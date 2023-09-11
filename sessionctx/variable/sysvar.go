@@ -40,6 +40,7 @@ import (
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
+	distroleutil "github.com/pingcap/tidb/util/distrole"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -343,7 +344,10 @@ var defaultSysVars = []*SysVar{
 			case kv.TiKV.Name():
 				s.IsolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				// If the tiflash is removed by the strict SQL mode. The hint should also not take effect.
+				if !s.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+					s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				}
 			case kv.TiDB.Name():
 				s.IsolationReadEngines[kv.TiDB] = struct{}{}
 			}
@@ -1401,8 +1405,15 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: DefaultCollationForUTF8MB4, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		coll, err := checkDefaultCollationForUTF8MB4(vars, normalizedValue, originalValue, scope)
+		if err == nil {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(DefaultCollationForUTF8MB4))
+		}
+		return coll, err
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: On, Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(varErrFunctionsNoopImpls *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if strings.EqualFold(normalizedValue, "SYSTEM") {
 			return "SYSTEM", nil
 		}
@@ -2824,6 +2835,28 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeInstance, Name: TiDBServiceScope, Value: "", Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := distroleutil.ToTiDBServiceScope(originalValue)
+			if !ok {
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+					originalValue,
+					TiDBServiceScope, `"", background`)
+				return normalizedValue, err
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			ServiceScope.Store(strings.ToLower(s))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return ServiceScope.Load(), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBSchemaVersionCacheLimit, Value: strconv.Itoa(DefTiDBSchemaVersionCacheLimit), Type: TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
+			return nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
@@ -3098,6 +3131,8 @@ const (
 	InitConnect = "init_connect"
 	// CollationServer is the name of 'collation_server' variable.
 	CollationServer = "collation_server"
+	// DefaultCollationForUTF8MB4 is the name of 'default_collation_for_utf8mb4' variable.
+	DefaultCollationForUTF8MB4 = "default_collation_for_utf8mb4"
 	// NetWriteTimeout is the name of 'net_write_timeout' variable.
 	NetWriteTimeout = "net_write_timeout"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
