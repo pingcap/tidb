@@ -2222,7 +2222,7 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
 		"[]",
-		"[or(or(eq(test.t1.a, 10), eq(test.t1.a, 20)), eq(test.t1.a, 30))]",
+		"[or(eq(test.t1.a, 10), or(eq(test.t1.a, 20), eq(test.t1.a, 30)))]",
 		"[[NULL,+inf]]")
 	checkRangeFallbackAndReset(t, sctx, true)
 
