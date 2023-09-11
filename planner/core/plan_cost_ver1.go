@@ -391,6 +391,12 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer1(_ property.TaskType, option *
 		p.planCost += getCardinality(partialScan, costFlag) * rowSize * netFactor // net I/O cost
 	}
 
+	// give a bias to pushDown limit, since it will get the same cost with NON_PUSH_DOWN_LIMIT case via expect count.
+	// push down limit case may reduce cop request consumption if any in some cases.
+	if p.PushedLimit != nil {
+		p.planCost = p.planCost * 0.99
+	}
+
 	// TODO: accumulate table-side seek cost
 
 	// consider concurrency

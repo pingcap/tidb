@@ -329,6 +329,11 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	sumIndexSideCost := sumCostVer2(indexSideCost...)
 
 	p.planCostVer2 = sumCostVer2(tableSideCost, sumIndexSideCost)
+	// give a bias to pushDown limit, since it will get the same cost with NON_PUSH_DOWN_LIMIT case via expect count.
+	// push down limit case may reduce cop request consumption if any in some cases.
+	if p.PushedLimit != nil {
+		p.planCostVer2 = mulCostVer2(p.planCostVer2, 0.99)
+	}
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
