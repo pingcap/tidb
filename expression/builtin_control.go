@@ -53,7 +53,7 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
-func CastForDecimalIfNeed(ctx sessionctx.Context, expectType *types.FieldType, origin Expression) Expression {
+func castForDecimalIfNeed(ctx sessionctx.Context, expectType *types.FieldType, origin Expression) Expression {
 	// https://github.com/pingcap/tidb/issues/44196
 	// For decimals, it is necessary to ensure that digitsFrac and digitsInt are consistent with the output type, so adding a cast function here.
 	if expectType.GetType() == mysql.TypeNewDecimal && !origin.GetType().Equal(expectType) {
@@ -242,10 +242,10 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 
 	for i := 1; i < l-1; i += 2 {
-		args[i] = CastForDecimalIfNeed(ctx, fieldTp, args[i])
+		args[i] = castForDecimalIfNeed(ctx, fieldTp, args[i])
 	}
 	if l%2 == 1 {
-		args[l-1] = CastForDecimalIfNeed(ctx, fieldTp, args[l-1])
+		args[l-1] = castForDecimalIfNeed(ctx, fieldTp, args[l-1])
 	}
 
 	argTps := make([]types.EvalType, 0, l)
@@ -571,8 +571,8 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		return nil, err
 	}
 
-	args[1] = CastForDecimalIfNeed(ctx, retTp, args[1])
-	args[2] = CastForDecimalIfNeed(ctx, retTp, args[2])
+	args[1] = castForDecimalIfNeed(ctx, retTp, args[1])
+	args[2] = castForDecimalIfNeed(ctx, retTp, args[2])
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
 	if err != nil {
@@ -776,8 +776,8 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 
-	args[0] = CastForDecimalIfNeed(ctx, retTp, args[0])
-	args[1] = CastForDecimalIfNeed(ctx, retTp, args[1])
+	args[0] = castForDecimalIfNeed(ctx, retTp, args[0])
+	args[1] = castForDecimalIfNeed(ctx, retTp, args[1])
 
 	evalTps := retTp.EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
