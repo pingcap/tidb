@@ -65,13 +65,13 @@ const (
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k         byte        // datum kind.
-	decimal   uint16      // decimal can hold uint16 values.
-	length    uint32      // length can hold uint32 values.
-	i         int64       // i can hold int64 uint64 float64 values.
-	collation string      // collation hold the collation information for string value.
-	b         []byte      // b can hold string or []byte values.
-	x         interface{} // x hold all other types.
+	k         byte   // datum kind.
+	decimal   uint16 // decimal can hold uint16 values.
+	length    uint32 // length can hold uint32 values.
+	i         int64  // i can hold int64 uint64 float64 values.
+	collation string // collation hold the collation information for string value.
+	b         []byte // b can hold string or []byte values.
+	x         any    // x hold all other types.
 }
 
 // EmptyDatumSize is the size of empty datum.
@@ -87,9 +87,14 @@ func (d *Datum) Clone() *Datum {
 
 // Copy deep copies a Datum into destination.
 func (d *Datum) Copy(dst *Datum) {
-	*dst = *d
+	dst.k = d.k
+	dst.decimal = d.decimal
+	dst.length = d.length
+	dst.i = d.i
+	dst.collation = d.collation
+	dst.x = d.x
 	if d.b != nil {
-		if cap(dst.b) != len(d.b) {
+		if dst.b == nil || cap(dst.b) != len(d.b) {
 			dst.b = make([]byte, len(d.b))
 		}
 		copy(dst.b, d.b)
