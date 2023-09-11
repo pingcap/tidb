@@ -41,6 +41,8 @@ type Engine interface {
 
 // Writer is the interface for the writer that can be used to write key-value pairs.
 type Writer interface {
+	// WriteRow writes one row into downstream.
+	// To enable uniqueness check, the handle should be non-empty.
 	WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error
 	LockForWrite() (unlock func())
 	Close(ctx context.Context) error

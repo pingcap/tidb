@@ -42,11 +42,9 @@ import (
 	"go.uber.org/zap"
 )
 
-type addIndexStage = int64
-
-const stageInit addIndexStage = proto.StepInit
+const stageInit = proto.StepInit
 const (
-	stageReadIndex addIndexStage = iota + 1
+	stageReadIndex = iota + 1
 	stageInstanceIngest
 	stageMergeSort
 )
@@ -366,12 +364,13 @@ func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, stageReadIndex)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
 	var minKey, maxKey kv.Key
-	var allDataFiles, allStatFiles []string
+	allDataFiles := make([]string, 0, 16)
+	allStatFiles := make([]string, 0, 16)
 	for _, subTaskMeta := range subTaskMetas {
 		var subtask BackfillSubTaskMeta
 		err := json.Unmarshal(subTaskMeta, &subtask)
