@@ -414,7 +414,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdCli,
 	)
 
 	rc := &Controller{
@@ -463,6 +463,8 @@ func (rc *Controller) Close() {
 }
 
 func (rc *Controller) Run(ctx context.Context) error {
+	failpoint.Inject("beforeRun", func() {})
+
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
 		rc.restoreSchema,
@@ -1352,7 +1354,7 @@ const (
 
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.pdCli.GetLeaderAddr()}, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1513,8 +1515,13 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		}
 
 		// Disable GC because TiDB enables GC already.
+
+		currentLeaderAddr := rc.pdCli.GetLeaderAddr()
+		// remove URL scheme
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "http://")
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "https://")
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true", rc.cfg.TiDB.PdAddr),
+			fmt.Sprintf("tikv://%s?disableGC=true", currentLeaderAddr),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
@@ -2116,7 +2123,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
 	if isLocalBackend(rc.cfg) {
-		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+		pdController, err := pdutil.NewPdController(ctx, rc.pdCli.GetLeaderAddr(),
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)

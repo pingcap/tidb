@@ -681,17 +681,19 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 // CDCPITRCheckItem check downstream has enabled CDC or PiTR. It's exposed to let
 // caller override the Instruction message.
 type CDCPITRCheckItem struct {
-	cfg         *config.Config
-	Instruction string
+	cfg              *config.Config
+	Instruction      string
+	leaderAddrGetter func() string
 	// used in test
 	etcdCli *clientv3.Client
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-func NewCDCPITRCheckItem(cfg *config.Config) PrecheckItem {
+func NewCDCPITRCheckItem(cfg *config.Config, leaderAddrGetter func() string) PrecheckItem {
 	return &CDCPITRCheckItem{
-		cfg:         cfg,
-		Instruction: "local backend is not compatible with them. Please switch to tidb backend then try again.",
+		cfg:              cfg,
+		Instruction:      "local backend is not compatible with them. Please switch to tidb backend then try again.",
+		leaderAddrGetter: leaderAddrGetter,
 	}
 }
 
@@ -700,7 +702,11 @@ func (ci *CDCPITRCheckItem) GetCheckItemID() CheckItemID {
 	return CheckTargetUsingCDCPITR
 }
 
-func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client, error) {
+func dialEtcdWithCfg(
+	ctx context.Context,
+	cfg *config.Config,
+	leaderAddr string,
+) (*clientv3.Client, error) {
 	cfg2, err := cfg.ToTLS()
 	if err != nil {
 		return nil, err
@@ -709,7 +715,7 @@ func dialEtcdWithCfg(ctx context.Context, cfg *config.Config) (*clientv3.Client,
 
 	return clientv3.New(clientv3.Config{
 		TLS:              tlsConfig,
-		Endpoints:        []string{cfg.TiDB.PdAddr},
+		Endpoints:        []string{leaderAddr},
 		AutoSyncInterval: 30 * time.Second,
 		DialTimeout:      5 * time.Second,
 		DialOptions: []grpc.DialOption{
@@ -740,7 +746,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*CheckResult, error) {
 
 	if ci.etcdCli == nil {
 		var err error
-		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg)
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.leaderAddrGetter())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
