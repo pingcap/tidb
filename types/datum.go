@@ -89,7 +89,9 @@ func (d *Datum) Clone() *Datum {
 func (d *Datum) Copy(dst *Datum) {
 	*dst = *d
 	if d.b != nil {
-		dst.b = make([]byte, len(d.b))
+		if cap(dst.b) != len(d.b) {
+			dst.b = make([]byte, len(d.b))
+		}
 		copy(dst.b, d.b)
 	}
 	switch dst.Kind() {
