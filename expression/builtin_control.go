@@ -53,6 +53,15 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
+func CastForDecimalIfNeed(ctx sessionctx.Context, expectType *types.FieldType, origin Expression) Expression {
+	// https://github.com/pingcap/tidb/issues/44196
+	// For decimals, it is necessary to ensure that digitsFrac and digitsInt are consistent with the output type, so adding a cast function here.
+	if expectType.GetType() == mysql.TypeNewDecimal && !origin.GetType().Equal(expectType) {
+		return BuildCastFunction(ctx, origin, expectType)
+	}
+	return origin
+}
+
 func maxlen(lhsFlen, rhsFlen int) int {
 	// -1 indicates that the length is unknown, such as the case for expressions.
 	if lhsFlen < 0 || rhsFlen < 0 {
@@ -234,14 +243,10 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 
 	// The types of the output arguments should all be retType for the CASE WHEN function.
 	for i := 1; i < l-1; i += 2 {
-		if !args[i].GetType().Equal(fieldTp) {
-			args[i] = BuildCastFunction(ctx, args[i], fieldTp)
-		}
+		args[i] = CastForDecimalIfNeed(ctx, fieldTp, args[i])
 	}
 	if l%2 == 1 {
-		if !args[l-1].GetType().Equal(fieldTp) {
-			args[l-1] = BuildCastFunction(ctx, args[l-1], fieldTp)
-		}
+		args[l-1] = CastForDecimalIfNeed(ctx, fieldTp, args[l-1])
 	}
 
 	argTps := make([]types.EvalType, 0, l)
@@ -567,13 +572,8 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 		return nil, err
 	}
 
-	// The types of the output arguments should all be retType for the IF function.
-	if !args[1].GetType().Equal(retTp) {
-		args[1] = BuildCastFunction(ctx, args[1], retTp)
-	}
-	if !args[2].GetType().Equal(retTp) {
-		args[2] = BuildCastFunction(ctx, args[2], retTp)
-	}
+	args[1] = CastForDecimalIfNeed(ctx, retTp, args[1])
+	args[2] = CastForDecimalIfNeed(ctx, retTp, args[2])
 
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
 	if err != nil {
@@ -777,13 +777,8 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 
-	// The types of arg0 and arg1 for the IFNULL function should be retType.
-	if !args[0].GetType().Equal(retTp) {
-		args[0] = BuildCastFunction(ctx, args[0], retTp)
-	}
-	if !args[1].GetType().Equal(retTp) {
-		args[1] = BuildCastFunction(ctx, args[1], retTp)
-	}
+	args[0] = CastForDecimalIfNeed(ctx, retTp, args[0])
+	args[1] = CastForDecimalIfNeed(ctx, retTp, args[1])
 
 	evalTps := retTp.EvalType()
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)

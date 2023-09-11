@@ -2320,13 +2320,11 @@ select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t
 b
 set names default;
 select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end;
-case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end
-a
+Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
 select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end;
 Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
 select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end;
-case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end
-a
+Error 1270: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_bin,EXPLICIT) for operation 'case'
 drop table if exists t0,t1;
 create table t0(col1 varchar(255));
 create table t1(col1 int(11));
