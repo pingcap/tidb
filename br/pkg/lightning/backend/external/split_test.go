@@ -42,10 +42,14 @@ func TestGeneralProperties(t *testing.T) {
 	for i := range keys {
 		keyLen := rand.Intn(100) + 1
 		valueLen := rand.Intn(100) + 1
-		keys[i] = make([]byte, keyLen)
-		values[i] = make([]byte, valueLen)
-		rand.Read(keys[i])
-		rand.Read(values[i])
+		keys[i] = make([]byte, keyLen+2)
+		values[i] = make([]byte, valueLen+2)
+		rand.Read(keys[i][:keyLen])
+		rand.Read(values[i][:valueLen])
+		keys[i][keyLen] = byte(i / 255)
+		keys[i][keyLen+1] = byte(i % 255)
+		values[i][valueLen] = byte(i / 255)
+		values[i][valueLen+1] = byte(i % 255)
 	}
 
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
