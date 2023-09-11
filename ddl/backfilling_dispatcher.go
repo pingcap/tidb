@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"math"
 	"sort"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -74,13 +74,21 @@ func (h *backfillingDispatcherExt) OnNextStage(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
-) ([][]byte, error) {
-	var globalTaskMeta BackfillGlobalMeta
-	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
+) (taskMeta [][]byte, err error) {
+	var gTaskMeta BackfillGlobalMeta
+	if err := json.Unmarshal(gTask.Meta, &gTaskMeta); err != nil {
 		return nil, err
 	}
-	job := &globalTaskMeta.Job
-	var tblInfo *model.TableInfo
+
+	useExtStore := len(gTaskMeta.CloudStorageURI) > 0
+	defer func() {
+		// Only redact when the task is complete.
+		if len(taskMeta) == 0 && useExtStore {
+			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
+		}
+	}()
+
+	job := &gTaskMeta.Job
 	tblInfo, err := getTblInfo(h.d, job)
 	if err != nil {
 		return nil, err
@@ -91,28 +99,29 @@ func (h *backfillingDispatcherExt) OnNextStage(
 		case stageInit:
 			gTask.Step = stageReadIndex
 			return generatePartitionPlan(tblInfo)
+		case stageReadIndex:
+			if useExtStore {
+				gTask.Step = stageMergeSort
+				return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
+			}
+			return nil, nil
 		default:
-			// This flow for partition table has only one step
 			return nil, nil
 		}
 	}
-
 	// generate non-partition table's plan.
 	switch gTask.Step {
 	case stageInit:
 		gTask.Step = stageReadIndex
 		return generateNonPartitionPlan(h.d, tblInfo, job)
 	case stageReadIndex:
-		// TODO(tangenta): check external storage URI is empty
-		if true {
+		if useExtStore {
 			gTask.Step = stageMergeSort
-			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID)
+			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 		}
 		gTask.Step = stageInstanceIngest
 		return generateIngestTaskPlan(ctx)
-	case stageMergeSort:
-		return nil, nil
-	case stageInstanceIngest:
+	case stageMergeSort, stageInstanceIngest:
 		return nil, nil
 	default:
 		return nil, nil
@@ -259,6 +268,7 @@ func generateMergeSortPlan(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 	jobID int64,
+	cloudStorageURI string,
 ) ([][]byte, error) {
 	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID)
 	if err != nil {
@@ -268,7 +278,8 @@ func generateMergeSortPlan(
 	if err != nil {
 		return nil, err
 	}
-	splitter, err := getRangeSplitter(ctx, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles)
+	splitter, err := getRangeSplitter(
+		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles)
 	if err != nil {
 		return nil, err
 	}
@@ -321,15 +332,13 @@ func generateMergeSortPlan(
 
 func getRangeSplitter(
 	ctx context.Context,
+	cloudStorageURI string,
 	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
 	dataFiles, statFiles []string,
 ) (*external.RangeSplitter, error) {
-	// TODO(tangenta): replace uri with global variable.
-	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
-		"globalsort", "addindex", "minioadmin", "minioadmin", "127.0.0.1", "9000")
-	backend, err := storage.ParseBackend(uri, nil)
+	backend, err := storage.ParseBackend(cloudStorageURI, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -391,4 +400,18 @@ func getSummaryFromLastStep(
 		allStatFiles = append(allStatFiles, subtask.StatFiles...)
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
+}
+
+func redactCloudStorageURI(
+	ctx context.Context,
+	gTask *proto.Task,
+	origin *BackfillGlobalMeta,
+) {
+	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
+	metaBytes, err := json.Marshal(origin)
+	if err != nil {
+		logutil.Logger(ctx).Warn("fail to marshal task meta", zap.Error(err))
+		return
+	}
+	gTask.Meta = metaBytes
 }

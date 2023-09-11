@@ -151,6 +151,7 @@ func NewAddIndexIngestPipeline(
 func NewWriteIndexToExternalStoragePipeline(
 	ctx *OperatorCtx,
 	store kv.Storage,
+	extStoreURI string,
 	sessPool opSessPool,
 	sessCtx sessionctx.Context,
 	jobID int64,
@@ -174,10 +175,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	readerCnt := int(variable.GetDDLReorgWorkerCounter())
 	writerCnt := 1
 
-	// TODO(tangenta): replace uri with global variable.
-	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
-		"globalsort", "addindex", "minioadmin", "minioadmin", "127.0.0.1", "9000")
-	backend, err := storage.ParseBackend(uri, nil)
+	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
 		return nil, err
 	}

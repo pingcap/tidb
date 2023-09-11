@@ -1895,10 +1895,12 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 	taskType := BackfillTaskType
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+
 	taskMeta := &BackfillGlobalMeta{
-		Job:        *reorgInfo.Job.Clone(),
-		EleID:      reorgInfo.currElement.ID,
-		EleTypeKey: reorgInfo.currElement.TypeKey,
+		Job:             *reorgInfo.Job.Clone(),
+		EleID:           reorgInfo.currElement.ID,
+		EleTypeKey:      reorgInfo.currElement.TypeKey,
+		CloudStorageURI: variable.CloudStorageURI.Load(),
 	}
 
 	metaData, err := json.Marshal(taskMeta)

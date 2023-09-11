@@ -34,6 +34,8 @@ type BackfillGlobalMeta struct {
 	Job        model.Job `json:"job"`
 	EleID      int64     `json:"ele_id"`
 	EleTypeKey []byte    `json:"ele_type_key"`
+
+	CloudStorageURI string `json:"cloud_storage_uri"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -81,11 +83,12 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 		jc := d.jobContext(jobMeta.ID)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexStage(d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary), nil
+		return newReadIndexStage(
+			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case stageInstanceIngest:
 		return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
 	case stageMergeSort:
-		return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc)
+		return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 	default:
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}

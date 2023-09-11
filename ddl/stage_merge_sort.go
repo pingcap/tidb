@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -31,10 +30,11 @@ import (
 )
 
 type mergeSortStage struct {
-	jobID int64
-	index *model.IndexInfo
-	ptbl  table.PhysicalTable
-	bc    ingest.BackendCtx
+	jobID         int64
+	index         *model.IndexInfo
+	ptbl          table.PhysicalTable
+	bc            ingest.BackendCtx
+	cloudStoreURI string
 }
 
 func newMergeSortStage(
@@ -42,12 +42,14 @@ func newMergeSortStage(
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
 	bc ingest.BackendCtx,
+	cloudStoreURI string,
 ) (*mergeSortStage, error) {
 	return &mergeSortStage{
-		jobID: jobID,
-		index: index,
-		ptbl:  ptbl,
-		bc:    bc,
+		jobID:         jobID,
+		index:         index,
+		ptbl:          ptbl,
+		bc:            bc,
+		cloudStoreURI: cloudStoreURI,
 	}, nil
 }
 
@@ -73,13 +75,10 @@ func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 		return nil,
 			errors.Errorf("local backend not found")
 	}
-	// TODO(tangenta): replace uri with global variable.
-	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
-		"globalsort", "addindex", "minioadmin", "minioadmin", "127.0.0.1", "9000")
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, int32(m.index.ID))
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:    uri,
+			StorageURI:    m.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			MinKey:        sm.MinKey,

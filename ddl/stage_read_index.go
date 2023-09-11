@@ -44,7 +44,7 @@ type readIndexStage struct {
 	ptbl  table.PhysicalTable
 	jc    *JobContext
 
-	useExternalStore bool
+	cloudStorageURI string
 
 	bc      ingest.BackendCtx
 	summary *execute.Summary
@@ -69,17 +69,17 @@ func newReadIndexStage(
 	jc *JobContext,
 	bc ingest.BackendCtx,
 	summary *execute.Summary,
+	cloudStorageURI string,
 ) *readIndexStage {
 	return &readIndexStage{
-		d:       d,
-		job:     job,
-		index:   index,
-		ptbl:    ptbl,
-		jc:      jc,
-		bc:      bc,
-		summary: summary,
-
-		useExternalStore: true,
+		d:               d,
+		job:             job,
+		index:           index,
+		ptbl:            ptbl,
+		jc:              jc,
+		bc:              bc,
+		summary:         summary,
+		cloudStorageURI: cloudStorageURI,
 	}
 }
 
@@ -119,7 +119,7 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 	totalRowCount := &atomic.Int64{}
 
 	var pipe *operator.AsyncPipeline
-	if r.useExternalStore {
+	if len(r.cloudStorageURI) > 0 {
 		pipe, err = r.buildExternalStorePipeline(opCtx, d, subtask.ID, sessCtx, tbl, startKey, endKey, totalRowCount)
 	} else {
 		pipe, err = r.buildLocalStorePipeline(opCtx, d, sessCtx, tbl, startKey, endKey, totalRowCount)
@@ -163,7 +163,7 @@ func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask)
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})
-	if !r.useExternalStore {
+	if len(r.cloudStorageURI) == 0 {
 		return nil
 	}
 	// Rewrite the subtask meta to record statistics.
@@ -271,6 +271,6 @@ func (r *readIndexStage) buildExternalStorePipeline(
 		s.mu.Unlock()
 	}
 	return NewWriteIndexToExternalStoragePipeline(
-		opCtx, d.store, d.sessPool, sessCtx, r.job.ID, subtaskID,
+		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
 		tbl, r.index, start, end, totalRowCount, onClose)
 }
