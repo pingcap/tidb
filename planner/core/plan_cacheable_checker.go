@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -33,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -197,15 +195,17 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			isPartitioned, err := isPartitionTable(checker.schema, node)
+			tb, err := checker.schema.TableByName(node.Schema, node.Name)
 			if err != nil {
 				checker.cacheable = false
-				checker.reason = fmt.Errorf("check partition table failed: %w", err).Error()
-				logutil.BgLogger().Warn("check partition table failed", zap.Error(err),
+				checker.reason = fmt.Sprintf("find table %s.%s failed: %s", node.Schema, node.Name, err.Error())
+				logutil.BgLogger().Warn("find table failed", zap.Error(err),
+					zap.String("table_schema", node.Schema.O), zap.String("table_name", node.Name.O),
 					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
 				return in, true
 			}
-			if isPartitioned {
+
+			if tb.Meta().GetPartitionInfo() != nil {
 				// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
 				// is fixed and additional tests with dynamic partition prune mode has been added.
 				/*
@@ -217,30 +217,14 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				checker.reason = "query accesses partitioned tables is un-cacheable"
 				return in, true
 			}
-
-			hasGenCols, err := hasGeneratedCol(checker.schema, node)
-			if err != nil {
-				checker.cacheable = false
-				checker.reason = fmt.Errorf("check generated column failed: %w", err).Error()
-				logutil.BgLogger().Warn("check generated column failed", zap.Error(err),
-					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
-				return in, true
+			for _, col := range tb.Cols() {
+				if col.IsGenerated() {
+					checker.cacheable = false
+					checker.reason = "query accesses generated columns is un-cacheable"
+					return in, true
+				}
 			}
-			if hasGenCols {
-				checker.cacheable = false
-				checker.reason = "query accesses generated columns is un-cacheable"
-				return in, true
-			}
-
-			isTempTbl, err := isTempTable(checker.ctx, checker.schema, node)
-			if err != nil {
-				checker.cacheable = false
-				checker.reason = fmt.Errorf("check temporary table failed: %w", err).Error()
-				logutil.BgLogger().Warn("check temporary table failed", zap.Error(err),
-					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
-				return in, true
-			}
-			if isTempTbl {
+			if tb.Meta().TempTableType != model.TempTableNone {
 				checker.cacheable = false
 				checker.reason = "query accesses temporary tables is un-cacheable"
 				return in, true
@@ -537,8 +521,11 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			tb, err := checker.schema.TableByName(node.Schema, node.Name)
 			if err != nil {
 				checker.cacheable = false
-				checker.reason = "table cannot be found in schema"
-				return in, !checker.cacheable
+				checker.reason = fmt.Sprintf("find table %s.%s failed: %s", node.Schema, node.Name, err.Error())
+				logutil.BgLogger().Warn("find table failed", zap.Error(err),
+					zap.String("table_schema", node.Schema.O), zap.String("table_name", node.Name.O),
+					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
+				return in, true
 			}
 			if tb.Meta().GetPartitionInfo() != nil {
 				checker.cacheable = false
@@ -592,19 +579,6 @@ func (*nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
 	return false
 }
 
-func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) (bool, error) {
-	tb, err := schema.TableByName(tn.Schema, tn.Name)
-	if err != nil {
-		return false, err
-	}
-	for _, col := range tb.Cols() {
-		if col.IsGenerated() {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
 func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.ColumnName) (colType byte, found bool) {
 	if tbl == nil {
 		return 0, false
@@ -619,32 +593,6 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 		}
 	}
 	return 0, false
-}
-
-func isTempTable(ctx context.Context, schema infoschema.InfoSchema, tn *ast.TableName) (bool, error) {
-	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760) != nil {
-		return false, errors.New("mock error")
-	}
-
-	tb, err := schema.TableByName(tn.Schema, tn.Name)
-	if err != nil {
-		return false, err
-	}
-	if tb.Meta().TempTableType != model.TempTableNone {
-		return true, nil
-	}
-	return false, nil
-}
-
-func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) (bool, error) {
-	tb, err := schema.TableByName(tn.Schema, tn.Name)
-	if err != nil {
-		return false, err
-	}
-	if tb.Meta().GetPartitionInfo() != nil {
-		return true, nil
-	}
-	return false, nil
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
