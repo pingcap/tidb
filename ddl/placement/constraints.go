@@ -15,9 +15,11 @@
 package placement
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -118,10 +120,10 @@ func (constraints *Constraints) Add(label Constraint) error {
 func (constraints Constraints) FingerPrint() string {
 	copied := make(Constraints, len(constraints))
 	copy(copied, constraints)
-	sort.SliceStable(copied, func(i, j int) bool {
-		return constraintToString(copied[i]) < constraintToString(copied[j])
+	slices.SortStableFunc(copied, func(i, j Constraint) int {
+		a, b := constraintToString(i), constraintToString(j)
+		return cmp.Compare(a, b)
 	})
-
 	var combinedConstraints string
 	for _, constraint := range copied {
 		combinedConstraints += constraintToString(constraint)
