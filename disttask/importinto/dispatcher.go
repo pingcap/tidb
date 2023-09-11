@@ -304,7 +304,7 @@ func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatche
 		return nil, nil
 	}
 
-	if gTask.Step == StepImport {
+	if gTask.Step == StepPostProcess {
 		err = rollback(ctx, handle, gTask, logger)
 		if err != nil {
 			// TODO: add error code according to spec.
@@ -585,7 +585,6 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	if err := taskHandle.UpdateTask(gTask.State, nil, dispatcher.RetrySQLTimes); err != nil {
 		return err
 	}
-
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
