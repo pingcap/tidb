@@ -89,8 +89,8 @@ func (h *Handle) GetLastGCTimestamp(ctx context.Context) (uint64, error) {
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	if len(rows) != 1 {
-		return 0, errors.New("can not get 'tidb_stat_gc_last_ts' from table mysql.tidb")
+	if len(rows) == 0 {
+		return 0, nil
 	}
 	lastGcTSString := rows[0].GetString(0)
 	lastGcTS, err := strconv.ParseUint(lastGcTSString, 10, 64)
@@ -102,9 +102,10 @@ func (h *Handle) GetLastGCTimestamp(ctx context.Context) (uint64, error) {
 
 func (h *Handle) writeGCTimestampToKV(ctx context.Context, newTS uint64) error {
 	_, _, err := h.execRestrictedSQL(ctx,
-		"update mysql.tidb set variable_value = %? where variable_name = %?",
-		newTS,
+		"insert into mysql.tidb (variable_name, variable_value) values (%?, %?) on duplicate key update variable_value = %?",
 		gcLastTSVarName,
+		newTS,
+		newTS,
 	)
 	return err
 }

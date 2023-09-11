@@ -356,7 +356,7 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 		return errors.Trace(err)
 	}
 	startTS := txn.StartTS()
-	if _, err := exec.ExecuteInternal(ctx, "update mysql.stats_meta set count=0, modify_count=0, version=%? where table_id =%?", startTS, physicalID); err != nil {
+	if _, err := exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
 		return err
 	}
 	return nil

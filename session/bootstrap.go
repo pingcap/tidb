@@ -728,9 +728,6 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// oom-action when upgrade from v3.0.x to v4.0.11+.
 	tidbDefOOMAction = "default_oom_action"
-
-	tiDBStatsGCLastTS        = "tidb_stats_gc_last_ts"
-	tiDBStatsGCLastTSComment = "the previous gc timestamp for statistics"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -978,15 +975,11 @@ const (
 	version172 = 172
 	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
 	version173 = 173
-	// version 174
-	//   add new `variable tidb_analyze_last_gc_point` to mysql.tidb
-	//   used for reduce the pressure the statistics's GC jobs.
-	version174 = 174
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version174
+var currentBootstrapVersion int64 = version173
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1128,7 +1121,6 @@ var (
 		upgradeToVer171,
 		upgradeToVer172,
 		upgradeToVer173,
-		upgradeToVer174,
 	}
 )
 
@@ -2729,18 +2721,6 @@ func upgradeToVer173(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
-func upgradeToVer174(s Session, ver int64) {
-	if ver >= version174 {
-		return
-	}
-	writeStatsGCLastPos(s)
-}
-
-func writeStatsGCLastPos(s Session) {
-	mustExecute(s, "INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE = %?",
-		mysql.SystemDB, mysql.TiDBTable, tiDBStatsGCLastTS, 0, tiDBStatsGCLastTSComment, 0)
-}
-
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2993,8 +2973,6 @@ func doDMLWorks(s Session) {
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
 	writeStmtSummaryVars(s)
-
-	writeStatsGCLastPos(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
