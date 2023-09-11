@@ -849,6 +849,13 @@ func TestStringBuiltin(t *testing.T) {
 	result = tk.MustQuery("select a,b,concat_ws(',',a,b) from t")
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
+
+	// issue 44359
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("CREATE TABLE t1 (c1 INT UNSIGNED NOT NULL )")
+	tk.MustExec("INSERT INTO t1 VALUES (0)")
+	tk.MustQuery("SELECT c1 FROM t1 WHERE c1 <> CAST(POW(-'0', 1) AS BINARY)").Check(testkit.Rows())
+	tk.MustQuery("SELECT c1 FROM t1 WHERE c1 = CAST('-000' AS BINARY)").Check(testkit.Rows("0"))
 }
 
 func TestInvalidStrings(t *testing.T) {
@@ -3717,15 +3724,14 @@ func TestNotExistFunc(t *testing.T) {
 
 	// current db is empty
 	tk.MustGetErrMsg("SELECT xxx(1)", "[planner:1046]No database selected")
-
 	tk.MustGetErrMsg("SELECT yyy()", "[planner:1046]No database selected")
+	tk.MustGetErrMsg("SELECT T.upper(1)", "[expression:1305]FUNCTION t.upper does not exist")
 
 	// current db is not empty
 	tk.MustExec("use test")
 	tk.MustGetErrMsg("SELECT xxx(1)", "[expression:1305]FUNCTION test.xxx does not exist")
 	tk.MustGetErrMsg("SELECT yyy()", "[expression:1305]FUNCTION test.yyy does not exist")
-
-	tk.MustExec("use test")
+	tk.MustGetErrMsg("SELECT t.upper(1)", "[expression:1305]FUNCTION t.upper does not exist")
 	tk.MustGetErrMsg("SELECT timestampliteral(rand())", "[expression:1305]FUNCTION test.timestampliteral does not exist")
 }
 

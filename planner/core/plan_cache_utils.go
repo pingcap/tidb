@@ -138,7 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		reason = "plan cache is disabled"
 	} else {
 		if isPrepStmt {
-			cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
 		} else {
 			cacheable = true // it is already checked here
 		}
