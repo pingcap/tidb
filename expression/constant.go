@@ -450,8 +450,7 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 		c.hashcode = codec.EncodeInt(c.hashcode, int64(c.ParamMarker.order))
 		return c.hashcode
 	}
-
-	// when err is not nil, value is c.Value, xxx
+	
 	_, err := c.Eval(chunk.Row{})
 	if err != nil {
 		terror.Log(err)
