@@ -108,27 +108,9 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, poolErr.Error())
 
-	// 4. get subtask failed
-	getSubtaskErr := errors.New("get subtask error")
-	cleanupErr := errors.New("clean up error")
 	var taskID int64 = 1
-	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockPool.EXPECT().RunWithConcurrency(gomock.Any(), gomock.Any()).DoAndReturn(runWithConcurrencyFn)
-	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne, []interface{}{proto.TaskStatePending}).Return(nil, getSubtaskErr)
-	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(cleanupErr)
-	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
-	require.EqualError(t, err, getSubtaskErr.Error())
 
-	// 5. update subtask state failed
-	updateSubtaskErr := errors.New("update subtask error")
-	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockPool.EXPECT().RunWithConcurrency(gomock.Any(), gomock.Any()).DoAndReturn(runWithConcurrencyFn)
-	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Step: proto.StepOne}, nil)
-	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(updateSubtaskErr)
-	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
-	require.EqualError(t, err, updateSubtaskErr.Error())
-	// 6. no subtask executor constructor
+	// 4. no subtask executor constructor
 	subtaskExecutorRegisterErr := errors.Errorf("constructor of subtask executor for key not found")
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, subtaskExecutorRegisterErr)
 	var concurrency uint64 = 10
@@ -144,7 +126,7 @@ func TestSchedulerRun(t *testing.T) {
 
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockMiniTaskExecutor, nil).AnyTimes()
 
-	// 7. run subtask failed
+	// 5. run subtask failed
 	runSubtaskErr := errors.New("run subtask error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockPool.EXPECT().RunWithConcurrency(gomock.Any(), gomock.Any()).DoAndReturn(runWithConcurrencyFn)
@@ -158,7 +140,7 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, runSubtaskErr.Error())
 
-	// 8. run subtask success
+	// 6. run subtask success
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockPool.EXPECT().RunWithConcurrency(gomock.Any(), gomock.Any()).DoAndReturn(runWithConcurrencyFn)
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp, Step: proto.StepOne}, nil)
@@ -173,7 +155,7 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
 
-	// 9. run subtask one by one
+	// 7. run subtask one by one
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockPool.EXPECT().RunWithConcurrency(gomock.Any(), gomock.Any()).DoAndReturn(runWithConcurrencyFn)
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp, Step: proto.StepOne}, nil)
@@ -194,7 +176,7 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
-	// 10. cancel
+	// 8. cancel
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockPool.EXPECT().RunWithConcurrency(gomock.Any(), gomock.Any()).DoAndReturn(runWithConcurrencyFn)
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp, Step: proto.StepOne}, nil)
@@ -215,7 +197,7 @@ func TestSchedulerRun(t *testing.T) {
 	time.Sleep(time.Second)
 	runCancel()
 	wg.Wait()
-	// 11. run subtask one by one, on error, we should wait all minimal task finished before call Cleanup
+	// 9. run subtask one by one, on error, we should wait all minimal task finished before call Cleanup
 	syncCh := make(chan struct{})
 	lastMinimalTaskFinishTime, cleanupTime := time.Time{}, time.Time{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/waitUntilError", `return(true)`))

@@ -170,11 +170,13 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 		if err != nil {
+			logutil.Logger(s.logCtx).Warn("GetSubtaskInStates meets error", zap.Error(err))
 			continue
 		}
 		if subtask == nil {
 			newTask, err := s.taskTable.GetGlobalTaskByID(task.ID)
 			if err != nil {
+				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
 				continue
 			}
 			// When the task move to next step or task state changes, the scheduler should exit.
@@ -185,6 +187,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		}
 		s.startSubtask(subtask.ID)
 		if err := s.getError(); err != nil {
+			logutil.Logger(s.logCtx).Warn("startSubtask meets error", zap.Error(err))
 			continue
 		}
 		failpoint.Inject("mockCleanScheduler", func() {
