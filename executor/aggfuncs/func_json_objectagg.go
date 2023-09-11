@@ -114,6 +114,40 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 	return memDelta, nil
 }
 
+func (c *jsonObjectAgg) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4JsonObjectAgg)(partialResult)
+	resBuf := spillHelper.serializePartialResult4JsonObjectAgg(*pr, spillHelper.tmpBuf[:])
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *jsonObjectAgg) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *jsonObjectAgg) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4JsonObjectAgg)(pr)
+	success, deserializeMemDelta := helper.deserializePartialResult4JsonObjectAgg(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta + deserializeMemDelta
+}
+
 func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, error) {
 	realVal := value.Clone().GetValue()
 	switch value.Kind() {

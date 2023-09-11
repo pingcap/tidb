@@ -15,6 +15,7 @@
 package spill
 
 import (
+	gotime "time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -36,9 +37,10 @@ const (
 	StringType     = 4
 	BinaryJSONType = 5
 	OpaqueType     = 6
-	MyDecimalType  = 7
-	TimeType       = 8
-	DurationType   = 9
+	TimeType       = 7
+	DurationType   = 8
+
+	intLen = int64(unsafe.Sizeof(int(0)))
 )
 
 // DeserializeBool deserializes bool type
@@ -46,9 +48,19 @@ func DeserializeBool(buf []byte, pos int64) bool {
 	return *(*bool)(unsafe.Pointer(&buf[pos]))
 }
 
+// DeserializeInt deserializes int type
+func DeserializeInt(buf []byte, pos int64) int {
+	return *(*int)(unsafe.Pointer(&buf[pos]))
+}
+
 // DeserializeInt8 deserializes int8 type
 func DeserializeInt8(buf []byte, pos int64) int8 {
 	return *(*int8)(unsafe.Pointer(&buf[pos]))
+}
+
+// DeserializeUint8 deserializes int8 type
+func DeserializeUint8(buf []byte, pos int64) uint8 {
+	return *(*uint8)(unsafe.Pointer(&buf[pos]))
 }
 
 // DeserializeInt32 deserializes int32 type
@@ -117,63 +129,103 @@ func DeserializeInterface(buf []byte, readPos int64) (interface{}, int64) {
 		readPos += strLen
 		return res, readPos
 	case BinaryJSONType:
-		// TODO
+		typeCode := buf[readPos]
+		readPos++
+		valueLen := DeserializeInt64(buf, readPos)
+		readPos += 8
+		return types.BinaryJSON{
+			TypeCode: typeCode,
+			Value:    buf[readPos : readPos+valueLen],
+		}, readPos + valueLen
 	case OpaqueType:
-	case MyDecimalType:
+		typeCode := buf[readPos]
+		readPos++
+		valueLen := DeserializeInt64(buf, readPos)
+		readPos += 8
+		return types.Opaque{
+			TypeCode: typeCode,
+			Buf:      buf[readPos : readPos+valueLen],
+		}, readPos + valueLen
 	case TimeType:
+		coreTime := DeserializeUint64(buf, readPos)
+		readPos += 8
+		t := DeserializeUint8(buf, readPos)
+		readPos += 1
+		fsp := DeserializeInt(buf, readPos)
+		readPos += intLen
+		return types.NewTime(types.CoreTime(coreTime), t, fsp), readPos
 	case DurationType:
+		value := DeserializeInt64(buf, readPos)
+		readPos += 8
+		fsp := DeserializeInt(buf, readPos)
+		readPos += intLen
+		return types.Duration{
+			Duration: gotime.Duration(value),
+			Fsp:      fsp,
+		}, readPos
 	default:
 		panic("Invalid data type happens in agg spill deserializing!")
 	}
-	return nil, 0
 }
 
 // SerializeBool serializes bool type
 func SerializeBool(value bool, tmpBuf []byte) []byte {
 	*(*bool)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:1]
+}
+
+// SerializeInt serializes int type
+func SerializeInt(value int, tmpBuf []byte) []byte {
+	*(*int)(unsafe.Pointer(&tmpBuf[0])) = value
+	return tmpBuf[:intLen]
 }
 
 // SerializeInt8 serializes int8 type
 func SerializeInt8(value int8, tmpBuf []byte) []byte {
 	*(*int8)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:1]
+}
+
+// SerializeUint8 serializes uint8 type
+func SerializeUint8(value uint8, tmpBuf []byte) []byte {
+	*(*uint8)(unsafe.Pointer(&tmpBuf[0])) = value
+	return tmpBuf[:1]
 }
 
 // SerializeInt32 serializes int32 type
 func SerializeInt32(value int32, tmpBuf []byte) []byte {
 	*(*int32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:4]
 }
 
 // SerializeUint32 serializes uint32 type
 func SerializeUint32(value uint32, tmpBuf []byte) []byte {
 	*(*uint32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:4]
 }
 
 // SerializeUint64 serializes uint64 type
 func SerializeUint64(value uint64, tmpBuf []byte) []byte {
 	*(*uint64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:8]
 }
 
 // SerializeInt64 serializes int64 type
 func SerializeInt64(value int64, tmpBuf []byte) []byte {
 	*(*int64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:8]
 }
 
 // SerializeFloat32 serializes float32 type
 func SerializeFloat32(value float32, tmpBuf []byte) []byte {
 	*(*float32)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:4]
 }
 
 // SerializeFloat64 serializes float64 type
 func SerializeFloat64(value float64, tmpBuf []byte) []byte {
 	*(*float64)(unsafe.Pointer(&tmpBuf[0])) = value
-	return tmpBuf
+	return tmpBuf[:8]
 }
 
 // SerializeInterface serialize interface type and return the number of bytes serialized
@@ -225,11 +277,14 @@ func SerializeInterface(value interface{}, varBuf *[]byte, tmpBuf []byte) int64 
 	case types.Time:
 		*varBuf = append(*varBuf, TimeType)
 		*varBuf = append(*varBuf, SerializeUint64(uint64(v.CoreTime()), tmpBuf)...)
-		encodedBytesNum += 8
+		*varBuf = append(*varBuf, SerializeUint8(v.Type(), tmpBuf)...)
+		*varBuf = append(*varBuf, SerializeInt(v.Fsp(), tmpBuf)...)
+		encodedBytesNum += 8 + 1 + intLen
 	case types.Duration:
 		*varBuf = append(*varBuf, DurationType)
 		*varBuf = append(*varBuf, SerializeInt64(int64(v.Duration), tmpBuf)...)
-		encodedBytesNum += 8
+		*varBuf = append(*varBuf, SerializeInt(v.Fsp, tmpBuf)...)
+		encodedBytesNum += 8 + intLen
 	default:
 		panic("Agg spill encounters an unexpected interface type!")
 	}

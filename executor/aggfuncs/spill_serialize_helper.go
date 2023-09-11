@@ -162,3 +162,22 @@ func (s *SpillSerializeHelper) serializePartialResult4BitFunc(value partialResul
 	spill.SerializeUint64(value, s.tmpBuf[:])
 	return s.tmpBuf[0:uint64Len]
 }
+
+func (s *SpillSerializeHelper) serializePartialResult4JsonArrayagg(value partialResult4JsonArrayagg, tmpBuf []byte) []byte {
+	varBuf := make([]byte, 0)
+	for _, value := range value.entries {
+		spill.SerializeInterface(value, &varBuf, tmpBuf)
+	}
+	return varBuf
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg, tmpBuf []byte) []byte {
+	resBuf := make([]byte, 0)
+	for key, value := range value.entries {
+		resBuf := spill.SerializeInt64(int64(len(key)), s.tmpBuf[:])
+		resBuf = append(resBuf, resBuf...)
+		resBuf = append(resBuf, key...)
+		spill.SerializeInterface(value, &resBuf, tmpBuf)
+	}
+	return resBuf
+}

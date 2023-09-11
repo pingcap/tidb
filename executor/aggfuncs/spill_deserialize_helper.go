@@ -42,14 +42,14 @@ type strSizeType uint16
 type spillDeserializeHelper struct {
 	column       *chunk.Column
 	readRowIndex int
-	totalRowCnt       int
+	totalRowCnt  int
 }
 
 func newDeserializeHelper(column *chunk.Column, rowNum int) spillDeserializeHelper {
 	return spillDeserializeHelper{
 		column:       column,
 		readRowIndex: 0,
-		totalRowCnt:       rowNum,
+		totalRowCnt:  rowNum,
 	}
 }
 
@@ -259,4 +259,49 @@ func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialRe
 		return true
 	}
 	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialResult4JsonArrayagg) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		byteNum := int64(len(bytes))
+		readPos := int64(0)
+		for readPos < byteNum {
+			value, readPosTmp := spill.DeserializeInterface(bytes, readPos)
+			readPos = readPosTmp
+			dst.entries = append(dst.entries, value)
+		}
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
+	memDelta := int64(0)
+	dst.bInMap = 0
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		byteNum := int64(len(bytes))
+		readPos := int64(0)
+		for readPos < byteNum {
+			keyLen := spill.DeserializeInt64(bytes, readPos)
+			readPos += 8
+			key := string(hack.String(bytes[readPos : readPos+keyLen]))
+			readPos += keyLen
+			realVal, readPosTmp := spill.DeserializeInterface(bytes, readPos)
+			readPos = readPosTmp
+			if _, ok := dst.entries[key]; !ok {
+				memDelta += int64(len(key)) + getValMemDelta(realVal)
+				if len(dst.entries)+1 > (1<<dst.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					memDelta += (1 << dst.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
+					dst.bInMap++
+				}
+			}
+			dst.entries[key] = realVal
+		}
+		s.readRowIndex++
+		return true, memDelta
+	}
+	return false, memDelta
 }

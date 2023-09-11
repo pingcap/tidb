@@ -91,3 +91,37 @@ func (*jsonArrayagg) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	p2.entries = append(p2.entries, p1.entries...)
 	return 0, nil
 }
+
+func (c *jsonArrayagg) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4JsonArrayagg)(partialResult)
+	resBuf := spillHelper.serializePartialResult4JsonArrayagg(*pr, spillHelper.tmpBuf[:])
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *jsonArrayagg) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *jsonArrayagg) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4JsonArrayagg)(pr)
+	success := helper.deserializePartialResult4JsonArrayagg(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
