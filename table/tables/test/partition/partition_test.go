@@ -747,12 +747,12 @@ func TestExchangePartitionStates(t *testing.T) {
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
-				// Sleep 50ms to wait load InforSchema finish, issue #46815.
-				gotime.Sleep(50 * gotime.Millisecond)
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
 		}
+		// Sleep 50ms to wait load InforSchema finish, issue #46815.
+		gotime.Sleep(50 * gotime.Millisecond)
 	}
 	waitFor("t", "write only", 4)
 	tk3.MustExec(`BEGIN`)
@@ -846,12 +846,12 @@ func TestAddKeyPartitionStates(t *testing.T) {
 		for {
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = 't' and job_type like 'alter table%'`).Rows()
 			if len(res) == 1 && res[0][i] == s {
-				// Sleep 50ms to wait load InforSchema finish.
-				gotime.Sleep(50 * gotime.Millisecond)
 				break
 			}
 			gotime.Sleep(10 * gotime.Millisecond)
 		}
+		// Sleep 50ms to wait load InforSchema finish.
+		gotime.Sleep(50 * gotime.Millisecond)
 	}
 	waitFor(4, "delete only")
 	tk3.MustExec(`BEGIN`)
