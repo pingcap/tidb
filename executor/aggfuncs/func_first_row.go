@@ -500,7 +500,6 @@ func (*firstRow4Decimal) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return memDelta, nil
 }
 
-
 // func (c *firstRow4Decimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 // 	pr := (*partialResult4FirstRowDecimal)(partialResult)
 // 	resBuf := spillHelper.serializePartialResult4MaxMinDecimal(*pr)

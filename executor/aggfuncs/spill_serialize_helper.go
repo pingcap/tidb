@@ -78,37 +78,41 @@ func (s *SpillSerializeHelper) serializePartialResult4MaxMinTime(value partialRe
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinDuration(value partialResult4MaxMinDuration) []byte {
 	spill.SerializeInt64(int64(value.val.Duration), s.tmpBuf[0:int64Len])
-	end := int64Len + boolLen
-	spill.SerializeBool(value.isNull, s.tmpBuf[int64Len:end])
+	spill.SerializeInt(value.val.Fsp, s.tmpBuf[int64Len:int64Len+intLen])
+	end := int64Len + intLen + boolLen
+	spill.SerializeBool(value.isNull, s.tmpBuf[int64Len+intLen:end])
 	return s.tmpBuf[0:end]
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinString(value partialResult4MaxMinString) []byte {
 	spill.SerializeBool(value.isNull, s.tmpBuf[0:boolLen])
-	bytes := []byte(value.val)
-	copy(s.tmpBuf[boolLen:], bytes)
-	return s.tmpBuf[0 : boolLen+int64(len(bytes))]
+	resBuf := s.tmpBuf[:1]
+	resBuf = append(resBuf, value.val...)
+	return resBuf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinJSON(value partialResult4MaxMinJSON) []byte {
 	s.tmpBuf[0] = value.val.TypeCode
 	spill.SerializeBool(value.isNull, s.tmpBuf[1:])
-	copy(s.tmpBuf[1+boolLen:], value.val.Value)
-	return s.tmpBuf[0 : 1+boolLen+int64(len(value.val.Value))]
+	resBuf := s.tmpBuf[:2]
+	resBuf = append(resBuf, value.val.Value...)
+	return resBuf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinEnum(value partialResult4MaxMinEnum) []byte {
 	spill.SerializeUint64(value.val.Value, s.tmpBuf[0:])
 	spill.SerializeBool(value.isNull, s.tmpBuf[uint64Len:])
-	copy(s.tmpBuf[uint64Len+boolLen:], []byte(value.val.Name))
-	return s.tmpBuf[0 : uint64Len+boolLen+int64(len(value.val.Name))]
+	resBuf := s.tmpBuf[:uint64Len+boolLen]
+	resBuf = append(resBuf, value.val.Name...)
+	return resBuf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4MaxMinSet(value partialResult4MaxMinSet) []byte {
 	spill.SerializeUint64(value.val.Value, s.tmpBuf[0:])
 	spill.SerializeBool(value.isNull, s.tmpBuf[uint64Len:])
-	copy(s.tmpBuf[uint64Len+boolLen:], []byte(value.val.Name))
-	return s.tmpBuf[0 : uint64Len+boolLen+int64(len(value.val.Name))]
+	resBuf := s.tmpBuf[:uint64Len+boolLen]
+	resBuf = append(resBuf, value.val.Name...)
+	return resBuf
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4AvgDecimal(value partialResult4AvgDecimal) []byte {
@@ -182,19 +186,78 @@ func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partia
 	return resBuf
 }
 
+func (s *SpillSerializeHelper) serializeBasePartialResult4FirstRow(value basePartialResult4FirstRow) ([]byte, int64) {
+	spill.SerializeBool(value.isNull, s.tmpBuf[:])
+	spill.SerializeBool(value.isNull, s.tmpBuf[1:])
+	return s.tmpBuf[:2], 2
+}
 
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowDecimal(value partialResult4FirstRowDecimal) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	*(*types.MyDecimal)(unsafe.Pointer(&s.tmpBuf[baseBytesNum])) = value.val
+	return s.tmpBuf[:types.MyDecimalStructSize+baseBytesNum]
+}
 
-// firstRow4Decimal
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowInt(value partialResult4FirstRowInt) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	spill.SerializeInt64(value.val, s.tmpBuf[baseBytesNum:])
+	return s.tmpBuf[:int64Len+baseBytesNum]
+}
 
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowTime(value partialResult4FirstRowTime) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	*(*types.Time)(unsafe.Pointer(&s.tmpBuf[baseBytesNum])) = value.val
+	return s.tmpBuf[:timeLen+baseBytesNum]
+}
 
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowString(value partialResult4FirstRowString) []byte {
+	resBuf, _ := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	resBuf = append(resBuf, value.val...)
+	return resBuf
+}
 
-// firstRow4Int
-// firstRow4Time
-// firstRow4String
-// firstRow4Duration
-// firstRow4Float32
-// firstRow4Float64
-// firstRow4JSON
-// firstRow4Enum
-// firstRow4Set
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowFloat32(value partialResult4FirstRowFloat32) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	spill.SerializeFloat32(value.val, s.tmpBuf[baseBytesNum:])
+	return s.tmpBuf[:float32Len+baseBytesNum]
+}
 
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowFloat64(value partialResult4FirstRowFloat64) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	spill.SerializeFloat64(value.val, s.tmpBuf[baseBytesNum:])
+	return s.tmpBuf[:float64Len+baseBytesNum]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowDuration(value partialResult4FirstRowDuration) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	spill.SerializeInt64(int64(value.val.Duration), s.tmpBuf[baseBytesNum:])
+	spill.SerializeInt(value.val.Fsp, s.tmpBuf[baseBytesNum+int64Len:int64Len+intLen])
+	return s.tmpBuf[:int64Len+intLen+baseBytesNum]
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	s.tmpBuf[baseBytesNum] = value.val.TypeCode
+	if len(s.varBuf) < 3+len(value.val.Value) {
+		s.varBuf = make([]byte, 3+len(value.val.Value))
+	}
+	copy(s.varBuf, s.tmpBuf[:baseBytesNum+1])
+	copy(s.varBuf[baseBytesNum+1:], value.val.Value)
+	return s.varBuf
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	spill.SerializeUint64(value.val.Value, s.tmpBuf[baseBytesNum:])
+	resBuf := s.tmpBuf[:8+baseBytesNum]
+	resBuf = append(resBuf, value.val.Name...)
+	return resBuf
+}
+
+func (s *SpillSerializeHelper) serializePartialResult4FirstRowSet(value partialResult4FirstRowSet) []byte {
+	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
+	spill.SerializeUint64(value.val.Value, s.tmpBuf[baseBytesNum:])
+	resBuf := s.tmpBuf[:8+baseBytesNum]
+	resBuf = append(resBuf, value.val.Name...)
+	return resBuf
+}
