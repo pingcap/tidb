@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
@@ -40,13 +41,13 @@ import (
 var (
 	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
 	MinDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
-	// see default for tikv-importer.max-kv-pairs
+	// MinDeliverRowCnt see default for tikv-importer.max-kv-pairs
 	MinDeliverRowCnt = 4096
 )
 
 type deliveredRow struct {
 	kvs *kv.Pairs // if kvs is nil, this indicated we've got the last message.
-	// end offset in data file after encode this row.
+	// offset is the end offset in data file after encode this row.
 	offset int64
 }
 
@@ -110,7 +111,8 @@ type chunkProcessor struct {
 	encoder  kvEncoder
 	kvCodec  tikv.Codec
 	progress *asyncloaddata.Progress
-	// startOffset is the offset of the first interested row in this chunk.
+	// startOffset is the offset of current source file reader. it might be
+	// larger than the pos that has been parsed due to reader buffering.
 	// some rows before startOffset might be skipped if skip_rows > 0.
 	startOffset int64
 
@@ -118,6 +120,7 @@ type chunkProcessor struct {
 	readTotalDur    time.Duration
 	encodeTotalDur  time.Duration
 	deliverTotalDur time.Duration
+	metrics         *metric.Common
 }
 
 func (p *chunkProcessor) process(ctx context.Context) (err error) {
@@ -129,9 +132,16 @@ func (p *chunkProcessor) process(ctx context.Context) (err error) {
 			zap.Duration("deliverDur", p.deliverTotalDur),
 			zap.Object("checksum", &p.chunkInfo.Checksum),
 		)
+		if err == nil && p.metrics != nil {
+			p.metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
+		}
 	}()
 	if err2 := p.initProgress(); err2 != nil {
 		return err2
+	}
+
+	if metrics, ok := metric.GetCommonMetric(ctx); ok {
+		p.metrics = metrics
 	}
 
 	group, gCtx := errgroup.WithContext(ctx)
@@ -227,6 +237,11 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
+		if p.metrics != nil {
+			p.metrics.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+			p.metrics.RowReadSecondsHistogram.Observe(readDur.Seconds())
+		}
+
 		if len(rowBatch) > 0 {
 			if err = send(rowBatch); err != nil {
 				return err
@@ -282,14 +297,35 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 
 			deliverDur := time.Since(start)
 			p.deliverTotalDur += deliverDur
+			if p.metrics != nil {
+				p.metrics.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+				p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).
+					Observe(float64(kvBatch.dataChecksum.SumSize()))
+				p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).
+					Observe(float64(kvBatch.indexChecksum.SumSize()))
+				p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).
+					Observe(float64(kvBatch.dataChecksum.SumKVS()))
+				p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).
+					Observe(float64(kvBatch.indexChecksum.SumKVS()))
+			}
 			return nil
 		}()
 		if err != nil {
 			return err
 		}
 
-		p.progress.EncodeFileSize.Add(currOffset - prevOffset)
+		delta := currOffset - prevOffset
+		p.progress.EncodeFileSize.Add(delta)
 		prevOffset = currOffset
+		if p.metrics != nil {
+			// if we're using split_file, this metric might larger than total
+			// source file size, as the offset we're using is the reader offset,
+			// and we'll buffer data.
+			p.metrics.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
+			p.metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten).Add(float64(kvBatch.size()))
+			// table name doesn't matter here, all those metrics will have task-id label.
+			p.metrics.RowsCounter.WithLabelValues(metric.StateRestored, "").Add(float64(kvBatch.dataChecksum.SumKVS()))
+		}
 
 		p.chunkInfo.Checksum.Add(kvBatch.dataChecksum)
 		p.chunkInfo.Checksum.Add(kvBatch.indexChecksum)

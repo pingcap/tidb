@@ -938,7 +938,7 @@ func (s *tableRestoreSuite) TestTableRestoreMetrics() {
 	engineFinishedBase := metric.ReadCounter(metrics.ProcessedEngineCounter.WithLabelValues("imported", metric.TableResultSuccess))
 	tableFinishedBase := metric.ReadCounter(metrics.TableCounter.WithLabelValues("index_imported", metric.TableResultSuccess))
 
-	ctx := metric.NewContext(context.Background(), metrics)
+	ctx := metric.WithMetric(context.Background(), metrics)
 	chptCh := make(chan saveCp)
 	defer close(chptCh)
 	cfg := config.NewConfig()

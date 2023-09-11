@@ -441,7 +441,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	}()
 	l.metrics = metrics
 
-	ctx := metric.NewContext(taskCtx, metrics)
+	ctx := metric.WithMetric(taskCtx, metrics)
 	ctx = log.NewContext(ctx, o.logger)
 	ctx, cancel := context.WithCancel(ctx)
 	l.cancelLock.Lock()
