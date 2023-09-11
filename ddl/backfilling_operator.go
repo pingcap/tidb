@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"math/rand"
 	"path"
 	"strconv"
 	"sync/atomic"
@@ -464,22 +465,22 @@ func NewWriteExternalStoreOperator(
 	concurrency int,
 	onClose external.OnCloseFunc,
 ) *WriteExternalStoreOperator {
-	var writerIDAlloc atomic.Int32
+	builder := external.NewWriterBuilder().
+		SetOnCloseFunc(onClose)
+	if index.Meta().Unique {
+		builder = builder.EnableDuplicationDetection()
+	}
+	rs := rand.NewSource(time.Now().Unix())
+	writerID := rand.New(rs).Int()
+
+	prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+	writer := builder.Build(store, prefix, writerID)
+
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
-			writerID := int(writerIDAlloc.Add(1))
-			builder := external.NewWriterBuilder().
-				SetOnCloseFunc(onClose)
-			if index.Meta().Unique {
-				builder = builder.EnableDuplicationDetection()
-			}
-
-			prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
-			writer := builder.Build(store, prefix, writerID)
-
 			return &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,

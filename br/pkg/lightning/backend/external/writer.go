@@ -21,6 +21,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -188,6 +189,7 @@ type Writer struct {
 
 	kvBuffer   *membuf.Buffer
 	writeBatch []common.KvPair
+	mu         sync.Mutex
 
 	onClose OnCloseFunc
 	closed  bool
@@ -227,7 +229,10 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 // Since flushKVs is thread-safe in external storage writer,
 // this is implemented as noop.
 func (w *Writer) LockForWrite() func() {
-	return func() {}
+	w.mu.Lock()
+	return func() {
+		w.mu.Unlock()
+	}
 }
 
 // Close closes the writer.
