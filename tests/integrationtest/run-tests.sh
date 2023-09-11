@@ -20,7 +20,7 @@ build=1
 mysql_tester="./mysql_tester"
 tidb_server=""
 portgenerator=""
-mysql_tester_log="./explain-test.out"
+mysql_tester_log="./integration-test.out"
 tests=""
 record=0
 record_case=""
@@ -41,10 +41,10 @@ function help_message()
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
                       \"b\" or \"B\" for both tests [default].
-                      Enable/Disable the new collation during the explain test.
+                      Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
-                           eg. \"./run-tests.sh -s ./explaintest_tidb-server\"
+                           eg. \"./run-tests.sh -s ./integrationtest_tidb-server\"
 
     -b <y|Y|n|N>: \"y\" or \"Y\" for building test binaries [default \"y\" if this option is not specified].
                   \"n\" or \"N\" for not to build.
@@ -74,7 +74,7 @@ function build_portgenerator()
 
 function build_tidb_server()
 {
-    tidb_server="./explaintest_tidb-server"
+    tidb_server="./integrationtest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
@@ -169,7 +169,7 @@ if [ $build -eq 1 ]; then
     build_mysql_tester
 else
     if [ -z "$tidb_server" ]; then
-        tidb_server="./explaintest_tidb-server"
+        tidb_server="./integrationtest_tidb-server"
         if [[ ! -f "$tidb_server" ]]; then
             build_tidb_server
         else
@@ -239,9 +239,9 @@ function run_mysql_tester()
       fi
     else
       if [ -z "$tests" ]; then
-          echo "run all explain test cases ($coll_msg)"
+          echo "run all integration test cases ($coll_msg)"
       else
-          echo "run explain test cases($coll_msg): $tests"
+          echo "run integration test cases($coll_msg): $tests"
       fi
       $mysql_tester -port "$port" --collation-disable=$coll_disabled $tests
     fi
@@ -285,4 +285,4 @@ if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     check_data_race
 fi
 
-echo "explaintest passed!"
+echo "integrationtest passed!"
