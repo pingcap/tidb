@@ -16,7 +16,9 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/pingcap/tidb/table"
 	"math"
 	"sync"
 
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -196,6 +199,9 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 	case *ast.TableName:
 		if checker.schema != nil {
 			tb, err := checker.schema.TableByName(node.Schema, node.Name)
+			if intest.InTest && checker.ctx.Value(PlanCacheKeyTestIssue46760) != nil {
+				err = errors.New("mock error")
+			}
 			if err != nil {
 				checker.cacheable = false
 				checker.reason = fmt.Sprintf("find table %s.%s failed: %s", node.Schema, node.Name, err.Error())
@@ -204,29 +210,8 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
 				return in, true
 			}
-
-			if tb.Meta().GetPartitionInfo() != nil {
-				// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
-				// is fixed and additional tests with dynamic partition prune mode has been added.
-				/*
-					if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
-						return in, false // dynamic-mode for partition tables can use plan-cache
-					}
-				*/
-				checker.cacheable = false
-				checker.reason = "query accesses partitioned tables is un-cacheable"
-				return in, true
-			}
-			for _, col := range tb.Cols() {
-				if col.IsGenerated() {
-					checker.cacheable = false
-					checker.reason = "query accesses generated columns is un-cacheable"
-					return in, true
-				}
-			}
-			if tb.Meta().TempTableType != model.TempTableNone {
-				checker.cacheable = false
-				checker.reason = "query accesses temporary tables is un-cacheable"
+			checker.cacheable, checker.reason = checkTableCacheable(tb, true)
+			if !checker.cacheable {
 				return in, true
 			}
 		}
@@ -527,33 +512,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
 				return in, true
 			}
-			if tb.Meta().GetPartitionInfo() != nil {
-				checker.cacheable = false
-				checker.reason = "queries that access partitioning table are not supported"
-				return in, !checker.cacheable
-			}
-			for _, col := range tb.Cols() {
-				if col.IsGenerated() {
-					checker.cacheable = false
-					checker.reason = "queries that have generated columns are not supported"
-					return in, !checker.cacheable
-				}
-			}
-			if tb.Meta().TempTableType != model.TempTableNone {
-				checker.cacheable = false
-				checker.reason = "queries that access temporary tables are not supported"
-				return in, !checker.cacheable
-			}
-			if tb.Meta().IsView() {
-				checker.cacheable = false
-				checker.reason = "queries that access views are not supported"
-				return in, !checker.cacheable
-			}
-			if !tb.Type().IsNormalTable() {
-				checker.cacheable = false
-				checker.reason = "queries that access in-memory tables"
-				return in, !checker.cacheable
-			}
+			checker.cacheable, checker.reason = checkTableCacheable(tb, true)
 		}
 		return in, !checker.cacheable
 	}
@@ -682,6 +641,39 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 	}
 
 	return v
+}
+
+// checkTableCacheable checks whether a query accessing this table is cacheable.
+func checkTableCacheable(tb table.Table, isNonPrep bool) (cacheable bool, reason string) {
+	if tb.Meta().GetPartitionInfo() != nil {
+		// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
+		// is fixed and additional tests with dynamic partition prune mode has been added.
+		/*
+			if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+				return in, false // dynamic-mode for partition tables can use plan-cache
+			}
+		*/
+		return false, "query accesses partitioned tables is un-cacheable"
+	}
+	for _, col := range tb.Cols() {
+		if col.IsGenerated() {
+			return false, "query accesses generated columns is un-cacheable"
+		}
+	}
+	if tb.Meta().TempTableType != model.TempTableNone {
+		return false, "query accesses temporary tables is un-cacheable"
+	}
+
+	if isNonPrep { // non-prep plan cache is stricter
+		if tb.Meta().IsView() {
+			return false, "queries that access views are not supported"
+		}
+		if !tb.Type().IsNormalTable() {
+			return false, "queries that access in-memory tables"
+		}
+	}
+
+	return true, ""
 }
 
 func trimIfTooLong(sql string) string {
