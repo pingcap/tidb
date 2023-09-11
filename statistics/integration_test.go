@@ -754,11 +754,14 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	for _, version := range []string{"1", "2"} {
+	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
 
 		// analyze table t
 		tk.MustExec("drop table if exists t")
+		if i != 0 {
+			require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		}
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
@@ -779,6 +782,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 		// analyze table t index idx
 		tk.MustExec("drop table if exists t")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
@@ -796,6 +800,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 
 		// analyze table t index
 		tk.MustExec("drop table if exists t")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
 			"PARTITION BY RANGE (a) (" +
 			"PARTITION p0 VALUES LESS THAN (10)," +
