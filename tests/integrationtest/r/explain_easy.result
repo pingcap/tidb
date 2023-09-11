@@ -583,19 +583,19 @@ explain format = 'brief' select * from t ta right outer join t tb on ta.nb = tb.
 id	estRows	task	access object	operator info
 HashJoin	8000.00	root		right outer join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
 ├─TableReader(Build)	2666.67	root		data:Selection
-│ └─Selection	2666.67	cop[tikv]		gt(explain_easy.t.a, 1), or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+│ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint(11) BINARY), gt(explain_easy.t.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		cast(explain_easy.t.nb, bigint(11) BINARY)
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select * from t ta inner join t tb on ta.nb = tb.nb and ta.a > 1 where ifnull(tb.nb, 1) or tb.nb is null;
 id	estRows	task	access object	operator info
 HashJoin	3333.33	root		inner join, equal:[eq(explain_easy.t.nb, explain_easy.t.nb)]
 ├─TableReader(Build)	2666.67	root		data:Selection
-│ └─Selection	2666.67	cop[tikv]		gt(explain_easy.t.a, 1), or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+│ └─Selection	2666.67	cop[tikv]		cast(explain_easy.t.nb, bigint(11) BINARY), gt(explain_easy.t.a, 1)
 │   └─TableFullScan	10000.00	cop[tikv]	table:ta	keep order:false, stats:pseudo
 └─TableReader(Probe)	8000.00	root		data:Selection
-  └─Selection	8000.00	cop[tikv]		or(cast(explain_easy.t.nb, bigint(11) BINARY), 0)
+  └─Selection	8000.00	cop[tikv]		cast(explain_easy.t.nb, bigint(11) BINARY)
     └─TableFullScan	10000.00	cop[tikv]	table:tb	keep order:false, stats:pseudo
 explain format = 'brief' select ifnull(t.nc, 1) in (select count(*) from t s , t t1 where s.a = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
