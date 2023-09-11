@@ -834,7 +834,9 @@ func (local *Backend) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble
 		MemTableSize: local.MemTableSize,
 		// the default threshold value may cause write stall.
 		MemTableStopWritesThreshold: 8,
-		MaxConcurrentCompactions:    16,
+		MaxConcurrentCompactions: func() int {
+			return 16
+		},
 		// set threshold to half of the max open files to avoid trigger compaction
 		L0CompactionThreshold: math.MaxInt32,
 		L0StopWritesThreshold: math.MaxInt32,

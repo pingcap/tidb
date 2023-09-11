@@ -1440,8 +1440,8 @@ func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 			return iter.key, iter.val, iter.iter.Error()
 		}
 
-		var k *pebble.InternalKey
-		k, iter.val = iter.iter.Next()
+		k, lazyval := iter.iter.Next()
+		iter.val = lazyval.InPlaceValue()
 		if k != nil {
 			iter.key = k.UserKey
 			iter.valid = true
@@ -1506,7 +1506,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 			name:   p.path,
 			iter:   iter,
 			key:    key.UserKey,
-			val:    val,
+			val:    val.InPlaceValue(),
 			reader: reader,
 			valid:  true,
 		})

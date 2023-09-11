@@ -30,7 +30,7 @@ func OSVersion() (osVersion string, err error) {
 	if err != nil {
 		return
 	}
-	charsToString := func(ca []int8) string {
+	charsToString := func<T>(ca []T) string {
 		s := make([]byte, len(ca))
 		var lens int
 		for ; lens < len(ca); lens++ {
