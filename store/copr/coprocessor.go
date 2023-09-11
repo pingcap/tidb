@@ -59,7 +59,8 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // Maximum total sleep time(in ms) for kv/cop commands.
@@ -85,7 +86,7 @@ func (c *CopClient) Send(ctx context.Context, req *kv.Request, variables interfa
 		return copErrorResponse{errors.Errorf("unsupported variables:%+v", variables)}
 	}
 	if req.StoreType == kv.TiFlash && req.BatchCop {
-		logutil.BgLogger().Debug("send batch requests")
+		log.Debug("send batch requests")
 		return c.sendBatch(ctx, req, vars, option)
 	}
 	ctx = context.WithValue(ctx, tikv.TxnStartKey(), req.StartTs)
@@ -122,7 +123,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	failpoint.Inject("checkKeyRangeSortedForPaging", func(_ failpoint.Value) {
 		if req.Paging.Enable {
 			if !req.KeyRanges.IsFullySorted() {
-				logutil.BgLogger().Fatal("distsql request key range not sorted!")
+				log.Fatal("distsql request key range not sorted!")
 			}
 		}
 	})
@@ -441,7 +442,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	tasks := builder.build()
 	elapsed := time.Since(start)
 	if elapsed > time.Millisecond*500 {
-		logutil.BgLogger().Warn("buildCopTasks takes too much time",
+		log.Warn("buildCopTasks takes too much time",
 			zap.Duration("elapsed", elapsed),
 			zap.Int("range len", rangesLen),
 			zap.Int("task len", len(tasks)))
@@ -1113,7 +1114,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.BgLogger().Error("copIteratorWork meet panic",
+			log.Error("copIteratorWork meet panic",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
@@ -1641,7 +1642,7 @@ func (worker *copIteratorWorker) buildCacheKey(task *copTask, copReq *coprocesso
 				copReq.CacheIfMatchVersion = 0
 			}
 		} else {
-			logutil.BgLogger().Warn("Failed to build copr cache key", zap.Error(err))
+			log.Warn("Failed to build copr cache key", zap.Error(err))
 		}
 	}
 	return
@@ -1929,7 +1930,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 	e.cond.once.Do(func() {
 		if e.cond.remainingTokenNum < 2 {
 			e.setEnabled(false)
-			logutil.BgLogger().Info("memory exceeds quota, rateLimitAction delegate to fallback action",
+			log.Info("memory exceeds quota, rateLimitAction delegate to fallback action",
 				zap.Uint("total token count", e.totalTokenNum))
 			if fallback := e.GetFallback(); fallback != nil {
 				fallback.Action(t)
@@ -1943,7 +1944,7 @@ func (e *rateLimitAction) Action(t *memory.Tracker) {
 				}
 			}
 		})
-		logutil.BgLogger().Info("memory exceeds quota, destroy one token now.",
+		log.Info("memory exceeds quota, destroy one token now.",
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()),
 			zap.Uint("total token count", e.totalTokenNum),

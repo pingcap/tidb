@@ -20,6 +20,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/log"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -144,7 +145,7 @@ func (ei *engineInfo) ImportAndClean() error {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			logLevel = zap.WarnLevel
 		}
-		logutil.Logger(ei.ctx).Log(logLevel, LitErrIngestDataErr, zap.Error(err),
+		/* logutil.Logger(ei.ctx) */log.L().Log(logLevel, LitErrIngestDataErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}

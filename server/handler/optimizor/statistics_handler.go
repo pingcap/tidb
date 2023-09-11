@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // StatsHandler is the handler for dumping statistics.
@@ -124,7 +124,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	snapshot := oracle.GoTimeToTS(t1)
 	tbl, err := getSnapshotTableInfo(sh.do, snapshot, params[handler.DBName], params[handler.TableName])
 	if err != nil {
-		logutil.BgLogger().Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
+		log.Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
 		is := sh.do.InfoSchema()
 		tbl, err = is.TableByName(model.NewCIStr(params[handler.DBName]), model.NewCIStr(params[handler.TableName]))
 		if err != nil {

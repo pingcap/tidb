@@ -48,14 +48,14 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/generatedexpr"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TableCommon is shared by both Table and partition.
@@ -133,7 +133,7 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		// Print some information when the column's offset isn't equal to i.
 		if colInfo.Offset != i {
-			logutil.BgLogger().Error("wrong table schema", zap.Any("table", tblInfo), zap.Any("column", colInfo), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("columnNumber", colsLen))
+			log.Error("wrong table schema", zap.Any("table", tblInfo), zap.Any("column", colInfo), zap.Int("index", i), zap.Int("offset", colInfo.Offset), zap.Int("columnNumber", colsLen))
 		}
 
 		col := table.ToColumn(colInfo)
@@ -449,7 +449,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 				// TODO: Check overflow or ignoreTruncate.
 				value, err = table.CastValue(sctx, oldData[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 				if err != nil {
-					logutil.BgLogger().Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
+					log.Info("update record cast value failed", zap.Any("col", col), zap.Uint64("txnStartTS", txn.StartTS()),
 						zap.String("handle", h.String()), zap.Any("val", oldData[col.DependencyColumnOffset]), zap.Error(err))
 					return err
 				}
@@ -553,7 +553,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if sctx.GetSessionVars().ConnectionID != 0 {
-			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
+			log.Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
@@ -980,7 +980,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)
-	logutil.BgLogger().Debug("addRecord",
+	log.Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
@@ -1034,7 +1034,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if sctx.GetSessionVars().ConnectionID != 0 {
-			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
+			log.Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
 				failpoint.Return(nil, err)
 			}
@@ -1298,7 +1298,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	sh := memBuffer.Staging()
 	defer memBuffer.Cleanup(sh)
 
-	logutil.BgLogger().Debug("RemoveRecord",
+	log.Debug("RemoveRecord",
 		zap.Stringer("key", t.RecordKey(h)))
 	err = t.removeRowData(ctx, h)
 	if err != nil {
@@ -1321,7 +1321,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 		relatedColDatum := r[t.Columns[len(r)].ChangeStateInfo.DependencyColumnOffset]
 		value, err := table.CastValue(ctx, relatedColDatum, t.Columns[len(r)].ColumnInfo, false, false)
 		if err != nil {
-			logutil.BgLogger().Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
+			log.Info("remove record cast value failed", zap.Any("col", t.Columns[len(r)]),
 				zap.String("handle", h.String()), zap.Any("val", relatedColDatum), zap.Error(err))
 			return err
 		}
@@ -1464,7 +1464,7 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if ctx.GetSessionVars().ConnectionID != 0 {
-			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
+			log.Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
@@ -1493,14 +1493,14 @@ func (t *TableCommon) removeRowIndices(ctx sessionctx.Context, h kv.Handle, rec 
 		}
 		vals, err := v.FetchValues(rec, nil)
 		if err != nil {
-			logutil.BgLogger().Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
+			log.Info("remove row index failed", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()), zap.Any("record", rec), zap.Error(err))
 			return err
 		}
 		if err = v.Delete(ctx.GetSessionVars().StmtCtx, txn, vals, h); err != nil {
 			if v.Meta().State != model.StatePublic && kv.ErrNotExist.Equal(err) {
 				// If the index is not in public state, we may have not created the index,
 				// or already deleted the index, so skip ErrNotExist error.
-				logutil.BgLogger().Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()))
+				log.Debug("row index not exists", zap.Any("index", v.Meta()), zap.Uint64("txnStartTS", txn.StartTS()), zap.String("handle", h.String()))
 				continue
 			}
 			return err
@@ -1558,7 +1558,7 @@ func IterRecords(t table.Table, ctx sessionctx.Context, cols []*table.Column,
 		return nil
 	}
 
-	logutil.BgLogger().Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
+	log.Debug("iterate records", zap.ByteString("startKey", startKey), zap.ByteString("key", it.Key()), zap.ByteString("value", it.Value()))
 
 	colMap := make(map[int64]*types.FieldType, len(cols))
 	for _, col := range cols {
@@ -1780,7 +1780,7 @@ func (t *TableCommon) initChecksumData(sctx sessionctx.Context, h kv.Handle) [][
 	}
 	numNonPubCols := len(t.Columns) - len(t.Cols())
 	if numNonPubCols > 1 {
-		logWithContext(sctx, logutil.BgLogger().Warn,
+		logWithContext(sctx, log.Warn,
 			"skip checksum since the number of non-public columns is greater than 1",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("cols", t.meta.Columns))
 		return nil
@@ -1805,7 +1805,7 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [
 		checksum, err := row.Checksum()
 		buf = row.Data
 		if err != nil {
-			logWithContext(sctx, logutil.BgLogger().Error,
+			logWithContext(sctx, log.Error,
 				"skip checksum due to encode error",
 				zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Error(err))
 			return nil, buf
@@ -1824,7 +1824,7 @@ func (t *TableCommon) appendPublicColForChecksum(
 		return nil
 	}
 	if c.State != model.StatePublic { // assert col is public
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx, log.Error,
 			"skip checksum due to inconsistent column state",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
@@ -1854,13 +1854,13 @@ func (t *TableCommon) appendNonPublicColForChecksum(
 	if size := len(data); size == 0 { // no need for checksum
 		return nil
 	} else if size == 1 { // assert that 2 checksums are required
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx, log.Error,
 			"skip checksum due to inconsistent length of column data",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID))
 		return nil
 	}
 	if c.State == model.StatePublic || c.ChangeStateInfo != nil { // assert col is not public and is not in changing
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx, log.Error,
 			"skip checksum due to inconsistent column state",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil
@@ -1879,13 +1879,13 @@ func (t *TableCommon) appendInChangeColForChecksum(
 	if size := len(data); size == 0 { // no need for checksum
 		return nil
 	} else if size == 1 { // assert that 2 checksums are required
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx, log.Error,
 			"skip checksum due to inconsistent length of column data",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID))
 		return nil
 	}
 	if c.State == model.StatePublic || c.ChangeStateInfo == nil { // assert col is not public and is in changing
-		logWithContext(sctx, logutil.BgLogger().Error,
+		logWithContext(sctx, log.Error,
 			"skip checksum due to inconsistent column state",
 			zap.Stringer("key", t.RecordKey(h)), zap.Int64("tblID", t.meta.ID), zap.Any("col", c))
 		return nil

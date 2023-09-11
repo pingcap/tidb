@@ -45,10 +45,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -88,8 +88,8 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 			recoverFn(r)
 		}
 		if r != nil {
-			logutil.BgLogger().Error("panic in the recoverable goroutine",
-				zap.Reflect("r", r),
+			log.Error("panic in the recoverable goroutine",
+				zap.Any("r", r),
 				zap.Stack("stack trace"))
 		}
 	}()
@@ -113,10 +113,10 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 	if recoverFn != nil {
 		recoverFn()
 	}
-	logutil.BgLogger().Error("panic in the recoverable goroutine",
+	log.Error("panic in the recoverable goroutine",
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
-		zap.Reflect("r", r),
+		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if quit {
@@ -146,7 +146,7 @@ func SyntaxError(err error) error {
 	if err == nil {
 		return nil
 	}
-	logutil.BgLogger().Debug("syntax error", zap.Error(err))
+	log.Debug("syntax error", zap.Error(err))
 
 	// If the error is already a terror with stack, pass it through.
 	if errors.HasStack(err) {
@@ -164,7 +164,7 @@ func SyntaxWarn(err error) error {
 	if err == nil {
 		return nil
 	}
-	logutil.BgLogger().Debug("syntax error", zap.Error(err))
+	log.Debug("syntax error", zap.Error(err))
 
 	// If the warn is already a terror with stack, pass it through.
 	if errors.HasStack(err) {
@@ -455,7 +455,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 	autoReload = false
 	if len(cert) == 0 || len(key) == 0 {
 		if !autoTLS {
-			logutil.BgLogger().Warn("Automatic TLS Certificate creation is disabled", zap.Error(err))
+			log.Warn("Automatic TLS Certificate creation is disabled", zap.Error(err))
 			return
 		}
 		autoReload = true
@@ -464,7 +464,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		key = filepath.Join(tempStoragePath, "/key.pem")
 		err = createTLSCertificates(cert, key, rsaKeySize)
 		if err != nil {
-			logutil.BgLogger().Warn("TLS Certificate creation failed", zap.Error(err))
+			log.Warn("TLS Certificate creation failed", zap.Error(err))
 			return
 		}
 	}
@@ -472,7 +472,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 	var tlsCert tls.Certificate
 	tlsCert, err = tls.LoadX509KeyPair(cert, key)
 	if err != nil {
-		logutil.BgLogger().Warn("load x509 failed", zap.Error(err))
+		log.Warn("load x509 failed", zap.Error(err))
 		err = errors.Trace(err)
 		return
 	}
@@ -491,13 +491,13 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		minTLSVersion = tls.VersionTLS13
 	case "":
 	default:
-		logutil.BgLogger().Warn(
+		log.Warn(
 			"Invalid TLS version, using default instead",
 			zap.String("tls-version", tlsver),
 		)
 	}
 	if minTLSVersion < tls.VersionTLS12 {
-		logutil.BgLogger().Warn(
+		log.Warn(
 			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
 		)
 	}
@@ -512,7 +512,7 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		var caCert []byte
 		caCert, err = os.ReadFile(ca)
 		if err != nil {
-			logutil.BgLogger().Warn("read file failed", zap.Error(err))
+			log.Warn("read file failed", zap.Error(err))
 			err = errors.Trace(err)
 			return
 		}
@@ -532,13 +532,13 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 	for _, sc := range tls.CipherSuites() {
 		switch sc.ID {
 		case tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA, tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:
-			logutil.BgLogger().Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
+			log.Info("Disabling weak cipherSuite", zap.String("cipherSuite", sc.Name))
 		default:
 			cipherNames = append(cipherNames, sc.Name)
 			cipherSuites = append(cipherSuites, sc.ID)
 		}
 	}
-	logutil.BgLogger().Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
+	log.Info("Enabled ciphersuites", zap.Strings("cipherNames", cipherNames))
 
 	/* #nosec G402 */
 	tlsConfig = &tls.Config{
@@ -573,7 +573,7 @@ func initInternalClient() {
 	clusterSecurity := config.GetGlobalConfig().Security.ClusterSecurity()
 	tlsCfg, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
-		logutil.BgLogger().Fatal("could not load cluster ssl", zap.Error(err))
+		log.Fatal("could not load cluster ssl", zap.Error(err))
 	}
 	if tlsCfg == nil {
 		internalHTTPSchema = "http"
@@ -688,7 +688,7 @@ func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyA
 		return err
 	}
 
-	logutil.BgLogger().Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
+	log.Info("TLS Certificates created", zap.String("cert", certpath), zap.String("key", keypath),
 		zap.Duration("validity", certValidity), zap.Int("rsaKeySize", rsaKeySize))
 	return nil
 }

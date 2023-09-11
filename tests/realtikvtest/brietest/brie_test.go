@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zapcore"
+	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 func makeTempDirForBackup(t *testing.T) string {

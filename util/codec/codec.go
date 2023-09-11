@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // First byte in the encoded value which specifies the encoding type.
@@ -1373,7 +1373,7 @@ func HashCode(b []byte, d types.Datum) []byte {
 	case types.KindMaxValue:
 		b = append(b, maxFlag)
 	default:
-		logutil.BgLogger().Warn("trying to calculate HashCode of an unexpected type of Datum",
+		log.Warn("trying to calculate HashCode of an unexpected type of Datum",
 			zap.Uint8("Datum Kind", d.Kind()),
 			zap.Stack("stack"))
 	}

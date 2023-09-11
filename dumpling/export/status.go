@@ -11,7 +11,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/failpoint"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const logProgressTick = 2 * time.Minute

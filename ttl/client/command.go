@@ -23,9 +23,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -182,7 +182,7 @@ loop:
 			}
 		case resp, ok := <-ch:
 			if !ok {
-				logutil.BgLogger().Info("watcher is closed")
+				log.Info("watcher is closed")
 				// to make ch always block
 				ch = make(chan clientv3.WatchResponse)
 				time.Sleep(time.Second)
@@ -278,7 +278,7 @@ func (c *etcdClient) WatchCommand(ctx context.Context) <-chan *CmdRequest {
 
 				var request CmdRequest
 				if err := json.Unmarshal(event.Kv.Value, &request); err != nil {
-					logutil.BgLogger().Error(
+					log.Error(
 						"failed to parse ttl cmd payload",
 						zap.Error(err),
 						zap.ByteString("key", event.Kv.Key),

@@ -47,7 +47,7 @@ import (
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/maps"
 )
 

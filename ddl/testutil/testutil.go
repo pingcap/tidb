@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SessionExecInGoroutine export for testing.
@@ -92,7 +92,7 @@ func ExtractAllTableHandles(se session.Session, dbName, tbName string) ([]int64,
 func FindIdxInfo(dom *domain.Domain, dbName, tbName, idxName string) *model.IndexInfo {
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tbName))
 	if err != nil {
-		logutil.BgLogger().Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
+		log.Warn("cannot find table", zap.String("dbName", dbName), zap.String("tbName", tbName))
 		return nil
 	}
 	return tbl.Meta().FindIndexByName(idxName)

@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	// "github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // RegionCache wraps tikv.RegionCache.
@@ -203,11 +203,14 @@ func (c *RegionCache) OnSendFailForBatchRegions(bo *Backoffer, store *tikv.Store
 		return
 	}
 	logutil.Logger(bo.GetCtx()).Info("Send fail for " + strconv.Itoa(len(regionInfos)) + " regions, will switch region peer for these regions. Only first " + strconv.Itoa(mathutil.Min(10, len(regionInfos))) + " regions will be logged if the log level is higher than Debug")
-	for index, ri := range regionInfos {
+	// for index, ri := range regionInfos {
+	for _, ri := range regionInfos {
 		if ri.Meta == nil {
 			continue
 		}
-		c.OnSendFailForTiFlash(bo.TiKVBackoffer(), store, ri.Region, ri.Meta, scheduleReload, err, !(index < 10 || log.GetLevel() <= zap.DebugLevel))
+		b := false
+		// b := !(index < 10 || log.GetLevel() <= zap.DebugLevel)
+		c.OnSendFailForTiFlash(bo.TiKVBackoffer(), store, ri.Region, ri.Meta, scheduleReload, err, b)
 	}
 }
 

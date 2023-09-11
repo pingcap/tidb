@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 /***
@@ -140,7 +140,7 @@ func (e *GrantExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		if !isCommit {
 			_, err := internalSession.(sqlexec.SQLExecutor).ExecuteInternal(internalCtx, "rollback")
 			if err != nil {
-				logutil.BgLogger().Error("rollback error occur at grant privilege", zap.Error(err))
+				log.Error("rollback error occur at grant privilege", zap.Error(err))
 			}
 		}
 		e.ReleaseSysSession(internalCtx, internalSession)

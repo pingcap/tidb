@@ -21,9 +21,9 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -37,7 +37,7 @@ const (
 
 var (
 	// Stats logger.
-	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
+	statsLogger = log.With(zap.String("category", "stats"))
 	// useCurrentSession to make sure the sql is executed in current session.
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 )
@@ -122,7 +122,7 @@ func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.RestrictedSQLE
 		insertSQL, tid, tid,
 	)
 	if err != nil {
-		logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
+		log.Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
 		return err
 	}
 	return nil

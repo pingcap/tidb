@@ -38,8 +38,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -592,7 +593,7 @@ func (s *indexWriteResultSink) flush() error {
 			err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
 			return err
 		}
-		logutil.BgLogger().Error("flush error",
+		log.Error("flush error",
 			zap.String("category", "ddl"), zap.Error(err))
 		return err
 	}

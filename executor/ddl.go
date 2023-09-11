@@ -40,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // DDLExec represents a DDL executor.
@@ -62,7 +62,7 @@ func (e *DDLExec) toErr(err error) error {
 	checker := domain.NewSchemaChecker(dom, e.is.SchemaMetaVersion(), nil, true)
 	txn, err1 := e.Ctx().Txn(true)
 	if err1 != nil {
-		logutil.BgLogger().Error("active txn failed", zap.Error(err1))
+		log.Error("active txn failed", zap.Error(err1))
 		return err
 	}
 	_, schemaInfoErr := checker.Check(txn.StartTS())

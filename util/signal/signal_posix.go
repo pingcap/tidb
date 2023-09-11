@@ -23,7 +23,7 @@ import (
 	"syscall"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SetupSignalHandler setup signal handler for TiDB Server

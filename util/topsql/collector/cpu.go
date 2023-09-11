@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -80,7 +80,7 @@ func (sp *SQLCPUCollector) Start() {
 	sp.ctx, sp.cancel = context.WithCancel(context.Background())
 	sp.wg.Add(1)
 	go sp.collectSQLCPULoop()
-	logutil.BgLogger().Info("sql cpu collector started")
+	log.Info("sql cpu collector started")
 }
 
 // Stop uses to stop the SQLCPUCollector.
@@ -95,7 +95,7 @@ func (sp *SQLCPUCollector) Stop() {
 	}
 
 	sp.wg.Wait()
-	logutil.BgLogger().Info("sql cpu collector stopped")
+	log.Info("sql cpu collector stopped")
 }
 
 var defCollectTickerInterval = time.Second
@@ -134,7 +134,7 @@ func (sp *SQLCPUCollector) handleProfileData(data *cpuprofile.ProfileData) {
 
 	p, err := profile.ParseData(data.Data.Bytes())
 	if err != nil {
-		logutil.BgLogger().Error("parse profile error", zap.Error(err))
+		log.Error("parse profile error", zap.Error(err))
 		return
 	}
 	stats := sp.parseCPUProfileBySQLLabels(p)

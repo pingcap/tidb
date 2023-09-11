@@ -32,12 +32,13 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Manager is used to campaign the owner and manage the owner information.
@@ -179,7 +180,7 @@ func (m *ownerManager) CampaignOwner(withTTL ...int) error {
 		ttl = withTTL[0]
 	}
 	logPrefix := fmt.Sprintf("[%s] %s", m.prompt, m.key)
-	logutil.BgLogger().Info("start campaign owner", zap.String("ownerInfo", logPrefix))
+	log.Info("start campaign owner", zap.String("ownerInfo", logPrefix))
 	session, err := util2.NewSession(m.ctx, logPrefix, m.etcdCli, util2.NewSessionDefaultRetryCnt, ttl)
 	if err != nil {
 		return errors.Trace(err)
@@ -232,7 +233,7 @@ func (m *ownerManager) campaignLoop(etcdSession *concurrency.Session) {
 	defer func() {
 		m.campaignCancel()
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.Stack("buffer"))
+			log.Error("recover panic", zap.String("prompt", m.prompt), zap.Any("error", r), zap.Stack("buffer"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelDDLOwner).Inc()
 		}
 		m.wg.Done()
@@ -332,7 +333,7 @@ func getOwnerInfo(ctx, logCtx context.Context, etcdCli *clientv3.Client, ownerPa
 		if err == nil {
 			break
 		}
-		logutil.BgLogger().Info("etcd-cli get owner info failed", zap.String("category", "ddl"), zap.String("key", ownerPath), zap.Int("retryCnt", i), zap.Error(err))
+		log.Info("etcd-cli get owner info failed", zap.String("category", "ddl"), zap.String("key", ownerPath), zap.Int("retryCnt", i), zap.Error(err))
 		time.Sleep(util.KeyOpRetryInterval)
 	}
 	if err != nil {
@@ -406,7 +407,7 @@ func (m *ownerManager) SetOwnerOpValue(ctx context.Context, op OpType) error {
 		If(clientv3.Compare(clientv3.ModRevision(ownerKey), "=", modRevision)).
 		Then(clientv3.OpPut(ownerKey, string(newOwnerVal), leaseOp)).
 		Commit()
-	logutil.BgLogger().Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
+	log.Info("set owner op value", zap.String("owner key", ownerKey), zap.ByteString("ownerID", ownerID),
 		zap.Stringer("old Op", currOp), zap.Stringer("op", op), zap.Bool("isSuc", resp.Succeeded), zap.Error(err))
 	if !resp.Succeeded {
 		err = errors.New("put owner key failed, cmp is false")
@@ -430,7 +431,7 @@ func GetOwnerOpValue(ctx context.Context, etcdCli *clientv3.Client, ownerPath, l
 func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.Session, key string) {
 	logPrefix := fmt.Sprintf("[%s] ownerManager %s watch owner key %v", m.prompt, m.id, key)
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	logutil.BgLogger().Debug(logPrefix)
+	log.Debug(logPrefix)
 	watchCh := m.etcdCli.Watch(ctx, key)
 	for {
 		select {
@@ -466,6 +467,6 @@ func (m *ownerManager) watchOwner(ctx context.Context, etcdSession *concurrency.
 func init() {
 	err := setManagerSessionTTL()
 	if err != nil {
-		logutil.BgLogger().Warn("set manager session TTL failed", zap.Error(err))
+		log.Warn("set manager session TTL failed", zap.Error(err))
 	}
 }

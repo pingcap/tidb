@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func addJobs(jobCount int, jobChan chan struct{}) {

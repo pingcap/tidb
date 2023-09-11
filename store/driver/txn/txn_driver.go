@@ -30,7 +30,7 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -39,7 +39,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type tikvTxn struct {
@@ -419,7 +419,7 @@ type TiDBKVFilter struct{}
 func (f TiDBKVFilter) IsUnnecessaryKeyValue(key, value []byte, flags tikvstore.KeyFlags) (bool, error) {
 	isUntouchedValue := tablecodec.IsUntouchedIndexKValue(key, value)
 	if isUntouchedValue && flags.HasPresumeKeyNotExists() {
-		logutil.BgLogger().Error("unexpected path the untouched key value with PresumeKeyNotExists flag",
+		log.Error("unexpected path the untouched key value with PresumeKeyNotExists flag",
 			zap.Stringer("key", kv.Key(key)), zap.Stringer("value", kv.Key(value)),
 			zap.Uint16("flags", uint16(flags)), zap.Stack("stack"))
 		return false, errors.Errorf(

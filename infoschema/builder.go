@@ -34,10 +34,10 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type policyGetter struct {
@@ -149,7 +149,7 @@ func (b *bundleInfoBuilder) updateTableBundles(is *infoSchema, tableID int64) {
 	getter := &policyGetter{is: is}
 	bundle, err := placement.NewTableBundle(getter, tbl.Meta())
 	if err != nil {
-		logutil.BgLogger().Error("create table bundle failed", zap.Error(err))
+		log.Error("create table bundle failed", zap.Error(err))
 	} else if bundle != nil {
 		is.ruleBundleMap[tableID] = bundle
 	} else {
@@ -163,7 +163,7 @@ func (b *bundleInfoBuilder) updateTableBundles(is *infoSchema, tableID int64) {
 	for _, par := range tbl.Meta().Partition.Definitions {
 		bundle, err = placement.NewPartitionBundle(getter, par)
 		if err != nil {
-			logutil.BgLogger().Error("create partition bundle failed",
+			log.Error("create partition bundle failed",
 				zap.Error(err),
 				zap.Int64("partition id", par.ID),
 			)

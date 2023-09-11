@@ -29,7 +29,7 @@ import (
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func TestDiskSorterCommon(t *testing.T) {

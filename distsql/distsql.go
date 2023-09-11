@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc/metadata"
 )
 

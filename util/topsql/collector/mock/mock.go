@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TopSQLCollector uses for testing.
@@ -71,7 +71,7 @@ func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 			c.sqlStatsMap[hash] = stats
 		}
 		stats.CPUTimeMs += stmt.CPUTimeMs
-		logutil.BgLogger().Info("mock top sql collector collected sql",
+		log.Info("mock top sql collector collected sql",
 			zap.String("sql", c.sqlMap[string(stmt.SQLDigest)]),
 			zap.Bool("has-plan", len(c.planMap[string(stmt.PlanDigest)]) > 0))
 	}

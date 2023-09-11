@@ -51,7 +51,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type tiflashContext struct {
@@ -855,7 +855,7 @@ func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql st
 		return false, e
 	case <-ctx.Done():
 		// Exceed given timeout
-		logutil.BgLogger().Info("execWithTimeout meet timeout", zap.String("sql", sql))
+		log.Info("execWithTimeout meet timeout", zap.String("sql", sql))
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/BatchAddTiFlashSendDone", "return(true)"))
 	}
 
@@ -933,7 +933,7 @@ func TestTiFlashBatchRateLimiter(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		tk.Session().Close()
-		logutil.BgLogger().Info("session closed")
+		log.Info("session closed")
 	})
 	mu.Lock()
 	timeOut, err = execWithTimeout(t, tk, time.Second*2, "alter database tiflash_ddl_limit set tiflash replica 1")
@@ -1420,7 +1420,7 @@ type TestDDLCallback struct {
 
 // OnJobRunBefore is used to run the user customized logic of `onJobRunBefore` first.
 func (tc *TestDDLCallback) OnJobRunBefore(job *model.Job) {
-	logutil.BgLogger().Info("on job run before", zap.String("job", job.String()))
+	log.Info("on job run before", zap.String("job", job.String()))
 	if tc.OnJobRunBeforeExported != nil {
 		tc.OnJobRunBeforeExported(job)
 		return

@@ -401,7 +401,7 @@ func (a *ExecStmt) RebuildPlan(ctx context.Context) (int64, error) {
 	a.InfoSchema = sessiontxn.GetTxnManager(a.Ctx).GetTxnInfoSchema()
 	replicaReadScope := sessiontxn.GetTxnManager(a.Ctx).GetReadReplicaScope()
 	if a.Ctx.GetSessionVars().GetReplicaRead().IsClosestRead() && replicaReadScope == kv.GlobalReplicaScope {
-		logutil.BgLogger().Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
+		log.Warn(fmt.Sprintf("tidb can't read closest replicas due to it haven't %s label", placement.DCLabelKey))
 	}
 	p, names, err := planner.Optimize(ctx, a.Ctx, a.StmtNode, a.InfoSchema)
 	if err != nil {
@@ -1448,7 +1448,7 @@ func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
 	cteErr := resetCTEStorageMap(a.Ctx)
 	if cteErr != nil {
-		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+		log.Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
 	}
 	if lastErr == nil {
 		// Only overwrite err when it's nil.
@@ -2108,7 +2108,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 	if execStmtAst, ok := stmtNode.(*ast.ExecuteStmt); ok {
 		planCacheStmt, err := plannercore.GetPreparedStmt(execStmtAst, sctx.GetSessionVars())
 		if err != nil {
-			logutil.BgLogger().Warn("fail to find prepared ast for dumping plan replayer", zap.String("category", "plan-replayer-capture"),
+			log.Warn("fail to find prepared ast for dumping plan replayer", zap.String("category", "plan-replayer-capture"),
 				zap.String("sqlDigest", key.SQLDigest),
 				zap.String("planDigest", key.PlanDigest),
 				zap.Error(err))

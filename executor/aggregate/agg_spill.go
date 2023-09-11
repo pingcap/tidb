@@ -17,9 +17,9 @@ package aggregate
 import (
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // maxSpillTimes indicates how many times the data can spill at most.
@@ -39,7 +39,7 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 	// Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
 	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && a.spillTimes < maxSpillTimes && a.e.memTracker.BytesConsumed() >= t.GetBytesLimit()/5 {
 		a.spillTimes++
-		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
+		log.Info("memory exceeds quota, set aggregate mode to spill-mode",
 			zap.Uint32("spillTimes", a.spillTimes),
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))

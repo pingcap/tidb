@@ -37,7 +37,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/syncutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/sync/errgroup"
 )
 

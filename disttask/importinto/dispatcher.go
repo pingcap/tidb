@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -166,7 +167,8 @@ func (dsp *ImportDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.
 		return
 	}
 
-	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+	// logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+	logger := log.L()
 	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
@@ -193,7 +195,8 @@ func (dsp *ImportDispatcherExt) unregisterTask(ctx context.Context, task *proto.
 // OnNextStage implements dispatcher.Extension interface.
 func (dsp *ImportDispatcherExt) OnNextStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task) (
 	resSubtaskMeta [][]byte, err error) {
-	logger := logutil.BgLogger().With(
+	// logger := logutil.BgLogger().With(
+	logger := log.L().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
@@ -279,7 +282,8 @@ func (dsp *ImportDispatcherExt) OnNextStage(ctx context.Context, handle dispatch
 
 // OnErrStage implements dispatcher.Extension interface.
 func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
-	logger := logutil.BgLogger().With(
+	logger := log.L().With(
+	// logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
@@ -515,7 +519,8 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 	// the errors include errors happened when communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	panic("TODO")
+	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -538,7 +543,8 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	// we might call this in scheduler later, there's no dispatcher.TaskHandle, so we use globalTaskManager here.
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	panic("TODO")
+	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -555,7 +561,8 @@ func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logge
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	panic("TODO")
+	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -572,7 +579,8 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	redactSensitiveInfo(gTask, taskMeta)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	panic("TODO")
+	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)

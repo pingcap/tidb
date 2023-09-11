@@ -40,8 +40,8 @@ import (
 
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ResultEncoder encodes a column value to a byte slice.
@@ -82,7 +82,7 @@ func (d *ResultEncoder) Clean() {
 func (d *ResultEncoder) UpdateDataEncoding(chsID uint16) {
 	chs, _, err := charset.GetCharsetInfoByID(int(chsID))
 	if err != nil {
-		logutil.BgLogger().Warn("unknown charset ID", zap.Error(err))
+		log.Warn("unknown charset ID", zap.Error(err))
 	}
 	d.dataEncoding = charset.FindEncodingTakeUTF8AsNoop(chs)
 	d.dataIsBinary = chsID == mysql.BinaryDefaultCollationID
@@ -126,7 +126,7 @@ func (d *ResultEncoder) EncodeData(src []byte) []byte {
 func (d *ResultEncoder) EncodeWith(src []byte, enc charset.Encoding) []byte {
 	data, err := enc.Transform(d.buffer, src, charset.OpEncode)
 	if err != nil {
-		logutil.BgLogger().Debug("encode error", zap.Error(err))
+		log.Debug("encode error", zap.Error(err))
 	}
 	return data
 }

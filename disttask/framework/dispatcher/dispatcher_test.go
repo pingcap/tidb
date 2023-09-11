@@ -81,9 +81,9 @@ func (n *numberExampleDispatcherExt) OnNextStage(_ context.Context, _ dispatcher
 		for i := 0; i < subtaskCnt; i++ {
 			metas = append(metas, []byte{'1'})
 		}
-		logutil.BgLogger().Info("progress step init")
+		log.Info("progress step init")
 	case proto.StepOne:
-		logutil.BgLogger().Info("progress step one")
+		log.Info("progress step one")
 		return nil, nil
 	default:
 		return nil, errors.New("unknown step")

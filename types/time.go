@@ -32,10 +32,11 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // Time format without fractional seconds precision.
@@ -439,7 +440,7 @@ func (t Time) FillNumber(dec *MyDecimal) {
 
 	s, err := t.DateFormat(tfStr)
 	if err != nil {
-		logutil.BgLogger().Error("never happen because we've control the format!", zap.String("category", "fatal"))
+		log.Error("never happen because we've control the format!", zap.String("category", "fatal"))
 	}
 
 	fsp := t.Fsp()
@@ -1527,7 +1528,7 @@ func (d Duration) ConvertToTimeWithTimestamp(sc *stmtctx.StatementContext, tp ui
 func (d Duration) RoundFrac(fsp int, loc *gotime.Location) (Duration, error) {
 	tz := loc
 	if tz == nil {
-		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
+		log.Warn("use gotime.local because sc.timezone is nil")
 		tz = gotime.Local
 	}
 
@@ -3437,7 +3438,7 @@ func DateFSP(date string) (fsp int) {
 func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
 	tz := sc.TimeZone
 	if tz == nil {
-		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
+		log.Warn("use gotime.local because sc.timezone is nil")
 		tz = gotime.Local
 	}
 

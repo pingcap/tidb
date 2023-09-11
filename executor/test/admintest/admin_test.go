@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func TestAdminCheckIndexRange(t *testing.T) {
@@ -1622,7 +1622,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
-	logutil.BgLogger().Info("random generator", zap.Int64("seed", seed))
+	log.Info("random generator", zap.Int64("seed", seed))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1754,7 +1754,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
-	logutil.BgLogger().Info("random generator", zap.Int64("seed", seed))
+	log.Info("random generator", zap.Int64("seed", seed))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

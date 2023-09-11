@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/sys/cpu"
 )
 
@@ -145,7 +145,7 @@ func (c *RowContainer) SpillToDisk() {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("%v", r)
 			c.m.records.spillError = err
-			logutil.BgLogger().Error("spill to disk failed", zap.Stack("stack"), zap.Error(err))
+			log.Error("spill to disk failed", zap.Stack("stack"), zap.Error(err))
 		}
 	}()
 	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
@@ -405,7 +405,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 
 	if a.getStatus() == notSpilled {
 		a.once.Do(func() {
-			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			log.Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 			if a.testSyncInputFunc != nil {
 				a.testSyncInputFunc()
@@ -634,7 +634,7 @@ func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
 	if a.getStatus() == notSpilled && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
 		a.once.Do(func() {
-			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			log.Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 			if a.testSyncInputFunc != nil {
 				a.testSyncInputFunc()

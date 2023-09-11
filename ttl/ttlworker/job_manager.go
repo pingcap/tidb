@@ -34,10 +34,11 @@ import (
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/timeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const scanTaskNotificationType string = "scan"
@@ -224,7 +225,7 @@ func (m *JobManager) jobLoop() error {
 					return nil
 				}
 
-				logutil.BgLogger().Warn("The TTL cmd watcher is closed unexpectedly, re-watch it again")
+				log.Warn("The TTL cmd watcher is closed unexpectedly, re-watch it again")
 				cmdWatcher = m.cmdCli.WatchCommand(m.ctx)
 				continue
 			}
@@ -242,7 +243,7 @@ func (m *JobManager) jobLoop() error {
 					return nil
 				}
 
-				logutil.BgLogger().Warn("The TTL scan task notification watcher is closed unexpectedly, re-watch it again")
+				log.Warn("The TTL scan task notification watcher is closed unexpectedly, re-watch it again")
 				scanTaskNotificationWatcher = m.notificationCli.WatchNotification(m.ctx, scanTaskNotificationType)
 				continue
 			}
@@ -321,7 +322,7 @@ func (m *JobManager) handleSubmitJobRequest(se session.Session, jobReq *SubmitTT
 func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJobRequest, se session.Session, store *timerapi.TimerStore) {
 	ok, err := m.cmdCli.TakeCommand(m.ctx, requestID)
 	if err != nil {
-		logutil.BgLogger().Error("failed to take TTL trigger job command",
+		log.Error("failed to take TTL trigger job command",
 			zap.String("requestID", requestID),
 			zap.String("database", cmd.DBName),
 			zap.String("table", cmd.TableName))
@@ -332,7 +333,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		return
 	}
 
-	logutil.BgLogger().Info("Get a command to trigger a new TTL job",
+	log.Info("Get a command to trigger a new TTL job",
 		zap.String("requestID", requestID),
 		zap.String("database", cmd.DBName),
 		zap.String("table", cmd.TableName))
@@ -455,7 +456,7 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 		}))
 
 		tableResultsJSON, _ := json.Marshal(tableResults)
-		logutil.BgLogger().Info("Done to trigger a new TTL job",
+		log.Info("Done to trigger a new TTL job",
 			zap.String("requestID", requestID),
 			zap.String("database", cmd.DBName),
 			zap.String("table", cmd.TableName),
@@ -1115,7 +1116,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	}
 
 	if err != nil {
-		logutil.BgLogger().Error(
+		log.Error(
 			"error to query ttl task count",
 			zap.Error(err),
 			zap.Int64("physicalID", physicalID),
@@ -1128,7 +1129,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) bool {
 	cnt := rs[0].GetInt64(0)
 	tasksLimit := getMaxRunningTasksLimit(a.store)
 	if cnt >= int64(tasksLimit) {
-		logutil.BgLogger().Warn(
+		log.Warn(
 			"current TTL tasks count exceeds limit, delay create new job temporarily",
 			zap.Int64("physicalID", physicalID),
 			zap.Int64("tableID", tableID),

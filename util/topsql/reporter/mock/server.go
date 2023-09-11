@@ -24,7 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )
 
@@ -64,7 +64,7 @@ func StartMockAgentServer() (*mockAgentServer, error) {
 	go func() {
 		err := server.Serve(lis)
 		if err != nil {
-			logutil.BgLogger().Warn("mock agent server serve failed", zap.String("category", "top-sql"), zap.Error(err))
+			log.Warn("mock agent server serve failed", zap.String("category", "top-sql"), zap.Error(err))
 		}
 	}()
 

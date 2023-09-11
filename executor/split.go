@@ -36,10 +36,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SplitIndexRegionExec represents a split index regions executor.
@@ -102,7 +102,7 @@ func (e *SplitIndexRegionExec) splitIndexRegion(ctx context.Context) error {
 	defer cancel()
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitIdxKeys, true, &e.tableInfo.ID)
 	if err != nil {
-		logutil.BgLogger().Warn("split table index region failed",
+		log.Warn("split table index region failed",
 			zap.String("table", e.tableInfo.Name.L),
 			zap.String("index", e.indexInfo.Name.L),
 			zap.Error(err))
@@ -372,7 +372,7 @@ func (e *SplitTableRegionExec) splitTableRegion(ctx context.Context) error {
 
 	regionIDs, err := s.SplitRegions(ctxWithTimeout, e.splitKeys, true, &e.tableInfo.ID)
 	if err != nil {
-		logutil.BgLogger().Warn("split table region failed",
+		log.Warn("split table region failed",
 			zap.String("table", e.tableInfo.Name.L),
 			zap.Error(err))
 	}
@@ -408,12 +408,12 @@ func waitScatterRegionFinish(ctxWithTimeout context.Context, sctx sessionctx.Con
 			finishScatterNum++
 		} else {
 			if len(indexName) == 0 {
-				logutil.BgLogger().Warn("wait scatter region failed",
+				log.Warn("wait scatter region failed",
 					zap.Uint64("regionID", regionID),
 					zap.String("table", tableName),
 					zap.Error(err))
 			} else {
-				logutil.BgLogger().Warn("wait scatter region failed",
+				log.Warn("wait scatter region failed",
 					zap.Uint64("regionID", regionID),
 					zap.String("table", tableName),
 					zap.String("index", indexName),

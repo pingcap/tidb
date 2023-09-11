@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // ErrCode represents a specific error type in a error class.

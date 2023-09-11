@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // isContextDone checks if context is done.
@@ -44,7 +44,7 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 	defer cancelFunc()
 	dom := domain.GetDomain(s)
 	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
-	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
+	logger := log.With(zap.String("category", "upgrading"))
 	if err != nil {
 		logger.Error("update global state failed", zap.String("state", syncer.StateUpgrading), zap.Error(err))
 		return err
@@ -85,7 +85,7 @@ func SyncNormalRunning(s sessionctx.Context) error {
 		}
 	})
 
-	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
+	logger := log.With(zap.String("category", "upgrading"))
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
 	if err != nil {
 		logger.Warn("resume all paused jobs failed", zap.Error(err))
@@ -130,7 +130,7 @@ func printClusterState(s Session, ver int64) {
 func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64, timeout time.Duration) {
 	now := time.Now()
 	interval := 200 * time.Millisecond
-	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
+	logger := log.With(zap.String("category", "upgrading"))
 	for i := 0; ; i++ {
 		isUpgrading, err := IsUpgradingClusterState(s)
 		if err == nil {

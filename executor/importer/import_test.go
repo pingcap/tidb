@@ -134,9 +134,9 @@ func TestAdjustDiskQuota(t *testing.T) {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize")
 	}()
 	d := t.TempDir()
-	require.Equal(t, int64(1638), adjustDiskQuota(0, d, logutil.BgLogger()))
-	require.Equal(t, int64(1), adjustDiskQuota(1, d, logutil.BgLogger()))
-	require.Equal(t, int64(1638), adjustDiskQuota(2000, d, logutil.BgLogger()))
+	require.Equal(t, int64(1638), adjustDiskQuota(0, d, log()))
+	require.Equal(t, int64(1), adjustDiskQuota(1, d, log()))
+	require.Equal(t, int64(1638), adjustDiskQuota(2000, d, log()))
 }
 
 func TestGetMsgFromBRError(t *testing.T) {

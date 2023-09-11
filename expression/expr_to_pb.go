@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
@@ -80,7 +80,7 @@ func (pc PbConverter) conOrCorColToPBExpr(expr Expression) *tipb.Expr {
 	ft := expr.GetType()
 	d, err := expr.Eval(chunk.Row{})
 	if err != nil {
-		logutil.BgLogger().Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
+		log.Error("eval constant or correlated column", zap.String("expression", expr.ExplainInfo()), zap.Error(err))
 		return nil
 	}
 	tp, val, ok := pc.encodeDatum(ft, d)
@@ -131,7 +131,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 		var err error
 		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil {
-			logutil.BgLogger().Error("encode decimal", zap.Error(err))
+			log.Error("encode decimal", zap.Error(err))
 			return tp, nil, false
 		}
 	case types.KindMysqlTime:
@@ -139,7 +139,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 			tp = tipb.ExprType_MysqlTime
 			val, err := codec.EncodeMySQLTime(pc.sc, d.GetMysqlTime(), ft.GetType(), nil)
 			if err != nil {
-				logutil.BgLogger().Error("encode mysql time", zap.Error(err))
+				log.Error("encode mysql time", zap.Error(err))
 				return tp, nil, false
 			}
 			return tp, val, true
@@ -247,7 +247,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		var err error
 		encoded, err = proto.Marshal(metadata)
 		if err != nil {
-			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
+			log.Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
 			return nil
 		}
 	}

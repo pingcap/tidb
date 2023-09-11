@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	rpprof "runtime/pprof"
+	"log/slog"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -29,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	// "go.uber.org/zap/zapcore"
 )
 
 // Handle is the handler for expensive query.
@@ -97,7 +98,7 @@ func (record *memoryUsageAlarm) updateVariable() {
 	} else {
 		record.serverMemoryLimit, record.err = memory.MemTotal()
 		if record.err != nil {
-			logutil.BgLogger().Error("get system total memory fail", zap.Error(record.err))
+			log.Error("get system total memory fail", zap.Error(record.err))
 			return
 		}
 		record.isServerMemoryLimitSet = false
@@ -150,7 +151,7 @@ func (record *memoryUsageAlarm) alarm4ExcessiveMemUsage(sm util.SessionManager) 
 	} else {
 		memoryUsage, record.err = memory.MemUsed()
 		if record.err != nil {
-			logutil.BgLogger().Error("get system memory usage fail", zap.Error(record.err))
+			log.Error("get system memory usage fail", zap.Error(record.err))
 			return
 		}
 	}
@@ -212,7 +213,7 @@ func (record *memoryUsageAlarm) doRecord(memUsage uint64, instanceMemoryUsage ui
 	}
 	fields = append(fields, zap.Any("memory-usage-alarm-ratio", record.memoryUsageAlarmRatio))
 	fields = append(fields, zap.Any("record path", record.baseRecordDir))
-	logutil.BgLogger().Warn(fmt.Sprintf("tidb-server has the risk of OOM because of %s. Running SQLs and heap profile will be recorded in record path", alarmReason.String()), fields...)
+	log.Warn(fmt.Sprintf("tidb-server has the risk of OOM because of %s. Running SQLs and heap profile will be recorded in record path", alarmReason.String()), fields...)
 	recordDir := filepath.Join(record.baseRecordDir, "record"+record.lastCheckTime.Format(time.RFC3339))
 	if record.err = disk.CheckAndCreateDir(recordDir); record.err != nil {
 		return
@@ -231,7 +232,7 @@ func (record *memoryUsageAlarm) tryRemoveRedundantRecords() {
 	for len(*filename) > int(record.memoryUsageAlarmKeepRecordNum) {
 		err := os.RemoveAll((*filename)[0])
 		if err != nil {
-			logutil.BgLogger().Error("remove temp files failed", zap.Error(err))
+			log.Error("remove temp files failed", zap.Error(err))
 		}
 		*filename = (*filename)[1:]
 	}
@@ -249,18 +250,18 @@ func getPlanString(info *util.ProcessInfo) string {
 
 func (record *memoryUsageAlarm) printTop10SqlInfo(pinfo []*util.ProcessInfo, f *os.File) {
 	if _, err := f.WriteString("The 10 SQLs with the most memory usage for OOM analysis\n"); err != nil {
-		logutil.BgLogger().Error("write top 10 memory sql info fail", zap.Error(err))
+		log.Error("write top 10 memory sql info fail", zap.Error(err))
 	}
 	memBuf := record.getTop10SqlInfoByMemoryUsage(pinfo)
 	if _, err := f.WriteString(memBuf.String()); err != nil {
-		logutil.BgLogger().Error("write top 10 memory sql info fail", zap.Error(err))
+		log.Error("write top 10 memory sql info fail", zap.Error(err))
 	}
 	if _, err := f.WriteString("The 10 SQLs with the most time usage for OOM analysis\n"); err != nil {
-		logutil.BgLogger().Error("write top 10 time cost sql info fail", zap.Error(err))
+		log.Error("write top 10 time cost sql info fail", zap.Error(err))
 	}
 	costBuf := record.getTop10SqlInfoByCostTime(pinfo)
 	if _, err := f.WriteString(costBuf.String()); err != nil {
-		logutil.BgLogger().Error("write top 10 time cost sql info fail", zap.Error(err))
+		log.Error("write top 10 time cost sql info fail", zap.Error(err))
 	}
 }
 
@@ -284,15 +285,15 @@ func (record *memoryUsageAlarm) getTop10SqlInfo(cmp func(i, j *util.ProcessInfo)
 		fields = append(fields, zap.Bool("tidb_enable_rate_limit_action", info.OOMAlarmVariablesInfo.SessionEnabledRateLimitAction))
 		fields = append(fields, zap.String("current_analyze_plan", getPlanString(info)))
 		for _, field := range fields {
-			switch field.Type {
-			case zapcore.StringType:
-				fmt.Fprintf(&buf, "%v: %v", field.Key, field.String)
-			case zapcore.Uint8Type, zapcore.Uint16Type, zapcore.Uint32Type, zapcore.Uint64Type:
-				fmt.Fprintf(&buf, "%v: %v", field.Key, uint64(field.Integer))
-			case zapcore.Int8Type, zapcore.Int16Type, zapcore.Int32Type, zapcore.Int64Type:
-				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Integer)
-			case zapcore.BoolType:
-				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Integer == 1)
+			switch field.Value.Kind() {
+			case slog.KindString:
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Value.String())
+			case slog.KindUint64:
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Value.Uint64())
+			case slog.KindInt64:
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Value.Int64())
+			case slog.KindBool:
+				fmt.Fprintf(&buf, "%v: %v", field.Key, field.Value.Bool())
 			}
 			buf.WriteString("\n")
 		}
@@ -325,13 +326,13 @@ func (record *memoryUsageAlarm) recordSQL(sm util.SessionManager, recordDir stri
 	fileName := filepath.Join(recordDir, "running_sql")
 	f, err := os.Create(fileName)
 	if err != nil {
-		logutil.BgLogger().Error("create oom record file fail", zap.Error(err))
+		log.Error("create oom record file fail", zap.Error(err))
 		return err
 	}
 	defer func() {
 		err := f.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close oom record file fail", zap.Error(err))
+			log.Error("close oom record file fail", zap.Error(err))
 		}
 	}()
 	record.printTop10SqlInfo(pinfo, f)
@@ -360,13 +361,13 @@ func write(item item, recordDir string) error {
 	fileName := filepath.Join(recordDir, item.Name)
 	f, err := os.Create(fileName)
 	if err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("create %v profile file fail", item.Name), zap.Error(err))
+		log.Error(fmt.Sprintf("create %v profile file fail", item.Name), zap.Error(err))
 		return err
 	}
 	p := rpprof.Lookup(item.Name)
 	err = p.WriteTo(f, item.Debug)
 	if err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("write %v profile file fail", item.Name), zap.Error(err))
+		log.Error(fmt.Sprintf("write %v profile file fail", item.Name), zap.Error(err))
 		return err
 	}
 
@@ -374,7 +375,7 @@ func write(item item, recordDir string) error {
 	defer func() {
 		err := f.Close()
 		if err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("close %v profile file fail", item.Name), zap.Error(err))
+			log.Error(fmt.Sprintf("close %v profile file fail", item.Name), zap.Error(err))
 		}
 	}()
 	return nil

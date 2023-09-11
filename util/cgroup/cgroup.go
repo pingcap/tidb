@@ -27,8 +27,9 @@ import (
 	"strings"
 
 	"github.com/cockroachdb/errors"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	// "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // CPUQuotaStatus presents the status of how CPU quota is used

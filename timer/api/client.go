@@ -24,8 +24,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -224,7 +224,7 @@ func (c *defaultTimerClient) ManualTriggerEvent(ctx context.Context, timerID str
 		})
 
 		if errors.ErrorEqual(ErrVersionNotMatch, err) {
-			logutil.BgLogger().Warn("failed to update timer for version not match, retry", zap.String("timerID", timerID))
+			log.Warn("failed to update timer for version not match, retry", zap.String("timerID", timerID))
 			return true, err
 		}
 

@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // DeleteExec represents a delete executor.
@@ -100,7 +100,7 @@ func (e *DeleteExec) deleteSingleTableByChunk(ctx context.Context) error {
 	chk := exec.TryNewCacheChunk(e.Children(0))
 	columns := e.Children(0).Schema().Columns
 	if len(columns) != len(fields) {
-		logutil.BgLogger().Error("schema columns and fields mismatch",
+		log.Error("schema columns and fields mismatch",
 			zap.Int("len(columns)", len(columns)),
 			zap.Int("len(fields)", len(fields)))
 		// Should never run here, so the error code is not defined.

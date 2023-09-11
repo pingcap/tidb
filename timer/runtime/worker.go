@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type hookWorkerRetryLoopKeyType struct{}
@@ -141,7 +141,7 @@ func newHookWorker(ctx context.Context, wg *util.WaitGroupWrapper, groupID strin
 		hookClass: hookClass,
 		hookFn:    hookFn,
 		ch:        make(chan *triggerEventRequest, workerRecvChanCap),
-		logger: logutil.BgLogger().With(
+		logger: log.With(
 			zap.String("groupID", groupID),
 			zap.String("hookClass", hookClass),
 		),

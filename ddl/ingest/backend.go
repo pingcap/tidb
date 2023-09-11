@@ -28,13 +28,14 @@ import (
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
+	plog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // BackendCtx is the backend context for add index reorg task.
@@ -88,7 +89,9 @@ type litBackendCtx struct {
 
 // CollectRemoteDuplicateRows collects duplicate rows from remote TiKV.
 func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error {
-	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
+	// logger := logutil.Logger(bc.ctx)
+	logger := plog.L()
+	errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logger})
 	// backend must be a local backend.
 	// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 	//nolint:forcetypeassert
@@ -129,7 +132,9 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 
 	// Check remote duplicate value for the index.
 	if unique {
-		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logutil.Logger(bc.ctx)})
+		// logger := logutil.Logger(bc.ctx)
+		logger := plog.L()
+		errorMgr := errormanager.New(nil, bc.cfg, log.Logger{Logger: logger})
 		// backend must be a local backend.
 		// todo: when we can separate local backend completely from tidb backend, will remove this cast.
 		//nolint:forcetypeassert

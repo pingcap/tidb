@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
 	"go.uber.org/zap/zapcore"
@@ -36,7 +36,7 @@ func newStmtLogStorage(cfg *log.Config) *stmtLogStorage {
 	// Create the stmt logger
 	logger, prop, err := log.InitLogger(cfg)
 	if err != nil {
-		logutil.BgLogger().Error("failed to init logger", zap.Error(err))
+		log.Error("failed to init logger", zap.Error(err))
 		return &stmtLogStorage{logger: zap.NewNop()}
 	}
 	// Replace 2018-12-19-unified-log-format text encoder with statements encoder
@@ -73,7 +73,7 @@ func (s *stmtLogStorage) sync() error {
 func (s *stmtLogStorage) log(r *StmtRecord) {
 	b, err := json.Marshal(r)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to marshal statement summary", zap.Error(err))
+		log.Warn("failed to marshal statement summary", zap.Error(err))
 		return
 	}
 	s.logger.Info(string(b))

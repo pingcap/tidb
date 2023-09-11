@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 func TestFieldsFromTraceInfo(t *testing.T) {

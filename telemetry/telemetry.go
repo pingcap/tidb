@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -133,7 +133,7 @@ func reportUsageData(ctx sessionctx.Context, etcdClient *clientv3.Client) (bool,
 	}
 
 	req.Header.Add("Content-Type", "application/json")
-	logutil.BgLogger().Info(fmt.Sprintf("Uploading telemetry data to %s", apiEndpoint))
+	log.Info(fmt.Sprintf("Uploading telemetry data to %s", apiEndpoint))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -173,6 +173,6 @@ func InitialRun(ctx sessionctx.Context, etcdClient *clientv3.Client) error {
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("Telemetry configuration", zap.String("endpoint", apiEndpoint), zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
+	log.Info("Telemetry configuration", zap.String("endpoint", apiEndpoint), zap.Duration("report_interval", ReportInterval), zap.Bool("enabled", enabled))
 	return ReportUsageData(ctx, etcdClient)
 }

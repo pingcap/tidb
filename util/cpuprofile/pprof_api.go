@@ -26,8 +26,8 @@ import (
 
 	"github.com/google/pprof/profile"
 	goutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ProfileHTTPHandler is same as pprof.Profile.
@@ -203,6 +203,6 @@ func serveError(w http.ResponseWriter, status int, txt string) {
 	w.WriteHeader(status)
 	_, err := fmt.Fprintln(w, txt)
 	if err != nil {
-		logutil.BgLogger().Info("write http response error", zap.Error(err))
+		log.Info("write http response error", zap.Error(err))
 	}
 }

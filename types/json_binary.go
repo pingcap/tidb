@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 /*
@@ -597,7 +597,7 @@ func (bj BinaryJSON) GetValue() any {
 	case JSONTypeCodeDate, JSONTypeCodeDatetime:
 		return bj.GetTime()
 	}
-	logutil.BgLogger().Error("unreachable JSON type", zap.Any("type", bj.TypeCode))
+	log.Error("unreachable JSON type", zap.Any("type", bj.TypeCode))
 	return nil
 }
 

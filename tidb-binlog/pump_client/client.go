@@ -24,14 +24,15 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/etcd"
 	pb "github.com/pingcap/tipb/go-binlog"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/api/v3/mvccpb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -101,7 +101,7 @@ func (w *watcher) Rewatch(ctx context.Context, etcdCli *clientv3.Client, path st
 		w.Lock()
 		w.wCh = wCh
 		w.Unlock()
-		logutil.BgLogger().Info("syncer rewatch global info finished", zap.String("category", "ddl"))
+		log.Info("syncer rewatch global info finished", zap.String("category", "ddl"))
 	}()
 }
 
@@ -189,7 +189,7 @@ func (s *schemaVersionSyncer) Done() <-chan struct{} {
 	failpoint.Inject("ErrorMockSessionDone", func(val failpoint.Value) {
 		if val.(bool) {
 			err := s.loadSession().Close()
-			logutil.BgLogger().Error("close session failed", zap.Error(err))
+			log.Error("close session failed", zap.Error(err))
 		}
 	})
 
@@ -328,7 +328,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 		// Get all the schema versions from ETCD.
 		resp, err := s.etcdCli.Get(ctx, path, clientv3.WithPrefix())
 		if err != nil {
-			logutil.BgLogger().Info("syncer check all versions failed, continue checking.", zap.String("category", "ddl"), zap.Error(err))
+			log.Info("syncer check all versions failed, continue checking.", zap.String("category", "ddl"), zap.Error(err))
 			continue
 		}
 
@@ -340,14 +340,14 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 				tidbIDInResp := key[strings.LastIndex(key, "/")+1:]
 				ver, err := strconv.Atoi(string(kv.Value))
 				if err != nil {
-					logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
+					log.Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
 					succ = false
 					break
 				}
 				// We need to check if the tidb ID is in the updatedMap, in case that deleting etcd is failed, and tidb server is down.
 				if int64(ver) < latestVer && updatedMap[tidbIDInResp] != "" {
 					if notMatchVerCnt%intervalCnt == 0 {
-						logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
+						log.Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
 							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
 					}
 					succ = false
@@ -359,7 +359,7 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 			if len(updatedMap) > 0 {
 				succ = false
 				for _, info := range updatedMap {
-					logutil.BgLogger().Info("syncer check all versions, someone is not synced", zap.String("category", "ddl"), zap.String("info", info), zap.Int64("ddl job id", jobID), zap.Int64("ver", latestVer))
+					log.Info("syncer check all versions, someone is not synced", zap.String("category", "ddl"), zap.String("info", info), zap.Int64("ddl job id", jobID), zap.Int64("ver", latestVer))
 				}
 			}
 		} else {
@@ -370,13 +370,13 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 
 				ver, err := strconv.Atoi(string(kv.Value))
 				if err != nil {
-					logutil.BgLogger().Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
+					log.Info("syncer check all versions, convert value to int failed, continue checking.", zap.String("category", "ddl"), zap.String("ddl", string(kv.Key)), zap.String("value", string(kv.Value)), zap.Error(err))
 					succ = false
 					break
 				}
 				if int64(ver) < latestVer {
 					if notMatchVerCnt%intervalCnt == 0 {
-						logutil.BgLogger().Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
+						log.Info("syncer check all versions, someone is not synced, continue checking", zap.String("category", "ddl"),
 							zap.String("ddl", string(kv.Key)), zap.Int("currentVer", ver), zap.Int64("latestVer", latestVer))
 					}
 					succ = false
@@ -397,6 +397,6 @@ func (s *schemaVersionSyncer) OwnerCheckAllVersions(ctx context.Context, jobID i
 func (s *schemaVersionSyncer) Close() {
 	err := s.removeSelfVersionPath()
 	if err != nil {
-		logutil.BgLogger().Error("remove self version path failed", zap.String("category", "ddl"), zap.Error(err))
+		log.Error("remove self version path failed", zap.String("category", "ddl"), zap.Error(err))
 	}
 }

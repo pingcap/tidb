@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/timer/api"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -117,7 +117,7 @@ func NewEtcdNotifier(clusterID uint64, etcd *clientv3.Client) api.TimerWatchEven
 		key:          key,
 		events:       make([]*notifyEvent, 0, 8),
 		notifyBgChan: make(chan struct{}, 1),
-		logger:       logutil.BgLogger().With(zap.String("EtcdKey", key)),
+		logger:       log.With(zap.String("EtcdKey", key)),
 	}
 	notifier.wg.Add(1)
 	go notifier.notifyLoop()

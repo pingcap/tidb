@@ -32,12 +32,12 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/size"
 	clientutil "github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ExplainExec represents an explain executor.
@@ -231,19 +231,19 @@ func (h *memoryDebugModeHandler) run() {
 		heapInUse, trackedMem := h.fetchCurrentMemoryUsage(true)
 		if err == nil {
 			fields, err := h.genInfo("finished", true, int64(heapInUse), int64(trackedMem))
-			logutil.BgLogger().Info("Memory Debug Mode", fields...)
+			log.Info("Memory Debug Mode", fields...)
 			if err != nil {
-				logutil.BgLogger().Error("Memory Debug Mode Exit", zap.Error(err))
+				log.Error("Memory Debug Mode Exit", zap.Error(err))
 			}
 		} else {
 			fields, err := h.genInfo("debug_mode_error", false, int64(heapInUse), int64(trackedMem))
-			logutil.BgLogger().Error("Memory Debug Mode", fields...)
-			logutil.BgLogger().Error("Memory Debug Mode Exit", zap.Error(err))
+			log.Error("Memory Debug Mode", fields...)
+			log.Error("Memory Debug Mode Exit", zap.Error(err))
 		}
 		h.wg.Done()
 	}()
 
-	logutil.BgLogger().Info("Memory Debug Mode",
+	log.Info("Memory Debug Mode",
 		zap.String("sql", "started"),
 		zap.Bool("autoGC", h.autoGC),
 		zap.String("minHeapInUse", memory.FormatBytes(h.minHeapInUse)),
@@ -261,7 +261,7 @@ func (h *memoryDebugModeHandler) run() {
 			loop++
 			if loop%printMod == 0 {
 				fields, err = h.genInfo("running", false, int64(heapInUse), int64(trackedMem))
-				logutil.BgLogger().Info("Memory Debug Mode", fields...)
+				log.Info("Memory Debug Mode", fields...)
 				if err != nil {
 					return
 				}
@@ -272,7 +272,7 @@ func (h *memoryDebugModeHandler) run() {
 			if !h.autoGC {
 				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {
 					fields, err = h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
-					logutil.BgLogger().Warn("Memory Debug Mode", fields...)
+					log.Warn("Memory Debug Mode", fields...)
 					if err != nil {
 						return
 					}
@@ -280,7 +280,7 @@ func (h *memoryDebugModeHandler) run() {
 			} else {
 				if heapInUse > uint64(h.minHeapInUse) && trackedMem/100*uint64(100+h.alarmRatio) < heapInUse {
 					fields, err = h.genInfo("warning", true, int64(heapInUse), int64(trackedMem))
-					logutil.BgLogger().Warn("Memory Debug Mode", fields...)
+					log.Warn("Memory Debug Mode", fields...)
 					if err != nil {
 						return
 					}
@@ -289,8 +289,8 @@ func (h *memoryDebugModeHandler) run() {
 					for _, t := range ts {
 						logs = append(logs, zap.String("Executor_"+strconv.Itoa(t.Label()), memory.FormatBytes(t.BytesConsumed())))
 					}
-					logutil.BgLogger().Warn("Memory Debug Mode, Log all executors that consumes more than threshold * 20%", logs...)
-					logutil.BgLogger().Warn("Memory Debug Mode, Log the tracker tree", h.getTrackerTreeMemUseLogs()...)
+					log.Warn("Memory Debug Mode, Log all executors that consumes more than threshold * 20%", logs...)
+					log.Warn("Memory Debug Mode, Log the tracker tree", h.getTrackerTreeMemUseLogs()...)
 				}
 			}
 		}

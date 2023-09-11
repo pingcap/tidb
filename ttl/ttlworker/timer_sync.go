@@ -28,8 +28,8 @@ import (
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -165,7 +165,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		newKey2Timers := make(map[string]*timerapi.TimerRecord, len(g.key2Timers))
 		timers, err := g.cli.GetTimers(ctx, timerapi.WithKeyPrefix(timerKeyPrefix))
 		if err != nil {
-			logutil.BgLogger().Error("failed to pull timers", zap.Error(err))
+			log.Error("failed to pull timers", zap.Error(err))
 			return
 		}
 
@@ -178,7 +178,7 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 
 	se, err := getSession(g.pool)
 	if err != nil {
-		logutil.BgLogger().Error("failed to sync TTL timers", zap.Error(err))
+		log.Error("failed to sync TTL timers", zap.Error(err))
 		return
 	}
 	defer se.Close()
@@ -204,19 +204,19 @@ func (g *TTLTimersSyncer) SyncTimers(ctx context.Context, is infoschema.InfoSche
 		if time.Since(timer.CreateTime) > g.delayDelete {
 			metrics.TTLSyncTimerCounter.Inc()
 			if _, err = g.cli.DeleteTimer(ctx, timer.ID); err != nil {
-				logutil.BgLogger().Error("failed to delete timer", zap.Error(err), zap.String("timerID", timer.ID))
+				log.Error("failed to delete timer", zap.Error(err), zap.String("timerID", timer.ID))
 			} else {
 				delete(g.key2Timers, key)
 			}
 		} else if timer.Enable {
 			metrics.TTLSyncTimerCounter.Inc()
 			if err = g.cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetEnable(false)); err != nil {
-				logutil.BgLogger().Error("failed to disable timer", zap.Error(err), zap.String("timerID", timer.ID))
+				log.Error("failed to disable timer", zap.Error(err), zap.String("timerID", timer.ID))
 			}
 
 			timer, err = g.cli.GetTimerByID(ctx, timer.ID)
 			if err != nil {
-				logutil.BgLogger().Error("failed to get timer", zap.Error(err), zap.String("timerID", timer.ID))
+				log.Error("failed to get timer", zap.Error(err), zap.String("timerID", timer.ID))
 			} else {
 				g.key2Timers[key] = timer
 			}
@@ -228,7 +228,7 @@ func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Ses
 	if tblInfo.Partition == nil {
 		key := buildTimerKey(tblInfo, nil)
 		if _, err := g.syncOneTimer(ctx, se, schema, tblInfo, nil, false); err != nil {
-			logutil.BgLogger().Error("failed to syncOneTimer", zap.Error(err), zap.String("key", key))
+			log.Error("failed to syncOneTimer", zap.Error(err), zap.String("key", key))
 		}
 		return []string{key}
 	}
@@ -240,7 +240,7 @@ func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Ses
 		key := buildTimerKey(tblInfo, partition)
 		keys = append(keys, key)
 		if _, err := g.syncOneTimer(ctx, se, schema, tblInfo, partition, false); err != nil {
-			logutil.BgLogger().Error("failed to syncOneTimer", zap.Error(err), zap.String("key", key))
+			log.Error("failed to syncOneTimer", zap.Error(err), zap.String("key", key))
 		}
 	}
 	return keys
@@ -281,7 +281,7 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 		var watermark time.Time
 		ttlTableStatus, err := getTTLTableStatus(ctx, se, tblInfo, partition)
 		if err != nil {
-			logutil.BgLogger().Warn("failed to get TTL table status", zap.Error(err), zap.String("key", key))
+			log.Warn("failed to get TTL table status", zap.Error(err), zap.String("key", key))
 		}
 
 		if ttlTableStatus != nil {
@@ -335,7 +335,7 @@ func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, 
 	)
 
 	if err != nil {
-		logutil.BgLogger().Error("failed to update timer",
+		log.Error("failed to update timer",
 			zap.Error(err),
 			zap.String("timerID", timer.ID),
 			zap.String("key", key),

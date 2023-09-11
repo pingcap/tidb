@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TopSQLPubSubService implements tipb.TopSQLPubSubServer.
@@ -126,7 +126,7 @@ func (ds *pubSubDataSink) run() error {
 			<-ctx.Done()
 
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				logutil.BgLogger().Warn(
+				log.Warn(
 					"[top-sql] pubsub datasink failed to send data to subscriber due to deadline exceeded",
 					zap.Time("deadline", task.deadline),
 				)
@@ -134,7 +134,7 @@ func (ds *pubSubDataSink) run() error {
 			}
 
 			if err != nil {
-				logutil.BgLogger().Warn(
+				log.Warn(
 					"[top-sql] pubsub datasink failed to send data to subscriber",
 					zap.Error(err),
 				)

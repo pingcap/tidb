@@ -55,11 +55,11 @@ func TestChecksumTable(t *testing.T) {
 	gtk.MustExec("create database db")
 	gtk.MustExec("create table db.tb(id int)")
 	gtk.MustExec("insert into db.tb values(1)")
-	remoteChecksum, err := importinto.TestChecksumTable(ctx, mgr, taskMeta, logutil.BgLogger())
+	remoteChecksum, err := importinto.TestChecksumTable(ctx, mgr, taskMeta, log())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 	// again
-	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, logutil.BgLogger())
+	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, log())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 
@@ -67,7 +67,7 @@ func TestChecksumTable(t *testing.T) {
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/errWhenChecksum")
 	}()
-	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, logutil.BgLogger())
+	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, log())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 }

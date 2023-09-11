@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const distinctFactor = 0.8
@@ -73,7 +73,7 @@ func EstimateColsNDVWithMatchedLen(cols []*expression.Column, schema *expression
 	}
 	indices := schema.ColumnsIndices(cols)
 	if indices == nil {
-		logutil.BgLogger().Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
+		log.Error("column not found in schema", zap.Any("columns", cols), zap.String("schema", schema.String()))
 		return ndv, 1
 	}
 	for _, idx := range indices {

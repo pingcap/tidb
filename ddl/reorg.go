@@ -44,13 +44,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // reorgCtx is for reorganization.
@@ -228,9 +228,9 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		rowCount := rc.getRowCount()
 		job.SetRowCount(rowCount)
 		if err != nil {
-			logutil.BgLogger().Warn("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
+			log.Warn("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
-			logutil.BgLogger().Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
+			log.Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
 		}
 
 		// Update a job's warnings.
@@ -246,7 +246,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 			return errors.Trace(err)
 		}
 	case <-w.ctx.Done():
-		logutil.BgLogger().Info("run reorg job quit", zap.String("category", "ddl"))
+		log.Info("run reorg job quit", zap.String("category", "ddl"))
 		d.removeReorgCtx(job.ID)
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
@@ -260,7 +260,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 
 		rc.resetWarnings()
 
-		logutil.BgLogger().Info("run reorg job wait timeout", zap.String("category", "ddl"),
+		log.Info("run reorg job wait timeout", zap.String("category", "ddl"),
 			zap.Duration("wait time", waitTimeout),
 			zap.Int64("total added row count", rowCount))
 		// If timeout, we will return, check the owner and retry to wait job done again.
@@ -292,7 +292,7 @@ func overwriteReorgInfoFromGlobalCheckpoint(w *worker, sess *sess.Session, job *
 		if bc.GetCheckpointManager() == nil {
 			mgr, err := ingest.NewCheckpointManager(w.ctx, bc, w.sessPool, job.ID, reorgInfo.currElement.ID)
 			if err != nil {
-				logutil.BgLogger().Warn("create checkpoint manager failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+				log.Warn("create checkpoint manager failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 			}
 			bc.AttachCheckpointManager(mgr)
 		}
@@ -336,7 +336,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if progress > 1 {
 			progress = 1
 		}
-		logutil.BgLogger().Debug("update progress", zap.String("category", "ddl"),
+		log.Debug("update progress", zap.String("category", "ddl"),
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
 			zap.Int64("totalCount", totalCount))
@@ -413,7 +413,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	}
 
 	if dc.isReorgPaused(jobID) {
-		logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
+		log.Warn("job paused by user", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
 		return dbterror.ErrPausedDDLJob.GenWithStackByArgs(jobID)
 	}
 
@@ -423,7 +423,7 @@ func (dc *ddlCtx) isReorgRunnable(jobID int64, isDistReorg bool) error {
 	}
 	if !dc.isOwner() {
 		// If it's not the owner, we will try later, so here just returns an error.
-		logutil.BgLogger().Info("DDL is not the DDL owner", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
+		log.Info("DDL is not the DDL owner", zap.String("category", "ddl"), zap.String("ID", dc.uuid))
 		return errors.Trace(dbterror.ErrNotOwner)
 	}
 	return nil
@@ -624,7 +624,7 @@ func getTableRange(ctx *JobContext, d *ddlCtx, tbl table.PhysicalTable, snapshot
 		endHandleKey = tablecodec.EncodeRecordKey(tbl.RecordPrefix(), maxHandle).Next()
 	}
 	if isEmptyTable || endHandleKey.Cmp(startHandleKey) <= 0 {
-		logutil.BgLogger().Info("get noop table range", zap.String("category", "ddl"),
+		log.Info("get noop table range", zap.String("category", "ddl"),
 			zap.String("table", fmt.Sprintf("%v", tbl.Meta())),
 			zap.Int64("table/partition ID", tbl.GetPhysicalID()),
 			zap.String("start key", hex.EncodeToString(startHandleKey)),
@@ -697,7 +697,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 				return nil, errors.Trace(err)
 			}
 		}
-		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
+		log.Info("job get table range", zap.String("category", "ddl"),
 			zap.Int64("jobID", job.ID), zap.Int64("physicalTableID", pid),
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.String("endKey", hex.EncodeToString(end)))
@@ -732,7 +732,7 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
+				log.Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
 				if job.IsCancelling() {
 					return nil, nil
 				}
@@ -777,7 +777,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("job get table range", zap.String("category", "ddl"),
+		log.Info("job get table range", zap.String("category", "ddl"),
 			zap.Int64("job ID", job.ID), zap.Int64("physical table ID", pid),
 			zap.String("start key", hex.EncodeToString(start)),
 			zap.String("end key", hex.EncodeToString(end)))
@@ -798,7 +798,7 @@ func getReorgInfoFromPartitions(ctx *JobContext, d *ddlCtx, rh *reorgHandler, jo
 			// We'll try to remove it in the next major TiDB version.
 			if meta.ErrDDLReorgElementNotExist.Equal(err) {
 				job.SnapshotVer = 0
-				logutil.BgLogger().Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
+				log.Warn("get reorg info, the element does not exist", zap.String("category", "ddl"), zap.String("job", job.String()))
 			}
 			return &info, errors.Trace(err)
 		}
@@ -880,7 +880,7 @@ func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 	err := cleanDDLReorgHandles(s, job)
 	if err != nil {
 		// ignore error, cleanup is not that critical
-		logutil.BgLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
+		log.Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.String("job", job.String()), zap.Error(err))
 	}
 }
 

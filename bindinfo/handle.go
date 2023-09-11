@@ -38,13 +38,14 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -179,7 +180,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		}
 
 		if err != nil {
-			logutil.BgLogger().Debug("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+			log.Debug("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
 			continue
 		}
 
@@ -199,7 +200,7 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 		// When the memory capacity of bing_cache is not enough,
 		// there will be some memory-related errors in multiple places.
 		// Only needs to be handled once.
-		logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(memExceededErr))
+		log.Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(memExceededErr))
 	}
 	return nil
 }
@@ -622,7 +623,7 @@ func (tmpMap *tmpBindRecordMap) flushToStore() {
 		if bindRecord.updateTime.IsZero() {
 			err := tmpMap.flushFunc(bindRecord.bindRecord)
 			if err != nil {
-				logutil.BgLogger().Debug("flush bind record failed", zap.String("category", "sql-bind"), zap.Error(err))
+				log.Debug("flush bind record failed", zap.String("category", "sql-bind"), zap.Error(err))
 			}
 			bindRecord.updateTime = time.Now()
 			continue
@@ -738,12 +739,12 @@ func (h *BindHandle) newBindRecord(row chunk.Row) (string, *BindRecord, error) {
 func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err0 != nil {
-		logutil.BgLogger().Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
+		log.Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	err1 := newCache.SetBindRecord(hash, meta)
 	if err1 != nil && err0 == nil {
-		logutil.BgLogger().Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
+		log.Warn("BindHandle.setBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
 	}
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, meta, false)
@@ -754,14 +755,14 @@ func (h *BindHandle) setBindRecord(hash string, meta *BindRecord) {
 func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 	newCache, err0 := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err0 != nil {
-		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
+		log.Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newRecord := merge(oldRecord, meta)
 	err1 := newCache.SetBindRecord(hash, newRecord)
 	if err1 != nil && err0 == nil {
 		// Only need to handle the error once.
-		logutil.BgLogger().Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
+		log.Warn("BindHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
 	}
 	h.bindInfo.Value.Store(newCache)
 	updateMetrics(metrics.ScopeGlobal, oldRecord, newRecord, false)
@@ -771,7 +772,7 @@ func (h *BindHandle) appendBindRecord(hash string, meta *BindRecord) {
 func (h *BindHandle) removeBindRecord(hash string, meta *BindRecord) {
 	newCache, err := h.bindInfo.Value.Load().(*bindCache).Copy()
 	if err != nil {
-		logutil.BgLogger().Warn("", zap.String("category", "sql-bind"), zap.Error(err))
+		log.Warn("", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	oldRecord := newCache.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	newCache.RemoveBindRecord(hash, meta)
@@ -850,7 +851,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	// uses another background session.
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.String("category", "sql-bind"), zap.Error(err))
+		log.Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.String("category", "sql-bind"), zap.Error(err))
 		return
 	}
 	for _, row := range rows {
@@ -860,7 +861,7 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		case "table":
 			tfilter, valid := ParseCaptureTableFilter(valStr)
 			if !valid {
-				logutil.BgLogger().Warn("capture table filter is invalid, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr))
+				log.Warn("capture table filter is invalid, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr))
 				continue
 			}
 			filter.tables = append(filter.tables, tfilter)
@@ -869,18 +870,18 @@ func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 		case "frequency":
 			f, err := strconv.ParseInt(valStr, 10, 64)
 			if err != nil {
-				logutil.BgLogger().Warn("failed to parse frequency type value, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr), zap.Error(err))
+				log.Warn("failed to parse frequency type value, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr), zap.Error(err))
 				continue
 			}
 			if f < 1 {
-				logutil.BgLogger().Warn("frequency threshold is less than 1, ignore it", zap.String("category", "sql-bind"), zap.Int64("frequency", f))
+				log.Warn("frequency threshold is less than 1, ignore it", zap.String("category", "sql-bind"), zap.Int64("frequency", f))
 				continue
 			}
 			if f > filter.frequency {
 				filter.frequency = f
 			}
 		default:
-			logutil.BgLogger().Warn("unknown capture filter type, ignore it", zap.String("category", "sql-bind"), zap.String("filter_type", filterTp))
+			log.Warn("unknown capture filter type, ignore it", zap.String("category", "sql-bind"), zap.String("filter_type", filterTp))
 		}
 	}
 	return
@@ -895,7 +896,7 @@ func (h *BindHandle) CaptureBaselines() {
 	for _, bindableStmt := range bindableStmts {
 		stmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
 		if err != nil {
-			logutil.BgLogger().Debug("parse SQL failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			log.Debug("parse SQL failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
 			continue
 		}
 		if insertStmt, ok := stmt.(*ast.InsertStmt); ok && insertStmt.Select == nil {
@@ -945,7 +946,7 @@ func (h *BindHandle) CaptureBaselines() {
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
 		err = h.CreateBindRecord(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
 		if err != nil {
-			logutil.BgLogger().Debug("create bind record failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			log.Debug("create bind record failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}
 	}
 }
@@ -1021,7 +1022,7 @@ func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string
 			restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &withSb)
 			restoreCtx.DefaultDB = defaultDB
 			if err := n.With.Restore(restoreCtx); err != nil {
-				logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
+				log.Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 				return ""
 			}
 			withEnd := withIdx + len(withSb.String())
@@ -1175,7 +1176,7 @@ func (*BindHandle) getRunningDuration(sctx sessionctx.Context, db, sql string, m
 		return time.Since(startTime), nil
 	case <-timer.C:
 		cancelFunc()
-		logutil.BgLogger().Debug("plan verification timed out", zap.String("category", "sql-bind"), zap.Duration("timeElapsed", time.Since(startTime)), zap.String("query", sql))
+		log.Debug("plan verification timed out", zap.String("category", "sql-bind"), zap.Duration("timeElapsed", time.Since(startTime)), zap.String("query", sql))
 	}
 	<-resultChan
 	return -1, nil
@@ -1246,7 +1247,7 @@ func (h *BindHandle) HandleEvolvePlanTask(sctx sessionctx.Context, adminEvolve b
 	if verifyPlanTime == -1 || (float64(verifyPlanTime)*acceptFactor > float64(currentPlanTime)) {
 		binding.Status = Rejected
 		digestText, _ := parser.NormalizeDigest(binding.BindSQL) // for log desensitization
-		logutil.BgLogger().Debug("new plan rejected", zap.String("category", "sql-bind"),
+		log.Debug("new plan rejected", zap.String("category", "sql-bind"),
 			zap.Duration("currentPlanTime", currentPlanTime),
 			zap.Duration("verifyPlanTime", verifyPlanTime),
 			zap.String("digestText", digestText),

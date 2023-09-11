@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
+	// "github.com/pingcap/tidb/util/logutil/zap"
 	"go.uber.org/zap"
 )
 

@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 	"strconv"
 
+	plog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/sessionctx"
@@ -48,7 +49,8 @@ const maxMemoryQuota = 2 * size.GB
 
 // InitGlobalLightningEnv initialize Lightning backfill environment.
 func InitGlobalLightningEnv(ctx context.Context, sctx sessionctx.Context) {
-	log.SetAppLogger(logutil.BgLogger())
+	// log.SetAppLogger(logutil.BgLogger())
+	log.SetAppLogger(plog.L())
 	globalCfg := config.GetGlobalConfig()
 	if globalCfg.Store != "tikv" {
 		logutil.BgLogger().Warn(LitWarnEnvInitFail,

@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 type fdEdge struct {
@@ -848,7 +848,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 	} else {
 		for k, v := range innerFDs.HashCodeToUniqueID {
 			if _, ok := s.HashCodeToUniqueID[k]; ok {
-				logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+				log.Warn("Error occurred when building the functional dependency")
 			}
 			s.HashCodeToUniqueID[k] = v
 		}
@@ -919,7 +919,7 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 	} else {
 		for k, v := range fds.HashCodeToUniqueID {
 			if _, ok := s.HashCodeToUniqueID[k]; ok {
-				logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+				log.Warn("Error occurred when building the functional dependency")
 				continue
 			}
 			s.HashCodeToUniqueID[k] = v
@@ -1187,7 +1187,7 @@ func (e *fdEdge) String() string {
 	var b strings.Builder
 	if e.equiv {
 		if !e.strict {
-			logutil.BgLogger().Warn("Error occurred when building the functional dependency. We don't support lax equivalent columns")
+			log.Warn("Error occurred when building the functional dependency. We don't support lax equivalent columns")
 			return "Wrong functional dependency"
 		}
 		_, _ = fmt.Fprintf(&b, "%s==%s", e.from, e.to)
@@ -1205,12 +1205,12 @@ func (e *fdEdge) String() string {
 func (s *FDSet) RegisterUniqueID(hashCode string, uniqueID int) {
 	if len(hashCode) == 0 {
 		// shouldn't be here.
-		logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+		log.Warn("Error occurred when building the functional dependency")
 		return
 	}
 	if _, ok := s.HashCodeToUniqueID[hashCode]; ok {
 		// shouldn't be here.
-		logutil.BgLogger().Warn("Error occurred when building the functional dependency")
+		log.Warn("Error occurred when building the functional dependency")
 		return
 	}
 	s.HashCodeToUniqueID[hashCode] = uniqueID

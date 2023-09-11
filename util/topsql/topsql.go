@@ -22,13 +22,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )
 
@@ -115,7 +115,7 @@ func AttachAndRegisterSQLInfo(ctx context.Context, normalizedSQL string, sqlDige
 			sqlPrefixes := []string{"insert", "update", "delete", "load", "replace", "select", "begin",
 				"commit", "analyze", "explain", "trace", "create", "set global"}
 			if MockHighCPULoad(normalizedSQL, sqlPrefixes, 1) {
-				logutil.BgLogger().Info("attach SQL info", zap.String("sql", normalizedSQL))
+				log.Info("attach SQL info", zap.String("sql", normalizedSQL))
 			}
 		}
 	})
@@ -139,7 +139,7 @@ func AttachSQLAndPlanInfo(ctx context.Context, sqlDigest *parser.Digest, planDig
 		// Work like mockHighLoadForEachSQL failpoint.
 		if val.(bool) {
 			if MockHighCPULoad("", []string{""}, 1) {
-				logutil.BgLogger().Info("attach SQL info")
+				log.Info("attach SQL info")
 			}
 		}
 	})

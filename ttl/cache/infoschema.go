@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // InfoSchemaCache is the cache for InfoSchema, it builds a map from physical table id to physical table information
@@ -56,8 +56,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 				continue
 			}
 
-			logger := logutil.BgLogger().
-				With(zap.String("schema", db.Name.L),
+			logger := log.With(zap.String("schema", db.Name.L),
 					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))
 
 			if tblInfo.Partition == nil {

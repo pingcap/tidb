@@ -29,7 +29,8 @@ import (
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -582,7 +583,7 @@ func VerifyTaskStateTransform(from, to string) bool {
 		proto.TaskStateRevertPending: {},
 		proto.TaskStateReverted:      {},
 	}
-	logutil.BgLogger().Info("task state transform", zap.String("from", from), zap.String("to", to))
+	log.Info("task state transform", zap.String("from", from), zap.String("to", to))
 
 	if from == to {
 		return true

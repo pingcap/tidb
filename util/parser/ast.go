@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/format"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
@@ -133,7 +133,7 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &sb)
 	ctx.DefaultDB = defaultDB
 	if err := node.Restore(ctx); err != nil {
-		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
+		log.Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 		return ""
 	}
 	return sb.String()

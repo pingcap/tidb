@@ -45,13 +45,13 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	utilhint "github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.
@@ -380,7 +380,7 @@ func refineCETrace(sctx sessionctx.Context) {
 			rec.TableName = tbl.Meta().Name.O
 			continue
 		}
-		logutil.BgLogger().Warn("Failed to find table in infoschema", zap.String("category", "OptimizerTrace"),
+		log.Warn("Failed to find table in infoschema", zap.String("category", "OptimizerTrace"),
 			zap.Int64("table id", rec.TableID))
 	}
 }
@@ -434,7 +434,7 @@ func generateRuntimeFilter(sctx sessionctx.Context, plan PhysicalPlan) {
 	if !sctx.GetSessionVars().IsRuntimeFilterEnabled() || sctx.GetSessionVars().InRestrictedSQL {
 		return
 	}
-	logutil.BgLogger().Debug("Start runtime filter generator")
+	log.Debug("Start runtime filter generator")
 	rfGenerator := &RuntimeFilterGenerator{
 		rfIDGenerator:      &util.IDGenerator{},
 		columnUniqueIDToRF: map[int64][]*RuntimeFilter{},
@@ -442,7 +442,7 @@ func generateRuntimeFilter(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 	startRFGenerator := time.Now()
 	rfGenerator.GenerateRuntimeFilter(plan)
-	logutil.BgLogger().Debug("Finish runtime filter generator",
+	log.Debug("Finish runtime filter generator",
 		zap.Duration("Cost", time.Since(startRFGenerator)))
 }
 

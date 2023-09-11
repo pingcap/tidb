@@ -54,7 +54,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func checkGlobalIndexCleanUpDone(t *testing.T, ctx sessionctx.Context, tblInfo *model.TableInfo, idxInfo *model.IndexInfo, pid int64) int {
@@ -3639,7 +3639,7 @@ func checkPartitionDelRangeDone(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	done := waitGCDeleteRangeDone(t, tk, oldPID)
 	if !done {
 		// Takes too long, give up the check.
-		logutil.BgLogger().Info("truncate partition table",
+		log.Info("truncate partition table",
 			zap.Int64("id", oldPID),
 			zap.Stringer("duration", time.Since(startTime)),
 		)
@@ -4279,7 +4279,7 @@ func TestDropSchemaWithPartitionTable(t *testing.T) {
 	done := waitGCDeleteRangeDone(t, tk, tableIDs[2])
 	if !done {
 		// Takes too long, give up the check.
-		logutil.BgLogger().Info("drop schema",
+		log.Info("drop schema",
 			zap.Int64("id", tableIDs[0]),
 			zap.Stringer("duration", time.Since(startTime)),
 		)

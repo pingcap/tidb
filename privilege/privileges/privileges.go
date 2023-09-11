@@ -40,10 +40,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sem"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SkipWithGrant causes the server to start without using the privilege system at all.
@@ -220,19 +220,19 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		if len(pwd) == mysql.PWDHashLen+1 {
 			return true
 		}
-		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		log.Error("the password from the mysql.user table does not match the definition of a mysql_native_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	case mysql.AuthCachingSha2Password:
 		if len(pwd) == mysql.SHAPWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		log.Error("the password from the mysql.user table does not match the definition of a caching_sha2_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	case mysql.AuthTiDBSM3Password:
 		if len(pwd) == mysql.SM3PWDHashLen {
 			return true
 		}
-		logutil.BgLogger().Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+		log.Error("the password from the mysql.user table does not match the definition of a tidb_sm3_password", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 		return false
 	case mysql.AuthSocket:
 		return true
@@ -242,7 +242,7 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 		return true
 	}
 
-	logutil.BgLogger().Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
+	log.Error("user password from the mysql.user table not like a known hash format", zap.String("user", record.User), zap.String("plugin", record.AuthPlugin), zap.Int("hash_length", len(pwd)))
 	return false
 }
 
@@ -251,7 +251,7 @@ func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
-		logutil.BgLogger().Error("get user privilege record fail",
+		log.Error("get user privilege record fail",
 			zap.String("user", user), zap.String("host", host))
 		return ""
 	}
@@ -340,7 +340,7 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
-		logutil.BgLogger().Error("get user privilege record fail",
+		log.Error("get user privilege record fail",
 			zap.String("user", user), zap.String("host", host))
 		return
 	}
@@ -428,7 +428,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 // GenerateAccountAutoLockErr implements the Manager interface.
 func GenerateAccountAutoLockErr(failedLoginAttempts int64,
 	user, host, lockTime, remainTime string) error {
-	logutil.BgLogger().Error(fmt.Sprintf("Access denied for user '%s'@'%s'."+
+	log.Error(fmt.Sprintf("Access denied for user '%s'@'%s'."+
 		" Account is blocked for %s day(s) (%s day(s) remaining) due to %d "+
 		"consecutive failed logins.", user, host, lockTime,
 		remainTime, failedLoginAttempts))
@@ -441,7 +441,7 @@ func (p *UserPrivileges) VerifyAccountAutoLockInMemory(user string, host string)
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchUser(user, host)
 	if record == nil {
-		logutil.BgLogger().Error("get authUser privilege record fail",
+		log.Error("get authUser privilege record fail",
 			zap.String("authUser", user), zap.String("authHost", host))
 		return false, ErrAccessDenied.FastGenByArgs(user, host)
 	}
@@ -527,7 +527,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	record := mysqlPriv.connectionVerification(authUser, authHost)
 
 	if record == nil {
-		logutil.BgLogger().Error("get authUser privilege record fail",
+		log.Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
@@ -535,7 +535,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
 	if globalPriv != nil {
 		if !p.checkSSL(globalPriv, sessionVars.TLSConnectionState) {
-			logutil.BgLogger().Error("global priv check ssl fail",
+			log.Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
@@ -549,12 +549,12 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	// If the user uses session token to log in, skip checking record.AuthPlugin.
 	if user.AuthPlugin == mysql.AuthTiDBSessionToken {
 		if err = sessionstates.ValidateSessionToken(authentication, user.Username); err != nil {
-			logutil.BgLogger().Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
+			log.Warn("verify session token failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
-			logutil.BgLogger().Error("empty authentication")
+			log.Error("empty authentication")
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		tokenString := string(hack.String(authentication[:len(authentication)-1]))
@@ -562,23 +562,23 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			claims map[string]interface{}
 		)
 		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
-			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
+			log.Error("verify JWT failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
-			logutil.BgLogger().Error("check claims failed", zap.Error(err))
+			log.Error("check claims failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if record.AuthPlugin == mysql.AuthLDAPSASL {
 		if err = ldap.LDAPSASLAuthImpl.AuthLDAPSASL(authUser, pwd, authentication, authConn); err != nil {
 			// though the pwd stores only `dn` for LDAP SASL, it could be unsafe to print it out.
 			// for example, someone may alter the auth plugin name but forgot to change the password...
-			logutil.BgLogger().Warn("verify through LDAP SASL failed", zap.String("username", user.Username), zap.Error(err))
+			log.Warn("verify through LDAP SASL failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if record.AuthPlugin == mysql.AuthLDAPSimple {
 		if err = ldap.LDAPSimpleAuthImpl.AuthLDAPSimple(authUser, pwd, authentication); err != nil {
-			logutil.BgLogger().Warn("verify through LDAP Simple failed", zap.String("username", user.Username), zap.Error(err))
+			log.Warn("verify through LDAP Simple failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 && len(authentication) > 0 {
@@ -587,7 +587,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		case mysql.AuthNativePassword:
 			hpwd, err := auth.DecodePassword(pwd)
 			if err != nil {
-				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
+				log.Error("decode password string failed", zap.Error(err))
 				info.FailedDueToWrongPassword = true
 				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
@@ -599,7 +599,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
 			if err != nil {
-				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+				log.Error("Failed to check caching_sha2_password", zap.Error(err))
 			}
 
 			if !authok {
@@ -608,13 +608,13 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			}
 		case mysql.AuthSocket:
 			if string(authentication) != authUser && string(authentication) != pwd {
-				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
+				log.Error("Failed socket auth", zap.String("authUser", authUser),
 					zap.String("socket_user", string(authentication)),
 					zap.String("authentication_string", pwd))
 				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		default:
-			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
+			log.Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if len(pwd) > 0 || len(authentication) > 0 {
@@ -627,7 +627,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
-		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
+		log.Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
 		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
@@ -659,7 +659,7 @@ const (
 
 func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.ConnectionState) bool {
 	if priv.Broken {
-		logutil.BgLogger().Info("ssl check failure, due to broken global_priv record",
+		log.Info("ssl check failure, due to broken global_priv record",
 			zap.String("user", priv.User), zap.String("host", priv.Host))
 		return false
 	}
@@ -669,13 +669,13 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 	case SslTypeAny:
 		r := tlsState != nil
 		if !r {
-			logutil.BgLogger().Info("ssl check failure, require ssl but not use ssl",
+			log.Info("ssl check failure, require ssl but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return r
 	case SslTypeX509:
 		if tlsState == nil {
-			logutil.BgLogger().Info("ssl check failure, require x509 but not use ssl",
+			log.Info("ssl check failure, require x509 but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
@@ -687,18 +687,18 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 			}
 		}
 		if !hasCert {
-			logutil.BgLogger().Info("ssl check failure, require x509 but no verified cert",
+			log.Info("ssl check failure, require x509 but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return hasCert
 	case SslTypeSpecified:
 		if tlsState == nil {
-			logutil.BgLogger().Info("ssl check failure, require subject/issuer/cipher but not use ssl",
+			log.Info("ssl check failure, require subject/issuer/cipher but not use ssl",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
 		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != util.TLSCipher2String(tlsState.CipherSuite) {
-			logutil.BgLogger().Info("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
+			log.Info("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
 				zap.String("require", priv.Priv.SSLCipher), zap.String("given", util.TLSCipher2String(tlsState.CipherSuite)))
 			return false
 		}
@@ -719,7 +719,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 					matchIssuer = pass
 				} else if matchIssuer == notCheck {
 					matchIssuer = fail
-					logutil.BgLogger().Info("ssl check failure for issuer", zap.String("user", priv.User), zap.String("host", priv.Host),
+					log.Info("ssl check failure for issuer", zap.String("user", priv.User), zap.String("host", priv.Host),
 						zap.String("require", priv.Priv.X509Issuer), zap.String("given", given))
 				}
 			}
@@ -729,7 +729,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 					matchSubject = pass
 				} else if matchSubject == notCheck {
 					matchSubject = fail
-					logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+					log.Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
 						zap.String("require", priv.Priv.X509Subject), zap.String("given", given))
 				}
 			}
@@ -745,7 +745,7 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 		}
 		checkResult := hasCert && matchIssuer != fail && matchSubject != fail && matchSAN != fail
 		if !checkResult && !hasCert {
-			logutil.BgLogger().Info("ssl check failure, require issuer/subject/SAN but no verified cert",
+			log.Info("ssl check failure, require issuer/subject/SAN but no verified cert",
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 		}
 		return checkResult
@@ -776,7 +776,7 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 			unsupported = true
 		}
 		if unsupported {
-			logutil.BgLogger().Warn("skip unsupported SAN type", zap.String("type", string(typ)),
+			log.Warn("skip unsupported SAN type", zap.String("type", string(typ)),
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			continue
 		}
@@ -790,7 +790,7 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 			}
 		}
 		if !givenMatchOne {
-			logutil.BgLogger().Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
+			log.Info("ssl check failure for subject", zap.String("user", priv.User), zap.String("host", priv.Host),
 				zap.String("require", priv.Priv.SAN), zap.Strings("given", given), zap.String("type", string(typ)))
 			r = false
 			return
@@ -861,7 +861,7 @@ func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.Ro
 	for _, r := range roleList {
 		ok := mysqlPrivilege.FindRole(u, h, r)
 		if !ok {
-			logutil.BgLogger().Error("find role failed", zap.Stringer("role", r))
+			log.Error("find role failed", zap.Stringer("role", r))
 			return false, r.String()
 		}
 	}
@@ -877,7 +877,7 @@ func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentit
 	mysqlPrivilege := p.Handle.Get()
 	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
 	if !ok {
-		logutil.BgLogger().Error("find role failed", zap.Stringer("role", role))
+		log.Error("find role failed", zap.Stringer("role", role))
 		return false
 	}
 	return true

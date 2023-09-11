@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func TestPartitionBasic(t *testing.T) {
@@ -746,7 +746,7 @@ func TestExchangePartitionStates(t *testing.T) {
 			}
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
-				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				log.Info("Got state", zap.String("State", s))
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
@@ -915,7 +915,7 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 	for i, testCase := range testCases {
 		// create table ... partition by key ...
 		ddlSQL := createSQL + testCase.partitionbySQL
-		logutil.BgLogger().Info("Partition DDL test", zap.Int("i", i), zap.String("ddlSQL", ddlSQL))
+		log.Info("Partition DDL test", zap.Int("i", i), zap.String("ddlSQL", ddlSQL))
 		executeSQLWrapper(t, tk, ddlSQL)
 		// insert data
 		for _, insertsql := range insertSQLs {
@@ -923,7 +923,7 @@ func executePartTableCase(t *testing.T, tk *testkit.TestKit, testCases []partTab
 		}
 		// execute testcases
 		for j, selInfo := range testCase.selectInfo {
-			logutil.BgLogger().Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
+			log.Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
 			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
@@ -1355,11 +1355,11 @@ func TestKeyPartitionTableBasic(t *testing.T) {
 	}
 
 	for i, testCase := range testCases {
-		logutil.BgLogger().Info("Partition DDL test", zap.Int("i", i), zap.String("createSQL", testCase.createSQL))
+		log.Info("Partition DDL test", zap.Int("i", i), zap.String("createSQL", testCase.createSQL))
 		executeSQLWrapper(t, tk, testCase.createSQL)
 		executeSQLWrapper(t, tk, testCase.insertSQL)
 		for j, selInfo := range testCase.selectInfo {
-			logutil.BgLogger().Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
+			log.Info("Select", zap.Int("j", j), zap.String("selectSQL", selInfo.selectSQL))
 			tk.MustQuery(selInfo.selectSQL).Check(testkit.Rows(strconv.Itoa(selInfo.rowCount)))
 			if selInfo.executeExplain {
 				result := tk.MustQuery("EXPLAIN " + selInfo.selectSQL)
@@ -2638,7 +2638,7 @@ func TestPartitionByIntListExtensivePart(t *testing.T) {
 	}
 
 	seed := gotime.Now().UnixNano()
-	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	log.Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
 	for _, createSQL := range tStart {
 		for _, alterSQL := range tAlter {
@@ -2750,7 +2750,7 @@ func TestPartitionByIntExtensivePart(t *testing.T) {
 	}
 
 	seed := gotime.Now().UnixNano()
-	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	log.Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
 	for _, createSQL := range tStart {
 		for _, alterSQL := range tAlter {
@@ -2899,7 +2899,7 @@ func TestPartitionByExtensivePart(t *testing.T) {
 	}
 
 	seed := gotime.Now().UnixNano()
-	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	log.Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
 	for _, createSQL := range tStart {
 		for _, alterSQL := range tAlter {
@@ -2993,7 +2993,7 @@ func TestReorgPartExtensivePart(t *testing.T) {
 	pkDeletes := 100 // Enough to delete half of what is inserted?
 	alterStr := `alter table t reorganize partition pNull, pM, pLast into (partition pI values less than ("I"), partition pQ values less than ("q"), partition pLast values less than (MAXVALUE))`
 	seed := rand.Int63()
-	logutil.BgLogger().Info("Seeding rand", zap.Int64("seed", seed))
+	log.Info("Seeding rand", zap.Int64("seed", seed))
 	reorgRand := rand.New(rand.NewSource(seed))
 	getNewPK := getNewStringPK()
 	getValues := getValuesFunc()
@@ -3099,7 +3099,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			// delete
 			// verify with select after commit?
 
-			logutil.BgLogger().Info("State before ins/upd/del", zap.Int("transitions", transitions),
+			log.Info("State before ins/upd/del", zap.Int("transitions", transitions),
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
 			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
@@ -3110,7 +3110,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			values := make([]string, 0, pkInserts)
 			for i := 0; i < pkInserts; i += 2 {
 				pk := getNewPK(pkMap, "-i0", reorgRand)
-				logutil.BgLogger().Debug("insert1", zap.String("pk", pk))
+				log.Debug("insert1", zap.String("pk", pk))
 				pkArray = append(pkArray, pk)
 				insPK = append(insPK, pk)
 				values = append(values, getValues(pk, false, reorgRand))
@@ -3139,7 +3139,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			values = values[:0]
 			for i := 1; i < pkInserts; i += 2 {
 				pk := getNewPK(pkMap, "-i1", reorgRand)
-				logutil.BgLogger().Debug("insert2", zap.String("pk", pk))
+				log.Debug("insert2", zap.String("pk", pk))
 				pkArray = append(pkArray, pk)
 				insPK = append(insPK, pk)
 				values = append(values, getValues(pk, false, reorgRand))
@@ -3172,7 +3172,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			}
 			t2Rows := tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
 			if tRows != t2Rows {
-				logutil.BgLogger().Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
+				log.Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
 			}
 
 			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
@@ -3191,7 +3191,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				pkArray[idx] = newPK
 				value := getValues(newPK, true, reorgRand)
 
-				logutil.BgLogger().Debug("update1", zap.String("old", oldPK), zap.String("value", value))
+				log.Debug("update1", zap.String("old", oldPK), zap.String("value", value))
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
 					return
@@ -3238,7 +3238,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				idx := len(pkArray) - len(insPK) + insIdx
 				pkArray[idx] = newPK
 				value := getValues(newPK, true, reorgRand)
-				logutil.BgLogger().Debug("update2", zap.String("old", oldPK), zap.String("value", value))
+				log.Debug("update2", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3286,7 +3286,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				newPK := getNewPK(pkMap, "-u2", reorgRand)
 				pkArray[idx] = newPK
 				value := getValues(newPK, true, reorgRand)
-				logutil.BgLogger().Debug("update3", zap.String("old", oldPK), zap.String("value", value))
+				log.Debug("update3", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3332,7 +3332,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				newPK := getNewPK(pkMap, "-u3", reorgRand)
 				pkArray[idx] = newPK
 				value := getValues(newPK, true, reorgRand)
-				logutil.BgLogger().Debug("update4", zap.String("old", oldPK), zap.String("value", value))
+				log.Debug("update4", zap.String("old", oldPK), zap.String("value", value))
 
 				hookErr = tk2.ExecToErr(`update t set ` + value + ` where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3377,7 +3377,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			}
 			t2Rows = tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
 			if tRows != t2Rows {
-				logutil.BgLogger().Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
+				log.Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
 			}
 
 			tk2.MustQuery(`select count(*) from (select a from t except select a from t2) a`).Check(testkit.Rows("0"))
@@ -3395,7 +3395,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				idx := len(pkArray) - len(insPK) + insIdx
 				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				logutil.BgLogger().Debug("delete0", zap.String("pk", oldPK))
+				log.Debug("delete0", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3427,7 +3427,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				idx := len(pkArray) - len(insPK) + insIdx
 				insPK = append(insPK[:insIdx], insPK[insIdx+1:]...)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				logutil.BgLogger().Debug("delete1", zap.String("pk", oldPK))
+				log.Debug("delete1", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3458,7 +3458,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				logutil.BgLogger().Debug("delete2", zap.String("pk", oldPK))
+				log.Debug("delete2", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3488,7 +3488,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 				lowerPK := strings.ToLower(oldPK)
 				delete(pkMap, lowerPK)
 				pkArray = append(pkArray[:idx], pkArray[idx+1:]...)
-				logutil.BgLogger().Debug("delete3", zap.String("pk", oldPK))
+				log.Debug("delete3", zap.String("pk", oldPK))
 
 				hookErr = tk2.ExecToErr(`delete from t where a = "` + oldPK + `"`)
 				if hookErr != nil {
@@ -3514,7 +3514,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			}
 			t2Rows = tk2.ResultSetToResult(rs, "").Rows()[0][0].(string)
 			if tRows != t2Rows {
-				logutil.BgLogger().Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
+				log.Error("rows do not match", zap.String("t", tRows), zap.String("t2", t2Rows), zap.Stringer("state", job.SchemaState))
 			}
 
 			require.True(t, tables.SwapReorgPartFields(currTbl, prevTbl))
@@ -3522,7 +3522,7 @@ func checkDMLInAllStates(t *testing.T, tk, tk2 *testkit.TestKit, schemaName, alt
 			tk2.MustQuery(`select count(*) from t2`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
 			tk2.MustQuery(`select count(*) from t`).Check(testkit.Rows(fmt.Sprintf("%d", len(pkMap))))
 			prevTbl = currTbl
-			logutil.BgLogger().Info("State after ins/upd/del", zap.Int("transitions", transitions),
+			log.Info("State after ins/upd/del", zap.Int("transitions", transitions),
 				zap.Int("rows", len(pkMap)), zap.Stringer("SchemaState", job.SchemaState))
 		}
 	}

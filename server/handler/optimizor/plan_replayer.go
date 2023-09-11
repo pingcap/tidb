@@ -37,9 +37,9 @@ import (
 	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/replayer"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // PlanReplayerHandler is the handler for dumping plan replayer file.
@@ -123,14 +123,14 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 		}
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
-		logutil.BgLogger().Info("return dump file successfully", zap.String("filename", name),
+		log.Info("return dump file successfully", zap.String("filename", name),
 			zap.String("address", localAddr), zap.Bool("forwarded", isForwarded))
 		return
 	}
 	// handler.infoGetter will be nil only in unit test
 	// or we couldn't find file for forward request, return 404
 	if dfHandler.infoGetter == nil || isForwarded {
-		logutil.BgLogger().Info("failed to find dump file", zap.String("filename", name),
+		log.Info("failed to find dump file", zap.String("filename", name),
 			zap.String("address", localAddr), zap.Bool("forwarded", isForwarded))
 		w.WriteHeader(http.StatusNotFound)
 		return
@@ -151,12 +151,12 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 		url := fmt.Sprintf("%s://%s/%s?forward=true", dfHandler.scheme, remoteAddr, dfHandler.urlPath)
 		resp, err := client.Get(url)
 		if err != nil {
-			logutil.BgLogger().Error("forward request failed",
+			log.Error("forward request failed",
 				zap.String("remote-addr", remoteAddr), zap.Error(err))
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
-			logutil.BgLogger().Info("can't find file in remote server", zap.String("filename", name),
+			log.Info("can't find file in remote server", zap.String("filename", name),
 				zap.String("remote-addr", remoteAddr), zap.Int("status-code", resp.StatusCode))
 			continue
 		}
@@ -178,12 +178,12 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 		// find dump file in one remote tidb-server, return file directly
 		w.Header().Set("Content-Type", "application/zip")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
-		logutil.BgLogger().Info("return dump file successfully in remote server",
+		log.Info("return dump file successfully in remote server",
 			zap.String("filename", name), zap.String("remote-addr", remoteAddr))
 		return
 	}
 	// we can't find dump file in any tidb-server, return 404 directly
-	logutil.BgLogger().Info("can't find dump file in any remote server", zap.String("filename", name))
+	log.Info("can't find dump file in any remote server", zap.String("filename", name))
 	w.WriteHeader(http.StatusNotFound)
 	_, err = fmt.Fprintf(w, "can't find dump file %s in any remote server", name)
 	handler.WriteError(w, err)
@@ -335,7 +335,7 @@ func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) 
 	for _, f := range zr.File {
 		err = zw.Copy(f)
 		if err != nil {
-			logutil.BgLogger().Error("copy plan replayer zip file failed", zap.Error(err))
+			log.Error("copy plan replayer zip file failed", zap.Error(err))
 			return "", err
 		}
 	}
@@ -355,12 +355,12 @@ func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) 
 	}
 	err = zw.Close()
 	if err != nil {
-		logutil.BgLogger().Error("Closing file failed", zap.Error(err))
+		log.Error("Closing file failed", zap.Error(err))
 		return "", err
 	}
 	err = zf.Close()
 	if err != nil {
-		logutil.BgLogger().Error("Closing file failed", zap.Error(err))
+		log.Error("Closing file failed", zap.Error(err))
 		return "", err
 	}
 	return newPath, nil

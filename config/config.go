@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tidb/util/tikvutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tracing "github.com/uber/jaeger-client-go/config"
@@ -1186,7 +1187,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 					err = nil
 				}
 			} else if tmp, ok := err.(*ErrConfigInstanceSection); ok {
-				logutil.BgLogger().Warn(tmp.Error())
+				log.Warn(tmp.Error())
 				err = nil
 			}
 		}
@@ -1195,7 +1196,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 		if configCheck {
 			err = cfg.RemovedVariableCheck(confPath)
 			if err != nil {
-				logutil.BgLogger().Warn(err.Error())
+				log.Warn(err.Error())
 				err = nil // treat as warning
 			}
 		}
@@ -1300,12 +1301,12 @@ func (c *Config) Load(confFile string) error {
 // Valid checks if this config is valid.
 func (c *Config) Valid() error {
 	if c.Log.EnableErrorStack == c.Log.DisableErrorStack && c.Log.EnableErrorStack != nbUnset {
-		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
+		log.Warn(fmt.Sprintf("\"enable-error-stack\" (%v) conflicts \"disable-error-stack\" (%v). \"disable-error-stack\" is deprecated, please use \"enable-error-stack\" instead. disable-error-stack is ignored.", c.Log.EnableErrorStack, c.Log.DisableErrorStack))
 		// if two options conflict, we will use the value of EnableErrorStack
 		c.Log.DisableErrorStack = nbUnset
 	}
 	if c.Log.EnableTimestamp == c.Log.DisableTimestamp && c.Log.EnableTimestamp != nbUnset {
-		logutil.BgLogger().Warn(fmt.Sprintf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp))
+		log.Warn(fmt.Sprintf("\"enable-timestamp\" (%v) conflicts \"disable-timestamp\" (%v). \"disable-timestamp\" is deprecated, please use \"enable-timestamp\" instead", c.Log.EnableTimestamp, c.Log.DisableTimestamp))
 		// if two options conflict, we will use the value of EnableTimestamp
 		c.Log.DisableTimestamp = nbUnset
 	}

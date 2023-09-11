@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/isolation"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -182,11 +182,11 @@ func (m *txnManager) OnTxnEnd() {
 	duration := time.Since(m.enterTxnInstant)
 	threshold := m.sctx.GetSessionVars().SlowTxnThreshold
 	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
-		logutil.BgLogger().Info(
+		log.Info(
 			"slow transaction", zap.Duration("duration", duration),
 			zap.Uint64("conn", m.sctx.GetSessionVars().ConnectionID),
 			zap.Uint64("txnStartTS", m.sctx.GetSessionVars().TxnCtx.StartTS),
-			zap.Objects("events", m.events),
+			zap.Any("events", m.events),
 		)
 	}
 

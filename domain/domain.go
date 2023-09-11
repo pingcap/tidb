@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
@@ -78,7 +78,7 @@ import (
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/replayer"
@@ -92,10 +92,11 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
+	gzap "go.uber.org/zap"
 )
 
 var (
@@ -230,7 +231,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	// fetch the commit timestamp of the schema diff
 	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+		log.Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
 		schemaTs = 0
 	}
 
@@ -259,7 +260,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		if err == nil {
 			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			do.infoCache.Insert(is, uint64(schemaTs))
-			logutil.BgLogger().Info("diff load InfoSchema success",
+			log.Info("diff load InfoSchema success",
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
 				zap.Duration("start time", time.Since(startTime)),
@@ -269,7 +270,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 			return is, false, currentSchemaVersion, relatedChanges, nil
 		}
 		// We can fall back to full load, don't need to return the error.
-		logutil.BgLogger().Error("failed to load schema diff", zap.Error(err))
+		log.Error("failed to load schema diff", zap.Error(err))
 	}
 
 	schemas, err := do.fetchAllSchemasWithTables(m)
@@ -292,7 +293,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		return nil, false, currentSchemaVersion, nil, err
 	}
 	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
-	logutil.BgLogger().Info("full load InfoSchema success",
+	log.Info("full load InfoSchema success",
 		zap.Int64("currentSchemaVersion", currentSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
 		zap.Duration("start time", time.Since(startTime)))
@@ -599,7 +600,7 @@ func (do *Domain) Reload() error {
 			// Update self schema version to etcd.
 			err = do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), 0, is.SchemaMetaVersion())
 			if err != nil {
-				logutil.BgLogger().Info("update self version failed",
+				log.Info("update self version failed",
 					zap.Int64("oldSchemaVersion", oldSchemaVersion),
 					zap.Int64("neededSchemaVersion", is.SchemaMetaVersion()), zap.Error(err))
 			}
@@ -607,7 +608,7 @@ func (do *Domain) Reload() error {
 
 		// it is full load
 		if changes == nil {
-			logutil.BgLogger().Info("full load and reset schema validator")
+			log.Info("full load and reset schema validator")
 			do.SchemaValidator.Reset()
 		}
 	}
@@ -619,7 +620,7 @@ func (do *Domain) Reload() error {
 	// Reload interval is lease / 2, if load schema time elapses more than this interval,
 	// some query maybe responded by ErrInfoSchemaExpired error.
 	if sub > (lease/2) && lease > 0 {
-		logutil.BgLogger().Warn("loading schema takes a long time", zap.Duration("take time", sub))
+		log.Warn("loading schema takes a long time", zap.Duration("take time", sub))
 	}
 
 	return nil
@@ -655,7 +656,7 @@ func (do *Domain) topNSlowQueryLoop() {
 	ticker := time.NewTicker(time.Minute * 10)
 	defer func() {
 		ticker.Stop()
-		logutil.BgLogger().Info("topNSlowQueryLoop exited.")
+		log.Info("topNSlowQueryLoop exited.")
 	}()
 	for {
 		select {
@@ -683,7 +684,7 @@ func (do *Domain) topNSlowQueryLoop() {
 
 func (do *Domain) infoSyncerKeeper() {
 	defer func() {
-		logutil.BgLogger().Info("infoSyncerKeeper exited.")
+		log.Info("infoSyncerKeeper exited.")
 	}()
 
 	defer util.Recover(metrics.LabelDomain, "infoSyncerKeeper", nil, false)
@@ -695,11 +696,11 @@ func (do *Domain) infoSyncerKeeper() {
 		case <-ticker.C:
 			do.info.ReportMinStartTS(do.Store())
 		case <-do.info.Done():
-			logutil.BgLogger().Info("server info syncer need to restart")
+			log.Info("server info syncer need to restart")
 			if err := do.info.Restart(context.Background()); err != nil {
-				logutil.BgLogger().Error("server info syncer restart failed", zap.Error(err))
+				log.Error("server info syncer restart failed", zap.Error(err))
 			} else {
-				logutil.BgLogger().Info("server info syncer restarted")
+				log.Info("server info syncer restarted")
 			}
 		case <-do.exit:
 			return
@@ -709,7 +710,7 @@ func (do *Domain) infoSyncerKeeper() {
 
 func (do *Domain) globalConfigSyncerKeeper() {
 	defer func() {
-		logutil.BgLogger().Info("globalConfigSyncerKeeper exited.")
+		log.Info("globalConfigSyncerKeeper exited.")
 	}()
 
 	defer util.Recover(metrics.LabelDomain, "globalConfigSyncerKeeper", nil, false)
@@ -719,7 +720,7 @@ func (do *Domain) globalConfigSyncerKeeper() {
 		case entry := <-do.globalCfgSyncer.NotifyCh:
 			err := do.globalCfgSyncer.StoreGlobalConfig(context.Background(), entry)
 			if err != nil {
-				logutil.BgLogger().Error("global config syncer store failed", zap.Error(err))
+				log.Error("global config syncer store failed", zap.Error(err))
 			}
 		// TODO(crazycs520): Add owner to maintain global config is consistency with global variable.
 		case <-do.exit:
@@ -733,7 +734,7 @@ func (do *Domain) topologySyncerKeeper() {
 	ticker := time.NewTicker(infosync.TopologyTimeToRefresh)
 	defer func() {
 		ticker.Stop()
-		logutil.BgLogger().Info("topologySyncerKeeper exited.")
+		log.Info("topologySyncerKeeper exited.")
 	}()
 
 	for {
@@ -741,14 +742,14 @@ func (do *Domain) topologySyncerKeeper() {
 		case <-ticker.C:
 			err := do.info.StoreTopologyInfo(context.Background())
 			if err != nil {
-				logutil.BgLogger().Error("refresh topology in loop failed", zap.Error(err))
+				log.Error("refresh topology in loop failed", zap.Error(err))
 			}
 		case <-do.info.TopologyDone():
-			logutil.BgLogger().Info("server topology syncer need to restart")
+			log.Info("server topology syncer need to restart")
 			if err := do.info.RestartTopology(context.Background()); err != nil {
-				logutil.BgLogger().Error("server topology syncer restart failed", zap.Error(err))
+				log.Error("server topology syncer restart failed", zap.Error(err))
 			} else {
-				logutil.BgLogger().Info("server topology syncer restarted")
+				log.Info("server topology syncer restarted")
 			}
 		case <-do.exit:
 			return
@@ -760,7 +761,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	se, err := do.sysSessionPool.Get()
 
 	if err != nil {
-		logutil.BgLogger().Warn("get system session failed", zap.Error(err))
+		log.Warn("get system session failed", zap.Error(err))
 		return
 	}
 	// Make sure the session is new.
@@ -773,7 +774,7 @@ func (do *Domain) refreshMDLCheckTableInfo() {
 	domainSchemaVer := do.InfoSchema().SchemaMetaVersion()
 	rows, _, err := exec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta), nil, fmt.Sprintf("select job_id, version, table_ids from mysql.tidb_mdl_info where version <= %d", domainSchemaVer))
 	if err != nil {
-		logutil.BgLogger().Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
+		log.Warn("get mdl info from tidb_mdl_info failed", zap.Error(err))
 		return
 	}
 	do.mdlCheckTableInfo.mu.Lock()
@@ -838,7 +839,7 @@ func (do *Domain) mdlCheckLoop() {
 
 		sm := do.InfoSyncer().GetSessionManager()
 		if sm == nil {
-			logutil.BgLogger().Info("session manager is nil")
+			log.Info("session manager is nil")
 		} else {
 			sm.CheckOldRunningTxn(jobsVerMap, jobsIdsMap)
 		}
@@ -857,11 +858,11 @@ func (do *Domain) mdlCheckLoop() {
 				// Already update, skip it.
 				continue
 			}
-			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+			log.Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 			if err != nil {
 				jobNeedToSync = true
-				logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+				log.Warn("update self version failed", zap.Error(err))
 			} else {
 				jobCache[jobID] = ver
 			}
@@ -876,7 +877,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 	ticker := time.NewTicker(lease / 2)
 	defer func() {
 		ticker.Stop()
-		logutil.BgLogger().Info("loadSchemaInLoop exited.")
+		log.Info("loadSchemaInLoop exited.")
 	}()
 	syncer := do.ddl.SchemaSyncer()
 
@@ -885,21 +886,21 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 		case <-ticker.C:
 			err := do.Reload()
 			if err != nil {
-				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+				log.Error("reload schema in loop failed", zap.Error(err))
 			}
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
-				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+				log.Error("reload schema in loop failed", zap.Error(err))
 			}
 			if !ok {
-				logutil.BgLogger().Warn("reload schema in loop, schema syncer need rewatch")
+				log.Warn("reload schema in loop, schema syncer need rewatch")
 				// Make sure the rewatch doesn't affect load schema, so we watch the global schema version asynchronously.
 				syncer.WatchGlobalSchemaVer(context.Background())
 			}
 		case <-syncer.Done():
 			// The schema syncer stops, we need stop the schema validator to synchronize the schema version.
-			logutil.BgLogger().Info("reload schema in loop, schema syncer need restart")
+			log.Info("reload schema in loop, schema syncer need restart")
 			// The etcd is responsible for schema synchronization, we should ensure there is at most two different schema version
 			// in the TiDB cluster, to make the data/schema be consistent. If we lost connection/session to etcd, the cluster
 			// will treats this TiDB as a down instance, and etcd will remove the key of `/tidb/ddl/all_schema_versions/tidb-id`.
@@ -909,18 +910,18 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			do.SchemaValidator.Stop()
 			err := do.mustRestartSyncer(ctx)
 			if err != nil {
-				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
+				log.Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
 				break
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
 			exitLoop := do.mustReload()
 			// domain is cosed.
 			if exitLoop {
-				logutil.BgLogger().Error("domain is closed, exit loadSchemaInLoop")
+				log.Error("domain is closed, exit loadSchemaInLoop")
 				return
 			}
 			do.SchemaValidator.Restart()
-			logutil.BgLogger().Info("schema syncer restarted")
+			log.Info("schema syncer restarted")
 		case <-do.exit:
 			return
 		}
@@ -946,7 +947,7 @@ func (do *Domain) mustRestartSyncer(ctx context.Context) error {
 		if do.isClose() {
 			return err
 		}
-		logutil.BgLogger().Error("restart the schema syncer failed", zap.Error(err))
+		log.Error("restart the schema syncer failed", zap.Error(err))
 		time.Sleep(time.Second)
 	}
 }
@@ -957,12 +958,12 @@ func (do *Domain) mustReload() (exitLoop bool) {
 	for {
 		err := do.Reload()
 		if err == nil {
-			logutil.BgLogger().Info("mustReload succeed")
+			log.Info("mustReload succeed")
 			return false
 		}
 
 		// If the domain is closed, we returns immediately.
-		logutil.BgLogger().Info("reload the schema failed", zap.Error(err))
+		log.Info("reload the schema failed", zap.Error(err))
 		if do.isClose() {
 			return true
 		}
@@ -973,7 +974,7 @@ func (do *Domain) mustReload() (exitLoop bool) {
 func (do *Domain) isClose() bool {
 	select {
 	case <-do.exit:
-		logutil.BgLogger().Info("domain is closed")
+		log.Info("domain is closed")
 		return true
 	default:
 	}
@@ -1003,7 +1004,7 @@ func (do *Domain) Close() {
 			return 30 * time.Second
 		}())
 		if err != nil {
-			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+			log.Warn("fail to wait until the ttl job manager stop", zap.Error(err))
 		}
 	}
 	do.releaseServerID(context.Background())
@@ -1040,7 +1041,7 @@ func (do *Domain) Close() {
 		handle.Close()
 	}
 
-	logutil.BgLogger().Info("domain closed", zap.Duration("take time", time.Since(startTime)))
+	log.Info("domain closed", zap.Duration("take time", time.Since(startTime)))
 }
 
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
@@ -1080,8 +1081,8 @@ const serverIDForStandalone = 1 // serverID for standalone deployment.
 
 func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
-	etcdLogCfg := zap.NewProductionConfig()
-	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+	etcdLogCfg := gzap.NewProductionConfig()
+	etcdLogCfg.Level = gzap.NewAtomicLevelAt(gzap.ErrorLevel)
 	backoffCfg := backoff.DefaultConfig
 	backoffCfg.MaxDelay = 3 * time.Second
 	cli, err := clientv3.New(clientv3.Config{
@@ -1196,7 +1197,7 @@ func (do *Domain) Init(
 		if do.etcdClient != nil {
 			err := do.acquireServerID(ctx)
 			if err != nil {
-				logutil.BgLogger().Error("acquire serverID failed", zap.Error(err))
+				log.Error("acquire serverID failed", zap.Error(err))
 				do.isLostConnectionToPD.Store(1) // will retry in `do.serverIDKeeper`
 			} else {
 				if err := do.info.StoreServerInfo(context.Background()); err != nil {
@@ -1241,7 +1242,7 @@ func (do *Domain) Init(
 		// The reload(in step 2) operation takes more than ddlLease and a new reload operation was not performed,
 		// the next query will respond by ErrInfoSchemaExpired error. So we do a new reload to update schemaValidator.latestSchemaExpire.
 		if sub > (ddlLease / 2) {
-			logutil.BgLogger().Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
+			log.Warn("loading schema takes a long time, we do a new reload", zap.Duration("take time", sub))
 			err = do.Reload()
 			if err != nil {
 				return err
@@ -1313,13 +1314,13 @@ func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.C
 
 	// trigger check once instantly.
 	if err := do.checkReplicaRead(ctx, pdClient); err != nil {
-		logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+		log.Warn("refresh replicaRead flag failed", zap.Error(err))
 	}
 
 	ticker := time.NewTicker(time.Minute)
 	defer func() {
 		ticker.Stop()
-		logutil.BgLogger().Info("closestReplicaReadCheckLoop exited.")
+		log.Info("closestReplicaReadCheckLoop exited.")
 	}()
 	for {
 		select {
@@ -1327,7 +1328,7 @@ func (do *Domain) closestReplicaReadCheckLoop(ctx context.Context, pdClient pd.C
 			return
 		case <-ticker.C:
 			if err := do.checkReplicaRead(ctx, pdClient); err != nil {
-				logutil.BgLogger().Warn("refresh replicaRead flag failed", zap.Error(err))
+				log.Warn("refresh replicaRead flag failed", zap.Error(err))
 			}
 		}
 	}
@@ -1344,7 +1345,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	do.sysVarCache.RUnlock()
 
 	if !strings.EqualFold(replicaRead, "closest-adaptive") {
-		logutil.BgLogger().Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
+		log.Debug("closest replica read is not enabled, skip check!", zap.String("mode", replicaRead))
 		return nil
 	}
 
@@ -1360,7 +1361,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 		}
 	}
 	if zone == "" {
-		logutil.BgLogger().Debug("server contains no 'zone' label, disable closest replica read", zap.Any("labels", serverInfo.Labels))
+		log.Debug("server contains no 'zone' label, disable closest replica read", zap.Any("labels", serverInfo.Labels))
 		variable.SetEnableAdaptiveReplicaRead(false)
 		return nil
 	}
@@ -1428,7 +1429,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	}
 
 	if variable.SetEnableAdaptiveReplicaRead(enabled) {
-		logutil.BgLogger().Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
+		log.Info("tidb server adaptive closest replica read is changed", zap.Bool("enable", enabled))
 	}
 	return nil
 }
@@ -1472,14 +1473,14 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	err := schedulerManager.Start()
 	if err != nil {
-		logutil.BgLogger().Error("dist task scheduler failed", zap.Error(err))
+		log.Error("dist task scheduler failed", zap.Error(err))
 		return
 	}
-	logutil.BgLogger().Info("dist task scheduler started")
+	log.Info("dist task scheduler started")
 	defer func() {
-		logutil.BgLogger().Info("stopping dist task scheduler")
+		log.Info("stopping dist task scheduler")
 		schedulerManager.Stop()
-		logutil.BgLogger().Info("dist task scheduler stopped")
+		log.Info("dist task scheduler stopped")
 	}()
 
 	var dispatcherManager *dispatcher.Manager
@@ -1490,16 +1491,16 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		var err error
 		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
 		if err != nil {
-			logutil.BgLogger().Error("failed to create a dist task dispatcher", zap.Error(err))
+			log.Error("failed to create a dist task dispatcher", zap.Error(err))
 			return
 		}
 		dispatcherManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
 		if dispatcherManager != nil && dispatcherManager.Inited() {
-			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
+			log.Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
 			dispatcherManager.Stop()
-			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
+			log.Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
@@ -1637,7 +1638,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("loadPrivilegeInLoop exited.")
+			log.Info("loadPrivilegeInLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "loadPrivilegeInLoop", nil, false)
 
@@ -1651,7 +1652,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			case <-time.After(duration):
 			}
 			if !ok {
-				logutil.BgLogger().Error("load privilege loop watch channel closed")
+				log.Error("load privilege loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), privilegeKey)
 				count++
 				if count > 10 {
@@ -1664,7 +1665,7 @@ func (do *Domain) LoadPrivilegeLoop(sctx sessionctx.Context) error {
 			err := do.privHandle.Update(sctx)
 			metrics.LoadPrivilegeCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("load privilege failed", zap.Error(err))
+				log.Error("load privilege failed", zap.Error(err))
 			}
 		}
 	}, "loadPrivilegeInLoop")
@@ -1687,7 +1688,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("LoadSysVarCacheLoop exited.")
+			log.Info("LoadSysVarCacheLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "LoadSysVarCacheLoop", nil, false)
 
@@ -1714,7 +1715,7 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 			})
 
 			if !ok {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop loop watch channel closed")
+				log.Error("LoadSysVarCacheLoop loop watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), sysVarCacheKey)
 				count++
 				if count > 10 {
@@ -1723,11 +1724,11 @@ func (do *Domain) LoadSysVarCacheLoop(ctx sessionctx.Context) error {
 				continue
 			}
 			count = 0
-			logutil.BgLogger().Debug("Rebuilding sysvar cache from etcd watch event.")
+			log.Debug("Rebuilding sysvar cache from etcd watch event.")
 			err := do.rebuildSysVarCache(ctx)
 			metrics.LoadSysVarCacheCounter.WithLabelValues(metrics.RetLabel(err)).Inc()
 			if err != nil {
-				logutil.BgLogger().Error("LoadSysVarCacheLoop failed", zap.Error(err))
+				log.Error("LoadSysVarCacheLoop failed", zap.Error(err))
 			}
 		}
 	}, "LoadSysVarCacheLoop")
@@ -1746,7 +1747,7 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 	duration := 10 * time.Second
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("WatchTiFlashComputeNodeChange exit")
+			log.Info("WatchTiFlashComputeNodeChange exit")
 		}()
 		defer util.Recover(metrics.LabelDomain, "WatchTiFlashComputeNodeChange", nil, false)
 
@@ -1763,7 +1764,7 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 			case <-time.After(duration):
 			}
 			if !ok {
-				logutil.BgLogger().Error("WatchTiFlashComputeNodeChange watch channel closed")
+				log.Error("WatchTiFlashComputeNodeChange watch channel closed")
 				watchCh = do.etcdClient.Watch(context.Background(), tiflashComputeNodeKey)
 				count++
 				if count > 10 {
@@ -1778,11 +1779,11 @@ func (do *Domain) WatchTiFlashComputeNodeChange() error {
 				s.GetRegionCache().InvalidateTiFlashComputeStores()
 				if logCount == 6 {
 					// Print log every 6*duration seconds.
-					logutil.BgLogger().Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
+					log.Debug("tiflash_compute store cache invalied, will update next query", zap.Bool("watched", watched))
 					logCount = 0
 				}
 			default:
-				logutil.BgLogger().Debug("No need to watch tiflash_compute store cache for non-tikv store")
+				log.Debug("No need to watch tiflash_compute store cache for non-tikv store")
 				return
 			}
 		}
@@ -1823,7 +1824,7 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("globalBindHandleWorkerLoop exited.")
+			log.Info("globalBindHandleWorkerLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 
@@ -1841,7 +1842,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				bindHandle := do.bindHandle.Load()
 				err := bindHandle.Update(false)
 				if err != nil {
-					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
+					log.Error("update bindinfo failed", zap.Error(err))
 				}
 				bindHandle.DropInvalidBindRecord()
 				// Get Global
@@ -1856,7 +1857,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				}
 				err := do.bindHandle.Load().GCBindRecord()
 				if err != nil {
-					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
+					log.Error("GC bind record failed", zap.Error(err))
 				}
 			}
 		}
@@ -1866,7 +1867,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.Manager) {
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("handleEvolvePlanTasksLoop exited.")
+			log.Info("handleEvolvePlanTasksLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "handleEvolvePlanTasksLoop", nil, false)
 
@@ -1880,7 +1881,7 @@ func (do *Domain) handleEvolvePlanTasksLoop(ctx sessionctx.Context, owner owner.
 			if owner.IsOwner() {
 				err := do.bindHandle.Load().HandleEvolvePlanTask(ctx, false)
 				if err != nil {
-					logutil.BgLogger().Info("evolve plan failed", zap.Error(err))
+					log.Info("evolve plan failed", zap.Error(err))
 				}
 			}
 		}
@@ -1893,12 +1894,12 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	err := telemetry.InitialRun(ctx, do.GetEtcdClient())
 	if err != nil {
-		logutil.BgLogger().Warn("Initial telemetry run failed", zap.Error(err))
+		log.Warn("Initial telemetry run failed", zap.Error(err))
 	}
 
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("TelemetryReportLoop exited.")
+			log.Info("TelemetryReportLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "TelemetryReportLoop", nil, false)
 
@@ -1915,7 +1916,7 @@ func (do *Domain) TelemetryReportLoop(ctx sessionctx.Context) {
 				err := telemetry.ReportUsageData(ctx, do.GetEtcdClient())
 				if err != nil {
 					// Only status update errors will be printed out
-					logutil.BgLogger().Warn("TelemetryReportLoop status update failed", zap.Error(err))
+					log.Warn("TelemetryReportLoop status update failed", zap.Error(err))
 				}
 			}
 		}
@@ -1927,7 +1928,7 @@ func (do *Domain) TelemetryRotateSubWindowLoop(ctx sessionctx.Context) {
 	ctx.GetSessionVars().InRestrictedSQL = true
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("TelemetryRotateSubWindowLoop exited.")
+			log.Info("TelemetryRotateSubWindowLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "TelemetryRotateSubWindowLoop", nil, false)
 
@@ -2029,11 +2030,11 @@ func (do *Domain) StartPlanReplayerHandle() {
 		return
 	}
 	do.wg.Run(func() {
-		logutil.BgLogger().Info("PlanReplayerTaskCollectHandle started")
+		log.Info("PlanReplayerTaskCollectHandle started")
 		tikcer := time.NewTicker(time.Duration(lease))
 		defer func() {
 			tikcer.Stop()
-			logutil.BgLogger().Info("PlanReplayerTaskCollectHandle exited.")
+			log.Info("PlanReplayerTaskCollectHandle exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskCollectHandle", nil, false)
 
@@ -2044,16 +2045,16 @@ func (do *Domain) StartPlanReplayerHandle() {
 			case <-tikcer.C:
 				err := do.planReplayerHandle.CollectPlanReplayerTask()
 				if err != nil {
-					logutil.BgLogger().Warn("plan replayer handle collect tasks failed", zap.Error(err))
+					log.Warn("plan replayer handle collect tasks failed", zap.Error(err))
 				}
 			}
 		}
 	}, "PlanReplayerTaskCollectHandle")
 
 	do.wg.Run(func() {
-		logutil.BgLogger().Info("PlanReplayerTaskDumpHandle started")
+		log.Info("PlanReplayerTaskDumpHandle started")
 		defer func() {
-			logutil.BgLogger().Info("PlanReplayerTaskDumpHandle exited.")
+			log.Info("PlanReplayerTaskDumpHandle exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "PlanReplayerTaskDumpHandle", nil, false)
 
@@ -2083,11 +2084,11 @@ func (do *Domain) GetDumpFileGCChecker() *dumpFileGcChecker {
 // DumpFileGcCheckerLoop creates a goroutine that handles `exit` and `gc`.
 func (do *Domain) DumpFileGcCheckerLoop() {
 	do.wg.Run(func() {
-		logutil.BgLogger().Info("dumpFileGcChecker started")
+		log.Info("dumpFileGcChecker started")
 		gcTicker := time.NewTicker(do.dumpFileGcChecker.gcLease)
 		defer func() {
 			gcTicker.Stop()
-			logutil.BgLogger().Info("dumpFileGcChecker exited.")
+			log.Info("dumpFileGcChecker exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "dumpFileGcCheckerLoop", nil, false)
 
@@ -2116,9 +2117,9 @@ func (do *Domain) StartHistoricalStatsWorker() {
 		return
 	}
 	do.wg.Run(func() {
-		logutil.BgLogger().Info("HistoricalStatsWorker started")
+		log.Info("HistoricalStatsWorker started")
 		defer func() {
-			logutil.BgLogger().Info("HistoricalStatsWorker exited.")
+			log.Info("HistoricalStatsWorker exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "HistoricalStatsWorkerLoop", nil, false)
 
@@ -2133,7 +2134,7 @@ func (do *Domain) StartHistoricalStatsWorker() {
 				}
 				err := do.historicalStatsWorker.DumpHistoricalStats(tblID, do.StatsHandle())
 				if err != nil {
-					logutil.BgLogger().Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
+					log.Warn("dump historical stats failed", zap.Error(err), zap.Int64("tableID", tblID))
 				}
 			}
 		}
@@ -2277,7 +2278,7 @@ func (do *Domain) newOwnerManager(prompt, ownerKey string) owner.Manager {
 	// TODO: Need to do something when err is not nil.
 	err := statsOwner.CampaignOwner()
 	if err != nil {
-		logutil.BgLogger().Warn("campaign owner failed", zap.Error(err))
+		log.Warn("campaign owner failed", zap.Error(err))
 	}
 	return statsOwner
 }
@@ -2296,9 +2297,9 @@ func (do *Domain) initStats() {
 		err = statsHandle.InitStats(do.InfoSchema())
 	}
 	if err != nil {
-		logutil.BgLogger().Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
+		log.Error("init stats info failed", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
+		log.Info("init stats info time", zap.Bool("lite", liteInitStats), zap.Duration("take time", time.Since(t)))
 	}
 }
 
@@ -2313,7 +2314,7 @@ func (do *Domain) loadStatsWorker() {
 	defer func() {
 		loadTicker.Stop()
 		updStatsHealthyTicker.Stop()
-		logutil.BgLogger().Info("loadStatsWorker exited.")
+		log.Info("loadStatsWorker exited.")
 	}()
 	do.initStats()
 	statsHandle := do.StatsHandle()
@@ -2323,15 +2324,15 @@ func (do *Domain) loadStatsWorker() {
 		case <-loadTicker.C:
 			err = statsHandle.RefreshVars()
 			if err != nil {
-				logutil.BgLogger().Debug("refresh variables failed", zap.Error(err))
+				log.Debug("refresh variables failed", zap.Error(err))
 			}
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
-				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
+				log.Debug("update stats info failed", zap.Error(err))
 			}
 			err = statsHandle.LoadNeededHistograms()
 			if err != nil {
-				logutil.BgLogger().Debug("load histograms failed", zap.Error(err))
+				log.Debug("load histograms failed", zap.Error(err))
 			}
 		case <-updStatsHealthyTicker.C:
 			statsHandle.UpdateStatsHealthyMetrics()
@@ -2348,7 +2349,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	handle := do.StatsHandle()
 	defer func() {
 		idxUsageSyncTicker.Stop()
-		logutil.BgLogger().Info("syncIndexUsageWorker exited.")
+		log.Info("syncIndexUsageWorker exited.")
 	}()
 	for {
 		select {
@@ -2357,14 +2358,14 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 			return
 		case <-idxUsageSyncTicker.C:
 			if err := handle.DumpIndexUsageToKV(); err != nil {
-				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
+				log.Debug("dump index usage failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				logutil.BgLogger().Error("gc index usage failed", zap.String("category", "stats"), zap.Error(err))
+				log.Error("gc index usage failed", zap.String("category", "stats"), zap.Error(err))
 			}
 		}
 	}
@@ -2375,25 +2376,25 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
-		logutil.BgLogger().Info("updateStatsWorker is going to exit, start to flush stats")
+		log.Info("updateStatsWorker is going to exit, start to flush stats")
 		statsHandle.FlushStats()
-		logutil.BgLogger().Info("updateStatsWorker ready to release owner")
+		log.Info("updateStatsWorker ready to release owner")
 		owner.Cancel()
 		ch <- struct{}{}
 	}()
 	select {
 	case <-ch:
-		logutil.BgLogger().Info("updateStatsWorker exit preprocessing finished")
+		log.Info("updateStatsWorker exit preprocessing finished")
 		return
 	case <-timeout.Done():
-		logutil.BgLogger().Warn("updateStatsWorker exit preprocessing timeout, force exiting")
+		log.Warn("updateStatsWorker exit preprocessing timeout, force exiting")
 		return
 	}
 }
 
 func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
-	logutil.BgLogger().Info("updateStatsWorker started.")
+	log.Info("updateStatsWorker started.")
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
@@ -2406,7 +2407,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		deltaUpdateTicker.Stop()
 		readMemTricker.Stop()
 		do.SetStatsUpdating(false)
-		logutil.BgLogger().Info("updateStatsWorker exited.")
+		log.Info("updateStatsWorker exited.")
 	}()
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 
@@ -2419,12 +2420,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 		case t := <-statsHandle.DDLEventCh():
 			err := statsHandle.HandleDDLEvent(t)
 			if err != nil {
-				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
+				log.Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
-				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
+				log.Debug("dump stats delta failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
@@ -2432,12 +2433,12 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			}
 			err := statsHandle.GCStats(do.InfoSchema(), do.DDL().GetLease())
 			if err != nil {
-				logutil.BgLogger().Debug("GC stats failed", zap.Error(err))
+				log.Debug("GC stats failed", zap.Error(err))
 			}
 		case <-dumpColStatsUsageTicker.C:
 			err := statsHandle.DumpColStatsUsageToKV()
 			if err != nil {
-				logutil.BgLogger().Debug("dump column stats usage failed", zap.Error(err))
+				log.Debug("dump column stats usage failed", zap.Error(err))
 			}
 
 		case <-readMemTricker.C:
@@ -2452,7 +2453,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	analyzeTicker := time.NewTicker(do.statsLease)
 	defer func() {
 		analyzeTicker.Stop()
-		logutil.BgLogger().Info("autoAnalyzeWorker exited.")
+		log.Info("autoAnalyzeWorker exited.")
 	}()
 	for {
 		select {
@@ -2473,7 +2474,7 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 	gcTicker := time.NewTicker(gcInterval)
 	defer func() {
 		gcTicker.Stop()
-		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+		log.Info("gcAnalyzeHistory exited.")
 	}()
 	for {
 		select {
@@ -2483,7 +2484,7 @@ func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
 				if err != nil {
-					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
+					log.Warn("gc analyze history failed", zap.Error(err))
 				}
 			}
 		case <-do.exit:
@@ -2523,7 +2524,7 @@ func (do *Domain) NotifyUpdatePrivilege() error {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), privilegeKey, "")
 		if err != nil {
-			logutil.BgLogger().Warn("notify update privilege failed", zap.Error(err))
+			log.Warn("notify update privilege failed", zap.Error(err))
 		}
 	}
 
@@ -2552,13 +2553,13 @@ func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 		row := do.etcdClient.KV
 		_, err := row.Put(context.Background(), sysVarCacheKey, "")
 		if err != nil {
-			logutil.BgLogger().Warn("notify update sysvar cache failed", zap.Error(err))
+			log.Warn("notify update sysvar cache failed", zap.Error(err))
 		}
 	}
 	// update locally
 	if updateLocal {
 		if err := do.rebuildSysVarCache(nil); err != nil {
-			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+			log.Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
 	}
 }
@@ -2570,7 +2571,7 @@ func (do *Domain) LoadSigningCertLoop(signingCert, signingKey string) {
 
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Debug("loadSigningCertLoop exited.")
+			log.Debug("loadSigningCertLoop exited.")
 		}()
 		defer util.Recover(metrics.LabelDomain, "LoadSigningCertLoop", nil, false)
 
@@ -2672,7 +2673,7 @@ func initByLDFlagsForGlobalKill() {
 		}
 		lostConnectionToPDTimeout = time.Duration(i) * time.Second
 
-		logutil.BgLogger().Info("global_kill_test is enabled", zap.Duration("serverIDTTL", serverIDTTL),
+		log.Info("global_kill_test is enabled", zap.Duration("serverIDTTL", serverIDTTL),
 			zap.Duration("serverIDTimeToKeepAlive", serverIDTimeToKeepAlive),
 			zap.Duration("serverIDTimeToCheckPDConnectionRestored", serverIDTimeToCheckPDConnectionRestored),
 			zap.Duration("lostConnectionToPDTimeout", lostConnectionToPDTimeout))
@@ -2691,7 +2692,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	resp, err := do.etcdClient.Grant(childCtx, int64(serverIDTTL.Seconds()))
 	cancel()
 	if err != nil {
-		logutil.BgLogger().Error("retrieveServerIDSession.Grant fail", zap.Error(err))
+		log.Error("retrieveServerIDSession.Grant fail", zap.Error(err))
 		return nil, err
 	}
 	leaseID := resp.ID
@@ -2699,7 +2700,7 @@ func (do *Domain) retrieveServerIDSession(ctx context.Context) (*concurrency.Ses
 	session, err := concurrency.NewSession(do.etcdClient,
 		concurrency.WithLease(leaseID), concurrency.WithContext(context.Background()))
 	if err != nil {
-		logutil.BgLogger().Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
+		log.Error("retrieveServerIDSession.NewSession fail", zap.Error(err))
 		return nil, err
 	}
 	do.serverIDSession = session
@@ -2740,14 +2741,14 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 			return err
 		}
 		if !resp.Succeeded {
-			logutil.BgLogger().Info("propose serverID exists, try again", zap.Uint64("proposeServerID", proposeServerID))
+			log.Info("propose serverID exists, try again", zap.Uint64("proposeServerID", proposeServerID))
 			time.Sleep(acquireServerIDRetryInterval)
 			conflictCnt++
 			continue
 		}
 
 		atomic.StoreUint64(&do.serverID, proposeServerID)
-		logutil.BgLogger().Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
+		log.Info("acquireServerID", zap.Uint64("serverID", do.ServerID()),
 			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
 		return nil
 	}
@@ -2766,9 +2767,9 @@ func (do *Domain) releaseServerID(ctx context.Context) {
 	key := fmt.Sprintf("%s/%v", serverIDEtcdPath, serverID)
 	err := ddlutil.DeleteKeyFromEtcd(key, do.etcdClient, refreshServerIDRetryCnt, acquireServerIDTimeout)
 	if err != nil {
-		logutil.BgLogger().Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
+		log.Error("releaseServerID fail", zap.Uint64("serverID", serverID), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("releaseServerID succeed", zap.Uint64("serverID", serverID))
+		log.Info("releaseServerID succeed", zap.Uint64("serverID", serverID))
 	}
 }
 
@@ -2802,9 +2803,9 @@ func (do *Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64,
 				}
 			}
 		}
-		logutil.BgLogger().Info("upgrade to 64 bits server ID due to used up", zap.Int("len(allServerInfo)", len(allServerInfo)))
+		log.Info("upgrade to 64 bits server ID due to used up", zap.Int("len(allServerInfo)", len(allServerInfo)))
 	} else {
-		logutil.BgLogger().Info("upgrade to 64 bits server ID due to conflict", zap.Int("conflictCnt", conflictCnt))
+		log.Info("upgrade to 64 bits server ID due to conflict", zap.Int("conflictCnt", conflictCnt))
 	}
 
 	// upgrade to 64 bits.
@@ -2821,9 +2822,9 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 	value := "0"
 	err = ddlutil.PutKVToEtcd(ctx, do.etcdClient, refreshServerIDRetryCnt, key, value, clientv3.WithLease(session.Lease()))
 	if err != nil {
-		logutil.BgLogger().Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
+		log.Error("refreshServerIDTTL fail", zap.Uint64("serverID", do.ServerID()), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()),
+		log.Info("refreshServerIDTTL succeed", zap.Uint64("serverID", do.ServerID()),
 			zap.String("lease id", strconv.FormatInt(int64(session.Lease()), 16)))
 	}
 	return err
@@ -2832,10 +2833,10 @@ func (do *Domain) refreshServerIDTTL(ctx context.Context) error {
 func (do *Domain) serverIDKeeper() {
 	defer func() {
 		do.wg.Done()
-		logutil.BgLogger().Info("serverIDKeeper exited.")
+		log.Info("serverIDKeeper exited.")
 	}()
 	defer util.Recover(metrics.LabelDomain, "serverIDKeeper", func() {
-		logutil.BgLogger().Info("recover serverIDKeeper.")
+		log.Info("recover serverIDKeeper.")
 		// should be called before `do.wg.Done()`, to ensure that Domain.Close() waits for the new `serverIDKeeper()` routine.
 		do.wg.Add(1)
 		go do.serverIDKeeper()
@@ -2859,17 +2860,17 @@ func (do *Domain) serverIDKeeper() {
 	var lastSucceedTimestamp time.Time
 
 	onConnectionToPDRestored := func() {
-		logutil.BgLogger().Info("restored connection to PD")
+		log.Info("restored connection to PD")
 		do.isLostConnectionToPD.Store(0)
 		lastSucceedTimestamp = time.Now()
 
 		if err := do.info.StoreServerInfo(context.Background()); err != nil {
-			logutil.BgLogger().Error("StoreServerInfo failed", zap.Error(err))
+			log.Error("StoreServerInfo failed", zap.Error(err))
 		}
 	}
 
 	onConnectionToPDLost := func() {
-		logutil.BgLogger().Warn("lost connection to PD")
+		log.Warn("lost connection to PD")
 		do.isLostConnectionToPD.Store(1)
 
 		// Kill all connections when lost connection to PD,
@@ -2900,7 +2901,7 @@ func (do *Domain) serverIDKeeper() {
 			// inform that TTL of `serverID` is expired. See https://godoc.org/github.com/coreos/etcd/clientv3/concurrency#Session.Done
 			//   Should be in `IsLostConnectionToPD` state, as `lostConnectionToPDTimeout` is shorter than `serverIDTTL`.
 			//   So just set `do.serverIDSession = nil` to restart `serverID` session in `retrieveServerIDSession()`.
-			logutil.BgLogger().Info("serverIDSession need restart")
+			log.Info("serverIDSession need restart")
 			do.serverIDSession = nil
 		case <-do.exit:
 			return
@@ -2912,7 +2913,7 @@ func (do *Domain) serverIDKeeper() {
 func (do *Domain) StartTTLJobManager() {
 	do.wg.Run(func() {
 		defer func() {
-			logutil.BgLogger().Info("ttlJobManager exited.")
+			log.Info("ttlJobManager exited.")
 		}()
 
 		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)

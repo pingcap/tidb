@@ -21,11 +21,11 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/mathutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // RoundMode is the type for round mode.
@@ -2411,7 +2411,7 @@ func NewDecFromFloatForTest(f float64) *MyDecimal {
 	dec := new(MyDecimal)
 	err := dec.FromFloat64(f)
 	if err != nil {
-		log.Panic("encountered error", zap.Error(err), zap.String("DecimalStr", strconv.FormatFloat(f, 'g', -1, 64)))
+		log.Fatal("encountered error", zap.Error(err), zap.String("DecimalStr", strconv.FormatFloat(f, 'g', -1, 64)))
 	}
 	return dec
 }
@@ -2421,7 +2421,7 @@ func NewDecFromStringForTest(s string) *MyDecimal {
 	dec := new(MyDecimal)
 	err := dec.FromString([]byte(s))
 	if err != nil {
-		log.Panic("encountered error", zap.Error(err), zap.String("DecimalStr", s))
+		log.Fatal("encountered error", zap.Error(err), zap.String("DecimalStr", s))
 	}
 	return dec
 }

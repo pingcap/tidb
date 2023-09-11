@@ -36,13 +36,13 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Attention:
@@ -597,7 +597,7 @@ func newSinglePointAlloc(store kv.Storage, dbID, tblID int64, isUnsigned bool) *
 		})
 		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespaceSlash(store.GetCodec()))
 		if err != nil {
-			logutil.BgLogger().Error("fail to connect etcd, fallback to default", zap.String("category", "autoid client"), zap.Error(err))
+			log.Error("fail to connect etcd, fallback to default", zap.String("category", "autoid client"), zap.Error(err))
 			return nil
 		}
 		spa.clientDiscover = clientDiscover{etcdCli: etcdCli}
@@ -948,7 +948,7 @@ func (alloc *allocator) alloc4Signed(ctx context.Context, n uint64, increment, o
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	logutil.Logger(context.TODO()).Debug("alloc N signed ID",
+	log.Debug("alloc N signed ID",
 		zap.Uint64("from ID", uint64(alloc.base)),
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
@@ -1039,7 +1039,7 @@ func (alloc *allocator) alloc4Unsigned(ctx context.Context, n uint64, increment,
 		}
 		alloc.base, alloc.end = newBase, newEnd
 	}
-	logutil.Logger(context.TODO()).Debug("alloc unsigned ID",
+	log.Debug("alloc unsigned ID",
 		zap.Uint64(" from ID", uint64(alloc.base)),
 		zap.Uint64("to ID", uint64(alloc.base+n1)),
 		zap.Int64("table ID", alloc.tbID),
@@ -1160,7 +1160,7 @@ func (alloc *allocator) alloc4Sequence() (min int64, max int64, round int64, err
 	if err != nil {
 		return 0, 0, 0, err
 	}
-	logutil.Logger(context.TODO()).Debug("alloc sequence value",
+	log.Debug("alloc sequence value",
 		zap.Uint64(" from value", uint64(newBase)),
 		zap.Uint64("to value", uint64(newEnd)),
 		zap.Int64("table ID", alloc.tbID),

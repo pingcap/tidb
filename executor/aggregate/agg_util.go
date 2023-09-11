@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
@@ -54,7 +54,7 @@ func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {
 		// Release the resource, but throw the panic again and let the top level handle it.
 		terror.Log(b.Close())
-		logutil.BgLogger().Warn("panic in Open(), close base executor and throw exception again")
+		log.Warn("panic in Open(), close base executor and throw exception again")
 		panic(r)
 	}
 }
@@ -62,7 +62,7 @@ func closeBaseExecutor(b *exec.BaseExecutor) {
 func recoveryHashAgg(output chan *AfFinalResult, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &AfFinalResult{err: errors.Errorf("%v", r)}
-	logutil.BgLogger().Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
+	log.Error("parallel hash aggregation panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func getGroupKeyMemUsage(groupKey [][]byte) int64 {

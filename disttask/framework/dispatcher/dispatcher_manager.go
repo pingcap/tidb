@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/syncutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -134,13 +134,13 @@ func (dm *Manager) Inited() bool {
 
 // dispatchTaskLoop dispatches the global tasks.
 func (dm *Manager) dispatchTaskLoop() {
-	logutil.BgLogger().Info("dispatch task loop start")
+	log.Info("dispatch task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-dm.ctx.Done():
-			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
+			log.Info("dispatch task loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
 			cnt := dm.getRunningTaskCnt()
@@ -151,7 +151,7 @@ func (dm *Manager) dispatchTaskLoop() {
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			tasks, err := dm.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateCancelling)
 			if err != nil {
-				logutil.BgLogger().Warn("get unfinished(pending, running, reverting or cancelling) tasks failed", zap.Error(err))
+				log.Warn("get unfinished(pending, running, reverting or cancelling) tasks failed", zap.Error(err))
 				break
 			}
 
@@ -169,13 +169,13 @@ func (dm *Manager) dispatchTaskLoop() {
 				// this should not happen normally, unless user modify system table
 				// directly.
 				if GetDispatcherFactory(task.Type) == nil {
-					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
+					log.Warn("unknown task type", zap.Int64("task-id", task.ID),
 						zap.String("task-type", task.Type))
 					prevState := task.State
 					task.State = proto.TaskStateFailed
 					task.Error = errors.New("unknown task type")
 					if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState); err2 != nil {
-						logutil.BgLogger().Warn("update task state of unknown type failed", zap.Error(err2))
+						log.Warn("update task state of unknown type failed", zap.Error(err2))
 					}
 					continue
 				}
@@ -198,7 +198,7 @@ func (dm *Manager) dispatchTaskLoop() {
 
 func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 	if cnt >= DefaultDispatchConcurrency {
-		logutil.BgLogger().Info("dispatch task loop, running task cnt is more than concurrency limitation",
+		log.Info("dispatch task loop, running task cnt is more than concurrency limitation",
 			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
 		return true
 	}

@@ -43,14 +43,14 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -172,7 +172,7 @@ func (h *Handle) Clear() {
 	h.mu.Lock()
 	cache, err := cache.NewStatsCache()
 	if err != nil {
-		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
+		log.Warn("create stats cache failed", zap.Error(err))
 		h.mu.Unlock()
 		return
 	}
@@ -310,7 +310,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		count := row.GetInt64(3)
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
-			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+			log.Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
 			continue
 		}
@@ -321,7 +321,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			logutil.BgLogger().Error("error occurred when read table stats", zap.String("category", "stats"), zap.String("table", tableInfo.Name.O), zap.Error(err))
+			log.Error("error occurred when read table stats", zap.String("category", "stats"), zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -397,7 +397,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 				item += " " + globalTableInfo.FindIndexNameByID(histIDs[0])
 			}
 		}
-		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
+		log.Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
 			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
 	}
 	return
@@ -463,7 +463,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 		// For AutoAnalyze and HandleDDLEvent(ActionDropTablePartition), we need to use @@global.tidb_skip_missing_partition_stats
 		val, err1 := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
 		if err1 != nil {
-			logutil.BgLogger().Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
+			log.Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
 			err = err1
 			return
 		}
@@ -836,7 +836,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
+		log.Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
 		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", col.TableID, col.ID))
 	}
 	statsVer := rows[0].GetInt64(0)
@@ -899,7 +899,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		return errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID))
+		log.Error("fail to get stats version for this histogram", zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID))
 		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", idx.TableID, idx.ID))
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
@@ -931,11 +931,11 @@ func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
 		e := <-h.ddlEventCh
 		if err := h.HandleDDLEvent(e); err != nil {
-			logutil.BgLogger().Error("handle ddl event fail", zap.String("category", "stats"), zap.Error(err))
+			log.Error("handle ddl event fail", zap.String("category", "stats"), zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
-		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
+		log.Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
 	}
 }
 
@@ -1083,7 +1083,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 	defer func() {
 		if err == nil && statsVer != 0 {
 			if err1 := recordHistoricalStatsMeta(sctx, tableID, statsVer, source); err1 != nil {
-				logutil.BgLogger().Error("record historical stats meta failed",
+				log.Error("record historical stats meta failed",
 					zap.Int64("table-id", tableID),
 					zap.Uint64("version", statsVer),
 					zap.String("source", source),
@@ -1141,7 +1141,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		if modifyCnt < 0 {
 			modifyCnt = 0
 		}
-		logutil.BgLogger().Info("incrementally update modifyCount", zap.String("category", "stats"),
+		log.Info("incrementally update modifyCount", zap.String("category", "stats"),
 			zap.Int64("tableID", tableID),
 			zap.Int64("curModifyCnt", curModifyCnt),
 			zap.Int64("results.BaseModifyCnt", results.BaseModifyCnt),
@@ -1152,7 +1152,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("incrementally update count", zap.String("category", "stats"),
+			log.Info("incrementally update count", zap.String("category", "stats"),
 				zap.Int64("tableID", tableID),
 				zap.Int64("curCnt", curCnt),
 				zap.Int64("results.Count", results.Count),
@@ -1163,7 +1163,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 			if cnt < 0 {
 				cnt = 0
 			}
-			logutil.BgLogger().Info("directly update count", zap.String("category", "stats"),
+			log.Info("directly update count", zap.String("category", "stats"),
 				zap.Int64("tableID", tableID),
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
@@ -1502,7 +1502,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		return fmt.Errorf("extended statistics '%s' for the specified table does not exist", statsName)
 	}
 	if len(rows) > 1 {
-		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
+		log.Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
 	}
 
 	h.mu.Lock()
@@ -1549,9 +1549,9 @@ func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 			return
 		}
 		if retry == 1 {
-			logutil.BgLogger().Info("remove extended stats cache failed", zap.String("stats_name", statsName), zap.Int64("table_id", tableID))
+			log.Info("remove extended stats cache failed", zap.String("stats_name", statsName), zap.Int64("table_id", tableID))
 		} else {
-			logutil.BgLogger().Info("remove extended stats cache failed, retrying", zap.String("stats_name", statsName), zap.Int64("table_id", tableID))
+			log.Info("remove extended stats cache failed, retrying", zap.String("stats_name", statsName), zap.Int64("table_id", tableID))
 		}
 	}
 }
@@ -1603,7 +1603,7 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 		colIDs := row.GetString(2)
 		err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 		if err != nil {
-			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", colIDs), zap.Error(err))
+			log.Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", colIDs), zap.Error(err))
 			continue
 		}
 		item = h.fillExtendedStatsItemVals(item, cols, collectors)
@@ -1866,7 +1866,7 @@ func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
 		data := row.GetString(2)
 		err := json.Unmarshal([]byte(data), &twoIDs)
 		if err != nil {
-			logutil.BgLogger().Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", data), zap.Error(err))
+			log.Error("invalid column_ids in mysql.stats_extended, skip collecting extended stats for this row", zap.String("column_ids", data), zap.Error(err))
 			continue
 		}
 		columnIDs = append(columnIDs, twoIDs...)
@@ -2015,7 +2015,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	}
 	sc := v
 	sc.SetCapacity(c)
-	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
+	log.Info("update stats cache capacity successfully", zap.Int64("capacity", c))
 }
 
 // Close stops the background

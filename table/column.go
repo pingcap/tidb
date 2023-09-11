@@ -37,9 +37,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/timeutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Column provides meta data describing a table column.
@@ -303,14 +303,14 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	if err != nil && types.ErrTruncated.Equal(err) && col.GetType() != mysql.TypeSet && col.GetType() != mysql.TypeEnum {
 		str, err1 := val.ToString()
 		if err1 != nil {
-			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
+			log.Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 		}
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(col.FieldType.CompactStr(), str)
 	} else if (sc.InInsertStmt || sc.InUpdateStmt) && !casted.IsNull() &&
 		(col.GetType() == mysql.TypeDate || col.GetType() == mysql.TypeDatetime || col.GetType() == mysql.TypeTimestamp) {
 		str, err1 := val.ToString()
 		if err1 != nil {
-			logutil.BgLogger().Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
+			log.Warn("Datum ToString failed", zap.Stringer("Datum", val), zap.Error(err1))
 			str = val.GetString()
 		}
 		if innCasted, exit, innErr := handleZeroDatetime(ctx, col, casted, str, types.ErrWrongValue.Equal(err)); exit {
@@ -318,7 +318,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 		}
 	} else if err != nil && charset.ErrInvalidCharacterString.Equal(err) {
 		err = convertToIncorrectStringErr(err, col.Name.O)
-		logutil.BgLogger().Debug("incorrect string value",
+		log.Debug("incorrect string value",
 			zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	}
 

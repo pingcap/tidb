@@ -42,13 +42,13 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Storage represents a storage that connects TiKV.
@@ -106,11 +106,11 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
 	kvResp, err := h.Store.SendReq(tikv.NewBackofferWithVars(context.Background(), 500, nil), tikvReq, keyLocation.Region, time.Minute)
 	if err != nil {
-		logutil.BgLogger().Info("get MVCC by encoded key failed",
+		log.Info("get MVCC by encoded key failed",
 			zap.Stringer("encodeKey", encodedKey),
-			zap.Reflect("region", keyLocation.Region),
+			zap.Any("region", keyLocation.Region),
 			zap.Stringer("keyLocation", keyLocation),
-			zap.Reflect("kvResp", kvResp),
+			zap.Any("kvResp", kvResp),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
@@ -130,7 +130,7 @@ func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*Mvc
 	for {
 		curRegion, err := h.RegionCache.LocateKey(bo, startKey)
 		if err != nil {
-			logutil.BgLogger().Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
+			log.Error("get MVCC by startTS failed", zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey), zap.Error(err))
 			return nil, derr.ToTiDBErr(err)
 		}
@@ -141,34 +141,34 @@ func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*Mvc
 		tikvReq.Context.Priority = kvrpcpb.CommandPri_Low
 		kvResp, err := h.Store.SendReq(bo, tikvReq, curRegion.Region, time.Hour)
 		if err != nil {
-			logutil.BgLogger().Error("get MVCC by startTS failed",
+			log.Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
-				zap.Reflect("region", curRegion.Region),
+				zap.Any("region", curRegion.Region),
 				zap.Stringer("curRegion", curRegion),
-				zap.Reflect("kvResp", kvResp),
+				zap.Any("kvResp", kvResp),
 				zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		data := kvResp.Resp.(*kvrpcpb.MvccGetByStartTsResponse)
 		if err := data.GetRegionError(); err != nil {
-			logutil.BgLogger().Warn("get MVCC by startTS failed",
+			log.Warn("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
-				zap.Reflect("region", curRegion.Region),
+				zap.Any("region", curRegion.Region),
 				zap.Stringer("curRegion", curRegion),
-				zap.Reflect("kvResp", kvResp),
+				zap.Any("kvResp", kvResp),
 				zap.Stringer("error", err))
 			continue
 		}
 
 		if len(data.GetError()) > 0 {
-			logutil.BgLogger().Error("get MVCC by startTS failed",
+			log.Error("get MVCC by startTS failed",
 				zap.Uint64("txnStartTS", startTS),
 				zap.Stringer("startKey", startKey),
-				zap.Reflect("region", curRegion.Region),
+				zap.Any("region", curRegion.Region),
 				zap.Stringer("curRegion", curRegion),
-				zap.Reflect("kvResp", kvResp),
+				zap.Any("kvResp", kvResp),
 				zap.String("error", data.GetError()))
 			return nil, errors.New(data.GetError())
 		}
@@ -292,7 +292,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchem
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
-			logutil.BgLogger().Error("locate region failed", zap.Error(err))
+			log.Error("locate region failed", zap.Error(err))
 			continue
 		}
 
@@ -423,7 +423,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		log.Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return
@@ -822,10 +822,10 @@ func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res inte
 
 func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res interface{}) error {
 	urlVar := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), host, uri)
-	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
+	log.Debug("RequestPD URL", zap.String("url", urlVar))
 	req, err := http.NewRequest(method, urlVar, body)
 	if err != nil {
-		logutil.BgLogger().Warn("requestPDForOneHost new request failed",
+		log.Warn("requestPDForOneHost new request failed",
 			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -833,7 +833,7 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 	resp, err := util.InternalHTTPClient().Do(req)
 	if err != nil {
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
-		logutil.BgLogger().Warn("requestPDForOneHost do request failed",
+		log.Warn("requestPDForOneHost do request failed",
 			zap.String("url", urlVar), zap.Error(err))
 		return errors.Trace(err)
 	}
@@ -842,7 +842,7 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("requestPDForOneHost close body failed",
+			log.Warn("requestPDForOneHost close body failed",
 				zap.String("url", urlVar), zap.Error(err))
 		}
 	}()
@@ -860,7 +860,7 @@ func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res 
 			logFields = append(logFields, zap.ByteString("body", bs))
 		}
 
-		logutil.BgLogger().Warn("requestPDForOneHost failed with non 200 status", logFields...)
+		log.Warn("requestPDForOneHost failed with non 200 status", logFields...)
 		return errors.Errorf("PD request failed with status: '%s'", resp.Status)
 	}
 
@@ -982,7 +982,7 @@ func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexSt
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
+			log.Error("err", zap.Error(err))
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
@@ -1022,7 +1022,7 @@ func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
+			log.Error("err", zap.Error(err))
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
@@ -1050,7 +1050,7 @@ func (h *Helper) SetPlacementRule(rule placement.Rule) error {
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
+			log.Error("err", zap.Error(err))
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
@@ -1078,7 +1078,7 @@ func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
+			log.Error("err", zap.Error(err))
 		}
 	}()
 
@@ -1130,7 +1130,7 @@ func (h *Helper) PostAccelerateSchedule(tableID int64) error {
 	}
 	defer func() {
 		if err = resp.Body.Close(); err != nil {
-			logutil.BgLogger().Error("err", zap.Error(err))
+			log.Error("err", zap.Error(err))
 		}
 	}()
 	return nil
@@ -1182,7 +1182,7 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 		}
 	}
 	if n != realN {
-		logutil.BgLogger().Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
+		log.Warn("ComputeTiFlashStatus count check failed", zap.Int64("claim", n), zap.Int64("real", realN))
 	}
 	return nil
 }
@@ -1209,7 +1209,7 @@ func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tabl
 	defer func() {
 		err = resp.Body.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
+			log.Error("close body failed", zap.Error(err))
 		}
 	}()
 

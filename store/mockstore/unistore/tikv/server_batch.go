@@ -19,8 +19,9 @@ import (
 	"io"
 
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	// "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 type respIDPair struct {

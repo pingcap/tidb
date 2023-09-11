@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -181,7 +181,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		if sqlErr != nil {
 			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())
 			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil
-			logutil.BgLogger().Error("execute query for ttl scan task failed",
+			log.Error("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
 				zap.Int("retryTimes", retryTimes),
 				zap.Bool("needRetry", needRetry),
@@ -306,7 +306,7 @@ func (w *ttlScanWorker) loop() error {
 	tracer := metrics.NewScanWorkerPhaseTracer()
 	defer func() {
 		tracer.EndPhase()
-		logutil.BgLogger().Info("ttlScanWorker loop exited.")
+		log.Info("ttlScanWorker loop exited.")
 	}()
 
 	ticker := time.Tick(time.Second * 5)
@@ -326,7 +326,7 @@ func (w *ttlScanWorker) loop() error {
 			case *ttlScanTask:
 				w.handleScanTask(tracer, task)
 			default:
-				logutil.BgLogger().Warn("unrecognized message for ttlScanWorker", zap.Any("msg", msg))
+				log.Warn("unrecognized message for ttlScanWorker", zap.Any("msg", msg))
 			}
 		}
 	}

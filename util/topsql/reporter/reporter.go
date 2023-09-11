@@ -20,12 +20,12 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -308,7 +308,7 @@ func (tsr *RemoteTopSQLReporter) trySend(data *ReportData, deadline time.Time) e
 	tsr.DefaultDataSinkRegisterer.Unlock()
 	for _, ds := range dataSinks {
 		if err := ds.TrySend(data, deadline); err != nil {
-			logutil.BgLogger().Warn("failed to send data to datasink", zap.String("category", "top-sql"), zap.Error(err))
+			log.Warn("failed to send data to datasink", zap.String("category", "top-sql"), zap.Error(err))
 		}
 	}
 	return nil

@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	pd "github.com/tikv/pd/client"
 	gatomic "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/sync/errgroup"
 )
 

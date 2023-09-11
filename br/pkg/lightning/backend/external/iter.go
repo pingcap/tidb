@@ -20,8 +20,9 @@ import (
 	"context"
 	"io"
 
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -86,7 +87,8 @@ func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
 ](ctx context.Context, readerOpeners []readerOpenerFn[T, R]) (*mergeIter[T, R], error) {
-	logger := logutil.Logger(ctx)
+	// logger := logutil.Logger(ctx)
+	logger := log.L()
 	readers := make([]*R, len(readerOpeners))
 	closeReaders := func() {
 		for _, rp := range readers {

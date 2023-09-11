@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	plog "github.com/pingcap/log"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -35,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -58,7 +59,9 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) execute.MiniTaskExe
 }
 
 func (e *importMinimalTaskExecutor) Run(ctx context.Context) error {
-	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
+	// logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
+	logger := plog.L().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
+
 	logger.Info("run minimal task")
 	failpoint.Inject("waitBeforeSortChunk", func() {
 		time.Sleep(3 * time.Second)

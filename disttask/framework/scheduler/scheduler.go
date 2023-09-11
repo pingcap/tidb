@@ -27,7 +27,8 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -317,11 +318,11 @@ func (s *BaseScheduler) runMinimalTask(minimalTaskCtx context.Context, minimalTa
 		if taskID, ok := val.(int); ok {
 			mgr, err := storage.GetTaskManager()
 			if err != nil {
-				logutil.BgLogger().Error("get task manager failed", zap.Error(err))
+				log.Error("get task manager failed", zap.Error(err))
 			} else {
 				err = mgr.CancelGlobalTask(int64(taskID))
 				if err != nil {
-					logutil.BgLogger().Error("cancel global task failed", zap.Error(err))
+					log.Error("cancel global task failed", zap.Error(err))
 				}
 			}
 		}
@@ -370,7 +371,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		return s.getError()
 	}
 	if subtask == nil {
-		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
+		log.Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
 	s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverting, nil)

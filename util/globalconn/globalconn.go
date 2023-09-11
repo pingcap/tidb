@@ -21,8 +21,8 @@ import (
 	"strconv"
 
 	"github.com/ngaut/sync2"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GCID is the Global Connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
@@ -215,12 +215,12 @@ func (g *GlobalAllocator) is64() bool {
 // upgradeTo64 upgrade allocator to 64bits.
 func (g *GlobalAllocator) upgradeTo64() {
 	g.is64bits.Set(1)
-	logutil.BgLogger().Info("GlobalAllocator upgrade to 64 bits")
+	log.Info("GlobalAllocator upgrade to 64 bits")
 }
 
 func (g *GlobalAllocator) downgradeTo32() {
 	g.is64bits.Set(0)
-	logutil.BgLogger().Info("GlobalAllocator downgrade to 32 bits")
+	log.Info("GlobalAllocator downgrade to 32 bits")
 }
 
 // LocalConnIDAllocator64TryCount is the try count of 64bits local connID allocation.
@@ -299,7 +299,7 @@ func (g *GlobalAllocator) Allocate() GCID {
 func (g *GlobalAllocator) Release(connectionID uint64) {
 	globalConnID, isTruncated, err := ParseConnID(connectionID)
 	if err != nil || isTruncated {
-		logutil.BgLogger().Error("failed to ParseGlobalConnID", zap.Error(err), zap.Uint64("connectionID", connectionID), zap.Bool("isTruncated", isTruncated))
+		log.Error("failed to ParseGlobalConnID", zap.Error(err), zap.Uint64("connectionID", connectionID), zap.Bool("isTruncated", isTruncated))
 		return
 	}
 
@@ -311,7 +311,7 @@ func (g *GlobalAllocator) Release(connectionID uint64) {
 				g.downgradeTo32()
 			}
 		} else {
-			logutil.BgLogger().Error("failed to release 32bits connection ID", zap.Uint64("connectionID", connectionID), zap.Uint64("localConnID", globalConnID.LocalConnID))
+			log.Error("failed to release 32bits connection ID", zap.Uint64("connectionID", connectionID), zap.Uint64("localConnID", globalConnID.LocalConnID))
 		}
 	}
 }
@@ -341,7 +341,7 @@ func initByLDFlagsForGlobalKill() {
 		LocalConnIDBits32 = uint(i)
 		MaxLocalConnID32 = 1<<LocalConnIDBits32 - 1
 
-		logutil.BgLogger().Info("global_kill_test is enabled",
+		log.Info("global_kill_test is enabled",
 			zap.Uint("ServerIDBits32", ServerIDBits32),
 			zap.Uint64("MaxServerID32", MaxServerID32),
 			zap.Uint("LocalConnIDBits32", LocalConnIDBits32),

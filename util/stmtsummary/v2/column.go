@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/plancodec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Statements summary table column name.
@@ -435,7 +435,7 @@ var columnFactoryMap = map[string]columnFactory{
 	PlanStr: func(info columnInfo, record *StmtRecord) interface{} {
 		plan, err := plancodec.DecodePlan(record.SamplePlan)
 		if err != nil {
-			logutil.BgLogger().Error("decode plan in statement summary failed",
+			log.Error("decode plan in statement summary failed",
 				zap.String("plan", record.SamplePlan),
 				zap.String("query", record.SampleSQL), zap.Error(err))
 			plan = ""

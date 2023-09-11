@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // HandleType is the type of a Handle, could be `int`(ie. kv.IntHandle) or `common`(ie. *kv.CommonHandle)
@@ -63,7 +63,7 @@ func handleType(handle kv.Handle) HandleType {
 	} else if h, ok := handle.(*kv.PartitionHandle); ok {
 		return handleType(h.Handle)
 	} else {
-		logutil.BgLogger().Warn("Unexpected kv.Handle type",
+		log.Warn("Unexpected kv.Handle type",
 			zap.String("handle Type", fmt.Sprintf("%T", handle)),
 		)
 	}
@@ -92,7 +92,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 
 		schema, ok := infoschema.SchemaByTable(table.Meta())
 		if !ok {
-			logutil.BgLogger().Warn("no schema associated with table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
+			log.Warn("no schema associated with table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
 			return result, nil
 		}
 		result.DbID = schema.ID
@@ -116,13 +116,13 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 			result.PartitionName = partition.Name.O
 		}
 		if !tableFound {
-			logutil.BgLogger().Warn("no table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
+			log.Warn("no table found in infoschema", zap.Int64("tableOrPartitionID", tableOrPartitionID))
 		}
 	}
 	if isRecordKey {
 		_, handle, err := tablecodec.DecodeRecordKey(key)
 		if err != nil {
-			logutil.BgLogger().Warn("decode record key failed", zap.Int64("tableOrPartitionID", tableOrPartitionID), zap.Error(err))
+			log.Warn("decode record key failed", zap.Int64("tableOrPartitionID", tableOrPartitionID), zap.Error(err))
 			return result, errors.Errorf("cannot decode record key of table %d", tableOrPartitionID)
 		}
 		result.HandleType = handleType(handle)
@@ -134,7 +134,7 @@ func DecodeKey(key []byte, infoschema infoschema.InfoSchema) (DecodedKey, error)
 		// is index key
 		_, _, indexValues, err := tablecodec.DecodeIndexKey(key)
 		if err != nil {
-			logutil.BgLogger().Warn("cannot decode index key", zap.ByteString("key", key), zap.Error(err))
+			log.Warn("cannot decode index key", zap.ByteString("key", key), zap.Error(err))
 			return result, nil
 		}
 		result.IndexID = indexID

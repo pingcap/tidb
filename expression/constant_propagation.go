@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/disjointset"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // MaxPropagateColsCnt means the max number of columns that can participate propagation.
@@ -344,7 +344,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		logutil.BgLogger().Warn("too many columns in a single CNF",
+		log.Warn("too many columns in a single CNF",
 			zap.Int("numCols", len(s.columns)),
 			zap.Int("maxNumCols", MaxPropagateColsCnt),
 		)
@@ -599,7 +599,7 @@ func (s *propOuterJoinConstSolver) solve(joinConds, filterConds []Expression) ([
 		s.insertCol(col)
 	}
 	if len(s.columns) > MaxPropagateColsCnt {
-		logutil.BgLogger().Warn("too many columns",
+		log.Warn("too many columns",
 			zap.Int("numCols", len(s.columns)),
 			zap.Int("maxNumCols", MaxPropagateColsCnt),
 		)

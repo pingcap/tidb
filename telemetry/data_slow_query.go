@@ -25,9 +25,9 @@ import (
 	pingcapErrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	pmodel "github.com/prometheus/common/model"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type slowQueryStats struct {
@@ -64,7 +64,7 @@ var (
 func getSlowQueryStats() (*slowQueryStats, error) {
 	slowQueryBucket, err := getSlowQueryBucket()
 	if err != nil {
-		logutil.BgLogger().Info("Failed to get Slow Query Stats", zap.Error(err))
+		log.Info("Failed to get Slow Query Stats", zap.Error(err))
 		return nil, err
 	}
 
@@ -96,7 +96,7 @@ func updateCurrentSQB() (err error) {
 	value, err := querySQLMetric(pQueryCtx, pQueryTs, promQL)
 
 	if err != nil && err != infosync.ErrPrometheusAddrIsNotSet {
-		logutil.BgLogger().Info("querySlowQueryMetric got error")
+		log.Info("querySlowQueryMetric got error")
 		return err
 	}
 	if value == nil {
@@ -143,7 +143,7 @@ func init() {
 	currentSQBInfo["+Inf"] = 0
 
 	if mysql.TiDBReleaseVersion != "None" {
-		logutil.BgLogger().Debug("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
+		log.Debug("Telemetry slow query stats initialized", zap.String("currentSQBInfo", currentSQBInfo.String()), zap.String("lastSQBInfo", lastSQBInfo.String()))
 	}
 }
 
@@ -154,5 +154,5 @@ func postReportSlowQueryStats() {
 	lastSQBInfo = currentSQBInfo
 	currentSQBInfo = make(SlowQueryBucket)
 	slowQueryLock.Unlock()
-	logutil.BgLogger().Info("Telemetry slow query stats, postReportSlowQueryStats finished")
+	log.Info("Telemetry slow query stats, postReportSlowQueryStats finished")
 }

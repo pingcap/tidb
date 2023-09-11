@@ -93,6 +93,7 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/consistency"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -111,7 +112,7 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.
@@ -1413,7 +1414,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// It might be a recently unregistered sysvar. We should return unknown
 		// since GetSysVar is the canonical version, but we can update the cache
 		// so the next request doesn't attempt to load this.
-		logutil.BgLogger().Info("sysvar does not exist. sysvar cache may be stale", zap.String("name", name))
+		log.Info("sysvar does not exist. sysvar cache may be stale", zap.String("name", name))
 		return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
 
@@ -1423,7 +1424,7 @@ func (s *session) GetGlobalSysVar(name string) (string, error) {
 		// This might be because the sysvar was only recently registered.
 		// In which case it is safe to return the default, but we can also
 		// update the cache for the future.
-		logutil.BgLogger().Info("sysvar not in cache yet. sysvar cache may be stale", zap.String("name", name))
+		log.Info("sysvar not in cache yet. sysvar cache may be stale", zap.String("name", name))
 		sysVar, err = s.getTableValue(context.TODO(), mysql.GlobalVariablesTable, name)
 		if err != nil {
 			return sv.Value, nil
@@ -1972,7 +1973,7 @@ func (s *session) useCurrentSession(execOption sqlexec.ExecOption) (*session, fu
 		s.sessionVars.AnalyzeVersion = prevStatsVer
 		s.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
 		if err := s.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+			log.Error("set tidbSnapshot error", zap.Error(err))
 		}
 		s.sessionVars.SnapshotInfoschema = orgSnapshotInfoSchema
 		s.sessionVars.SnapshotTS = orgSnapshotTS
@@ -2029,7 +2030,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 		se.sessionVars.AnalyzeVersion = prevStatsVer
 		se.sessionVars.EnableAnalyzeSnapshot = prevAnalyzeSnapshot
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, ""); err != nil {
-			logutil.BgLogger().Error("set tidbSnapshot error", zap.Error(err))
+			log.Error("set tidbSnapshot error", zap.Error(err))
 		}
 		se.sessionVars.SnapshotInfoschema = nil
 		se.sessionVars.SnapshotTS = 0
@@ -2597,7 +2598,7 @@ func (s *session) Close() {
 		lockedTables := s.GetAllTableLocks()
 		err := domain.GetDomain(s).DDL().UnlockTables(s, lockedTables)
 		if err != nil {
-			logutil.BgLogger().Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
+			log.Error("release table lock failed", zap.Uint64("conn", s.sessionVars.ConnectionID))
 		}
 	}
 	s.ReleaseAllAdvisoryLocks()
@@ -3101,7 +3102,7 @@ func loadCollationParameter(ctx context.Context, se *session) (bool, error) {
 	} else if para == varFalse {
 		return false, nil
 	}
-	logutil.BgLogger().Warn(
+	log.Warn(
 		"Unexpected value of 'new_collation_enabled' in 'mysql.tidb', use 'False' instead",
 		zap.String("value", para))
 	return false, nil
@@ -3274,7 +3275,7 @@ func InitMDLVariable(store kv.Storage) error {
 		if isNull {
 			// Workaround for version: nightly-2022-11-07 to nightly-2022-11-17.
 			enable = true
-			logutil.BgLogger().Warn("metadata lock is null")
+			log.Warn("metadata lock is null")
 			err = t.SetMetadataLock(true)
 			if err != nil {
 				return err
@@ -3540,7 +3541,7 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(Session)) {
 	s, err := createSession(store)
 	if err != nil {
 		// Bootstrap fail will cause program exit.
-		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
+		log.Fatal("createSession error", zap.Error(err))
 	}
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
@@ -3702,7 +3703,7 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		return err
 	})
 	if err != nil {
-		logutil.BgLogger().Fatal("check bootstrapped failed",
+		log.Fatal("check bootstrapped failed",
 			zap.Error(err))
 	}
 
@@ -3725,7 +3726,7 @@ func finishBootstrap(store kv.Storage) {
 		return err
 	})
 	if err != nil {
-		logutil.BgLogger().Fatal("finish bootstrap failed",
+		log.Fatal("finish bootstrap failed",
 			zap.Error(err))
 	}
 }
@@ -3865,7 +3866,7 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 	tmp, ok := se.(*session)
 	if !ok {
-		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")
+		log.Error("GetStartTSFromSession failed, can't transform to session struct")
 		return 0, 0
 	}
 	txnInfo := tmp.TxnInfo()
@@ -3874,7 +3875,7 @@ func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
 		processInfoID = txnInfo.ConnectionID
 	}
 
-	logutil.BgLogger().Debug(
+	log.Debug(
 		"GetStartTSFromSession getting startTS of internal session",
 		zap.Uint64("startTS", startTS), zap.Time("start time", oracle.GetTimeFromTS(startTS)))
 
@@ -3908,13 +3909,13 @@ func logStmt(execStmt *executor.ExecStmt, s *session) {
 		user := vars.User
 		schemaVersion := s.GetInfoSchema().SchemaMetaVersion()
 		if ss, ok := execStmt.StmtNode.(ast.SensitiveStmtNode); ok {
-			logutil.BgLogger().Info("CRUCIAL OPERATION",
+			log.Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("secure text", ss.SecureText()),
 				zap.Stringer("user", user))
 		} else {
-			logutil.BgLogger().Info("CRUCIAL OPERATION",
+			log.Info("CRUCIAL OPERATION",
 				zap.Uint64("conn", vars.ConnectionID),
 				zap.Int64("schemaVersion", schemaVersion),
 				zap.String("cur_db", vars.CurrentDB),
@@ -3940,7 +3941,7 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 		if !vars.EnableRedactLog {
 			query += vars.PlanCacheParams.String()
 		}
-		logutil.BgLogger().Info("GENERAL_LOG",
+		log.Info("GENERAL_LOG",
 			zap.Uint64("conn", vars.ConnectionID),
 			zap.String("session_alias", vars.SessionAlias),
 			zap.String("user", vars.User.LoginString()),
@@ -4080,7 +4081,7 @@ func (s *session) GetInfoSchema() sessionctx.InfoschemaMetaVersion {
 	vars := s.GetSessionVars()
 	var is infoschema.InfoSchema
 	if snap, ok := vars.SnapshotInfoschema.(infoschema.InfoSchema); ok {
-		logutil.BgLogger().Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
+		log.Info("use snapshot schema", zap.Uint64("conn", vars.ConnectionID), zap.Int64("schemaVersion", snap.SchemaMetaVersion()))
 		is = snap
 	} else {
 		vars.TxnCtxMu.Lock()
@@ -4411,9 +4412,9 @@ func RemoveLockDDLJobs(s Session, job2ver map[int64]int64, job2ids map[int64]str
 				delete(job2ver, jobID)
 				elapsedTime := time.Since(oracle.GetTimeFromTS(sv.TxnCtx.StartTS))
 				if elapsedTime > time.Minute && printLog {
-					logutil.BgLogger().Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+					log.Info("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
 				} else {
-					logutil.BgLogger().Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
+					log.Debug("old running transaction block DDL", zap.Int64("table ID", tblID.(int64)), zap.Int64("jobID", jobID), zap.Uint64("connection ID", sv.ConnectionID), zap.Duration("elapsed time", elapsedTime))
 				}
 			}
 		}

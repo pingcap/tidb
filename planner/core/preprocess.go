@@ -46,9 +46,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	utilparser "github.com/pingcap/tidb/util/parser"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.
@@ -1863,7 +1863,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 				found := false
 				for _, coll := range tableInfo.Columns {
 					if col.Name.L == coll.Name.L && col.ID != coll.ID {
-						logutil.BgLogger().Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
+						log.Info("public column changed", zap.String("column", col.Name.L), zap.String("old_col", coll.Name.L), zap.Int64("new id", col.ID), zap.Int64("old id", coll.ID))
 						found = true
 						break
 					}
@@ -1879,7 +1879,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 
 		se, ok := is.(*infoschema.SessionExtendedInfoSchema)
 		if !ok {
-			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
+			log.Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
 		db, _ := domainSchema.SchemaByTable(tbl.Meta())

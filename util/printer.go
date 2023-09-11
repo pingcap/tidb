@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Version information.

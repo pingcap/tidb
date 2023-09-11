@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Summary is used to collect the summary of subtasks execution.

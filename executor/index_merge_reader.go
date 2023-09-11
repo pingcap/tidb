@@ -48,11 +48,12 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -860,7 +861,7 @@ func handleWorkerPanic(ctx context.Context, finished <-chan struct{}, ch chan<- 
 			defer close(ch)
 		}
 		if r == nil {
-			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
+			log.Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 
@@ -1294,7 +1295,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 			}
 		}
 
-		logutil.BgLogger().Debug("intersectionProcessWorker handle tasks", zap.Int("workerID", w.workerID),
+		log.Debug("intersectionProcessWorker handle tasks", zap.Int("workerID", w.workerID),
 			zap.Int("task.handles", len(task.handles)), zap.Int64("rowDelta", rowDelta))
 
 		w.mapUsageDelta += mapDelta
@@ -1339,7 +1340,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 				task.partitionTable = w.indexMerge.prunedPartitions[parTblIdx]
 			}
 			tasks = append(tasks, task)
-			logutil.BgLogger().Debug("intersectionProcessWorker build tasks",
+			log.Debug("intersectionProcessWorker build tasks",
 				zap.Int("parTblIdx", parTblIdx), zap.Int("task.handles", len(task.handles)))
 		}
 	}
@@ -1484,7 +1485,7 @@ type partialIndexWorker struct {
 }
 
 func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexMergeTableTask, err error) {
-	logutil.BgLogger().Error("IndexMergeReaderExecutor.syncErr", zap.Error(err))
+	log.Error("IndexMergeReaderExecutor.syncErr", zap.Error(err))
 	doneCh := make(chan error, 1)
 	doneCh <- err
 	task := &indexMergeTableTask{
@@ -1715,7 +1716,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
 	return func(r interface{}) {
 		if r == nil {
-			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
+			log.Debug("worker finish without panic", zap.Any("worker", worker))
 			return
 		}
 

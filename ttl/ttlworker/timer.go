@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	timerrt "github.com/pingcap/tidb/timer/runtime"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/timeutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -104,7 +104,7 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 	timer := event.Timer()
 	var data TTLTimerData
 	if err = json.Unmarshal(event.Timer().Data, &data); err != nil {
-		logutil.BgLogger().Error("invalid TTL timer data",
+		log.Error("invalid TTL timer data",
 			zap.String("timerID", timer.ID),
 			zap.String("timerKey", timer.Key),
 			zap.ByteString("data", timer.Data),
@@ -124,7 +124,7 @@ func (t *ttlTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.TimerSh
 func (t *ttlTimerHook) OnSchedEvent(ctx context.Context, event timerapi.TimerShedEvent) error {
 	timer := event.Timer()
 	eventID := event.EventID()
-	logger := logutil.BgLogger().With(
+	logger := log.With(
 		zap.String("key", timer.Key),
 		zap.String("eventID", eventID),
 		zap.Time("eventStart", timer.EventStart),

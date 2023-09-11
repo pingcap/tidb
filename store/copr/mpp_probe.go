@@ -25,9 +25,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GlobalMPPFailedStoreProber mpp failed store probe
@@ -122,7 +123,7 @@ func (t MPPFailedStoreProber) scan(ctx context.Context) {
 		address := fmt.Sprint(k)
 		state, ok := v.(*MPPStoreState)
 		if !ok {
-			logutil.BgLogger().Warn("MPPStoreState struct assert failed,will be clean",
+			log.Warn("MPPStoreState struct assert failed,will be clean",
 				zap.String("address", address))
 			t.Delete(address)
 			return
@@ -176,7 +177,7 @@ func (t *MPPFailedStoreProber) IsRecovery(ctx context.Context, address string, r
 
 	state, ok := v.(*MPPStoreState)
 	if !ok {
-		logutil.BgLogger().Warn("MPPStoreState struct assert failed,will be clean",
+		log.Warn("MPPStoreState struct assert failed,will be clean",
 			zap.String("address", address))
 		t.Delete(address)
 		return false
@@ -202,14 +203,14 @@ func (t *MPPFailedStoreProber) Run() {
 		for {
 			select {
 			case <-t.ctx.Done():
-				logutil.BgLogger().Debug("ctx.done")
+				log.Debug("ctx.done")
 				return
 			case <-ticker.C:
 				t.scan(t.ctx)
 			}
 		}
 	}()
-	logutil.BgLogger().Debug("run a background probe process for mpp")
+	log.Debug("run a background probe process for mpp")
 }
 
 // Stop stop background goroutine
@@ -219,7 +220,7 @@ func (t *MPPFailedStoreProber) Stop() {
 	}
 	t.cancel()
 	t.wg.Wait()
-	logutil.BgLogger().Debug("stop background task")
+	log.Debug("stop background task")
 }
 
 // Delete clean store from failed map
@@ -227,7 +228,7 @@ func (t *MPPFailedStoreProber) Delete(address string) {
 	metrics.TiFlashFailedMPPStoreState.DeleteLabelValues(address)
 	_, ok := t.failedMPPStores.LoadAndDelete(address)
 	if !ok {
-		logutil.BgLogger().Warn("Store is deleted", zap.String("address", address))
+		log.Warn("Store is deleted", zap.String("address", address))
 	}
 }
 
@@ -243,7 +244,7 @@ func detectMPPStore(ctx context.Context, client tikv.Client, address string, det
 		if err == nil {
 			err = fmt.Errorf("store not ready to serve")
 		}
-		logutil.BgLogger().Warn("Store is not ready",
+		log.Warn("Store is not ready",
 			zap.String("store address", address),
 			zap.String("err message", err.Error()))
 		return false

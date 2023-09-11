@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/label"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -51,7 +51,7 @@ import (
 	util2 "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/tikv/client-go/v2/oracle"
@@ -59,7 +59,8 @@ import (
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 const (
@@ -299,7 +300,7 @@ func initTiFlashReplicaManager(etcdCli *clientv3.Client, codec tikv.Codec) TiFla
 		m := mockTiFlashReplicaManagerCtx{tiflashProgressCache: make(map[int64]float64)}
 		return &m
 	}
-	logutil.BgLogger().Warn("init TiFlashReplicaManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
+	log.Warn("init TiFlashReplicaManager", zap.Strings("pd addrs", etcdCli.Endpoints()))
 	return &TiFlashReplicaManagerCtx{etcdCli: etcdCli, tiflashProgressCache: make(map[int64]float64), codec: codec}
 }
 
@@ -429,12 +430,12 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 			for _, l := range store.Store.Labels {
 				if l.Key == "engine" && l.Value == "tiflash" {
 					stores[store.Store.ID] = store
-					logutil.BgLogger().Debug("Found tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
+					log.Debug("Found tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
 				}
 			}
 		}
 		*tiFlashStores = stores
-		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
+		log.Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
 	progress, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
@@ -468,7 +469,7 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 				return nil, err
 			}
 			if res.StatusCode != http.StatusOK {
-				logutil.BgLogger().Warn("response not 200",
+				log.Warn("response not 200",
 					zap.String("method", method),
 					zap.String("hosts", addr),
 					zap.String("url", url),
@@ -485,7 +486,7 @@ func doRequest(ctx context.Context, apiName string, addrs []string, route, metho
 			return bodyBytes, err
 		}
 		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
-		logutil.BgLogger().Warn("fail to doRequest",
+		log.Warn("fail to doRequest",
 			zap.Error(err),
 			zap.Bool("retry next address", idx == len(addrs)-1),
 			zap.String("method", method),
@@ -574,7 +575,7 @@ func PutRuleBundlesWithRetry(ctx context.Context, bundles []*placement.Bundle, m
 		}
 
 		if i != maxRetry {
-			logutil.BgLogger().Warn("Error occurs when PutRuleBundles, retry", zap.Error(err))
+			log.Warn("Error occurs when PutRuleBundles, retry", zap.Error(err))
 			time.Sleep(interval)
 		}
 	}
@@ -671,7 +672,7 @@ func (is *InfoSyncer) RemoveServerInfo() {
 	}
 	err := util.DeleteKeyFromEtcd(is.serverInfoPath, is.etcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		logutil.BgLogger().Error("remove server info failed", zap.Error(err))
+		log.Error("remove server info failed", zap.Error(err))
 	}
 }
 
@@ -748,7 +749,7 @@ func (is *InfoSyncer) RemoveMinStartTS() {
 	}
 	err := util.DeleteKeyFromEtcd(is.minStartTSPath, is.unprefixedEtcdCli, keyOpDefaultRetryCnt, keyOpDefaultTimeout)
 	if err != nil {
-		logutil.BgLogger().Error("remove minStartTS failed", zap.Error(err))
+		log.Error("remove minStartTS failed", zap.Error(err))
 	}
 }
 
@@ -764,14 +765,14 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	// Calculate the lower limit of the start timestamp to avoid extremely old transaction delaying GC.
 	currentVer, err := store.CurrentVersion(kv.GlobalTxnScope)
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		log.Error("update minStartTS failed", zap.Error(err))
 		return
 	}
 	now := oracle.GetTimeFromTS(currentVer.Ver)
 	// GCMaxWaitTime is in seconds, GCMaxWaitTime * 1000 converts it to milliseconds.
 	startTSLowerLimit := oracle.GoTimeToLowerLimitStartTS(now, variable.GCMaxWaitTime.Load()*1000)
 	minStartTS := oracle.GoTimeToTS(now)
-	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
+	log.Debug("ReportMinStartTS", zap.Uint64("initial minStartTS", minStartTS),
 		zap.Uint64("StartTSLowerLimit", startTSLowerLimit))
 	for _, info := range pl {
 		if info.CurTxnStartTS > startTSLowerLimit && info.CurTxnStartTS < minStartTS {
@@ -780,7 +781,7 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 	}
 
 	for _, innerTS := range innerSessionStartTSList {
-		logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
+		log.Debug("ReportMinStartTS", zap.Uint64("Internal Session Transaction StartTS", innerTS))
 		kv.PrintLongTimeInternalTxn(now, innerTS, false)
 		if innerTS > startTSLowerLimit && innerTS < minStartTS {
 			minStartTS = innerTS
@@ -791,9 +792,9 @@ func (is *InfoSyncer) ReportMinStartTS(store kv.Storage) {
 
 	err = is.storeMinStartTS(context.Background())
 	if err != nil {
-		logutil.BgLogger().Error("update minStartTS failed", zap.Error(err))
+		log.Error("update minStartTS failed", zap.Error(err))
 	}
-	logutil.BgLogger().Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
+	log.Debug("ReportMinStartTS", zap.Uint64("final minStartTS", is.minStartTS))
 }
 
 // Done returns a channel that closes when the info syncer is no longer being refreshed.
@@ -990,7 +991,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 		resp, err = etcdCli.Get(childCtx, key, opts...)
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Info("get key failed", zap.String("key", key), zap.Error(err))
+			log.Info("get key failed", zap.String("key", key), zap.Error(err))
 			time.Sleep(200 * time.Millisecond)
 			continue
 		}
@@ -1000,7 +1001,7 @@ func getInfo(ctx context.Context, etcdCli *clientv3.Client, key string, retryCnt
 			}
 			err = info.Unmarshal(kv.Value)
 			if err != nil {
-				logutil.BgLogger().Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
+				log.Info("get key failed", zap.String("key", string(kv.Key)), zap.ByteString("value", kv.Value),
 					zap.Error(err))
 				return nil, errors.Trace(err)
 			}
@@ -1125,7 +1126,7 @@ func UpdateTiFlashProgressCache(tableID int64, progress float64) error {
 func GetTiFlashProgressFromCache(tableID int64) (float64, bool) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
-		logutil.BgLogger().Error("GetTiFlashProgressFromCache get info sync failed", zap.Int64("tableID", tableID), zap.Error(err))
+		log.Error("GetTiFlashProgressFromCache get info sync failed", zap.Int64("tableID", tableID), zap.Error(err))
 		return 0, false
 	}
 	return is.tiflashReplicaManager.GetTiFlashProgressFromCache(tableID)
@@ -1146,7 +1147,7 @@ func SetTiFlashGroupConfig(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("SetTiFlashGroupConfig")
+	log.Info("SetTiFlashGroupConfig")
 	return is.tiflashReplicaManager.SetTiFlashGroupConfig(ctx)
 }
 
@@ -1158,7 +1159,7 @@ func SetTiFlashPlacementRule(ctx context.Context, rule placement.TiFlashRule) er
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
+	log.Info("SetTiFlashPlacementRule", zap.String("ruleID", rule.ID))
 	return is.tiflashReplicaManager.SetPlacementRule(ctx, rule)
 }
 
@@ -1168,7 +1169,7 @@ func DeleteTiFlashPlacementRule(ctx context.Context, group string, ruleID string
 	if err != nil {
 		return errors.Trace(err)
 	}
-	logutil.BgLogger().Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
+	log.Info("DeleteTiFlashPlacementRule", zap.String("ruleID", ruleID))
 	return is.tiflashReplicaManager.DeletePlacementRule(ctx, group, ruleID)
 }
 
@@ -1215,7 +1216,7 @@ func ConfigureTiFlashPDForTable(id int64, count uint64, locationLabels *[]string
 		return errors.Trace(err)
 	}
 	ctx := context.Background()
-	logutil.BgLogger().Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
+	log.Info("ConfigureTiFlashPDForTable", zap.Int64("tableID", id), zap.Uint64("count", count))
 	ruleNew := MakeNewRule(id, count, *locationLabels)
 	if e := is.tiflashReplicaManager.SetPlacementRule(ctx, ruleNew); e != nil {
 		return errors.Trace(e)
@@ -1233,7 +1234,7 @@ func ConfigureTiFlashPDForPartitions(accel bool, definitions *[]model.PartitionD
 	rules := make([]placement.TiFlashRule, 0, len(*definitions))
 	pids := make([]int64, 0, len(*definitions))
 	for _, p := range *definitions {
-		logutil.BgLogger().Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
+		log.Info("ConfigureTiFlashPDForPartitions", zap.Int64("tableID", tableID), zap.Int64("partID", p.ID), zap.Bool("accel", accel), zap.Uint64("count", count))
 		ruleNew := MakeNewRule(p.ID, count, *locationLabels)
 		rules = append(rules, ruleNew)
 		pids = append(pids, p.ID)

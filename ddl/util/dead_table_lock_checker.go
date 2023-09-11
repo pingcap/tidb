@@ -21,9 +21,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -59,7 +59,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
-			logutil.BgLogger().Info("clean dead table lock get alive servers failed.", zap.String("category", "ddl"), zap.Error(err))
+			log.Info("clean dead table lock get alive servers failed.", zap.String("category", "ddl"), zap.Error(err))
 			time.Sleep(defaultRetryInterval)
 			continue
 		}

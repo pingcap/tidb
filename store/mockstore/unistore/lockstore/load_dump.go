@@ -21,8 +21,9 @@ import (
 	"os"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	// "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // LoadFromFile load a meta from a file.

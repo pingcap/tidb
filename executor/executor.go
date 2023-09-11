@@ -84,7 +84,8 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 var (
@@ -1397,7 +1398,7 @@ func (e *LimitExec) Close() error {
 
 	elapsed := time.Since(start)
 	if elapsed > time.Millisecond {
-		logutil.BgLogger().Info("limit executor close takes a long time",
+		log.Info("limit executor close takes a long time",
 			zap.Duration("elapsed", elapsed))
 		if e.span != nil {
 			span1 := e.span.Tracer().StartSpan("limitExec.Close", opentracing.ChildOf(e.span.Context()), opentracing.StartTime(start))
@@ -2279,7 +2280,7 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 	defer func(rs sqlexec.RecordSet) {
 		err := rs.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close record set failed", zap.Error(err))
+			log.Error("close record set failed", zap.Error(err))
 		}
 	}(rs)
 	rows, err := sqlexec.DrainRecordSet(ctx, rs, 256)
@@ -2398,7 +2399,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
 		times++
 		if times == maxTimes {
-			logutil.BgLogger().Warn("compare checksum by group reaches time limit", zap.Int("times", times))
+			log.Warn("compare checksum by group reaches time limit", zap.Int("times", times))
 			break
 		}
 		whereKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle.String(), offset, mod)
@@ -2411,7 +2412,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		tblQuery := fmt.Sprintf("select /*+ read_from_storage(tikv[%s]) */ bit_xor(%s), %s, count(*) from %s use index() where %s = 0 group by %s", TableName(w.e.dbName, w.e.table.Meta().Name.String()), md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), whereKey, groupByKey)
 		idxQuery := fmt.Sprintf("select bit_xor(%s), %s, count(*) from %s use index(`%s`) where %s = 0 group by %s", md5HandleAndIndexCol.String(), groupByKey, TableName(w.e.dbName, w.e.table.Meta().Name.String()), idxInfo.Name, whereKey, groupByKey)
 
-		logutil.BgLogger().Info("fast check table by group", zap.String("table name", w.table.Meta().Name.String()), zap.String("index name", idxInfo.Name.String()), zap.Int("times", times), zap.Int("current offset", offset), zap.Int("current mod", mod), zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
+		log.Info("fast check table by group", zap.String("table name", w.table.Meta().Name.String()), zap.String("index name", idxInfo.Name.String()), zap.Int("times", times), zap.Int("current offset", offset), zap.Int("current mod", mod), zap.String("table sql", tblQuery), zap.String("index sql", idxQuery))
 
 		// compute table side checksum.
 		tableChecksum, err := getCheckSum(w.e.contextCtx, se, tblQuery)
@@ -2466,7 +2467,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 
 		if !meetError {
 			if times != 1 {
-				logutil.BgLogger().Error("unexpected result, no error detected in this round, but an error is detected in the previous round", zap.Int("times", times), zap.Int("offset", offset), zap.Int("mod", mod))
+				log.Error("unexpected result, no error detected in this round, but an error is detected in the previous round", zap.Int("times", times), zap.Int("offset", offset), zap.Int("mod", mod))
 			}
 			break
 		}
@@ -2486,7 +2487,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 		err = rs.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("close result set failed", zap.Error(err))
+			log.Warn("close result set failed", zap.Error(err))
 		}
 		return row, nil
 	}

@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/time/rate"
 )
 
@@ -106,7 +106,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
 		if err != nil {
 			t.statistics.IncErrorRows(len(delBatch))
-			logutil.BgLogger().Warn(
+			log.Warn(
 				"build delete SQL in TTL failed",
 				zap.Error(err),
 				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
@@ -127,7 +127,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		if err != nil {
 			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())
 			needRetry = needRetry && ctx.Err() == nil
-			logutil.BgLogger().Warn(
+			log.Warn(
 				"delete SQL in TTL failed",
 				zap.Error(err),
 				zap.String("SQL", sql),
@@ -188,7 +188,7 @@ func (b *ttlDelRetryBuffer) DoRetry(do func(*ttlDeleteTask) [][]types.Datum) tim
 		ele := b.list.Front()
 		item, ok := ele.Value.(*ttlDelRetryItem)
 		if !ok {
-			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
+			log.Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
 			b.list.Remove(ele)
 			continue
 		}
@@ -222,7 +222,7 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 		if item, ok := ele.Value.(*ttlDelRetryItem); ok {
 			item.task.statistics.IncErrorRows(len(item.task.rows))
 		} else {
-			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
+			log.Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
 		}
 		b.list.Remove(b.list.Front())
 	}
@@ -258,7 +258,7 @@ func (w *ttlDeleteWorker) loop() error {
 	tracer := metrics.NewDeleteWorkerPhaseTracer()
 	defer func() {
 		tracer.EndPhase()
-		logutil.BgLogger().Info("ttlDeleteWorker loop exited.")
+		log.Info("ttlDeleteWorker loop exited.")
 	}()
 
 	tracer.EnterPhase(metrics.PhaseOther)

@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -55,7 +55,7 @@ func (s *Server) Stats(_ *variable.SessionVars) (map[string]interface{}, error) 
 		if len(tlsConfig.Certificates) == 1 {
 			pc, err := x509.ParseCertificate(tlsConfig.Certificates[0].Certificate[0])
 			if err != nil {
-				logutil.BgLogger().Error("Failed to parse TLS certficates to get server status", zap.Error(err))
+				log.Error("Failed to parse TLS certficates to get server status", zap.Error(err))
 			} else {
 				m[serverNotAfter] = pc.NotAfter.Format("Jan _2 15:04:05 2006 MST")
 				m[serverNotBefore] = pc.NotBefore.Format("Jan _2 15:04:05 2006 MST")
@@ -67,7 +67,7 @@ func (s *Server) Stats(_ *variable.SessionVars) (map[string]interface{}, error) 
 	info := tikvhandler.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+		log.Error("Failed to get ServerInfo for uptime status", zap.Error(err))
 	} else {
 		m[upTime] = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
 	}

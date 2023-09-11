@@ -35,12 +35,13 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sli"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // LazyTxn wraps kv.Transaction to provide a new kv.Transaction.
@@ -389,7 +390,7 @@ func ResetMockAutoRandIDRetryCount(failTimes int64) {
 func (txn *LazyTxn) Commit(ctx context.Context) error {
 	defer txn.reset()
 	if len(txn.mutations) != 0 || txn.countHint() != 0 {
-		logutil.BgLogger().Error("the code should never run here",
+		log.Error("the code should never run here",
 			zap.String("TxnState", txn.GoString()),
 			zap.Int("staging handler", int(txn.stagingHandle)),
 			zap.Int("mutations", txn.countHint()),
@@ -482,7 +483,7 @@ func (txn *LazyTxn) StartFairLocking() error {
 		return txn.Transaction.StartFairLocking()
 	} else if !txn.pending() {
 		err := errors.New("trying to start fair locking on a transaction in invalid state")
-		logutil.BgLogger().Error("unexpected error when starting fair locking", zap.Error(err), zap.Stringer("txn", txn))
+		log.Error("unexpected error when starting fair locking", zap.Error(err), zap.Stringer("txn", txn))
 		return err
 	}
 	txn.enterFairLockingOnValid = true
@@ -495,7 +496,7 @@ func (txn *LazyTxn) RetryFairLocking(ctx context.Context) error {
 		return txn.Transaction.RetryFairLocking(ctx)
 	} else if !txn.pending() {
 		err := errors.New("trying to retry fair locking on a transaction in invalid state")
-		logutil.BgLogger().Error("unexpected error when retrying fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
+		log.Error("unexpected error when retrying fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
 		return err
 	}
 	return nil
@@ -507,12 +508,12 @@ func (txn *LazyTxn) CancelFairLocking(ctx context.Context) error {
 		return txn.Transaction.CancelFairLocking(ctx)
 	} else if !txn.pending() {
 		err := errors.New("trying to cancel fair locking on a transaction in invalid state")
-		logutil.BgLogger().Error("unexpected error when cancelling fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
+		log.Error("unexpected error when cancelling fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
 		return err
 	}
 	if !txn.enterFairLockingOnValid {
 		err := errors.New("trying to cancel fair locking when it's not started")
-		logutil.BgLogger().Error("unexpected error when cancelling fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
+		log.Error("unexpected error when cancelling fair locking", zap.Error(err), zap.Stringer("txnStartTS", txn))
 		return err
 	}
 	txn.enterFairLockingOnValid = false
@@ -526,12 +527,12 @@ func (txn *LazyTxn) DoneFairLocking(ctx context.Context) error {
 	}
 	if !txn.pending() {
 		err := errors.New("trying to cancel fair locking on a transaction in invalid state")
-		logutil.BgLogger().Error("unexpected error when finishing fair locking")
+		log.Error("unexpected error when finishing fair locking")
 		return err
 	}
 	if !txn.enterFairLockingOnValid {
 		err := errors.New("trying to finish fair locking when it's not started")
-		logutil.BgLogger().Error("unexpected error when finishing fair locking")
+		log.Error("unexpected error when finishing fair locking")
 		return err
 	}
 	txn.enterFairLockingOnValid = false
@@ -593,7 +594,7 @@ func (txn *LazyTxn) Wait(ctx context.Context, sctx sessionctx.Context) (kv.Trans
 		// PrepareTxnCtx is called to get a tso future, makes s.txn a pending txn,
 		// If Txn() is called later, wait for the future to get a valid txn.
 		if err := txn.changePendingToValid(ctx, sctx); err != nil {
-			logutil.BgLogger().Error("active transaction fail",
+			log.Error("active transaction fail",
 				zap.Error(err))
 			txn.cleanup()
 			sctx.GetSessionVars().TxnCtx.StartTS = 0
@@ -637,7 +638,7 @@ func keyNeedToLock(k, v []byte, flags kv.KeyFlags) bool {
 	if tablecodec.IsTempIndexKey(k) {
 		tmpVal, err := tablecodec.DecodeTempIndexValue(v)
 		if err != nil {
-			logutil.BgLogger().Warn("decode temp index value failed", zap.Error(err))
+			log.Warn("decode temp index value failed", zap.Error(err))
 			return false
 		}
 		current := tmpVal.Current()
@@ -690,7 +691,7 @@ func (tf *txnFuture) wait() (kv.Transaction, error) {
 		return nil, err
 	}
 
-	logutil.BgLogger().Warn("wait tso failed", zap.Error(err))
+	log.Warn("wait tso failed", zap.Error(err))
 	// It would retry get timestamp.
 	return tf.store.Begin(tikv.WithTxnScope(tf.txnScope))
 }

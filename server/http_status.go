@@ -53,14 +53,14 @@ import (
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
@@ -93,11 +93,11 @@ func (s *Server) listenStatusHTTPServer() error {
 		s.statusAddr = net.JoinHostPort(s.cfg.Status.StatusHost, strconv.Itoa(defaultStatusPort))
 	}
 
-	logutil.BgLogger().Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
+	log.Info("for status and metrics report", zap.String("listening on addr", s.statusAddr))
 	clusterSecurity := s.cfg.Security.ClusterSecurity()
 	tlsConfig, err := clusterSecurity.ToTLSConfig()
 	if err != nil {
-		logutil.BgLogger().Error("invalid TLS config", zap.Error(err))
+		log.Error("invalid TLS config", zap.Error(err))
 		return errors.Trace(err)
 	}
 	tlsConfig = s.SetCNChecker(tlsConfig)
@@ -109,7 +109,7 @@ func (s *Server) listenStatusHTTPServer() error {
 		s.statusListener, err = net.Listen("tcp", s.statusAddr)
 	}
 	if err != nil {
-		logutil.BgLogger().Info("listen failed", zap.Error(err))
+		log.Info("listen failed", zap.Error(err))
 		return errors.Trace(err)
 	} else if RunInGoTest && s.cfg.Status.StatusPort == 0 {
 		s.statusAddr = s.statusListener.Addr().String()
@@ -136,7 +136,7 @@ func newBallast(maxSize int) *Ballast {
 		// since the fatal throw "runtime: out of memory" would never yield to `recover`
 		totalRAMSz, err := memory.MemTotal()
 		if err != nil {
-			logutil.BgLogger().Error("failed to get the total amount of RAM on this system", zap.Error(err))
+			log.Error("failed to get the total amount of RAM on this system", zap.Error(err))
 		} else {
 			maxSzAdvice := totalRAMSz >> 2
 			if uint64(b.maxSize) > maxSzAdvice {
@@ -284,7 +284,7 @@ func (s *Server) startHTTPServer() {
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
 		if _, err := traceapp.New(traceapp.NewRouter(sr), baseURL); err != nil {
-			logutil.BgLogger().Error("new failed", zap.Error(err))
+			log.Error("new failed", zap.Error(err))
 		}
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
@@ -302,7 +302,7 @@ func (s *Server) startHTTPServer() {
 	{
 		err := ballast.SetSize(s.cfg.BallastObjectSize)
 		if err != nil {
-			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
+			log.Error("set initial ballast object size failed", zap.Error(err))
 		}
 	}
 	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
@@ -441,7 +441,7 @@ func (s *Server) startHTTPServer() {
 	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err = route.GetPathTemplate()
 		if err != nil {
-			logutil.BgLogger().Error("get HTTP router path failed", zap.Error(err))
+			log.Error("get HTTP router path failed", zap.Error(err))
 		}
 		name := route.GetName()
 		// If the name attribute is not set, GetName returns "".
@@ -452,14 +452,14 @@ func (s *Server) startHTTPServer() {
 		return nil
 	})
 	if err != nil {
-		logutil.BgLogger().Error("generate root failed", zap.Error(err))
+		log.Error("generate root failed", zap.Error(err))
 	}
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
 	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		_, err = responseWriter.Write(httpRouterPage.Bytes())
 		if err != nil {
-			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
+			log.Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
 	s.startStatusServerAndRPCServer(serverMux)
@@ -486,7 +486,7 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 			}
 			store, err := store.New(fullPath)
 			if err != nil {
-				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+				log.Error("new tikv store fail", zap.Error(err))
 				break
 			}
 			ebd, ok := store.(kv.EtcdBackend)
@@ -495,12 +495,12 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 			}
 			etcdAddr, err := ebd.EtcdAddrs()
 			if err != nil {
-				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+				log.Error("tikv store not etcd background", zap.Error(err))
 				break
 			}
 			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
 			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
-			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
+			log.Info("register auto service at", zap.String("addr", selfAddr))
 			pb.RegisterAutoIDAllocServer(grpcServer, service)
 			s.autoIDService = service
 			break
@@ -512,17 +512,17 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 
 	go util.WithRecovery(func() {
 		err := grpcServer.Serve(grpcL)
-		logutil.BgLogger().Error("grpc server error", zap.Error(err))
+		log.Error("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
 		err := statusServer.Serve(httpL)
-		logutil.BgLogger().Error("http server error", zap.Error(err))
+		log.Error("http server error", zap.Error(err))
 	}, nil)
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
+		log.Error("start status/rpc server error", zap.Error(err))
 	}
 }
 
@@ -573,7 +573,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 	js, err := json.Marshal(st)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		logutil.BgLogger().Error("encode json failed", zap.Error(err))
+		log.Error("encode json failed", zap.Error(err))
 		return
 	}
 	_, err = w.Write(js)

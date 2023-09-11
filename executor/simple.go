@@ -57,7 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
@@ -65,7 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const notSpecified = -1
@@ -217,7 +217,7 @@ func (e *SimpleExec) setDefaultRoleNone(s *ast.SetDefaultRoleStmt) error {
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", u.Username, u.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+			log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
 				return rollbackErr
 			}
@@ -268,7 +268,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+			log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 				return rollbackErr
 			}
@@ -286,7 +286,7 @@ func (e *SimpleExec) setDefaultRoleRegular(ctx context.Context, s *ast.SetDefaul
 			sql.Reset()
 			sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles values(%?, %?, %?, %?);", user.Hostname, user.Username, role.Hostname, role.Username)
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
-				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+				log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 				if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 					return rollbackErr
 				}
@@ -328,7 +328,7 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+			log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 				return rollbackErr
 			}
@@ -337,7 +337,7 @@ func (e *SimpleExec) setDefaultRoleAll(ctx context.Context, s *ast.SetDefaultRol
 		sql.Reset()
 		sqlexec.MustFormatSQL(sql, "INSERT IGNORE INTO mysql.default_roles(HOST,USER,DEFAULT_ROLE_HOST,DEFAULT_ROLE_USER) SELECT TO_HOST,TO_USER,FROM_HOST,FROM_USER FROM mysql.role_edges WHERE TO_HOST=%? AND TO_USER=%?;", user.Hostname, user.Username)
 		if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
-			logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+			log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 			if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 				return rollbackErr
 			}
@@ -371,7 +371,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	sql := new(strings.Builder)
 	sqlexec.MustFormatSQL(sql, "DELETE IGNORE FROM mysql.default_roles WHERE USER=%? AND HOST=%?;", user.Username, user.Hostname)
 	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 		if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
 			return rollbackErr
 		}
@@ -399,7 +399,7 @@ func (e *SimpleExec) setDefaultRoleForCurrentUser(s *ast.SetDefaultRoleStmt) (er
 	}
 
 	if _, err := sqlExecutor.ExecuteInternal(ctx, sql.String()); err != nil {
-		logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+		log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 		if _, rollbackErr := sqlExecutor.ExecuteInternal(ctx, "rollback"); rollbackErr != nil {
 			return rollbackErr
 		}
@@ -772,7 +772,7 @@ func (e *SimpleExec) executeCommit() {
 
 func (e *SimpleExec) executeRollback(s *ast.RollbackStmt) error {
 	sessVars := e.Ctx().GetSessionVars()
-	logutil.BgLogger().Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
+	log.Debug("execute rollback statement", zap.Uint64("conn", sessVars.ConnectionID))
 	txn, err := e.Ctx().Txn(false)
 	if err != nil {
 		return err
@@ -1223,7 +1223,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 	}
 	_, err = sqlExecutor.ExecuteInternal(internalCtx, sql.String())
 	if err != nil {
-		logutil.BgLogger().Warn("Fail to create user", zap.String("sql", sql.String()))
+		log.Warn("Fail to create user", zap.String("sql", sql.String()))
 		if _, rollbackErr := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); rollbackErr != nil {
 			return rollbackErr
 		}
@@ -1380,7 +1380,7 @@ func checkPasswordsMatch(rows []chunk.Row, oldPwd, authPlugin string) (bool, err
 			pwd := row.GetString(0)
 			authok, err := auth.CheckHashingPassword([]byte(pwd), oldPwd, authPlugin)
 			if err != nil {
-				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+				log.Error("Failed to check caching_sha2_password", zap.Error(err))
 				return false, err
 			}
 			if authok {
@@ -2045,7 +2045,7 @@ func (e *SimpleExec) executeGrantRole(ctx context.Context, s *ast.GrantRoleStmt)
 			sql.Reset()
 			sqlexec.MustFormatSQL(sql, `INSERT IGNORE INTO %n.%n (FROM_HOST, FROM_USER, TO_HOST, TO_USER) VALUES (%?,%?,%?,%?)`, mysql.SystemDB, mysql.RoleEdgeTable, role.Hostname, role.Username, user.Hostname, user.Username)
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, sql.String()); err != nil {
-				logutil.BgLogger().Error(fmt.Sprintf("Error occur when executing %s", sql))
+				log.Error(fmt.Sprintf("Error occur when executing %s", sql))
 				if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 					return err
 				}
@@ -2547,7 +2547,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		return nil
 	}
 	if e.IsFromRemote {
-		logutil.BgLogger().Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
+		log.Info("Killing connection in current instance redirected from remote TiDB", zap.Uint64("conn", s.ConnectionID), zap.Bool("query", s.Query),
 			zap.String("sourceAddr", e.Ctx().GetSessionVars().SourceAddr.IP.String()))
 		sm.Kill(s.ConnectionID, s.Query, false)
 		return nil
@@ -2561,7 +2561,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 	}
 	if isTruncated {
 		message := "Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."
-		logutil.BgLogger().Warn(message, zap.Uint64("conn", s.ConnectionID))
+		log.Warn(message, zap.Uint64("conn", s.ConnectionID))
 		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
 		//   as the KILL is sent by a new connection.
 		err := errors.New(message)
@@ -2627,7 +2627,7 @@ func killRemoteConn(ctx context.Context, sctx sessionctx.Context, gcid *globalco
 		return errors.Trace(err)
 	}
 
-	logutil.BgLogger().Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
+	log.Info("Killed remote connection", zap.Uint64("serverID", gcid.ServerID),
 		zap.Uint64("conn", gcid.ToConnID()), zap.Bool("query", query))
 	return err
 }
@@ -2657,7 +2657,7 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 
 func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 	if s.ReloadTLS {
-		logutil.BgLogger().Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
+		log.Info("execute reload tls", zap.Bool("NoRollbackOnError", s.NoRollbackOnError))
 		sm := e.Ctx().GetSessionManager()
 		tlsCfg, _, err := util.LoadTLSCertificates(
 			variable.GetSysVar("ssl_ca").Value,
@@ -2670,7 +2670,7 @@ func (e *SimpleExec) executeAlterInstance(s *ast.AlterInstanceStmt) error {
 			if !s.NoRollbackOnError || tls.RequireSecureTransport.Load() {
 				return err
 			}
-			logutil.BgLogger().Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
+			log.Warn("reload TLS fail but keep working without TLS due to 'no rollback on error'")
 		}
 		sm.UpdateTLSConfig(tlsCfg)
 	}
@@ -2728,7 +2728,7 @@ func (e *SimpleExec) autoNewTxn() bool {
 
 func (e *SimpleExec) executeShutdown() error {
 	sessVars := e.Ctx().GetSessionVars()
-	logutil.BgLogger().Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID))
+	log.Info("execute shutdown statement", zap.Uint64("conn", sessVars.ConnectionID))
 	p, err := os.FindProcess(os.Getpid())
 	if err != nil {
 		return err
@@ -2759,7 +2759,7 @@ func asyncDelayShutdown(p *os.Process, delay time.Duration) {
 
 	// The shutdown is supposed to start at graceTime and is allowed to take up to 10s.
 	time.Sleep(time.Second * time.Duration(graceTime+10))
-	logutil.BgLogger().Info("Killing process as grace period is over", zap.Int("pid", p.Pid), zap.Int("graceTime", graceTime))
+	log.Info("Killing process as grace period is over", zap.Int("pid", p.Pid), zap.Int("graceTime", graceTime))
 	err = p.Kill()
 	if err != nil {
 		panic(err)

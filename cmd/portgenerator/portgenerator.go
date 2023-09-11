@@ -20,7 +20,7 @@ import (
 
 	"github.com/phayes/freeport"
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (

@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -47,9 +47,9 @@ func (do *Domain) rebuildSysVarCacheIfNeeded() (err error) {
 	cacheNeedsRebuild := len(do.sysVarCache.session) == 0 || len(do.sysVarCache.global) == 0
 	do.sysVarCache.RUnlock()
 	if cacheNeedsRebuild {
-		logutil.BgLogger().Warn("sysvar cache is empty, triggering rebuild")
+		log.Warn("sysvar cache is empty, triggering rebuild")
 		if err = do.rebuildSysVarCache(nil); err != nil {
-			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
+			log.Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
 	}
 	return err
@@ -81,7 +81,7 @@ func (do *Domain) GetGlobalVar(name string) (string, error) {
 	if val, ok := do.sysVarCache.global[name]; ok {
 		return val, nil
 	}
-	logutil.BgLogger().Warn("could not find key in global cache", zap.String("name", name))
+	log.Warn("could not find key in global cache", zap.String("name", name))
 	return "", variable.ErrUnknownSystemVar.GenWithStackByArgs(name)
 }
 
@@ -146,13 +146,13 @@ func (do *Domain) rebuildSysVarCache(ctx sessionctx.Context) error {
 				sVal = sv.ValidateWithRelaxedValidation(ctx.GetSessionVars(), sVal, variable.ScopeGlobal)
 				err = sv.SetGlobal(context.Background(), ctx.GetSessionVars(), sVal)
 				if err != nil {
-					logutil.BgLogger().Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
+					log.Error(fmt.Sprintf("load global variable %s error", sv.Name), zap.Error(err))
 				}
 			}
 		}
 	}
 
-	logutil.BgLogger().Debug("rebuilding sysvar cache")
+	log.Debug("rebuilding sysvar cache")
 
 	do.sysVarCache.Lock()
 	defer do.sysVarCache.Unlock()

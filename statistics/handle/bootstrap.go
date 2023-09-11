@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
@@ -42,7 +42,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.Stat
 		// The table is read-only. Please do not modify it.
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
-			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+			log.Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
 		}
 		tableInfo := table.Meta()
@@ -409,14 +409,14 @@ func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Itera
 			var err error
 			lower, err = d.ConvertTo(sc, &column.Info.FieldType)
 			if err != nil {
-				logutil.BgLogger().Debug("decode bucket lower bound failed", zap.Error(err))
+				log.Debug("decode bucket lower bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}
 			d = types.NewBytesDatum(row.GetBytes(6))
 			upper, err = d.ConvertTo(sc, &column.Info.FieldType)
 			if err != nil {
-				logutil.BgLogger().Debug("decode bucket upper bound failed", zap.Error(err))
+				log.Debug("decode bucket upper bound failed", zap.Error(err))
 				delete(table.Columns, histID)
 				continue
 			}

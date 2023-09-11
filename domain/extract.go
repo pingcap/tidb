@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -144,12 +144,12 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 	}
 	records, err := w.collectRecords(ctx, task)
 	if err != nil {
-		logutil.BgLogger().Error("collect stmt summary records failed for extract plan task", zap.Error(err))
+		log.Error("collect stmt summary records failed for extract plan task", zap.Error(err))
 		return "", err
 	}
 	p, err := w.packageExtractPlanRecords(ctx, records)
 	if err != nil {
-		logutil.BgLogger().Error("package stmt summary records failed for extract plan task", zap.Error(err))
+		log.Error("package stmt summary records failed for extract plan task", zap.Error(err))
 		return "", err
 	}
 	return w.dumpExtractPlanPackage(task, p)
@@ -344,13 +344,13 @@ func (w *extractWorker) dumpExtractPlanPackage(task *ExtractTask, p *extractPlan
 	zw := zip.NewWriter(f)
 	defer func() {
 		if err != nil {
-			logutil.BgLogger().Error("dump extract plan task failed", zap.Error(err))
+			log.Error("dump extract plan task failed", zap.Error(err))
 		}
 		if err1 := zw.Close(); err1 != nil {
-			logutil.BgLogger().Warn("close zip file failed", zap.String("file", name), zap.Error(err))
+			log.Warn("close zip file failed", zap.String("file", name), zap.Error(err))
 		}
 		if err1 := f.Close(); err1 != nil {
-			logutil.BgLogger().Warn("close file failed", zap.String("file", name), zap.Error(err))
+			log.Warn("close file failed", zap.String("file", name), zap.Error(err))
 		}
 	}()
 

@@ -38,12 +38,12 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const ( // GET_FORMAT first argument.
@@ -6026,7 +6026,7 @@ func (b *builtinTimeFormatSig) evalString(row chunk.Row) (string, bool, error) {
 	dur, isNull, err := b.args[0].EvalDuration(b.ctx, row)
 	// if err != nil, then dur is ZeroDuration, outputs 00:00:00 in this case which follows the behavior of mysql.
 	if err != nil {
-		logutil.BgLogger().Warn("time_format.args[0].EvalDuration failed", zap.Error(err))
+		log.Warn("time_format.args[0].EvalDuration failed", zap.Error(err))
 	}
 	if isNull {
 		return "", isNull, err
@@ -6684,7 +6684,7 @@ func CalAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 //     and with it, a read request won't fail because it's bigger than the latest SafeTS.
 func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 	if minSafeTime.Before(minTime) || minSafeTime.After(maxTime) {
-		logutil.BgLogger().Warn("calAppropriateTime",
+		log.Warn("calAppropriateTime",
 			zap.Time("minTime", minTime),
 			zap.Time("maxTime", maxTime),
 			zap.Time("minSafeTime", minSafeTime))
@@ -6694,7 +6694,7 @@ func calAppropriateTime(minTime, maxTime, minSafeTime time.Time) time.Time {
 			return maxTime
 		}
 	}
-	logutil.BgLogger().Debug("calAppropriateTime",
+	log.Debug("calAppropriateTime",
 		zap.Time("minTime", minTime),
 		zap.Time("maxTime", maxTime),
 		zap.Time("minSafeTime", minSafeTime))

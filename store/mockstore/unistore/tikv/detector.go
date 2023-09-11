@@ -33,9 +33,10 @@ import (
 	"time"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // Detector detects deadlock.

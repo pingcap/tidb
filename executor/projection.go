@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // This file contains the implementation of the physical Projection Operator:
@@ -464,7 +464,7 @@ func recoveryProjection(output *projectionOutput, r interface{}) {
 	if output != nil {
 		output.done <- errors.Errorf("%v", r)
 	}
-	logutil.BgLogger().Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
+	log.Error("projection executor panicked", zap.String("error", fmt.Sprintf("%v", r)), zap.Stack("stack"))
 }
 
 func readProjection[T any](ch <-chan T, finishCh <-chan struct{}) (t T, isNil bool) {

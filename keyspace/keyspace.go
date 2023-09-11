@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	// "github.com/pingcap/tidb/util/logutil/zap"
+	// "github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 const (
@@ -60,12 +60,12 @@ func IsKeyspaceNameEmpty(keyspaceName string) bool {
 }
 
 // WrapZapcoreWithKeyspace is used to wrap zapcore.Core.
-func WrapZapcoreWithKeyspace() zap.Option {
-	return zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		keyspaceName := GetKeyspaceNameBySettings()
-		if !IsKeyspaceNameEmpty(keyspaceName) {
-			core = core.With([]zap.Field{zap.String("keyspaceName", keyspaceName)})
-		}
-		return core
-	})
-}
+// func WrapZapcoreWithKeyspace() zap.Option {
+// 	return zap.WrapCore(func(core zapcore.Core) zapcore.Core {
+// 		keyspaceName := GetKeyspaceNameBySettings()
+// 		if !IsKeyspaceNameEmpty(keyspaceName) {
+// 			core = core.With([]zap.Field{zap.String("keyspaceName", keyspaceName)})
+// 		}
+// 		return core
+// 	})
+// }

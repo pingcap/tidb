@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // selectivity = (row count after filter) / (row count before filter), smaller is better
@@ -138,7 +138,7 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 	for _, group := range groupMap {
 		selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, group, nil)
 		if err != nil {
-			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			log.Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		if selectivity <= selectivityThreshold {
@@ -229,7 +229,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 		mergedConds := append(selectedConds, exprGroup.exprs...)
 		selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, mergedConds, nil)
 		if err != nil {
-			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
+			log.Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
 		}
 		colCnt := expression.ExtractColumnSet(mergedConds...).Len()
@@ -251,7 +251,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 	if len(selectedConds) == 0 {
 		return
 	}
-	logutil.BgLogger().Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(selectedConds))))
+	log.Debug("planner: push down conditions to table scan", zap.String("table", physicalTableScan.Table.Name.L), zap.String("conditions", string(expression.SortedExplainExpressionList(selectedConds))))
 	// remove the pushed down conditions from selection
 	removeSpecificExprsFromSelection(physicalSelection, selectedConds)
 	// add the pushed down conditions to table scan

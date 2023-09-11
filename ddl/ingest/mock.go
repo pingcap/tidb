@@ -22,9 +22,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // MockBackendCtxMgr is a mock backend context manager.
@@ -48,7 +49,7 @@ func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 
 // Register implements BackendCtxMgr.Register interface.
 func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client) (BackendCtx, error) {
-	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
+	log.Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
 	}
@@ -66,7 +67,7 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 	if mCtx, ok := m.runningJobs[jobID]; ok {
 		mCtx.sessCtx.StmtCommit(context.Background())
 		err := mCtx.sessCtx.CommitTxn(context.Background())
-		logutil.BgLogger().Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
+		log.Info("mock backend mgr unregister", zap.Int64("jobID", jobID), zap.Error(err))
 		delete(m.runningJobs, jobID)
 		if mCtx.checkpointMgr != nil {
 			mCtx.checkpointMgr.Close()
@@ -76,7 +77,7 @@ func (m *MockBackendCtxMgr) Unregister(jobID int64) {
 
 // Load implements BackendCtxMgr.Load interface.
 func (m *MockBackendCtxMgr) Load(jobID int64) (BackendCtx, bool) {
-	logutil.BgLogger().Info("mock backend mgr load", zap.Int64("jobID", jobID))
+	log.Info("mock backend mgr load", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, true
 	}
@@ -99,24 +100,24 @@ type MockBackendCtx struct {
 
 // Register implements BackendCtx.Register interface.
 func (m *MockBackendCtx) Register(jobID, indexID int64, _, _ string) (Engine, error) {
-	logutil.BgLogger().Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+	log.Info("mock backend ctx register", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return &MockEngineInfo{sessCtx: m.sessCtx, mu: &m.mu}, nil
 }
 
 // Unregister implements BackendCtx.Unregister interface.
 func (*MockBackendCtx) Unregister(jobID, indexID int64) {
-	logutil.BgLogger().Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
+	log.Info("mock backend ctx unregister", zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 }
 
 // CollectRemoteDuplicateRows implements BackendCtx.CollectRemoteDuplicateRows interface.
 func (*MockBackendCtx) CollectRemoteDuplicateRows(indexID int64, _ table.Table) error {
-	logutil.BgLogger().Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
+	log.Info("mock backend ctx collect remote duplicate rows", zap.Int64("indexID", indexID))
 	return nil
 }
 
 // FinishImport implements BackendCtx.FinishImport interface.
 func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error {
-	logutil.BgLogger().Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
+	log.Info("mock backend ctx finish import", zap.Int64("indexID", indexID))
 	return nil
 }
 
@@ -188,7 +189,7 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 
 // CreateWriter implements Engine.CreateWriter interface.
 func (m *MockEngineInfo) CreateWriter(id int, _ bool) (Writer, error) {
-	logutil.BgLogger().Info("mock engine info create writer", zap.Int("id", id))
+	log.Info("mock engine info create writer", zap.Int("id", id))
 	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }
 
@@ -201,7 +202,7 @@ type MockWriter struct {
 
 // WriteRow implements Writer.WriteRow interface.
 func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
-	logutil.BgLogger().Info("mock writer write row",
+	log.Info("mock writer write row",
 		zap.String("key", hex.EncodeToString(key)),
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()

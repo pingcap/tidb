@@ -41,14 +41,14 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var pdScheduleKey = []string{
@@ -444,7 +444,7 @@ func SendPrepareFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("send prepare flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
+		log.Info("send prepare flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdPrepareFlashbackToVersion, &kvrpcpb.PrepareFlashbackToVersionRequest{
@@ -478,7 +478,7 @@ func SendPrepareFlashbackToVersionRPC(
 			continue
 		}
 		if resp.Resp == nil {
-			logutil.BgLogger().Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+			log.Warn("prepare flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
 			err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("prepare flashback rpc miss resp body"))
 			if err != nil {
 				return taskStat, err
@@ -538,7 +538,7 @@ func SendFlashbackToVersionRPC(
 			endKey = rangeEndKey
 		}
 
-		logutil.BgLogger().Info("send flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
+		log.Info("send flashback request", zap.String("category", "ddl"), zap.Uint64("region_id", loc.Region.GetID()),
 			zap.String("start_key", hex.EncodeToString(startKey)), zap.String("end_key", hex.EncodeToString(endKey)))
 
 		req := tikvrpc.NewRequest(tikvrpc.CmdFlashbackToVersion, &kvrpcpb.FlashbackToVersionRequest{
@@ -551,7 +551,7 @@ func SendFlashbackToVersionRPC(
 
 		resp, err := s.SendReq(bo, req, loc.Region, flashbackTimeout)
 		if err != nil {
-			logutil.BgLogger().Warn("send request meets error", zap.Uint64("region_id", loc.Region.GetID()), zap.Error(err))
+			log.Warn("send request meets error", zap.Uint64("region_id", loc.Region.GetID()), zap.Error(err))
 			if err.Error() != fmt.Sprintf("region %d is not prepared for the flashback", loc.Region.GetID()) {
 				return taskStat, err
 			}
@@ -568,7 +568,7 @@ func SendFlashbackToVersionRPC(
 				continue
 			}
 			if resp.Resp == nil {
-				logutil.BgLogger().Warn("flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
+				log.Warn("flashback miss resp body", zap.Uint64("region_id", loc.Region.GetID()))
 				err = bo.Backoff(tikv.BoTiKVRPC(), errors.New("flashback rpc miss resp body"))
 				if err != nil {
 					return taskStat, err
@@ -730,7 +730,7 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					totalRegions.Add(uint64(stats.CompletedRegions))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
+				log.Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
 				return ver, err
 			}
 		}
@@ -760,13 +760,13 @@ func (w *worker) onFlashbackCluster(d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 					// Use same startTS as prepare phase to simulate 1PC txn.
 					stats, err := SendFlashbackToVersionRPC(ctx, d.store.(tikv.Storage), flashbackTS, startTS, commitTS, r)
 					completedRegions.Add(uint64(stats.CompletedRegions))
-					logutil.BgLogger().Info("flashback cluster stats", zap.String("category", "ddl"),
+					log.Info("flashback cluster stats", zap.String("category", "ddl"),
 						zap.Uint64("complete regions", completedRegions.Load()),
 						zap.Uint64("total regions", totalRegions.Load()),
 						zap.Error(err))
 					return stats, err
 				}, r.StartKey, r.EndKey); err != nil {
-				logutil.BgLogger().Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
+				log.Warn("Get error when do flashback", zap.String("category", "ddl"), zap.Error(err))
 				return ver, errors.Trace(err)
 			}
 		}

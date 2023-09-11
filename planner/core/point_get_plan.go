@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/size"
@@ -55,7 +55,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // PointGetPlan is a fast plan for simple point get.
@@ -1113,7 +1113,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 			if check && latestIndexes == nil {
 				latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
 				if err != nil {
-					logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
+					log.Warn("get information schema failed", zap.Error(err))
 					return nil
 				}
 			}
@@ -1133,7 +1133,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		if check && latestIndexes == nil {
 			latestIndexes, check, err = getLatestIndexInfo(ctx, tbl.ID, 0)
 			if err != nil {
-				logutil.BgLogger().Warn("get information schema failed", zap.Error(err))
+				log.Warn("get information schema failed", zap.Error(err))
 				return nil
 			}
 		}

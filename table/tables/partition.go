@@ -43,11 +43,11 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -628,7 +628,7 @@ func dataForRangePruning(sctx sessionctx.Context, defs []model.PartitionDefiniti
 			if err != nil {
 				val, ok := fixOldVersionPartitionInfo(sctx, defs[i].LessThan[0])
 				if !ok {
-					logutil.BgLogger().Error("wrong partition definition", zap.String("less than", defs[i].LessThan[0]))
+					log.Error("wrong partition definition", zap.String("less than", defs[i].LessThan[0]))
 					return nil, errors.WithStack(err)
 				}
 				lessThan[i] = val
@@ -746,7 +746,7 @@ func getRangeLocateExprs(ctx sessionctx.Context, p *parser.Parser, defs []model.
 		expr, err := parseSimpleExprWithNames(p, ctx, buf.String(), schema, names)
 		if err != nil {
 			// If it got an error here, ddl may hang forever, so this error log is important.
-			logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
+			log.Error("wrong table partition expression", zap.String("expression", buf.String()), zap.Error(err))
 			return nil, errors.Trace(err)
 		}
 		locateExprs = append(locateExprs, expr)
@@ -859,7 +859,7 @@ func (lp *ForListPruning) buildListPruner(ctx sessionctx.Context, exprStr string
 	expr, err := parseSimpleExprWithNames(p, ctx, exprStr, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
+		log.Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
 		return errors.Trace(err)
 	}
 	// Since need to change the column index of the expression, clone the expression first.
@@ -1192,7 +1192,7 @@ func generateHashPartitionExpr(ctx sessionctx.Context, exprStr string,
 	exprs, err := rewritePartitionExpr(ctx, origExpr, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		logutil.BgLogger().Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
+		log.Error("wrong table partition expression", zap.String("expression", exprStr), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	// build column offset.
@@ -1711,7 +1711,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		// unlikely to happen in step2.
 		err = t.GetPartition(from).RemoveRecord(ctx, h, currData)
 		if err != nil {
-			logutil.BgLogger().Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
+			log.Error("update partition record fails", zap.String("message", "new record inserted while old record is not removed"), zap.Error(err))
 			return errors.Trace(err)
 		}
 		newTo, newFrom := int64(0), int64(0)

@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mock"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Constraint provides meta and map dependency describing a table constraint.
@@ -92,7 +92,7 @@ func buildConstraintExpression(ctx sessionctx.Context, exprString string,
 	exprs, err := expression.ParseSimpleExprsWithNames(ctx, exprString, schema, names)
 	if err != nil {
 		// If it got an error here, ddl may hang forever, so this error log is important.
-		logutil.BgLogger().Error("wrong check constraint expression", zap.String("expression", exprString), zap.Error(err))
+		log.Error("wrong check constraint expression", zap.String("expression", exprString), zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	return exprs[0], nil

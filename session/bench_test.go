@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 var smallCount = 100
@@ -50,16 +50,16 @@ func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 
 	store, err := mockstore.NewMockStore()
 	if err != nil {
-		logutil.BgLogger().Fatal(err.Error())
+		log.Fatal(err.Error())
 	}
 	domain, err := BootstrapSession(store)
 	if err != nil {
-		logutil.BgLogger().Fatal(err.Error())
+		log.Fatal(err.Error())
 	}
 	log.SetLevel(zapcore.ErrorLevel)
 	se, err := CreateSession4Test(store)
 	if err != nil {
-		logutil.BgLogger().Fatal(err.Error())
+		log.Fatal(err.Error())
 	}
 	mustExecute(se, "use test")
 	return se, domain, store

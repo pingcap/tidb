@@ -42,9 +42,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"sourcegraph.com/sourcegraph/appdash"
 	traceImpl "sourcegraph.com/sourcegraph/appdash/opentracing"
 )
@@ -171,11 +172,11 @@ func (e *TraceExec) nextOptimizerPlanTrace(ctx context.Context, se sessionctx.Co
 	defer func() {
 		err := zw.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
+			log.Warn("Closing zip writer failed", zap.Error(err))
 		}
 		err = zf.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("Closing zip file failed", zap.Error(err))
+			log.Warn("Closing zip file failed", zap.Error(err))
 		}
 	}()
 	traceZW, err := zw.Create("trace.json")

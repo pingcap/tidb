@@ -31,8 +31,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Token-based authentication is used in session migration. We don't use typical authentication because the proxy
@@ -190,12 +190,12 @@ func (sc *signingCert) checkAndLoadCert() {
 		return
 	}
 	if err := sc.loadCert(); err != nil {
-		logutil.BgLogger().Warn("loading signing cert failed",
+		log.Warn("loading signing cert failed",
 			zap.String("cert path", sc.certPath),
 			zap.String("key path", sc.keyPath),
 			zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("signing cert is loaded successfully",
+		log.Info("signing cert is loaded successfully",
 			zap.String("cert path", sc.certPath),
 			zap.String("key path", sc.keyPath))
 	}

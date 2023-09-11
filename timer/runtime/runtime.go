@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -52,7 +52,7 @@ type TimerRuntimeBuilder struct {
 func NewTimerRuntimeBuilder(groupID string, store *api.TimerStore) *TimerRuntimeBuilder {
 	return &TimerRuntimeBuilder{
 		rt: &TimerGroupRuntime{
-			logger:       logutil.BgLogger().With(zap.String("groupID", groupID)),
+			logger:       log.With(zap.String("groupID", groupID)),
 			cache:        newTimersCache(),
 			groupID:      groupID,
 			store:        store,

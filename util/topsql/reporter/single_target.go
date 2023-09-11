@@ -22,11 +22,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"
@@ -75,7 +75,7 @@ func (ds *SingleTargetDataSink) Start() {
 		if err == nil {
 			ds.registered.Store(true)
 		} else {
-			logutil.BgLogger().Warn("failed to register single target datasink", zap.Error(err))
+			log.Warn("failed to register single target datasink", zap.Error(err))
 		}
 	}
 
@@ -90,7 +90,7 @@ func (ds *SingleTargetDataSink) recoverRun() {
 		}
 		err := ds.conn.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("single target dataSink close connection failed", zap.String("category", "top-sql"), zap.Error(err))
+			log.Warn("single target dataSink close connection failed", zap.String("category", "top-sql"), zap.Error(err))
 		}
 		ds.conn = nil
 	}()
@@ -103,7 +103,7 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 	defer func() {
 		r := recover()
 		if r != nil {
-			logutil.BgLogger().Error("panic in SingleTargetDataSink, rerun",
+			log.Error("panic in SingleTargetDataSink, rerun",
 				zap.Reflect("r", r),
 				zap.Stack("stack trace"))
 			rerun = true
@@ -140,7 +140,7 @@ func (ds *SingleTargetDataSink) trySwitchRegistration(addr string) error {
 	// register if `add` is not empty and not registered before
 	if addr != "" && !ds.registered.Load() {
 		if err := ds.registerer.Register(ds); err != nil {
-			logutil.BgLogger().Warn("failed to register the single target datasink", zap.Error(err))
+			log.Warn("failed to register the single target datasink", zap.Error(err))
 			return err
 		}
 		ds.registered.Store(true)
@@ -189,7 +189,7 @@ func (ds *SingleTargetDataSink) doSend(addr string, task sendTask) {
 	start := time.Now()
 	defer func() {
 		if err != nil {
-			logutil.BgLogger().Warn("single target data sink failed to send data to receiver", zap.String("category", "top-sql"), zap.Error(err))
+			log.Warn("single target data sink failed to send data to receiver", zap.String("category", "top-sql"), zap.Error(err))
 			reporter_metrics.ReportAllDurationFailedHistogram.Observe(time.Since(start).Seconds())
 		} else {
 			reporter_metrics.ReportAllDurationSuccHistogram.Observe(time.Since(start).Seconds())
@@ -341,7 +341,7 @@ func (ds *SingleTargetDataSink) tryEstablishConnection(ctx context.Context, targ
 
 	if ds.conn != nil {
 		err := ds.conn.Close()
-		logutil.BgLogger().Warn("grpc dataSink close connection failed", zap.String("category", "top-sql"), zap.Error(err))
+		log.Warn("grpc dataSink close connection failed", zap.String("category", "top-sql"), zap.Error(err))
 	}
 
 	ds.conn, err = ds.dial(ctx, targetRPCAddr)

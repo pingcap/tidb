@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"go.uber.org/atomic"
 )
 
@@ -491,7 +491,7 @@ func getBinCollation(cs string) string {
 		return charset.CollationGBKBin
 	}
 
-	logutil.BgLogger().Error("unexpected charset " + cs)
+	log.Error("unexpected charset " + cs)
 	// it must return something, never reachable
 	return charset.CollationUTF8MB4
 }

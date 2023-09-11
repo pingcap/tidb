@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -37,11 +37,11 @@ type MyWorker[T int64, R struct{}] struct {
 func (w *MyWorker[T, R]) HandleTask(task int64, _ func(struct{})) {
 	globalCnt.Add(task)
 	cntWg.Done()
-	logutil.BgLogger().Info("Worker handling task")
+	log.Info("Worker handling task")
 }
 
 func (w *MyWorker[T, R]) Close() {
-	logutil.BgLogger().Info("Close worker", zap.Any("id", w.id))
+	log.Info("Close worker", zap.Any("id", w.id))
 }
 
 func createMyWorker() Worker[int64, struct{}] {

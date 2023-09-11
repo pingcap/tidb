@@ -99,13 +99,14 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -1077,7 +1078,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				return
 			} else if terror.ErrCritical.Equal(err) {
 				metrics.CriticalErrorCounter.Add(1)
-				logutil.Logger(ctx).Fatal("critical error, stop the server", zap.Error(err))
+				logutil.Logger(ctx).Log(context.Background(), log.LevelFatal, "critical error, stop the server", zap.Error(err))
 			}
 			var txnMode string
 			if ctx := cc.getCtx(); ctx != nil {
@@ -1336,7 +1337,7 @@ func (cc *clientConn) writeStats(ctx context.Context) error {
 	info := tikvhandler.ServerInfo{}
 	info.ServerInfo, err = infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("Failed to get ServerInfo for uptime status", zap.Error(err))
+		log.Error("Failed to get ServerInfo for uptime status", zap.Error(err))
 	} else {
 		uptime = int64(time.Since(time.Unix(info.ServerInfo.StartTimestamp, 0)).Seconds())
 	}
@@ -1694,7 +1695,7 @@ func (cc *clientConn) handlePlanReplayerDump(ctx context.Context, e *executor.Pl
 	}
 	data, err := cc.getDataFromPath(ctx, e.Path)
 	if err != nil {
-		logutil.BgLogger().Error(err.Error())
+		log.Error(err.Error())
 		return err
 	}
 	if len(data) == 0 {
@@ -1940,7 +1941,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 			//nolint:forcetypeassert
 			updateStmt, ok := stmt.(*ast.UpdateStmt)
 			if !ok {
-				logutil.BgLogger().Warn("unexpected statement type for Update plan",
+				log.Warn("unexpected statement type for Update plan",
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
@@ -1953,7 +1954,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		case *plannercore.Delete:
 			deleteStmt, ok := stmt.(*ast.DeleteStmt)
 			if !ok {
-				logutil.BgLogger().Warn("unexpected statement type for Delete plan",
+				log.Warn("unexpected statement type for Delete plan",
 					zap.String("type", fmt.Sprintf("%T", stmt)))
 				continue
 			}
@@ -1987,7 +1988,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		if err != nil {
 			// suppress the lock error, we are not going to handle it here for simplicity.
 			err = nil
-			logutil.BgLogger().Warn("lock keys error on prefetch", zap.Error(err))
+			log.Warn("lock keys error on prefetch", zap.Error(err))
 		}
 	} else {
 		_, err = snapshot.BatchGet(ctx, rowKeys)

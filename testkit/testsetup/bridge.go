@@ -17,12 +17,12 @@
 package testsetup
 
 import (
-	"fmt"
-	"os"
+	// "fmt"
+	// "os"
 
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
+	// "github.com/pingcap/log"
+	// "github.com/pingcap/tidb/util/logutil/zap"
+	// "github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 // SetupForCommonTest runs before all the tests.
@@ -31,18 +31,18 @@ func SetupForCommonTest() {
 }
 
 func applyOSLogLevel() {
-	osLoglevel := os.Getenv("log_level")
-	if len(osLoglevel) > 0 {
-		cfg := log.Config{
-			Level:  osLoglevel,
-			Format: "text",
-			File:   log.FileLogConfig{},
-		}
-		gl, props, err := log.InitLogger(&cfg, zap.AddStacktrace(zapcore.FatalLevel))
-		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "applyOSLogLevel failed: %v", err)
-			os.Exit(-1)
-		}
-		log.ReplaceGlobals(gl, props)
-	}
+	// osLoglevel := os.Getenv("log_level")
+	// if len(osLoglevel) > 0 {
+	// 	cfg := log.Config{
+	// 		Level:  osLoglevel,
+	// 		Format: "text",
+	// 		File:   log.FileLogConfig{},
+	// 	}
+	// 	gl, props, err := log.InitLogger(&cfg, zap.AddStacktrace(zapcore.FatalLevel))
+	// 	if err != nil {
+	// 		_, _ = fmt.Fprintf(os.Stderr, "applyOSLogLevel failed: %v", err)
+	// 		os.Exit(-1)
+	// 	}
+	// 	log.ReplaceGlobals(gl, props)
+	// }
 }

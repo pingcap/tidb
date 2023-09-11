@@ -31,10 +31,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // StatsReader is used for simplifying code that needs to read statistics from system tables(mysql.stats_xxx) in different sqls
@@ -198,7 +198,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 			colIDs := row.GetString(3)
 			err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 			if err != nil {
-				logutil.BgLogger().Error("decode column IDs failed", zap.String("category", "stats"), zap.String("column_ids", colIDs), zap.Error(err))
+				log.Error("decode column IDs failed", zap.String("category", "stats"), zap.String("column_ids", colIDs), zap.Error(err))
 				return nil, err
 			}
 			statsStr := row.GetString(4)
@@ -206,7 +206,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *Table, physicalID int6
 				if statsStr != "" {
 					item.ScalarVals, err = strconv.ParseFloat(statsStr, 64)
 					if err != nil {
-						logutil.BgLogger().Error("parse scalar stats failed", zap.String("category", "stats"), zap.String("stats", statsStr), zap.Error(err))
+						log.Error("parse scalar stats failed", zap.String("category", "stats"), zap.String("stats", statsStr), zap.Error(err))
 						return nil, err
 					}
 				}
@@ -295,7 +295,7 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 	if idx != nil {
 		table.Indices[histID] = idx
 	} else {
-		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
+		log.Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }
@@ -401,7 +401,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
 		// But don't worry, next lease the ddl will be updated, and we will load a same table for two times to
 		// avoid error.
-		logutil.BgLogger().Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
+		log.Debug("we cannot find column in table info now. It may be deleted", zap.Int64("colID", histID), zap.String("table", tableInfo.Name.O))
 	}
 	return nil
 }

@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/set"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // AfFinalResult indicates aggregation functions final result.
@@ -139,7 +139,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	for i := 0; i < len(w.groupSet.StringSet); i++ {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, partialResults[i][j], result); err != nil {
-				logutil.BgLogger().Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
+				log.Error("HashAggFinalWorker failed to append final result to Chunk", zap.Error(err))
 			}
 		}
 		if len(w.aggFuncs) == 0 {

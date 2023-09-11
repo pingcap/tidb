@@ -24,12 +24,13 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // pluginGlobal holds all global variables for plugin.
@@ -260,7 +261,7 @@ type flushWatcher struct {
 func (w *flushWatcher) refreshPluginState() error {
 	disabled, err := w.getPluginDisabledFlag()
 	if err != nil {
-		logutil.BgLogger().Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
+		log.Error("get plugin disabled flag failure", zap.String("plugin", w.manifest.Name), zap.Error(err))
 		return err
 	}
 	if disabled {
@@ -270,7 +271,7 @@ func (w *flushWatcher) refreshPluginState() error {
 	}
 	err = w.manifest.OnFlush(w.ctx, w.manifest)
 	if err != nil {
-		logutil.BgLogger().Error("plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
+		log.Error("plugin flush event failed", zap.String("plugin", w.manifest.Name), zap.Error(err))
 		return err
 	}
 	return nil

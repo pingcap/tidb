@@ -51,12 +51,12 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -679,20 +679,20 @@ func bootstrap(s Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock error",
+		log.Fatal("init metadata lock error",
 			zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
 	for {
 		b, err := checkBootstrapped(s)
 		if err != nil {
-			logutil.BgLogger().Fatal("check bootstrap error",
+			log.Fatal("check bootstrap error",
 				zap.Error(err))
 		}
 		// For rolling upgrade, we can't do upgrade only in the owner.
 		if b {
 			upgrade(s)
-			logutil.BgLogger().Info("upgrade successful in bootstrap",
+			log.Info("upgrade successful in bootstrap",
 				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
@@ -702,7 +702,7 @@ func bootstrap(s Session) {
 			doDDLWorks(s)
 			doDMLWorks(s)
 			runBootstrapSQLFile = true
-			logutil.BgLogger().Info("bootstrap successful",
+			log.Info("bootstrap successful",
 				zap.Duration("take time", time.Since(startTime)))
 			return
 		}
@@ -1134,7 +1134,7 @@ func checkBootstrapped(s Session) (bool, error) {
 	//  Check if system db exists.
 	_, err := s.ExecuteInternal(ctx, "USE %n", mysql.SystemDB)
 	if err != nil && infoschema.ErrDatabaseNotExists.NotEqual(err) {
-		logutil.BgLogger().Fatal("check bootstrap error",
+		log.Fatal("check bootstrap error",
 			zap.Error(err))
 	}
 	// Check bootstrapped variable value in TiDB table.
@@ -1205,7 +1205,7 @@ func upgrade(s Session) {
 	if ver < version92 {
 		useConcurrentDDL, err := checkOwnerVersion(context.Background(), domain.GetDomain(s))
 		if err != nil {
-			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
+			log.Fatal("[upgrade] upgrade failed", zap.Error(err))
 		}
 		if !useConcurrentDDL {
 			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
@@ -1216,7 +1216,7 @@ func upgrade(s Session) {
 	// Do upgrade works then update bootstrap version.
 	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
+		log.Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
 	if isNull {
@@ -1239,19 +1239,19 @@ func upgrade(s Session) {
 
 	if err != nil {
 		sleepTime := 1 * time.Second
-		logutil.BgLogger().Info("update bootstrap ver failed",
+		log.Info("update bootstrap ver failed",
 			zap.Error(err), zap.Duration("sleeping time", sleepTime))
 		time.Sleep(sleepTime)
 		// Check if TiDB is already upgraded.
 		v, err1 := getBootstrapVersion(s)
 		if err1 != nil {
-			logutil.BgLogger().Fatal("upgrade failed", zap.Error(err1))
+			log.Fatal("upgrade failed", zap.Error(err1))
 		}
 		if v >= currentBootstrapVersion {
 			// It is already bootstrapped/upgraded by a higher version TiDB server.
 			return
 		}
-		logutil.BgLogger().Fatal("[upgrade] upgrade failed",
+		log.Fatal("[upgrade] upgrade failed",
 			zap.Int64("from", ver),
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
@@ -1262,7 +1262,7 @@ func upgrade(s Session) {
 func checkOwnerVersion(ctx context.Context, dom *domain.Domain) (bool, error) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
-	logutil.BgLogger().Info("Waiting for the DDL owner to be elected in the cluster")
+	log.Info("Waiting for the DDL owner to be elected in the cluster")
 	for {
 		select {
 		case <-ctx.Done():
@@ -1376,7 +1376,7 @@ func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
 		}
 	}
 	if err != nil {
-		logutil.BgLogger().Fatal("doReentrantDDL error", zap.Error(err))
+		log.Fatal("doReentrantDDL error", zap.Error(err))
 	}
 }
 
@@ -1970,7 +1970,7 @@ func upgradeToVer67(s Session, ver int64) {
 			WHERE source != 'builtin'
 			ORDER BY update_time DESC`)
 	if err != nil {
-		logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
+		log.Fatal("upgradeToVer67 error", zap.Error(err))
 	}
 	req := rs.NewChunk(nil)
 	iter := chunk.NewIterator4Chunk(req)
@@ -1979,7 +1979,7 @@ func upgradeToVer67(s Session, ver int64) {
 	for {
 		err = rs.Next(context.TODO(), req)
 		if err != nil {
-			logutil.BgLogger().Fatal("upgradeToVer67 error", zap.Error(err))
+			log.Fatal("upgradeToVer67 error", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
 			break
@@ -2017,7 +2017,7 @@ func updateBindInfo(iter *chunk.Iterator4Chunk, p *parser.Parser, bindMap map[st
 		collation := row.GetString(5)
 		stmt, err := p.ParseOneStmt(bind, charset, collation)
 		if err != nil {
-			logutil.BgLogger().Fatal("updateBindInfo error", zap.Error(err))
+			log.Fatal("updateBindInfo error", zap.Error(err))
 		}
 		originWithDB := parser.Normalize(utilparser.RestoreWithDefaultDB(stmt, db, bind))
 		if _, ok := bindMap[originWithDB]; ok {
@@ -2286,7 +2286,7 @@ func upgradeToVer89(s Session, ver int64) {
 // (changes to the config file will no longer take effect past this point).
 func importConfigOption(s Session, configName, svName, valStr string) {
 	message := fmt.Sprintf("%s is now configured by the system variable %s. One-time importing the value specified in tidb.toml file", configName, svName)
-	logutil.BgLogger().Warn(message, zap.String("value", valStr))
+	log.Warn(message, zap.String("value", valStr))
 	// We use insert ignore, since if its a duplicate we don't want to overwrite any user-set values.
 	sql := fmt.Sprintf("INSERT IGNORE INTO  %s.%s (`VARIABLE_NAME`, `VARIABLE_VALUE`) VALUES ('%s', '%s')",
 		mysql.SystemDB, mysql.GlobalVariablesTable, svName, valStr)
@@ -2858,31 +2858,31 @@ func doBootstrapSQLFile(s Session) error {
 	if sqlFile == "" {
 		return nil
 	}
-	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
+	log.Info("executing -initialize-sql-file", zap.String("file", sqlFile))
 	b, err := os.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
 		if intest.InTest {
 			return err
 		}
-		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
+		log.Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
 	stmts, err := s.Parse(ctx, string(b))
 	if err != nil {
 		if intest.InTest {
 			return err
 		}
-		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
+		log.Fatal("unable to parse InitializeSQLFile", zap.Error(err))
 	}
 	for _, stmt := range stmts {
 		rs, err := s.ExecuteStmt(ctx, stmt)
 		if err != nil {
-			logutil.BgLogger().Warn("InitializeSQLFile error", zap.Error(err))
+			log.Warn("InitializeSQLFile error", zap.Error(err))
 		}
 		if rs != nil {
 			// I don't believe we need to drain the result-set in bootstrap mode
 			// but if required we can do this here in future.
 			if err := rs.Close(); err != nil {
-				logutil.BgLogger().Fatal("unable to close result", zap.Error(err))
+				log.Fatal("unable to close result", zap.Error(err))
 			}
 		}
 	}
@@ -2899,7 +2899,7 @@ func doDMLWorks(s Session) {
 		// The auth_socket plugin will validate that the user matches $USER.
 		u, err := osuser.Current()
 		if err != nil {
-			logutil.BgLogger().Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
+			log.Fatal("failed to read current user. unable to secure bootstrap.", zap.Error(err))
 		}
 		mustExecute(s, `INSERT HIGH_PRIORITY INTO mysql.user (Host,User,authentication_string,plugin,Select_priv,Insert_priv,Update_priv,Delete_priv,Create_priv,Drop_priv,Process_priv,Grant_priv,References_priv,Alter_priv,Show_db_priv,
 			Super_priv,Create_tmp_table_priv,Lock_tables_priv,Execute_priv,Create_view_priv,Show_view_priv,Create_routine_priv,Alter_routine_priv,Index_priv,Create_user_priv,Event_priv,Repl_slave_priv,Repl_client_priv,Trigger_priv,Create_role_priv,Drop_role_priv,Account_locked,
@@ -2979,17 +2979,17 @@ func doDMLWorks(s Session) {
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
 	if err != nil {
 		sleepTime := 1 * time.Second
-		logutil.BgLogger().Info("doDMLWorks failed", zap.Error(err), zap.Duration("sleeping time", sleepTime))
+		log.Info("doDMLWorks failed", zap.Error(err), zap.Duration("sleeping time", sleepTime))
 		time.Sleep(sleepTime)
 		// Check if TiDB is already bootstrapped.
 		b, err1 := checkBootstrapped(s)
 		if err1 != nil {
-			logutil.BgLogger().Fatal("doDMLWorks failed", zap.Error(err1))
+			log.Fatal("doDMLWorks failed", zap.Error(err1))
 		}
 		if b {
 			return
 		}
-		logutil.BgLogger().Fatal("doDMLWorks failed", zap.Error(err))
+		log.Fatal("doDMLWorks failed", zap.Error(err))
 	}
 }
 
@@ -2999,7 +2999,7 @@ func mustExecute(s Session, sql string, args ...interface{}) {
 	_, err := s.ExecuteInternal(ctx, sql, args...)
 	defer cancel()
 	if err != nil {
-		logutil.BgLogger().Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
+		log.Fatal("mustExecute error", zap.Error(err), zap.Stack("stack"))
 	}
 }
 
@@ -3033,7 +3033,7 @@ func rebuildAllPartitionValueMapAndSorted(s *session) {
 			pe := t.(partitionExpr).PartitionExpr()
 			for _, cp := range pe.ColPrunes {
 				if err := cp.RebuildPartitionValueMapAndSorted(p, pi.Definitions); err != nil {
-					logutil.BgLogger().Warn("build list column partition value map and sorted failed")
+					log.Warn("build list column partition value map and sorted failed")
 					break
 				}
 			}

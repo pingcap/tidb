@@ -21,9 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // LockNoWait is used for pessimistic lock wait time
@@ -190,7 +191,10 @@ func (lw *Manager) WakeUp(txn, commitTS uint64, keyHashes []uint64) {
 			default:
 			}
 		}
-		log.S().Debug("wakeup", len(waiters), "txns blocked by txn", txn, " keyHashes=", keyHashes)
+		log.Debug("",
+			zap.Int("wakeup", len(waiters)),
+			zap.Any("txns blocked by txn", txn),
+			zap.Any("keyHashes", keyHashes))
 	}
 	// wake up delay waiters, this will not remove waiter from queue
 	if len(wakeUpDelayWaiters) > 0 {
@@ -243,7 +247,7 @@ func (lw *Manager) WakeUpForDeadlock(resp *deadlock.DeadlockResponse) {
 	lw.mu.Unlock()
 	if waiter != nil {
 		waiter.ch <- WaitResult{DeadlockResp: resp}
-		log.S().Infof("wakeup txn=%v blocked by txn=%v because of deadlock, keyHash=%v, deadlockKeyHash=%v",
+		log.Infof("wakeup txn=%v blocked by txn=%v because of deadlock, keyHash=%v, deadlockKeyHash=%v",
 			resp.Entry.Txn, resp.Entry.WaitForTxn, resp.Entry.KeyHash, resp.DeadlockKeyHash)
 	}
 }

@@ -42,10 +42,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type domainMap struct {
@@ -77,7 +77,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	idxUsageSyncLease := GetIndexUsageSyncLease()
 	planReplayerGCLease := GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
-		logutil.BgLogger().Info("new domain",
+		log.Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
 			zap.Stringer("stats lease", statisticLease),
@@ -94,7 +94,7 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
-			logutil.BgLogger().Error("init domain failed", zap.String("category", "ddl"),
+			log.Error("init domain failed", zap.String("category", "ddl"),
 				zap.Error(err1))
 		}
 		return true, err1
@@ -204,7 +204,7 @@ func DisableStats4Test() {
 
 // Parse parses a query string to raw ast.StmtNode.
 func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
-	logutil.BgLogger().Debug("compiling", zap.String("source", src))
+	log.Debug("compiling", zap.String("source", src))
 	sessVars := ctx.GetSessionVars()
 	p := parser.New()
 	p.SetParserConfig(sessVars.BuildParserConfig())
@@ -214,7 +214,7 @@ func Parse(ctx sessionctx.Context, src string) ([]ast.StmtNode, error) {
 		sessVars.StmtCtx.AppendWarning(warn)
 	}
 	if err != nil {
-		logutil.BgLogger().Warn("compiling",
+		log.Warn("compiling",
 			zap.String("source", src),
 			zap.Error(err))
 		return nil, err
@@ -282,11 +282,11 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	sessVars := se.sessionVars
 	if meetsErr != nil {
 		if !sessVars.InTxn() {
-			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
+			log.Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
 		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
-			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
+			log.Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
 		}

@@ -17,9 +17,9 @@ package globalconfigsync
 import (
 	"context"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GlobalConfigSyncer is used to sync pd global config.
@@ -45,7 +45,7 @@ func (s *GlobalConfigSyncer) StoreGlobalConfig(ctx context.Context, item pd.Glob
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("store global config", zap.String("name", item.Name), zap.String("value", item.Value))
+	log.Info("store global config", zap.String("name", item.Name), zap.String("value", item.Value))
 	return nil
 }
 

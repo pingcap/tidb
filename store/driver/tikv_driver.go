@@ -34,14 +34,14 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	txn_driver "github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/gcworker"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -197,10 +197,10 @@ func (d TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore kv
 	)
 
 	if keyspaceName == "" {
-		logutil.BgLogger().Info("using API V1.")
+		log.Info("using API V1.")
 		pdClient = tikv.NewCodecPDClient(tikv.ModeTxn, pdCli)
 	} else {
-		logutil.BgLogger().Info("using API V2.", zap.String("keyspaceName", keyspaceName))
+		log.Info("using API V2.", zap.String("keyspaceName", keyspaceName))
 		pdClient, err = tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdCli, keyspaceName)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -301,7 +301,7 @@ func (s *tikvStore) EtcdAddrs() ([]string, error) {
 			if len(member.ClientUrls) > 0 {
 				u, err := url.Parse(member.ClientUrls[0])
 				if err != nil {
-					logutil.BgLogger().Error("fail to parse client url from pd members", zap.String("client_url", member.ClientUrls[0]), zap.Error(err))
+					log.Error("fail to parse client url from pd members", zap.String("client_url", member.ClientUrls[0]), zap.Error(err))
 					return nil, err
 				}
 				etcdAddrs = append(etcdAddrs, u.Host)
@@ -391,11 +391,11 @@ func (s *tikvStore) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 	for _, store := range stores {
 		resp, err := s.GetTiKVClient().SendRequest(context.TODO(), store.GetAddr(), tikvrpc.NewRequest(tikvrpc.CmdLockWaitInfo, &kvrpcpb.GetLockWaitInfoRequest{}), time.Second*30)
 		if err != nil {
-			logutil.BgLogger().Warn("query lock wait info failed", zap.Error(err))
+			log.Warn("query lock wait info failed", zap.Error(err))
 			continue
 		}
 		if resp.Resp == nil {
-			logutil.BgLogger().Warn("lock wait info from store is nil")
+			log.Warn("lock wait info from store is nil")
 			continue
 		}
 		entries := resp.Resp.(*kvrpcpb.GetLockWaitInfoResponse).Entries

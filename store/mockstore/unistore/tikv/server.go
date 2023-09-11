@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/store/mockstore/unistore/cophandler"
@@ -37,7 +37,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/pberror"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 var _ tikvpb.TikvServer = new(Server)
@@ -471,7 +472,7 @@ func (svr *Server) KvResolveLock(ctx context.Context, req *kvrpcpb.ResolveLockRe
 	resp := &kvrpcpb.ResolveLockResponse{}
 	if len(req.TxnInfos) > 0 {
 		for _, txnInfo := range req.TxnInfos {
-			log.S().Debugf("kv resolve lock region:%d txn:%v", reqCtx.regCtx.Meta().Id, txnInfo.Txn)
+			log.Debugf("kv resolve lock region:%d txn:%v", reqCtx.regCtx.Meta().Id, txnInfo.Txn)
 			err := svr.mvccStore.ResolveLock(reqCtx, nil, txnInfo.Txn, txnInfo.Status)
 			if err != nil {
 				resp.Error, resp.RegionError = convertToPBError(err)
@@ -479,7 +480,7 @@ func (svr *Server) KvResolveLock(ctx context.Context, req *kvrpcpb.ResolveLockRe
 			}
 		}
 	} else {
-		log.S().Debugf("kv resolve lock region:%d txn:%v", reqCtx.regCtx.Meta().Id, req.StartVersion)
+		log.Debugf("kv resolve lock region:%d txn:%v", reqCtx.regCtx.Meta().Id, req.StartVersion)
 		err := svr.mvccStore.ResolveLock(reqCtx, req.Keys, req.StartVersion, req.CommitVersion)
 		resp.Error, resp.RegionError = convertToPBError(err)
 	}

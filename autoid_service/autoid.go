@@ -33,10 +33,11 @@ import (
 	"github.com/pingcap/tidb/owner"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/etcd"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	zaplog "go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -211,7 +212,7 @@ func (alloc *autoIDValue) rebase4Unsigned(ctx context.Context,
 		return err
 	}
 
-	logutil.BgLogger().Info("rebase4Unsigned from",
+	log.Info("rebase4Unsigned from",
 		zap.String("category", "autoid service"),
 		zap.Int64("dbID", dbID),
 		zap.Int64("tblID", tblID),
@@ -252,7 +253,7 @@ func (alloc *autoIDValue) rebase4Signed(ctx context.Context, store kv.Storage, d
 		return err
 	}
 
-	logutil.BgLogger().Info("rebase4Signed from",
+	log.Info("rebase4Signed from",
 		zap.Int64("dbID", dbID),
 		zap.Int64("tblID", tblID),
 		zap.Int64("from", oldValue),
@@ -274,7 +275,7 @@ type Service struct {
 // New return a Service instance.
 func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Config) *Service {
 	cfg := config.GetGlobalConfig()
-	etcdLogCfg := zap.NewProductionConfig()
+	etcdLogCfg := zaplog.NewProductionConfig()
 
 	cli, err := clientv3.New(clientv3.Config{
 		LogConfig:        &etcdLogCfg,
@@ -302,7 +303,7 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
 	l.SetBeOwnerHook(func() {
-		logutil.BgLogger().Info("leader change of autoid service, this node become owner",
+		log.Info("leader change of autoid service, this node become owner",
 			zap.String("addr", selfAddr),
 			zap.String("category", "autoid service"))
 	})
@@ -357,7 +358,7 @@ func (s *Service) Close() {
 			if v.base > 0 {
 				err := v.forceRebase(context.Background(), s.store, k.dbID, k.tblID, v.base, v.isUnsigned)
 				if err != nil {
-					logutil.BgLogger().Warn("save cached ID fail when service exit", zap.String("category", "autoid service"),
+					log.Warn("save cached ID fail when service exit", zap.String("category", "autoid service"),
 						zap.Int64("db id", k.dbID),
 						zap.Int64("table id", k.tblID),
 						zap.Int64("value", v.base),
@@ -406,7 +407,7 @@ const batch = 4000
 func (s *Service) AllocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	serviceKeyspaceID := uint32(s.store.GetCodec().GetKeyspaceID())
 	if req.KeyspaceID != serviceKeyspaceID {
-		logutil.BgLogger().Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
+		log.Info("Current service is not request keyspace leader.", zap.Uint32("req-keyspace-id", req.KeyspaceID), zap.Uint32("service-keyspace-id", serviceKeyspaceID))
 		return nil, errors.Trace(errors.New("not leader"))
 	}
 	var res *autoid.AutoIDResponse
@@ -442,7 +443,7 @@ func (s *Service) getAlloc(dbID, tblID int64, isUnsigned bool) *autoIDValue {
 
 func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*autoid.AutoIDResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
-		logutil.BgLogger().Info("Alloc AutoID fail, not leader", zap.String("category", "autoid service"))
+		log.Info("Alloc AutoID fail, not leader", zap.String("category", "autoid service"))
 		return nil, errors.New("not leader")
 	}
 
@@ -526,7 +527,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 	if err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("forceRebase from",
+	log.Info("forceRebase from",
 		zap.Int64("dbID", dbID),
 		zap.Int64("tblID", tblID),
 		zap.Int64("from", oldValue),
@@ -541,7 +542,7 @@ func (alloc *autoIDValue) forceRebase(ctx context.Context, store kv.Storage, dbI
 // req.N = 0 is handled specially, it is used to return the current auto ID value.
 func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoid.RebaseResponse, error) {
 	if s.leaderShip != nil && !s.leaderShip.IsOwner() {
-		logutil.BgLogger().Info("Rebase() fail, not leader", zap.String("category", "autoid service"))
+		log.Info("Rebase() fail, not leader", zap.String("category", "autoid service"))
 		return nil, errors.New("not leader")
 	}
 

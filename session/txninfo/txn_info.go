@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TxnRunningState is the current state of a transaction
@@ -235,7 +235,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		}
 		res, err := json.Marshal(allSQLDigests)
 		if err != nil {
-			logutil.BgLogger().Warn("Failed to marshal sql digests list as json", zap.Uint64("txnStartTS", info.StartTS))
+			log.Warn("Failed to marshal sql digests list as json", zap.Uint64("txnStartTS", info.StartTS))
 			return types.NewDatum(nil)
 		}
 		return types.NewDatum(string(res))

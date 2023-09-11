@@ -35,13 +35,14 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func genKeyExistsError(name string, value string, err error) error {
 	if err != nil {
-		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
+		log.Info("extractKeyExistsErr meets error", zap.Error(err))
 	}
 	return kv.ErrKeyExists.FastGenByArgs(value, name)
 }
@@ -188,16 +189,16 @@ func prettyWriteKey(bufTableID, bufRest *bytes.Buffer, key []byte) {
 	if err == nil {
 		_, err1 := fmt.Fprintf(bufTableID, "{tableID=%d", tableID)
 		if err1 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err1))
+			log.Error("error", zap.Error(err1))
 		}
 		_, err1 = fmt.Fprintf(bufRest, ", indexID=%d, indexValues={", indexID)
 		if err1 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err1))
+			log.Error("error", zap.Error(err1))
 		}
 		for _, v := range indexValues {
 			_, err2 := fmt.Fprintf(bufRest, "%s, ", v)
 			if err2 != nil {
-				logutil.BgLogger().Error("error", zap.Error(err2))
+				log.Error("error", zap.Error(err2))
 			}
 		}
 		bufRest.WriteString("}}")
@@ -208,11 +209,11 @@ func prettyWriteKey(bufTableID, bufRest *bytes.Buffer, key []byte) {
 	if err == nil {
 		_, err3 := fmt.Fprintf(bufTableID, "{tableID=%d", tableID)
 		if err3 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err3))
+			log.Error("error", zap.Error(err3))
 		}
 		_, err3 = fmt.Fprintf(bufRest, ", handle=%s}", handle.String())
 		if err3 != nil {
-			logutil.BgLogger().Error("error", zap.Error(err3))
+			log.Error("error", zap.Error(err3))
 		}
 		return
 	}
@@ -228,7 +229,7 @@ func prettyWriteKey(bufTableID, bufRest *bytes.Buffer, key []byte) {
 
 	_, err4 := fmt.Fprintf(bufRest, "%#v", key)
 	if err4 != nil {
-		logutil.BgLogger().Error("error", zap.Error(err4))
+		log.Error("error", zap.Error(err4))
 	}
 }
 

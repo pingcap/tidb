@@ -38,9 +38,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -290,7 +290,7 @@ func (c *concatFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 
 		if argType.GetFlen() < 0 {
 			bf.tp.SetFlen(mysql.MaxBlobWidth)
-			logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
+			log.Debug("unexpected `Flen` value(-1) in CONCAT's args", zap.Int("arg's index", i))
 		}
 		bf.tp.SetFlen(bf.tp.GetFlen() + argType.GetFlen())
 	}
@@ -366,7 +366,7 @@ func (c *concatWSFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		if i != 0 {
 			if argType.GetFlen() < 0 {
 				bf.tp.SetFlen(mysql.MaxBlobWidth)
-				logutil.BgLogger().Debug("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
+				log.Debug("unexpected `Flen` value(-1) in CONCAT_WS's args", zap.Int("arg's index", i))
 			}
 			bf.tp.SetFlen(bf.tp.GetFlen() + argType.GetFlen())
 		}
@@ -2014,7 +2014,7 @@ func getFlen4LpadAndRpad(ctx sessionctx.Context, arg Expression) int {
 	if constant, ok := arg.(*Constant); ok {
 		length, isNull, err := constant.EvalInt(ctx, chunk.Row{})
 		if err != nil {
-			logutil.BgLogger().Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
+			log.Error("eval `Flen` for LPAD/RPAD", zap.Error(err))
 		}
 		if isNull || err != nil || length > mysql.MaxBlobWidth {
 			return mysql.MaxBlobWidth
@@ -2341,7 +2341,7 @@ func (c *charFunctionClass) getFunction(ctx sessionctx.Context, args []Expressio
 	// The last argument represents the charset name after "using".
 	if _, ok := args[len(args)-1].(*Constant); !ok {
 		// If we got there, there must be something wrong in other places.
-		logutil.BgLogger().Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
+		log.Warn(fmt.Sprintf("The last argument in char function must be constant, but got %T", args[len(args)-1]))
 		return nil, errIncorrectArgs
 	}
 	charsetName, isNull, err := args[len(args)-1].EvalString(ctx, chunk.Row{})

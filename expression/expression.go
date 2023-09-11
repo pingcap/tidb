@@ -36,11 +36,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/zeropool"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -1395,7 +1395,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 		var err error
 		_, err = proto.Marshal(metadata)
 		if err != nil {
-			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
+			log.Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
 			return false
 		}
 	}

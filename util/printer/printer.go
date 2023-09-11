@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/versioninfo"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // PrintTiDBInfo prints the TiDB version information.
@@ -44,12 +44,12 @@ func PrintTiDBInfo() {
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		fields = append(fields, zap.String("Enterprise Extension Commit Hash", versioninfo.TiDBEnterpriseExtensionGitHash))
 	}
-	logutil.BgLogger().Info("Welcome to TiDB.", fields...)
+	log.Info("Welcome to TiDB.", fields...)
 	configJSON, err := json.Marshal(config.GetGlobalConfig())
 	if err != nil {
 		panic(err)
 	}
-	logutil.BgLogger().Info("loaded config", zap.ByteString("config", configJSON))
+	log.Info("loaded config", zap.ByteString("config", configJSON))
 }
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.

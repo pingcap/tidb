@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var emptyOptimisticTxnContextProvider = OptimisticTxnContextProvider{}
@@ -136,13 +136,13 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) 
 
 	if ok {
 		sessVars := p.sctx.GetSessionVars()
-		logutil.BgLogger().Debug("init txnStartTS with MaxUint64",
+		log.Debug("init txnStartTS with MaxUint64",
 			zap.Uint64("conn", sessVars.ConnectionID),
 			zap.String("text", sessVars.StmtCtx.OriginalSQL),
 		)
 
 		if err = p.forcePrepareConstStartTS(math.MaxUint64); err != nil {
-			logutil.BgLogger().Error("failed init txnStartTS with MaxUint64",
+			log.Error("failed init txnStartTS with MaxUint64",
 				zap.Error(err),
 				zap.Uint64("conn", sessVars.ConnectionID),
 				zap.String("text", sessVars.StmtCtx.OriginalSQL),

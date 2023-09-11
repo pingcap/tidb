@@ -36,10 +36,10 @@ import (
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/gcutil"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SetExecutor executes set statement.
@@ -161,7 +161,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			}
 			return nil
 		})
-		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		log.Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
@@ -233,7 +233,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	}
 	// Clients are often noisy in setting session variables such as
 	// autocommit, timezone, query cache
-	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+	log.Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
 }
 
@@ -317,7 +317,7 @@ func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uin
 		vars.SnapshotInfoschema = nil
 		return nil
 	}
-	logutil.BgLogger().Info("load snapshot info schema",
+	log.Info("load snapshot info schema",
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
 	dom := domain.GetDomain(e.Ctx())

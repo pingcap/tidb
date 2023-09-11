@@ -24,7 +24,8 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type analyzeSaveStatsWorker struct {
@@ -51,7 +52,7 @@ func newAnalyzeSaveStatsWorker(
 func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot bool) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			log.Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			worker.errCh <- getAnalyzePanicErr(r)
 		}
 	}()

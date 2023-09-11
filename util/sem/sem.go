@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 const (
@@ -75,7 +75,7 @@ func Enable() {
 	variable.SetSysVar(variable.TiDBEnableEnhancedSecurity, variable.On)
 	variable.SetSysVar(variable.Hostname, variable.DefHostname)
 	// write to log so users understand why some operations are weird.
-	logutil.BgLogger().Info("tidb-server is operating with security enhanced mode (SEM) enabled")
+	log.Info("tidb-server is operating with security enhanced mode (SEM) enabled")
 }
 
 // Disable disables SEM. This is intended to be used by the test-suite.

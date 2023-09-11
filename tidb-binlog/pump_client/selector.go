@@ -17,9 +17,10 @@ package client
 import (
 	"sync"
 
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	pb "github.com/pingcap/tipb/go-binlog"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 const (

@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
@@ -60,7 +60,7 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 	}
 	indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
 	if indexInfo == nil {
-		logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
+		log.Warn("index info not found", zap.String("category", "ddl-ingest"),
 			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", bgm.EleID))
 		return nil, errors.New("index info not found")
 	}

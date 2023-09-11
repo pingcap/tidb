@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var _ Manager = &mockManager{}
@@ -76,7 +76,7 @@ func (m *mockManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *mockManager) IsOwner() bool {
-	logutil.BgLogger().Debug("owner manager checks owner", zap.String("category", "ddl"),
+	log.Debug("owner manager checks owner", zap.String("category", "ddl"),
 		zap.String("ID", m.id), zap.String("ownerKey", m.key))
 	return util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
 }
@@ -84,7 +84,7 @@ func (m *mockManager) IsOwner() bool {
 func (m *mockManager) toBeOwner() {
 	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
 	if ok {
-		logutil.BgLogger().Debug("owner manager gets owner", zap.String("category", "ddl"),
+		log.Debug("owner manager gets owner", zap.String("category", "ddl"),
 			zap.String("ID", m.id), zap.String("ownerKey", m.key))
 		if m.beOwnerHook != nil {
 			m.beOwnerHook()
@@ -101,7 +101,7 @@ func (m *mockManager) RetireOwner() {
 func (m *mockManager) Cancel() {
 	m.cancel()
 	m.wg.Wait()
-	logutil.BgLogger().Info("owner manager is canceled", zap.String("category", "ddl"),
+	log.Info("owner manager is canceled", zap.String("category", "ddl"),
 		zap.String("ID", m.id), zap.String("ownerKey", m.key))
 }
 
@@ -134,18 +134,18 @@ func sleepContext(ctx context.Context, delay time.Duration) {
 func (m *mockManager) CampaignOwner(_ ...int) error {
 	m.wg.Add(1)
 	go func() {
-		logutil.BgLogger().Debug("owner manager campaign owner", zap.String("category", "ddl"),
+		log.Debug("owner manager campaign owner", zap.String("category", "ddl"),
 			zap.String("ID", m.id), zap.String("ownerKey", m.key))
 		defer m.wg.Done()
 		for {
 			select {
 			case <-m.campaignDone:
 				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager campaign done", zap.String("category", "ddl"), zap.String("ID", m.id))
+				log.Debug("owner manager campaign done", zap.String("category", "ddl"), zap.String("ID", m.id))
 				return
 			case <-m.ctx.Done():
 				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager is cancelled", zap.String("category", "ddl"), zap.String("ID", m.id))
+				log.Debug("owner manager is cancelled", zap.String("category", "ddl"), zap.String("ID", m.id))
 				return
 			case <-m.resignDone:
 				m.RetireOwner()
@@ -153,7 +153,7 @@ func (m *mockManager) CampaignOwner(_ ...int) error {
 			default:
 				m.toBeOwner()
 				sleepContext(m.ctx, 1*time.Second) // Speed up domain.Close()
-				logutil.BgLogger().Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
+				log.Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
 					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
 			}
 		}

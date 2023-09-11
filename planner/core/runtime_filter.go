@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // RuntimeFilterType "IN"
@@ -111,7 +111,7 @@ func (rf *RuntimeFilter) assign(targetNode *PhysicalTableScan, targetExpr *expre
 	rf.targetExprList = append(rf.targetExprList, targetExpr)
 	rf.buildNode.runtimeFilterList = append(rf.buildNode.runtimeFilterList, rf)
 	rf.targetNode.runtimeFilterList = append(rf.targetNode.runtimeFilterList, rf)
-	logutil.BgLogger().Debug("Assign RF to target node",
+	log.Debug("Assign RF to target node",
 		zap.String("RuntimeFilter", rf.String()))
 }
 

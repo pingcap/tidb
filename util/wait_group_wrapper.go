@@ -18,8 +18,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // WaitGroupEnhancedWrapper wrapper wg, it provides the basic ability of WaitGroupWrapper with checking unexited process
@@ -46,12 +46,12 @@ func NewWaitGroupEnhancedWrapper(source string, exit chan struct{}, exitedCheck 
 
 func (w *WaitGroupEnhancedWrapper) checkUnExitedProcess(exit chan struct{}) {
 	defer func() {
-		logutil.BgLogger().Info("waitGroupWrapper exit-checking exited", zap.String("source", w.source))
+		log.Info("waitGroupWrapper exit-checking exited", zap.String("source", w.source))
 		w.Done()
 	}()
-	logutil.BgLogger().Info("waitGroupWrapper enable exit-checking", zap.String("source", w.source))
+	log.Info("waitGroupWrapper enable exit-checking", zap.String("source", w.source))
 	<-exit
-	logutil.BgLogger().Info("waitGroupWrapper start exit-checking", zap.String("source", w.source))
+	log.Info("waitGroupWrapper start exit-checking", zap.String("source", w.source))
 	if w.check() {
 		ticker := time.NewTimer(2 * time.Second)
 		defer ticker.Stop()
@@ -72,12 +72,12 @@ func (w *WaitGroupEnhancedWrapper) check() bool {
 		return true
 	})
 	if len(unexitedProcess) > 0 {
-		logutil.BgLogger().Warn("background process unexited while received exited signal",
+		log.Warn("background process unexited while received exited signal",
 			zap.Strings("process", unexitedProcess),
 			zap.String("source", w.source))
 		return true
 	}
-	logutil.BgLogger().Info("waitGroupWrapper finish checking unexited process", zap.String("source", w.source))
+	log.Info("waitGroupWrapper finish checking unexited process", zap.String("source", w.source))
 	return false
 }
 
@@ -109,7 +109,7 @@ func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r 
 		defer func() {
 			r := recover()
 			if r != nil && recoverFn != nil {
-				logutil.BgLogger().Info("WaitGroupEnhancedWrapper exec panic recovered", zap.String("process", label))
+				log.Info("WaitGroupEnhancedWrapper exec panic recovered", zap.String("process", label))
 				recoverFn(r)
 			}
 			w.onExit(label)
@@ -122,19 +122,19 @@ func (w *WaitGroupEnhancedWrapper) RunWithRecover(exec func(), recoverFn func(r 
 func (w *WaitGroupEnhancedWrapper) onStart(label string) {
 	_, ok := w.registerProcess.Load(label)
 	if ok {
-		logutil.BgLogger().Panic("WaitGroupEnhancedWrapper received duplicated source process",
+		log.Fatal("WaitGroupEnhancedWrapper received duplicated source process",
 			zap.String("source", w.source),
 			zap.String("process", label))
 	}
 	w.registerProcess.Store(label, struct{}{})
-	logutil.BgLogger().Info("background process started",
+	log.Info("background process started",
 		zap.String("source", w.source),
 		zap.String("process", label))
 }
 
 func (w *WaitGroupEnhancedWrapper) onExit(label string) {
 	w.registerProcess.Delete(label)
-	logutil.BgLogger().Info("background process exited",
+	log.Info("background process exited",
 		zap.String("source", w.source),
 		zap.String("process", label))
 }

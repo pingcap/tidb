@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
@@ -827,7 +827,7 @@ func (p *LogicalJoin) getIndexJoinBuildHelper(ds *DataSource, innerJoinKeys []*e
 				return nil, nil
 			}
 			if err != nil {
-				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
+				log.Warn("build index join failed", zap.Error(err))
 			}
 		}
 	}
@@ -1081,7 +1081,7 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		var err error
 		selectivity, _, err = cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
-			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
+			log.Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ts.TableAsName.L))
 			selectivity = SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
@@ -1366,7 +1366,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	if len(tblConds) > 0 {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, tblConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
-			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
+			log.Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = SelectionFactor
 		}
 		// rowCount is computed from result row count of join, which has already accounted the filters on DataSource,
@@ -1384,7 +1384,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 	if len(indexConds) > 0 {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, indexConds, ds.possibleAccessPaths)
 		if err != nil || selectivity <= 0 {
-			logutil.BgLogger().Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
+			log.Debug("unexpected selectivity, use selection factor", zap.Float64("selectivity", selectivity), zap.String("table", ds.TableAsName.L))
 			selectivity = SelectionFactor
 		}
 		cnt := tmpPath.CountAfterIndex / selectivity
@@ -1538,7 +1538,7 @@ func (ijHelper *indexJoinBuildHelper) resetContextForIndex(innerKeys []*expressi
 			if collate.NewCollationEnabled() && types.IsString(idxCol.RetType.GetType()) && types.IsString(outerKeys[ijHelper.curIdxOff2KeyOff[i]].RetType.GetType()) {
 				et, err := expression.CheckAndDeriveCollationFromExprs(ijHelper.innerPlan.SCtx(), "equal", types.ETInt, idxCol, outerKeys[ijHelper.curIdxOff2KeyOff[i]])
 				if err != nil {
-					logutil.BgLogger().Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
+					log.Error("Unexpected error happened during constructing index join", zap.Stack("stack"))
 				}
 				if !collate.CompatibleCollate(idxCol.GetType().GetCollate(), et.Collation) {
 					ijHelper.curIdxOff2KeyOff[i] = -1

@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/kvcache"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/syncutil"
@@ -67,7 +67,7 @@ type LRUPlanCache struct {
 func NewLRUPlanCache(capacity uint, guard float64, quota uint64, sctx sessionctx.Context, _ bool) *LRUPlanCache {
 	if capacity < 1 {
 		capacity = 100
-		logutil.BgLogger().Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
+		log.Info("capacity of LRU cache is less than 1, will use default value(100) init cache")
 	}
 	return &LRUPlanCache{
 		capacity: capacity,

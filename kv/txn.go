@@ -27,11 +27,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -96,7 +97,7 @@ func PrintLongTimeInternalTxn(now time.Time, startTS uint64, runByFunction bool)
 			}
 			infoHeader := fmt.Sprintf("An internal transaction running by %s lasts long time", callerName)
 
-			logutil.BgLogger().Info(infoHeader,
+			log.Info(infoHeader,
 				zap.Duration("time", now.Sub(innerTxnStartTime)), zap.Uint64("startTS", startTS),
 				zap.Time("start time", innerTxnStartTime))
 		}
@@ -118,7 +119,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
-			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
+			log.Error("RunInNewTxn", zap.Error(err))
 			return err
 		}
 		setRequestSourceForInnerTxn(ctx, txn)
@@ -134,7 +135,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			err1 := txn.Rollback()
 			terror.Log(err1)
 			if retryable && IsTxnRetryableError(err) {
-				logutil.BgLogger().Warn("RunInNewTxn",
+				log.Warn("RunInNewTxn",
 					zap.Uint64("retry txn", txn.StartTS()),
 					zap.Uint64("original txn", originalTxnTS),
 					zap.Error(err))
@@ -164,7 +165,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 			}
 		}
 		if retryable && IsTxnRetryableError(err) {
-			logutil.BgLogger().Warn("RunInNewTxn",
+			log.Warn("RunInNewTxn",
 				zap.Uint64("retry txn", txn.StartTS()),
 				zap.Uint64("original txn", originalTxnTS),
 				zap.Error(err))

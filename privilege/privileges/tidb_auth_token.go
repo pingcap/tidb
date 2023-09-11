@@ -27,8 +27,8 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // JWKSImpl contains a JSON Web Key Set (JWKS), and a filepath that stores the JWKS
@@ -71,7 +71,7 @@ func (jwks *JWKSImpl) LoadJWKS4AuthToken(ctx context.Context, wg *sync.WaitGroup
 				case <-ticker:
 				}
 				if err := jwks.load(); err != nil {
-					logutil.BgLogger().Error("Fail to load JWKS", zap.String("path", jwksPath), zap.Duration("interval", interval))
+					log.Error("Fail to load JWKS", zap.String("path", jwksPath), zap.Duration("interval", interval))
 				}
 			}
 		}()

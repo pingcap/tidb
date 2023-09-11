@@ -22,9 +22,9 @@ import (
 	"flag"
 	"time"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // WithMockUpgrade is a flag identify whether tests run with mock upgrading.
@@ -71,7 +71,7 @@ var allDDLs = []string{
 var mockLatestVer = currentBootstrapVersion + 1
 
 func mockUpgradeToVerLatest(s Session, ver int64) {
-	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
+	log.Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
 	if ver >= mockLatestVer {
 		return
 	}
@@ -102,7 +102,7 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 	for _, sql := range allDDLs {
 		TestHook.OnBootstrap(s)
 		mustExecute(s, sql)
-		logutil.BgLogger().Info("mock upgrade exec", zap.String("sql", sql))
+		log.Info("mock upgrade exec", zap.String("sql", sql))
 		time.Sleep(20 * time.Millisecond)
 	}
 	TestHook.OnBootstrapAfter(s)
@@ -110,7 +110,7 @@ func mockUpgradeToVerLatest(s Session, ver int64) {
 
 // mockSimpleUpgradeToVerLatest mocks a simple bootstrapVersion(make the test faster).
 func mockSimpleUpgradeToVerLatest(s Session, ver int64) {
-	logutil.BgLogger().Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
+	log.Info("mock upgrade to ver latest", zap.Int64("old ver", ver), zap.Int64("mock latest ver", mockLatestVer))
 	if ver >= mockLatestVer {
 		return
 	}

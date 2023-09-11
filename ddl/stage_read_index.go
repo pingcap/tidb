@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type readIndexToLocalStage struct {
@@ -64,20 +65,20 @@ func newReadIndexToLocalStage(
 }
 
 func (*readIndexToLocalStage) Init(_ context.Context) error {
-	logutil.BgLogger().Info("read index stage init subtask exec env",
+	log.Info("read index stage init subtask exec env",
 		zap.String("category", "ddl"))
 	return nil
 }
 
 func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
-	logutil.BgLogger().Info("read index stage run subtask",
+	log.Info("read index stage run subtask",
 		zap.String("category", "ddl"))
 
 	d := r.d
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
-		logutil.BgLogger().Error("unmarshal error",
+		log.Error("unmarshal error",
 			zap.String("category", "ddl"),
 			zap.Error(err))
 		return nil, err
@@ -95,7 +96,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask *proto
 		pid := sm.PhysicalTableID
 		startKey, endKey, err = getTableRange(r.jc, d.ddlCtx, parTbl.GetPartition(pid), currentVer.Ver, r.job.Priority)
 		if err != nil {
-			logutil.BgLogger().Error("get table range error",
+			log.Error("get table range error",
 				zap.String("category", "ddl"),
 				zap.Error(err))
 			return nil, err
@@ -146,7 +147,7 @@ func (r *readIndexToLocalStage) SplitSubtask(ctx context.Context, subtask *proto
 }
 
 func (r *readIndexToLocalStage) Cleanup(_ context.Context) error {
-	logutil.BgLogger().Info("read index stage cleanup subtask exec env",
+	log.Info("read index stage cleanup subtask exec env",
 		zap.String("category", "ddl"))
 	if _, ok := r.ptbl.(table.PartitionedTable); ok {
 		ingest.LitBackCtxMgr.Unregister(r.job.ID)
@@ -168,7 +169,7 @@ func (*readIndexToLocalStage) OnFinished(_ context.Context, subtask []byte) ([]b
 }
 
 func (r *readIndexToLocalStage) Rollback(_ context.Context) error {
-	logutil.BgLogger().Info("read index stage rollback backfill add index task",
+	log.Info("read index stage rollback backfill add index task",
 		zap.String("category", "ddl"), zap.Int64("jobID", r.job.ID))
 	ingest.LitBackCtxMgr.Unregister(r.job.ID)
 	return nil

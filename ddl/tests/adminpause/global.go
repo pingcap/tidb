@@ -27,7 +27,7 @@ import (
 const dbTestLease = 600 * time.Millisecond
 
 // Logger is the global logger in this package
-var Logger = logutil.BgLogger()
+var Logger = log()
 
 func prepareDomain(t *testing.T) (*domain.Domain, *testkit.TestKit, *testkit.TestKit) {
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)

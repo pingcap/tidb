@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type collectPredicateColumnsPoint struct{}
@@ -94,11 +94,11 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+			log.Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("RequestLoadStats failed", zap.Error(err))
+		log.Error("RequestLoadStats failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -114,11 +114,11 @@ func SyncWaitStatsLoad(plan LogicalPlan) error {
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("SyncWaitStatsLoad failed", zap.Error(err))
+			log.Warn("SyncWaitStatsLoad failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("SyncWaitStatsLoad failed", zap.Error(err))
+		log.Error("SyncWaitStatsLoad failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -184,10 +184,10 @@ func recordTableRuntimeStats(sctx sessionctx.Context, tbls map[int64]struct{}) {
 	for tblID := range tbls {
 		tblJSONStats, skip, err := recordSingleTableRuntimeStats(sctx, tblID)
 		if err != nil {
-			logutil.BgLogger().Warn("record table json stats failed", zap.Int64("tblID", tblID), zap.Error(err))
+			log.Warn("record table json stats failed", zap.Int64("tblID", tblID), zap.Error(err))
 		}
 		if tblJSONStats == nil && !skip {
-			logutil.BgLogger().Warn("record table json stats failed due to empty", zap.Int64("tblID", tblID))
+			log.Warn("record table json stats failed due to empty", zap.Int64("tblID", tblID))
 		}
 		tblStats[tblID] = tblJSONStats
 	}

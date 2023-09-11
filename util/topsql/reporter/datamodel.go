@@ -21,7 +21,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/wangjohn/quickselect"
 	atomic2 "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Data naming and relationship in datamodel.go:
@@ -723,7 +723,7 @@ func (m *normalizedPlanMap) toProto(decodePlan planBinaryDecodeFunc, compressPla
 			protoMeta.NormalizedPlan, err = decodePlan(originalMeta.binaryNormalizedPlan)
 		}
 		if err != nil {
-			logutil.BgLogger().Warn("decode plan failed", zap.String("category", "top-sql"), zap.Error(err))
+			log.Warn("decode plan failed", zap.String("category", "top-sql"), zap.Error(err))
 			return true
 		}
 

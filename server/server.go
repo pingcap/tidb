@@ -69,10 +69,11 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
 	uatomic "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )
 
@@ -221,10 +222,10 @@ func (s *Server) newConn(conn net.Conn) *clientConn {
 	cc := newClientConn(s)
 	if tcpConn, ok := conn.(*net.TCPConn); ok {
 		if err := tcpConn.SetKeepAlive(s.cfg.Performance.TCPKeepAlive); err != nil {
-			logutil.BgLogger().Error("failed to set tcp keep alive option", zap.Error(err))
+			log.Error("failed to set tcp keep alive option", zap.Error(err))
 		}
 		if err := tcpConn.SetNoDelay(s.cfg.Performance.TCPNoDelay); err != nil {
-			logutil.BgLogger().Error("failed to set tcp no delay option", zap.Error(err))
+			log.Error("failed to set tcp no delay option", zap.Error(err))
 		}
 	}
 	cc.setConn(conn)
@@ -265,12 +266,12 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if autoReload {
 		go func() {
 			for range time.Tick(time.Hour * 24 * 30) { // 30 days
-				logutil.BgLogger().Info("Rotating automatically created TLS Certificates")
+				log.Info("Rotating automatically created TLS Certificates")
 				tlsConfig, _, err = util.LoadTLSCertificates(
 					s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert,
 					s.cfg.Security.AutoTLS, s.cfg.Security.RSAKeySize)
 				if err != nil {
-					logutil.BgLogger().Warn("TLS Certificate rotation failed", zap.Error(err))
+					log.Warn("TLS Certificate rotation failed", zap.Error(err))
 				}
 				atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
 			}
@@ -280,7 +281,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 	if tlsConfig != nil {
 		setSSLVariable(s.cfg.Security.SSLCA, s.cfg.Security.SSLKey, s.cfg.Security.SSLCert)
 		atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(tlsConfig))
-		logutil.BgLogger().Info("mysql protocol server secure connection is enabled",
+		log.Info("mysql protocol server secure connection is enabled",
 			zap.Bool("client verification enabled", len(variable.GetSysVar("ssl_ca").Value) > 0))
 	}
 	if s.tlsConfig != nil {
@@ -296,7 +297,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if s.listener, err = net.Listen(tcpProto, addr); err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("addr", addr))
+		log.Info("server is running MySQL protocol", zap.String("addr", addr))
 		if RunInGoTest && s.cfg.Port == 0 {
 			s.cfg.Port = uint(s.listener.Addr().(*net.TCPAddr).Port)
 		}
@@ -310,7 +311,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		if s.socket, err = net.Listen("unix", s.cfg.Socket); err != nil {
 			return nil, errors.Trace(err)
 		}
-		logutil.BgLogger().Info("server is running MySQL protocol", zap.String("socket", s.cfg.Socket))
+		log.Info("server is running MySQL protocol", zap.String("socket", s.cfg.Socket))
 	}
 
 	if s.socket == nil && s.listener == nil {
@@ -326,15 +327,15 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		ppListener, err := proxyprotocol.NewLazyListener(proxyTarget, s.cfg.ProxyProtocol.Networks,
 			int(s.cfg.ProxyProtocol.HeaderTimeout), s.cfg.ProxyProtocol.Fallbackable)
 		if err != nil {
-			logutil.BgLogger().Error("ProxyProtocol networks parameter invalid")
+			log.Error("ProxyProtocol networks parameter invalid")
 			return nil, errors.Trace(err)
 		}
 		if s.listener != nil {
 			s.listener = ppListener
-			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
+			log.Info("server is running MySQL protocol (through PROXY protocol)", zap.String("host", s.cfg.Host))
 		} else {
 			s.socket = ppListener
-			logutil.BgLogger().Info("server is running MySQL protocol (through PROXY protocol)", zap.String("socket", s.cfg.Socket))
+			log.Info("server is running MySQL protocol (through PROXY protocol)", zap.String("socket", s.cfg.Socket))
 		}
 	}
 
@@ -352,13 +353,13 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 			ctx          context.Context
 		)
 		if timeInterval, err = time.ParseDuration(s.cfg.Security.AuthTokenRefreshInterval); err != nil {
-			logutil.BgLogger().Error("Fail to parse security.auth-token-refresh-interval. Use default value",
+			log.Error("Fail to parse security.auth-token-refresh-interval. Use default value",
 				zap.String("security.auth-token-refresh-interval", s.cfg.Security.AuthTokenRefreshInterval))
 			timeInterval = config.DefAuthTokenRefreshInterval
 		}
 		ctx, s.authTokenCancelFunc = context.WithCancel(context.Background())
 		if err = privileges.GlobalJWKS.LoadJWKS4AuthToken(ctx, &s.wg, s.cfg.Security.AuthTokenJWKS, timeInterval); err != nil {
-			logutil.BgLogger().Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
+			log.Error("Fail to load JWKS from the path", zap.String("jwks", s.cfg.Security.AuthTokenJWKS))
 		}
 	}
 
@@ -458,16 +459,16 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 
 			// If we got PROXY protocol error, we should continue to accept.
 			if proxyprotocol.IsProxyProtocolError(err) {
-				logutil.BgLogger().Error("PROXY protocol failed", zap.Error(err))
+				log.Error("PROXY protocol failed", zap.Error(err))
 				continue
 			}
 
-			logutil.BgLogger().Error("accept failed", zap.Error(err))
+			log.Error("accept failed", zap.Error(err))
 			errChan <- err
 			return
 		}
 
-		logutil.BgLogger().Debug("accept new connection success")
+		log.Debug("accept new connection success")
 
 		clientConn := s.newConn(conn)
 		if isUnixSocket {
@@ -485,7 +486,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 				uc, ok = conn.(*net.UnixConn)
 			}
 			if !ok {
-				logutil.BgLogger().Error("Expected UNIX socket, but got something else")
+				log.Error("Expected UNIX socket, but got something else")
 				return
 			}
 
@@ -493,7 +494,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 			clientConn.peerHost = "localhost"
 			clientConn.socketCredUID, err = linux.GetSockUID(*uc)
 			if err != nil {
-				logutil.BgLogger().Error("Failed to get UNIX socket peer credentials", zap.Error(err))
+				log.Error("Failed to get UNIX socket peer credentials", zap.Error(err))
 				return
 			}
 		}
@@ -508,7 +509,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 		}
 
 		if s.dom != nil && s.dom.IsLostConnectionToPD() {
-			logutil.BgLogger().Warn("reject connection due to lost connection to PD")
+			log.Warn("reject connection due to lost connection to PD")
 			terror.Log(clientConn.Close())
 			continue
 		}
@@ -525,13 +526,13 @@ func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 		}
 		host, _, err := clientConn.PeerHost("", false)
 		if err != nil {
-			logutil.BgLogger().Error("get peer host failed", zap.Error(err))
+			log.Error("get peer host failed", zap.Error(err))
 			terror.Log(clientConn.Close())
 			return errors.Trace(err)
 		}
 		if err = authPlugin.OnConnectionEvent(context.Background(), plugin.PreAuth,
 			&variable.ConnectionInfo{Host: host}); err != nil {
-			logutil.BgLogger().Info("do connection event failed", zap.Error(err))
+			log.Info("do connection event failed", zap.Error(err))
 			terror.Log(clientConn.Close())
 			return errors.Trace(err)
 		}
@@ -540,13 +541,13 @@ func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 }
 
 func (s *Server) startShutdown() {
-	logutil.BgLogger().Info("setting tidb-server to report unhealthy (shutting-down)")
+	log.Info("setting tidb-server to report unhealthy (shutting-down)")
 	s.health.Store(false)
 	// give the load balancer a chance to receive a few unhealthy health reports
 	// before acquiring the s.rwlock and blocking connections.
 	waitTime := time.Duration(s.cfg.GracefulWaitBeforeShutdown) * time.Second
 	if waitTime > 0 {
-		logutil.BgLogger().Info("waiting for stray connections before starting shutdown process", zap.Duration("waitTime", waitTime))
+		log.Info("waiting for stray connections before starting shutdown process", zap.Duration("waitTime", waitTime))
 		time.Sleep(waitTime)
 	}
 }
@@ -612,7 +613,7 @@ func (s *Server) onConn(conn *clientConn) {
 	// init the connInfo
 	_, _, err := conn.PeerHost("", false)
 	if err != nil {
-		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+		log.With(zap.Uint64("conn", conn.connectionID)).
 			Error("get peer host failed", zap.Error(err))
 		terror.Log(conn.Close())
 		return
@@ -620,7 +621,7 @@ func (s *Server) onConn(conn *clientConn) {
 
 	extensions, err := extension.GetExtensions()
 	if err != nil {
-		logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+		log.With(zap.Uint64("conn", conn.connectionID)).
 			Error("error in get extensions", zap.Error(err))
 		terror.Log(conn.Close())
 		return
@@ -653,17 +654,17 @@ func (s *Server) onConn(conn *clientConn) {
 		switch errors.Cause(err) {
 		case io.EOF:
 			// `EOF` means the connection is closed normally, we do not treat it as a noticeable error and log it in 'DEBUG' level.
-			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			log.With(zap.Uint64("conn", conn.connectionID)).
 				Debug("EOF", zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		case servererr.ErrConCount:
 			if err := conn.writeError(ctx, err); err != nil {
-				logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+				log.With(zap.Uint64("conn", conn.connectionID)).
 					Warn("error in writing errConCount", zap.Error(err),
 						zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 			}
 		default:
 			metrics.HandShakeErrorCounter.Inc()
-			logutil.BgLogger().With(zap.Uint64("conn", conn.connectionID)).
+			log.With(zap.Uint64("conn", conn.connectionID)).
 				Warn("Server.onConn handshake", zap.Error(err),
 					zap.String("remote addr", conn.bufReadConn.RemoteAddr().String()))
 		}
@@ -705,7 +706,7 @@ func (s *Server) onConn(conn *clientConn) {
 			sessionVars.ConnectionInfo.Duration = float64(time.Since(connectedTime)) / float64(time.Millisecond)
 			err := authPlugin.OnConnectionEvent(context.Background(), plugin.Disconnect, sessionVars.ConnectionInfo)
 			if err != nil {
-				logutil.BgLogger().Warn("do connection event failed", zap.String("plugin", authPlugin.Name), zap.Error(err))
+				log.Warn("do connection event failed", zap.String("plugin", authPlugin.Name), zap.Error(err))
 			}
 		}
 		return nil
@@ -769,7 +770,7 @@ func (s *Server) checkConnectionCount() error {
 	s.rwlock.RUnlock()
 
 	if conns >= int(s.cfg.Instance.MaxConnections) {
-		logutil.BgLogger().Error("too many connections",
+		log.Error("too many connections",
 			zap.Uint32("max connections", s.cfg.Instance.MaxConnections), zap.Error(servererr.ErrConCount))
 		return servererr.ErrConCount
 	}
@@ -857,7 +858,7 @@ func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]stri
 
 // Kill implements the SessionManager interface.
 func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
-	logutil.BgLogger().Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
+	log.Info("kill", zap.Uint64("conn", connectionID), zap.Bool("query", query))
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventKill).Inc()
 
 	s.rwlock.RLock()
@@ -902,7 +903,7 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 	}
 	if conn.bufReadConn != nil {
 		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
-			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			log.Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
 }
@@ -921,7 +922,7 @@ func (s *Server) KillSysProcesses() {
 // KillAllConnections implements the SessionManager interface.
 // KillAllConnections kills all connections.
 func (s *Server) KillAllConnections() {
-	logutil.BgLogger().Info("kill all connections.", zap.String("category", "server"))
+	log.Info("kill all connections.", zap.String("category", "server"))
 
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
@@ -1042,7 +1043,7 @@ func setSystemTimeZoneVariable() {
 	setSysTimeZoneOnce.Do(func() {
 		tz, err := timeutil.GetSystemTZ()
 		if err != nil {
-			logutil.BgLogger().Error(
+			log.Error(
 				"Error getting SystemTZ, use default value instead",
 				zap.Error(err),
 				zap.String("default system_time_zone", variable.GetSysVar("system_time_zone").Value))

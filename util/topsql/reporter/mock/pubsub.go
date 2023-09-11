@@ -19,7 +19,7 @@ import (
 	"net"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )
 
@@ -48,7 +48,7 @@ func NewMockPubSubServer() (*mockPubSubServer, error) {
 func (svr *mockPubSubServer) Serve() {
 	err := svr.grpcServer.Serve(svr.listen)
 	if err != nil {
-		logutil.BgLogger().Warn("mock pubsub server serve failed", zap.String("category", "top-sql"), zap.Error(err))
+		log.Warn("mock pubsub server serve failed", zap.String("category", "top-sql"), zap.Error(err))
 	}
 }
 

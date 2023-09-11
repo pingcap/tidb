@@ -17,6 +17,7 @@ package consistency
 import (
 	"context"
 	"encoding/hex"
+	"log/slog"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -34,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -215,7 +216,7 @@ func (r *Reporter) ReportLookupInconsistent(ctx context.Context, idxCnt, tblCnt 
 			}
 		}
 
-		logutil.Logger(ctx).Error("indexLookup found data inconsistency", fs...)
+		logutil.Logger(ctx).LogAttrs(context.Background(), slog.LevelError, "indexLookup found data inconsistency", fs...)
 	}
 	return ErrLookupInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, idxCnt, tblCnt)
 }
@@ -246,7 +247,7 @@ func (r *Reporter) ReportAdminCheckInconsistentWithColInfo(ctx context.Context, 
 		}
 		fs = append(fs, zap.Error(err))
 		fs = append(fs, zap.Stack("stack"))
-		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
+		logutil.Logger(ctx).LogAttrs(context.Background(), slog.LevelError, "admin check found data inconsistency", fs...)
 	}
 	return ErrAdminCheckInconsistentWithColInfo.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, colName, fmt.Sprint(handle), fmt.Sprint(idxDat), fmt.Sprint(tblDat), err)
 }
@@ -288,7 +289,7 @@ func (r *Reporter) ReportAdminCheckInconsistent(ctx context.Context, handle kv.H
 			}
 		}
 		fs = append(fs, zap.Stack("stack"))
-		logutil.Logger(ctx).Error("admin check found data inconsistency", fs...)
+		logutil.Logger(ctx).LogAttrs(context.Background(), slog.LevelError, "admin check found data inconsistency", fs...)
 	}
 	return ErrAdminCheckInconsistent.GenWithStackByArgs(r.Tbl.Name.O, r.Idx.Name.O, fmt.Sprint(handle), fmt.Sprint(idxRow), fmt.Sprint(tblRow))
 }

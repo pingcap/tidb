@@ -35,10 +35,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tidb/util/tracing"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // InsertExec represents an insert executor.
@@ -265,7 +266,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 				if kv.IsErrNotFound(err) {
 					// Data index inconsistent? A unique key provide the handle information, but the
 					// handle points to nothing.
-					logutil.BgLogger().Error("get old row failed when insert on dup",
+					log.Error("get old row failed when insert on dup",
 						zap.String("uniqueKey", hex.EncodeToString(uk.newKey)),
 						zap.Stringer("handle", handle),
 						zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))

@@ -29,17 +29,17 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ceTraceExpr appends an expression and related information into CE trace
 func ceTraceExpr(sctx sessionctx.Context, tableID int64, tp string, expr expression.Expression, rowCount float64) {
 	exprStr, err := exprToString(expr)
 	if err != nil {
-		logutil.BgLogger().Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
+		log.Debug("Failed to trace CE of an expression", zap.String("category", "OptimizerTrace"),
 			zap.Any("expression", expr))
 		return
 	}
@@ -221,7 +221,7 @@ func ceTraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ran
 	}
 	expr, err := ranger.RangesToString(sc, ranges, colNames)
 	if err != nil {
-		logutil.BgLogger().Debug("Failed to trace CE of ranges", zap.String("category", "OptimizerTrace"), zap.Error(err))
+		log.Debug("Failed to trace CE of ranges", zap.String("category", "OptimizerTrace"), zap.Error(err))
 	}
 	// We don't need to record meaningless expressions.
 	if expr == "" || expr == "true" || expr == "false" {

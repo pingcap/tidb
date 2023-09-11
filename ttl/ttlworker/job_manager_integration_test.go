@@ -45,7 +45,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func sessionFactory(t *testing.T, store kv.Storage) func() session.Session {
@@ -103,7 +103,7 @@ func TestParallelLockNewJob(t *testing.T) {
 					successCounter.Add(1)
 					successJob = job
 				} else {
-					logutil.BgLogger().Info("lock new job with error", zap.Error(err))
+					log.Info("lock new job with error", zap.Error(err))
 				}
 				wg.Done()
 			}()

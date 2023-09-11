@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/util/channel"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/twmb/murmur3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ShuffleExec is the executor to run other executors in a parallel manner.
@@ -256,7 +256,7 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
 	err := errors.Errorf("%v", r)
 	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
-	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
+	log.Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int) {

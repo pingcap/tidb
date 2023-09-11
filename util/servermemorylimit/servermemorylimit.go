@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Process global Observation indicators for memory limit.
@@ -103,7 +103,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		if info, ok := sm.GetProcessInfo(s.sessionID); ok {
 			if info.Time == s.sqlStartTime {
 				if time.Since(s.lastLogTime) > 5*time.Second {
-					logutil.BgLogger().Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
+					log.Warn(fmt.Sprintf("global memory controller failed to kill the top-consumer in %ds",
 						time.Since(s.killStartTime)/time.Second),
 						zap.Uint64("conn", info.ID),
 						zap.String("sql digest", info.Digest),
@@ -119,7 +119,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 		memory.MemUsageTop1Tracker.CompareAndSwap(s.sessionTracker, nil)
 		//nolint: all_revive,revive
 		runtime.GC()
-		logutil.BgLogger().Warn("global memory controller killed the top1 memory consumer successfully")
+		log.Warn("global memory controller killed the top1 memory consumer successfully")
 	}
 
 	if bt == 0 {
@@ -145,7 +145,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 				memory.MemUsageTop1Tracker.CompareAndSwap(t, nil)
 				t = nil
 			} else if info, ok := sm.GetProcessInfo(sessionID); ok {
-				logutil.BgLogger().Warn("global memory controller tries to kill the top1 memory consumer",
+				log.Warn("global memory controller tries to kill the top1 memory consumer",
 					zap.Uint64("conn", info.ID),
 					zap.String("sql digest", info.Digest),
 					zap.String("sql text", fmt.Sprintf("%.100v", info.Info)),
@@ -176,7 +176,7 @@ func killSessIfNeeded(s *sessionToBeKilled, bt uint64, sm util.SessionManager) {
 			if time.Since(s.lastLogTime) < 5*time.Second {
 				return
 			}
-			logutil.BgLogger().Warn("global memory controller tries to kill the top1 memory consumer, but no one larger than tidb_server_memory_limit_sess_min_size is found", zap.Uint64("tidb_server_memory_limit_sess_min_size", limitSessMinSize))
+			log.Warn("global memory controller tries to kill the top1 memory consumer, but no one larger than tidb_server_memory_limit_sess_min_size is found", zap.Uint64("tidb_server_memory_limit_sess_min_size", limitSessMinSize))
 			s.lastLogTime = time.Now()
 		}
 	}

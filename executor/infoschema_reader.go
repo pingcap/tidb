@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -82,7 +83,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type memtableRetriever struct {
@@ -2061,7 +2062,7 @@ func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (r
 				getRemainDurationForAnalyzeStatusHelper(ctx, sctx, &startTime,
 					dbName, tableName, partitionName, processedRows)
 			if remainDurationErr != nil {
-				logutil.BgLogger().Warn("get remaining duration failed", zap.Error(remainDurationErr))
+				log.Warn("get remaining duration failed", zap.Error(remainDurationErr))
 			}
 			if remainingDuration != nil {
 				remainDurationStr = execdetails.FormatDuration(*remainingDuration)
@@ -2273,7 +2274,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 				for _, p := range pi.Definitions {
 					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 					if err != nil {
-						logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+						log.Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
 					}
 					progress += progressOfPartition
 				}
@@ -2282,7 +2283,7 @@ func (e *memtableRetriever) dataForTableTiFlashReplica(ctx sessionctx.Context, s
 				var err error
 				progress, err = infosync.MustGetTiFlashProgress(tbl.ID, tbl.TiFlashReplica.Count, &tiFlashStores)
 				if err != nil {
-					logutil.BgLogger().Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
+					log.Error("dataForTableTiFlashReplica error", zap.Int64("tableID", tbl.ID), zap.Error(err))
 				}
 			}
 			progressString := types.TruncateFloatToString(progress, 2)
@@ -2675,7 +2676,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 					if err == nil {
 						decodedKeyBytes, err := json.Marshal(decodedKey)
 						if err != nil {
-							logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+							log.Warn("marshal decoded key info to JSON failed", zap.Error(err))
 						} else {
 							decodedKeyStr = string(decodedKeyBytes)
 						}
@@ -2876,7 +2877,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 						if err == nil {
 							decodedKeyJSON, err := json.Marshal(decodedKey)
 							if err != nil {
-								logutil.BgLogger().Warn("marshal decoded key info to JSON failed", zap.Error(err))
+								log.Warn("marshal decoded key info to JSON failed", zap.Error(err))
 							} else {
 								value = types.NewDatum(string(decodedKeyJSON))
 							}
@@ -3190,12 +3191,12 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 		skip := true
 		dbName, tableName, partitionName, err := checkRule(rule)
 		if err != nil {
-			logutil.BgLogger().Warn("check table-rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			log.Warn("check table-rule failed", zap.String("ID", rule.ID), zap.Error(err))
 			continue
 		}
 		tableID, err := decodeTableIDFromRule(rule)
 		if err != nil {
-			logutil.BgLogger().Warn("decode table ID from rule failed", zap.String("ID", rule.ID), zap.Error(err))
+			log.Warn("decode table ID from rule failed", zap.String("ID", rule.ID), zap.Error(err))
 			continue
 		}
 
@@ -3275,7 +3276,7 @@ func (e *memtableRetriever) setDataFromRunawayWatches(sctx sessionctx.Context) e
 	do := domain.GetDomain(sctx)
 	err := do.TryToUpdateRunawayWatch()
 	if err != nil {
-		logutil.BgLogger().Warn("read runaway watch list", zap.Error(err))
+		log.Warn("read runaway watch list", zap.Error(err))
 	}
 	watches := do.GetRunawayWatchList()
 	rows := make([][]types.Datum, 0, len(watches))

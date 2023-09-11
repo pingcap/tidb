@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

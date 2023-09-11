@@ -25,8 +25,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	// "github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -121,7 +122,7 @@ func RewriteNewCollationIDIfNeeded(id int32) int32 {
 		if id >= 0 {
 			return -id
 		}
-		logutil.BgLogger().Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
+		log.Warn("Unexpected negative collation ID for rewrite.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -132,7 +133,7 @@ func RestoreCollationIDIfNeeded(id int32) int32 {
 		if id <= 0 {
 			return -id
 		}
-		logutil.BgLogger().Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
+		log.Warn("Unexpected positive collation ID for restore.", zap.Int32("ID", id))
 	}
 	return id
 }
@@ -143,7 +144,7 @@ func GetCollator(collate string) Collator {
 		ctor, ok := newCollatorMap[collate]
 		if !ok {
 			if collate != "" {
-				logutil.BgLogger().Warn(
+				log.Warn(
 					"Unable to get collator by name, use binCollator instead.",
 					zap.String("name", collate),
 					zap.Stack("stack"))
@@ -177,7 +178,7 @@ func GetCollatorByID(id int) Collator {
 	if atomic.LoadInt32(&newCollationEnabled) == 1 {
 		ctor, ok := newCollatorIDMap[id]
 		if !ok {
-			logutil.BgLogger().Warn(
+			log.Warn(
 				"Unable to get collator by ID, use binCollator instead.",
 				zap.Int("ID", id),
 				zap.Stack("stack"))
@@ -194,7 +195,7 @@ func CollationID2Name(id int32) string {
 	collation, err := charset.GetCollationByID(int(id))
 	if err != nil {
 		// TODO(bb7133): fix repeating logs when the following code is uncommented.
-		// logutil.BgLogger().Warn(
+		// log.Warn(
 		// 	"Unable to get collation name from ID, use default collation instead.",
 		// 	zap.Int32("ID", id),
 		// 	zap.Stack("stack"))
@@ -219,10 +220,10 @@ func SubstituteMissingCollationToDefault(co string) string {
 	if _, err = GetCollationByName(co); err == nil {
 		return co
 	}
-	logutil.BgLogger().Warn(fmt.Sprintf("The collation %s specified on connection is not supported when new collation is enabled, switch to the default collation: %s", co, mysql.DefaultCollationName))
+	log.Warn(fmt.Sprintf("The collation %s specified on connection is not supported when new collation is enabled, switch to the default collation: %s", co, mysql.DefaultCollationName))
 	var coll *charset.Collation
 	if coll, err = GetCollationByName(charset.CollationUTF8MB4); err != nil {
-		logutil.BgLogger().Warn(err.Error())
+		log.Warn(err.Error())
 	}
 	return coll.Name
 }
@@ -369,7 +370,7 @@ func CollationToProto(c string) int32 {
 		return RewriteNewCollationIDIfNeeded(int32(coll.ID))
 	}
 	v := RewriteNewCollationIDIfNeeded(int32(mysql.DefaultCollationID))
-	logutil.BgLogger().Warn(
+	log.Warn(
 		"Unable to get collation ID by name, use ID of the default collation instead",
 		zap.String("name", c),
 		zap.Int32("default collation ID", v),
@@ -384,7 +385,7 @@ func ProtoToCollation(c int32) string {
 	if err == nil {
 		return coll.Name
 	}
-	logutil.BgLogger().Warn(
+	log.Warn(
 		"Unable to get collation name from ID, use name of the default collation instead",
 		zap.Int32("id", c),
 		zap.Int("default collation ID", mysql.DefaultCollationID),

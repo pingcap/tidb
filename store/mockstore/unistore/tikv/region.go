@@ -31,12 +31,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/metrics"
 	"github.com/pingcap/tidb/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/util/codec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // InternalKey
@@ -254,7 +255,7 @@ func (ri *regionCtx) AcquireLatches(hashVals []uint64) {
 		} else {
 			id = strconv.FormatUint(ri.meta.Id, 10)
 		}
-		log.S().Warnf("region %s acquire %d locks takes %v, waitCnt %d", id, len(hashVals), dur, waitCnt)
+		log.Warnf("region %s acquire %d locks takes %v, waitCnt %d", id, len(hashVals), dur, waitCnt)
 	}
 }
 
@@ -408,7 +409,7 @@ type StandAloneRegionManager struct {
 func NewStandAloneRegionManager(bundle *mvcc.DBBundle, opts RegionOptions, pdc pd.Client) *StandAloneRegionManager {
 	var err error
 	clusterID := pdc.GetClusterID(context.TODO())
-	log.S().Infof("cluster id %v", clusterID)
+	log.Infof("cluster id %v", clusterID)
 	rm := &StandAloneRegionManager{
 		bundle:     bundle,
 		pdc:        pdc,

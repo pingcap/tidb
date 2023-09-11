@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type statsWrapper struct {
@@ -107,7 +107,7 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	var errorMsgs []string
 	defer func() {
 		if len(errorMsgs) > 0 {
-			logutil.BgLogger().Warn("SyncWaitStatsLoad meets error",
+			log.Warn("SyncWaitStatsLoad meets error",
 				zap.Strings("errors", errorMsgs))
 		}
 		sc.StatsLoad.NeededItems = nil
@@ -186,11 +186,11 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 	readerCtx := &StatsReaderContext{}
 	defer func() {
 		exitWg.Done()
-		logutil.BgLogger().Info("SubLoadWorker exited.")
+		log.Info("SubLoadWorker exited.")
 		if readerCtx.reader != nil {
 			err := readerCtx.reader.Close()
 			if err != nil {
-				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
+				log.Error("Fail to release stats loader: ", zap.Error(err))
 			}
 		}
 	}()
@@ -216,7 +216,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("stats loading panicked", zap.Any("error", r), zap.Stack("stack"))
+			log.Error("stats loading panicked", zap.Any("error", r), zap.Stack("stack"))
 			err = errors.Errorf("stats loading panicked: %v", r)
 		}
 	}()
@@ -224,7 +224,7 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 		task, err = h.drainColTask(exit)
 		if err != nil {
 			if err != errExit {
-				logutil.BgLogger().Error("Fail to drain task for stats loading.", zap.Error(err))
+				log.Error("Fail to drain task for stats loading.", zap.Error(err))
 			}
 			return task, err
 		}
@@ -299,7 +299,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 	if readerCtx.reader != nil {
 		err := readerCtx.reader.Close()
 		if err != nil {
-			logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
+			log.Warn("Fail to release stats loader: ", zap.Error(err))
 		}
 	}
 	for {
@@ -309,7 +309,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 			readerCtx.createdTime = time.Now()
 			return
 		}
-		logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
+		log.Error("Fail to new stats loader, retry after a while.", zap.Error(err))
 		time.Sleep(h.Lease() / 10)
 	}
 }
@@ -360,7 +360,7 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+		log.Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
 		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
@@ -464,7 +464,7 @@ func (*Handle) writeToChanWithTimeout(taskCh chan *NeededItemTask, task *NeededI
 func (*Handle) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtctx.StatsLoadResult) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
+			log.Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
 	select {

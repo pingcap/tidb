@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tipb/go-binlog"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )
 
@@ -115,18 +115,18 @@ var statusListener = func(_ BinlogStatus) error {
 // NOTE: it is used *ONLY* for test.
 func EnableSkipBinlogFlag() {
 	atomic.StoreUint32(&skipBinlog, 1)
-	logutil.BgLogger().Warn("enable the skipBinlog flag", zap.String("category", "binloginfo"))
+	log.Warn("enable the skipBinlog flag", zap.String("category", "binloginfo"))
 }
 
 // DisableSkipBinlogFlag disable the skipBinlog flag.
 func DisableSkipBinlogFlag() error {
 	if err := statusListener(BinlogStatusOn); err != nil {
-		logutil.BgLogger().Warn("update binlog status failed", zap.Error(err))
+		log.Warn("update binlog status failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 
 	atomic.StoreUint32(&skipBinlog, 0)
-	logutil.BgLogger().Warn("disable the skipBinlog flag", zap.String("category", "binloginfo"))
+	log.Warn("disable the skipBinlog flag", zap.String("category", "binloginfo"))
 	return nil
 }
 
@@ -153,18 +153,18 @@ var skippedCommitterCounter int32
 
 // WaitBinlogRecover returns when all committing transaction finished.
 func WaitBinlogRecover(timeout time.Duration) error {
-	logutil.BgLogger().Warn("start waiting for binlog recovering", zap.String("category", "binloginfo"))
+	log.Warn("start waiting for binlog recovering", zap.String("category", "binloginfo"))
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	start := time.Now()
 	for {
 		<-ticker.C
 		if atomic.LoadInt32(&skippedCommitterCounter) == 0 {
-			logutil.BgLogger().Warn("binlog recovered", zap.String("category", "binloginfo"))
+			log.Warn("binlog recovered", zap.String("category", "binloginfo"))
 			return nil
 		}
 		if time.Since(start) > timeout {
-			logutil.BgLogger().Warn("waiting for binlog recovering timed out", zap.String("category", "binloginfo"),
+			log.Warn("waiting for binlog recovering timed out", zap.String("category", "binloginfo"),
 				zap.Duration("duration", timeout))
 			return errors.New("timeout")
 		}
@@ -179,7 +179,7 @@ func SkippedCommitterCount() int32 {
 // ResetSkippedCommitterCounter is used to reset the skippedCommitterCounter.
 func ResetSkippedCommitterCounter() {
 	atomic.StoreInt32(&skippedCommitterCounter, 0)
-	logutil.BgLogger().Warn("skippedCommitterCounter is reset to 0", zap.String("category", "binloginfo"))
+	log.Warn("skippedCommitterCounter is reset to 0", zap.String("category", "binloginfo"))
 }
 
 // AddOneSkippedCommitter adds one committer to skippedCommitterCounter.
@@ -251,19 +251,19 @@ func (info *BinlogInfo) WriteBinlog(clusterID uint64) *WriteResult {
 	// it will retry in PumpsClient if write binlog fail.
 	err := info.Client.WriteBinlog(info.Data)
 	if err != nil {
-		logutil.BgLogger().Error("write binlog failed",
+		log.Error("write binlog failed",
 			zap.String("binlog_type", info.Data.Tp.String()),
 			zap.Uint64("binlog_start_ts", uint64(info.Data.StartTs)),
 			zap.Uint64("binlog_commit_ts", uint64(info.Data.CommitTs)),
 			zap.Error(err))
 		if atomic.LoadUint32(&ignoreError) == 1 {
-			logutil.BgLogger().Error("write binlog fail but error ignored")
+			log.Error("write binlog fail but error ignored")
 			metrics.CriticalErrorCounter.Add(1)
 			// If error happens once, we'll stop writing binlog.
 			swapped := atomic.CompareAndSwapUint32(&skipBinlog, skip, skip+1)
 			if swapped && skip == 0 {
 				if err := statusListener(BinlogStatusSkipping); err != nil {
-					logutil.BgLogger().Warn("update binlog status failed", zap.Error(err))
+					log.Warn("update binlog status failed", zap.Error(err))
 				}
 			}
 			return &WriteResult{true, nil}
@@ -289,7 +289,7 @@ func SetDDLBinlog(client *pumpcli.PumpsClient, txn kv.Transaction, jobID int64, 
 	if commented, err := FormatAndAddTiDBSpecificComment(ddlQuery); err == nil {
 		ddlQuery = commented
 	} else {
-		logutil.BgLogger().Warn("Unable to add TiDB-specified comment for DDL query.", zap.String("DDL Query", ddlQuery), zap.Error(err))
+		log.Warn("Unable to add TiDB-specified comment for DDL query.", zap.String("DDL Query", ddlQuery), zap.Error(err))
 	}
 	info := &BinlogInfo{
 		Data: &binlog.Binlog{

@@ -29,7 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // BackendCtxMgr is used to manage the backend context.
@@ -60,11 +61,11 @@ func newLitBackendCtxMgr(ctx context.Context, sctx sessionctx.Context, path stri
 	LitDiskRoot.UpdateUsage()
 	err := LitDiskRoot.StartupCheck()
 	if err != nil {
-		logutil.BgLogger().Warn("ingest backfill may not be available", zap.String("category", "ddl-ingest"), zap.Error(err))
+		log.Warn("ingest backfill may not be available", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
 	isRaftKV2, err := util.IsRaftKv2(ctx, sctx)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to get 'storage.engine'", zap.String("category", "ddl-ingest"), zap.Error(err))
+		log.Warn("failed to get 'storage.engine'", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
 	mgr.isRaftKV2 = isRaftKV2
 	return mgr
@@ -75,12 +76,12 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 	// We only allow one task to use ingest at the same time, in order to limit the CPU usage.
 	activeJobIDs := m.Keys()
 	if len(activeJobIDs) > 0 {
-		logutil.BgLogger().Info("ingest backfill is already in use by another DDL job", zap.String("category", "ddl-ingest"),
+		log.Info("ingest backfill is already in use by another DDL job", zap.String("category", "ddl-ingest"),
 			zap.Int64("job ID", activeJobIDs[0]))
 		return false, nil
 	}
 	if err := m.diskRoot.PreCheckUsage(); err != nil {
-		logutil.BgLogger().Info("ingest backfill is not available", zap.String("category", "ddl-ingest"), zap.Error(err))
+		log.Info("ingest backfill is not available", zap.String("category", "ddl-ingest"), zap.Error(err))
 		return false, err
 	}
 	return true, nil
@@ -126,7 +127,7 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 		return nil, err
 	}
 
-	logutil.BgLogger().Info("create local backend for adding index", zap.String("category", "ddl-ingest"), zap.String("keyspaceName", cfg.KeyspaceName))
+	log.Info("create local backend for adding index", zap.String("category", "ddl-ingest"), zap.String("keyspaceName", cfg.KeyspaceName))
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{
 		DB: nil,
 	}

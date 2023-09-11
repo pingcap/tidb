@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/ddl/resourcegroup"
@@ -53,13 +53,13 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -1842,7 +1842,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		req, err := http.NewRequest(http.MethodGet, url, nil)
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			logutil.BgLogger().Warn("create pd server info request error", zap.String("url", url), zap.Error(err))
+			log.Warn("create pd server info request error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
 		}
@@ -1850,7 +1850,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		resp, err := util.InternalHTTPClient().Do(req)
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			logutil.BgLogger().Warn("request pd server info error", zap.String("url", url), zap.Error(err))
+			log.Warn("request pd server info error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
 		}
@@ -1863,7 +1863,7 @@ func GetPDServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 		terror.Log(resp.Body.Close())
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-			logutil.BgLogger().Warn("close pd server info request error", zap.String("url", url), zap.Error(err))
+			log.Warn("close pd server info request error", zap.String("url", url), zap.Error(err))
 			errs = append(errs, err)
 			continue
 		}

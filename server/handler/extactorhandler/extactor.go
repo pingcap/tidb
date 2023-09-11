@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -52,7 +52,7 @@ func NewExtractTaskServeHandler(extractHandler *domain.ExtractHandle) *ExtractTa
 func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	task, isDump, err := buildExtractTask(req)
 	if err != nil {
-		logutil.BgLogger().Error("build extract task failed", zap.Error(err))
+		log.Error("build extract task failed", zap.Error(err))
 		handler.WriteError(w, err)
 		return
 	}
@@ -69,7 +69,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 
 	name, err := eh.ExtractHandler.ExtractTask(context.Background(), task)
 	if err != nil {
-		logutil.BgLogger().Error("extract task failed", zap.Error(err))
+		log.Error("extract task failed", zap.Error(err))
 		handler.WriteError(w, err)
 		return
 	}
@@ -77,13 +77,13 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	if !isDump {
 		_, err = w.Write([]byte(name))
 		if err != nil {
-			logutil.BgLogger().Error("extract handler failed", zap.Error(err))
+			log.Error("extract handler failed", zap.Error(err))
 		}
 		return
 	}
 	content, err := loadExtractResponse(name)
 	if err != nil {
-		logutil.BgLogger().Error("load extract task failed", zap.Error(err))
+		log.Error("load extract task failed", zap.Error(err))
 		handler.WriteError(w, err)
 		return
 	}
@@ -116,7 +116,7 @@ func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {
 	if strings.ToLower(extractTaskType) == extractPlanTaskType {
 		return buildExtractPlanTask(req)
 	}
-	logutil.BgLogger().Error("unknown extract task type")
+	log.Error("unknown extract task type")
 	return nil, false, errors.New("unknown extract task type")
 }
 
@@ -130,7 +130,7 @@ func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) 
 	} else {
 		begin, err = time.Parse(types.TimeFormat, beginStr)
 		if err != nil {
-			logutil.BgLogger().Error("extract task begin time failed", zap.Error(err), zap.String("begin", beginStr))
+			log.Error("extract task begin time failed", zap.Error(err), zap.String("begin", beginStr))
 			return nil, false, err
 		}
 	}
@@ -140,7 +140,7 @@ func buildExtractPlanTask(req *http.Request) (*domain.ExtractTask, bool, error) 
 	} else {
 		end, err = time.Parse(types.TimeFormat, endStr)
 		if err != nil {
-			logutil.BgLogger().Error("extract task end time failed", zap.Error(err), zap.String("end", endStr))
+			log.Error("extract task end time failed", zap.Error(err), zap.String("end", endStr))
 			return nil, false, err
 		}
 	}

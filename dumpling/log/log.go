@@ -5,7 +5,7 @@ package log
 import (
 	"github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var appLogger = Logger{zap.NewNop()}

@@ -35,13 +35,13 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
@@ -1649,7 +1649,7 @@ func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
 	for key := range tableIDSet {
 		tableID, err = strconv.ParseInt(key, 10, 64)
 		if err != nil {
-			logutil.BgLogger().Error("extract table_id failed", zap.Error(err), zap.String("tableID", key))
+			log.Error("extract table_id failed", zap.Error(err), zap.String("tableID", key))
 			e.tablesID = nil
 			return predicates
 		}

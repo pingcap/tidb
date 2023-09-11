@@ -35,9 +35,9 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -471,7 +471,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 		refExprArr := cowExprRef{v.GetArgs(), nil}
 		oldCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), v.GetArgs()...)
 		if err != nil {
-			logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+			log.Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
 			return false, false, v
 		}
 		var tmpArgForCollCheck []Expression
@@ -491,7 +491,7 @@ func ColumnSubstituteImpl(expr Expression, schema *Schema, newExprs []Expression
 				tmpArgForCollCheck[idx] = newFuncExpr
 				newCollEt, err := CheckAndDeriveCollationFromExprs(v.GetCtx(), v.FuncName.L, v.RetType.EvalType(), tmpArgForCollCheck...)
 				if err != nil {
-					logutil.BgLogger().Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
+					log.Error("Unexpected error happened during ColumnSubstitution", zap.Stack("stack"))
 					return false, failed, v
 				}
 				if oldCollEt.Collation == newCollEt.Collation {
@@ -1397,7 +1397,7 @@ func RemoveDupExprs(ctx sessionctx.Context, exprs []Expression) []Expression {
 func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 	con, ok := expr.(*Constant)
 	if !ok {
-		logutil.BgLogger().Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
+		log.Warn("not a constant expression", zap.String("expression", expr.ExplainInfo()))
 		return 0, false, false
 	}
 	dt := con.Value
@@ -1407,7 +1407,7 @@ func GetUint64FromConstant(expr Expression) (uint64, bool, bool) {
 		var err error
 		dt, err = con.DeferredExpr.Eval(chunk.Row{})
 		if err != nil {
-			logutil.BgLogger().Warn("eval deferred expr failed", zap.Error(err))
+			log.Warn("eval deferred expr failed", zap.Error(err))
 			return 0, false, false
 		}
 	}

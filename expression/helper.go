@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func boolToInt64(v bool) int64 {
@@ -166,7 +166,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		if staleTSO != 0 && err == nil {
 			return oracle.GetTimeFromTS(staleTSO), nil
 		} else if err != nil {
-			logutil.BgLogger().Error("get stale tso failed", zap.Error(err))
+			log.Error("get stale tso failed", zap.Error(err))
 		}
 	}
 

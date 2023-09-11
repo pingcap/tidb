@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -149,7 +149,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 	is, ok := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	if !ok {
 		// it should never happen
-		logutil.BgLogger().Error(fmt.Sprintf("GetDomainInfoSchema returns a invalid type: %T", is))
+		log.Error(fmt.Sprintf("GetDomainInfoSchema returns a invalid type: %T", is))
 		return
 	}
 
@@ -172,7 +172,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, selectDeletedRowsOneDaySQL)
 	if err != nil {
-		logutil.BgLogger().Error("exec sql error", zap.String("SQL", selectDeletedRowsOneDaySQL), zap.Error(err))
+		log.Error("exec sql error", zap.String("SQL", selectDeletedRowsOneDaySQL), zap.Error(err))
 	} else {
 		for _, row := range rows {
 			counter.UpdateTableHistWithDeleteRows(row.GetInt64(1))
@@ -181,7 +181,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 
 	rows, _, err = exec.ExecRestrictedSQL(ctx, nil, selectDelaySQL)
 	if err != nil {
-		logutil.BgLogger().Error("exec sql error", zap.String("SQL", selectDelaySQL), zap.Error(err))
+		log.Error("exec sql error", zap.String("SQL", selectDelaySQL), zap.Error(err))
 	} else {
 		noHistoryTables := len(ttlTables)
 		for _, row := range rows {
@@ -200,7 +200,7 @@ func getTTLUsageInfo(ctx context.Context, sctx sessionctx.Context) (counter *ttl
 
 			innerRows, _, err := exec.ExecRestrictedSQL(ctx, nil, evalIntervalSQL)
 			if err != nil || len(innerRows) == 0 {
-				logutil.BgLogger().Error("exec sql error or empty rows returned", zap.String("SQL", evalIntervalSQL), zap.Error(err))
+				log.Error("exec sql error or empty rows returned", zap.String("SQL", evalIntervalSQL), zap.Error(err))
 				continue
 			}
 

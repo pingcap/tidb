@@ -20,10 +20,11 @@ import (
 
 	"github.com/danjacques/gofslock/fslock"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/terror"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"golang.org/x/sync/singleflight"
 )
 

@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/util/backoff"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -86,7 +86,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 			case proto.TaskStateSucceed:
 				return nil
 			case proto.TaskStateReverted:
-				logutil.BgLogger().Error("global task reverted", zap.Int64("task-id", globalTask.ID), zap.Error(found.Error))
+				log.Error("global task reverted", zap.Int64("task-id", globalTask.ID), zap.Error(found.Error))
 				return found.Error
 			case proto.TaskStateFailed, proto.TaskStateCanceled:
 				return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)

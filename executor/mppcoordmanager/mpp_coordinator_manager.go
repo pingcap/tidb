@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/copr"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // InstanceMPPCoordinatorManager is a local instance mpp coordinator manager
@@ -88,7 +88,7 @@ func (m *MPPCoordinatorManager) detectAndDelete(nowTs uint64) {
 
 	for _, deletedID := range outOfTimeIDs {
 		metrics.MppCoordinatorStatsOverTimeNumber.Inc()
-		logutil.BgLogger().Error("Delete MppCoordinator due to OutOfTime",
+		log.Error("Delete MppCoordinator due to OutOfTime",
 			zap.Uint64("QueryID", deletedID.MPPQueryID.LocalQueryID),
 			zap.Uint64("QueryTs", deletedID.MPPQueryID.QueryTs))
 	}
@@ -163,7 +163,7 @@ func (m *MPPCoordinatorManager) ReportStatus(request *mpp.ReportTaskStatusReques
 	err := coord.ReportStatus(kv.ReportStatusRequest{Request: request})
 	if err != nil {
 		resp.Error = &mpp.Error{MppVersion: request.Meta.MppVersion, Msg: err.Error()}
-		logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator handles ReportMPPTaskStatus met error: %s", err.Error()),
+		log.Warn(fmt.Sprintf("Mpp coordinator handles ReportMPPTaskStatus met error: %s", err.Error()),
 			zap.Uint64("QueryID", coordID.MPPQueryID.LocalQueryID),
 			zap.Uint64("QueryTs", coordID.MPPQueryID.QueryTs),
 			zap.Int64("TaskID", request.Meta.TaskId))

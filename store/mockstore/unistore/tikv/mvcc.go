@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/badger"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
@@ -45,7 +45,8 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // MVCCStore is a wrapper of badger.DB to provide MVCC functions.
@@ -494,7 +495,7 @@ func (store *MVCCStore) CheckTxnStatus(reqCtx *requestCtx,
 
 		// For an async-commit lock, never roll it back or push forward it MinCommitTS.
 		if lock.UseAsyncCommit && !req.ForceSyncCommit {
-			log.S().Debugf("async commit startTS=%v secondaries=%v minCommitTS=%v", lock.StartTS, lock.Secondaries, lock.MinCommitTS)
+			log.Debugf("async commit startTS=%v secondaries=%v minCommitTS=%v", lock.StartTS, lock.Secondaries, lock.MinCommitTS)
 			return TxnStatus{0, kvrpcpb.Action_NoAction, lock.ToLockInfo(req.PrimaryKey)}, nil
 		}
 
@@ -579,7 +580,7 @@ type SecondaryLocksStatus struct {
 func (store *MVCCStore) CheckSecondaryLocks(reqCtx *requestCtx, keys [][]byte, startTS uint64) (SecondaryLocksStatus, error) {
 	sortKeys(keys)
 	hashVals := keysToHashVals(keys...)
-	log.S().Debugf("%d check secondary %v", startTS, hashVals)
+	log.Debugf("%d check secondary %v", startTS, hashVals)
 	regCtx := reqCtx.regCtx
 	regCtx.AcquireLatches(hashVals)
 	defer regCtx.ReleaseLatches(hashVals)
@@ -636,7 +637,7 @@ func (store *MVCCStore) handleCheckPessimisticErr(startTS uint64, err error, isF
 			keyHash := farm.Fingerprint64(locked.Key)
 			waitTimeDuration := store.normalizeWaitTime(lockWaitTime)
 			lock := locked.Lock
-			log.S().Debugf("%d blocked by %d on key %d", startTS, lock.StartTS, keyHash)
+			log.Debugf("%d blocked by %d on key %d", startTS, lock.StartTS, keyHash)
 			waiter := store.lockWaiterManager.NewWaiter(startTS, lock.StartTS, keyHash, waitTimeDuration)
 			if !isFirstLock {
 				store.DeadlockDetectCli.Detect(startTS, lock.StartTS, keyHash, key, resourceGroupTag)
@@ -1190,7 +1191,7 @@ const (
 func (store *MVCCStore) Rollback(reqCtx *requestCtx, keys [][]byte, startTS uint64) error {
 	sortKeys(keys)
 	hashVals := keysToHashVals(keys...)
-	log.S().Debugf("%d rollback %v", startTS, hashVals)
+	log.Debugf("%d rollback %v", startTS, hashVals)
 	regCtx := reqCtx.regCtx
 	batch := store.dbWriter.NewWriteBatch(startTS, 0, reqCtx.rpcCtx)
 

@@ -34,7 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func TestParallelLockNewTask(t *testing.T) {
@@ -100,7 +100,7 @@ func TestParallelLockNewTask(t *testing.T) {
 				if err == nil {
 					successCounter.Add(1)
 				} else {
-					logutil.BgLogger().Info("lock new task with error", zap.Error(err))
+					log.Info("lock new task with error", zap.Error(err))
 				}
 				wg.Done()
 			}()

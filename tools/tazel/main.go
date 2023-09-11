@@ -24,7 +24,7 @@ import (
 	"github.com/bazelbuild/buildtools/build"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/mathutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const maxShardCount = 50

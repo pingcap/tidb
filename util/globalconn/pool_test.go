@@ -316,13 +316,13 @@ func prepareConcurrencyTest(pool globalconn.IDPool, producers int, consumers int
 }
 
 func doConcurrencyTest(ready chan struct{}, done chan struct{}, wgProducer *sync.WaitGroup, wgConsumer *sync.WaitGroup) {
-	// logutil.BgLogger().Info("Init", zap.Stringer("pool", q))
+	// log.Info("Init", zap.Stringer("pool", q))
 	close(ready)
 	wgProducer.Wait()
-	// logutil.BgLogger().Info("Snapshot on producing done", zap.Stringer("pool", q))
+	// log.Info("Snapshot on producing done", zap.Stringer("pool", q))
 	close(done)
 	wgConsumer.Wait()
-	// logutil.BgLogger().Info("Finally", zap.Stringer("pool", q))
+	// log.Info("Finally", zap.Stringer("pool", q))
 }
 
 func expectedConcurrencyTestResult(poolSizeInBits uint32, fillCount uint32, producers int, consumers int, requests int) (expected int64) {

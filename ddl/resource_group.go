@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -49,7 +49,7 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 	// check if resource group value is valid and convert to proto format.
 	protoGroup, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
 	if err != nil {
-		logutil.BgLogger().Warn("convert to resource group failed", zap.Error(err))
+		log.Warn("convert to resource group failed", zap.Error(err))
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -67,7 +67,7 @@ func onCreateResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		defer cancel()
 		err = infosync.AddResourceGroup(ctx, protoGroup)
 		if err != nil {
-			logutil.BgLogger().Warn("create resource group failed", zap.String("group-name", groupInfo.Name.L), zap.Error(err))
+			log.Warn("create resource group failed", zap.String("group-name", groupInfo.Name.L), zap.Error(err))
 			// TiDB will add the group to the resource manager when it bootstraps.
 			// here order to compatible with keyspace mode TiDB to skip the exist error with default group.
 			if !strings.Contains(err.Error(), alreadyExists) || groupInfo.Name.L != rg.DefaultResourceGroupName {
@@ -96,7 +96,7 @@ func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 	// check if resource group value is valid and convert to proto format.
 	protoGroup, err := resourcegroup.NewGroupFromOptions(alterGroupInfo.Name.L, alterGroupInfo.ResourceGroupSettings)
 	if err != nil {
-		logutil.BgLogger().Warn("convert to resource group failed", zap.Error(err))
+		log.Warn("convert to resource group failed", zap.Error(err))
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
@@ -117,7 +117,7 @@ func onAlterResourceGroup(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _
 
 	err = infosync.ModifyResourceGroup(context.TODO(), protoGroup)
 	if err != nil {
-		logutil.BgLogger().Warn("update resource group failed", zap.Error(err))
+		log.Warn("update resource group failed", zap.Error(err))
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}

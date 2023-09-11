@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
@@ -150,7 +150,7 @@ func RestoreTableOptimizerHint(hint *ast.TableOptimizerHint) string {
 	err := hint.Restore(ctx)
 	// There won't be any error for optimizer hint.
 	if err != nil {
-		logutil.BgLogger().Debug("restore TableOptimizerHint failed", zap.Error(err))
+		log.Debug("restore TableOptimizerHint failed", zap.Error(err))
 	}
 	return strings.ToLower(sb.String())
 }
@@ -161,7 +161,7 @@ func RestoreIndexHint(hint *ast.IndexHint) (string, error) {
 	ctx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
 	err := hint.Restore(ctx)
 	if err != nil {
-		logutil.BgLogger().Debug("restore IndexHint failed", zap.Error(err))
+		log.Debug("restore IndexHint failed", zap.Error(err))
 		return "", err
 	}
 	return strings.ToLower(sb.String()), nil

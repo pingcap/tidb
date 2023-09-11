@@ -35,8 +35,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Kind constants.
@@ -200,7 +200,7 @@ func (d *Datum) GetString() string {
 func (d *Datum) GetBinaryStringEncoded() string {
 	coll, err := charset.GetCollationByName(d.Collation())
 	if err != nil {
-		logutil.BgLogger().Warn("unknown collation", zap.Error(err))
+		log.Warn("unknown collation", zap.Error(err))
 		return d.GetString()
 	}
 	enc := charset.FindEncodingTakeUTF8AsNoop(coll.CharsetName)

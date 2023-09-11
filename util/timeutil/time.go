@@ -24,9 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // init initializes `locCache`.
@@ -86,7 +86,7 @@ func InferSystemTZ() string {
 			if strings.Contains(path, "posixrules") {
 				path, err1 = inferOneStepLinkForPath("/etc/localtime")
 				if err1 != nil {
-					logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
+					log.Error("locate timezone files failed", zap.Error(err1))
 					return ""
 				}
 			}
@@ -94,9 +94,9 @@ func InferSystemTZ() string {
 			if err2 == nil {
 				return name
 			}
-			logutil.BgLogger().Error("infer timezone failed", zap.Error(err2))
+			log.Error("infer timezone failed", zap.Error(err2))
 		}
-		logutil.BgLogger().Error("locate timezone files failed", zap.Error(err1))
+		log.Error("locate timezone files failed", zap.Error(err1))
 	case tz != "" && tz != "UTC":
 		_, err := time.LoadLocation(tz)
 		if err == nil {

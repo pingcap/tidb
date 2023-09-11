@@ -34,7 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type allTableData struct {
@@ -125,7 +125,7 @@ func getAllDataForPhysicalTable(t *testing.T, ctx sessionctx.Context, physTable 
 			tblID, kv, _ := tablecodec.DecodeRecordKey(it.Key())
 			require.Equal(t, pid, tblID)
 			vals, _ := tablecodec.DecodeValuesBytesToStrings(it.Value())
-			logutil.BgLogger().Info("Record",
+			log.Info("Record",
 				zap.Int64("pid", tblID),
 				zap.Stringer("key", kv),
 				zap.Strings("values", vals))

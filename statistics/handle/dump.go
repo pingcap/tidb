@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // JSONTable is used for dumping statistics.
@@ -310,7 +310,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 		return nil, false, errors.AddStack(err)
 	}
 	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get records of stats_meta_history",
+		log.Warn("failed to get records of stats_meta_history",
 			zap.Int64("table-id", physicalID),
 			zap.Uint64("snapshotTS", snapshot))
 		return nil, false, nil
@@ -329,7 +329,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 		return nil, false, errors.AddStack(err)
 	}
 	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get record of stats_history",
+		log.Warn("failed to get record of stats_history",
 			zap.Int64("table-id", physicalID),
 			zap.Uint64("snapshotTS", snapshot))
 		return nil, false, nil

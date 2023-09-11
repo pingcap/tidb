@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SessionHandle is used to handle all session sql bind operations.
@@ -49,7 +49,7 @@ func (h *SessionHandle) appendBindRecord(hash string, meta *BindRecord) {
 	oldRecord := h.ch.GetBindRecord(hash, meta.OriginalSQL, meta.Db)
 	err := h.ch.SetBindRecord(hash, meta)
 	if err != nil {
-		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
+		log.Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }

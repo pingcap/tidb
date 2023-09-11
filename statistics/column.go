@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Column represents a column histogram.
@@ -167,7 +167,7 @@ func (c *Column) IsInvalid(
 		stmtctx := sctx.GetSessionVars().StmtCtx
 		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
-				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
+				log.Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.

@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // CheckpointManager is a checkpoint manager implementation that used by non-distributed reorganization.
@@ -113,7 +113,7 @@ func NewCheckpointManager(ctx context.Context, flushCtrl FlushController,
 		cm.updateCheckpointLoop()
 		cm.updaterWg.Done()
 	}()
-	logutil.BgLogger().Info("create checkpoint manager", zap.String("category", "ddl-ingest"),
+	log.Info("create checkpoint manager", zap.String("category", "ddl-ingest"),
 		zap.Int64("jobID", jobID), zap.Int64("indexID", indexID))
 	return cm, nil
 }
@@ -212,7 +212,7 @@ func (s *CheckpointManager) progressLocalSyncMinKey() {
 func (s *CheckpointManager) Close() {
 	s.updaterExitCh <- struct{}{}
 	s.updaterWg.Wait()
-	logutil.BgLogger().Info("close checkpoint manager", zap.String("category", "ddl-ingest"),
+	log.Info("close checkpoint manager", zap.String("category", "ddl-ingest"),
 		zap.Int64("jobID", s.jobID), zap.Int64("indexID", s.indexID))
 }
 
@@ -220,7 +220,7 @@ func (s *CheckpointManager) Close() {
 func (s *CheckpointManager) Sync() {
 	_, _, err := s.flushCtrl.Flush(s.indexID, FlushModeForceLocal)
 	if err != nil {
-		logutil.BgLogger().Warn("flush local engine failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+		log.Warn("flush local engine failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 	}
 	s.mu.Lock()
 	s.progressLocalSyncMinKey()
@@ -235,7 +235,7 @@ func (s *CheckpointManager) Sync() {
 func (s *CheckpointManager) Reset(newPhysicalID int64, start, end kv.Key) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	logutil.BgLogger().Info("reset checkpoint manager", zap.String("category", "ddl-ingest"),
+	log.Info("reset checkpoint manager", zap.String("category", "ddl-ingest"),
 		zap.Int64("newPhysicalID", newPhysicalID), zap.Int64("oldPhysicalID", s.pidLocal),
 		zap.Int64("indexID", s.indexID), zap.Int64("jobID", s.jobID), zap.Int("localCnt", s.localCnt))
 	if s.pidLocal != newPhysicalID {
@@ -309,7 +309,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				s.minKeySyncLocal = cp.LocalSyncKey
 				s.localCnt = cp.LocalKeyCount
 			}
-			logutil.BgLogger().Info("resume checkpoint", zap.String("category", "ddl-ingest"),
+			log.Info("resume checkpoint", zap.String("category", "ddl-ingest"),
 				zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 				zap.String("local checkpoint", hex.EncodeToString(s.minKeySyncLocal)),
 				zap.String("global checkpoint", hex.EncodeToString(s.minKeySyncGlobal)),
@@ -318,7 +318,7 @@ func (s *CheckpointManager) resumeCheckpoint() error {
 				zap.String("current instance", s.instanceAddr))
 			return nil
 		}
-		logutil.BgLogger().Info("checkpoint is empty", zap.String("category", "ddl-ingest"),
+		log.Info("checkpoint is empty", zap.String("category", "ddl-ingest"),
 			zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID))
 		return nil
 	})
@@ -375,7 +375,7 @@ func (s *CheckpointManager) updateCheckpoint() error {
 		s.mu.Unlock()
 		return nil
 	})
-	logutil.BgLogger().Info("update checkpoint", zap.String("category", "ddl-ingest"),
+	log.Info("update checkpoint", zap.String("category", "ddl-ingest"),
 		zap.Int64("job ID", s.jobID), zap.Int64("index ID", s.indexID),
 		zap.String("local checkpoint", hex.EncodeToString(currentLocalKey)),
 		zap.String("global checkpoint", hex.EncodeToString(currentGlobalKey)),
@@ -392,7 +392,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 		case wg := <-s.updaterCh:
 			err := s.updateCheckpoint()
 			if err != nil {
-				logutil.BgLogger().Error("update checkpoint failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+				log.Error("update checkpoint failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 			}
 			wg.Done()
 		case <-ticker.C:
@@ -404,7 +404,7 @@ func (s *CheckpointManager) updateCheckpointLoop() {
 			s.mu.Unlock()
 			err := s.updateCheckpoint()
 			if err != nil {
-				logutil.BgLogger().Error("update checkpoint failed", zap.String("category", "ddl-ingest"), zap.Error(err))
+				log.Error("update checkpoint failed", zap.String("category", "ddl-ingest"), zap.Error(err))
 			}
 		case <-s.updaterExitCh:
 			return

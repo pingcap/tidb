@@ -33,10 +33,10 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TableStatsOption used to indicate the way to get table stats
@@ -124,7 +124,7 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
 		return ok
 	}
 	// TODO(hawkingrei): If necessary, add asynchronous retries
-	logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
+	log.Warn("fail to put the stats cache", zap.Int64("id", id))
 	return ok
 }
 
@@ -132,7 +132,7 @@ func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
 func (sc *StatsCache) put(id int64, t *statistics.Table) {
 	ok := sc.putCache(id, t)
 	if !ok {
-		logutil.BgLogger().Warn("fail to put the stats cache", zap.Int64("id", id))
+		log.Warn("fail to put the stats cache", zap.Int64("id", id))
 		return
 	}
 	// update the maxTblStatsVer

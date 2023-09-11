@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/ranger"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type ppdSolver struct{}
@@ -893,7 +893,7 @@ func (ds *DataSource) AddPrefix4ShardIndexes(sc sessionctx.Context, conds []expr
 		}
 		newConds, err = ds.addExprPrefixCond(sc, path, newConds)
 		if err != nil {
-			logutil.BgLogger().Error("Add tidb_shard expression failed",
+			log.Error("Add tidb_shard expression failed",
 				zap.Error(err),
 				zap.Uint64("connection id", sc.GetSessionVars().ConnectionID),
 				zap.String("database name", ds.DBName.L),

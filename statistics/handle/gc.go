@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
@@ -63,7 +63,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) error
 		}
 	}
 	if err := h.ClearOutdatedHistoryStats(); err != nil {
-		logutil.BgLogger().Warn("failed to gc outdated historical stats",
+		log.Warn("failed to gc outdated historical stats",
 			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
 			zap.Error(err))
 	}
@@ -87,7 +87,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 	}
 	tbl, ok := h.getTableByPhysicalID(is, physicalID)
 	if !ok {
-		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
+		log.Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return errors.Trace(h.DeleteTableStatsFromKV([]int64{physicalID}))
 	}
 	tblInfo := tbl.Meta()
@@ -128,7 +128,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		var colIDs []int64
 		err = json.Unmarshal([]byte(strColIDs), &colIDs)
 		if err != nil {
-			logutil.BgLogger().Debug("decode column IDs failed", zap.String("column_ids", strColIDs), zap.Error(err))
+			log.Debug("decode column IDs failed", zap.String("column_ids", strColIDs), zap.Error(err))
 			return errors.Trace(err)
 		}
 		for _, colID := range colIDs {
@@ -140,10 +140,10 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 				}
 			}
 			if !found {
-				logutil.BgLogger().Info("mark mysql.stats_extended record as 'deleted' in GC due to dropped columns", zap.String("table_name", tblInfo.Name.L), zap.Int64("table_id", physicalID), zap.String("stats_name", statsName), zap.Int64("dropped_column_id", colID))
+				log.Info("mark mysql.stats_extended record as 'deleted' in GC due to dropped columns", zap.String("table_name", tblInfo.Name.L), zap.Int64("table_id", physicalID), zap.String("stats_name", statsName), zap.Int64("dropped_column_id", colID))
 				err = h.MarkExtendedStatsDeleted(statsName, physicalID, true)
 				if err != nil {
-					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
+					log.Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
 					return errors.Trace(err)
 				}
 				break
@@ -181,7 +181,7 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 		}
 		sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		logutil.BgLogger().Info("clear outdated historical stats")
+		log.Info("clear outdated historical stats")
 		return err
 	}
 	return nil

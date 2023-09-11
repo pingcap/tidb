@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // HistoricalStatsWorker indicates for dump historical stats
@@ -46,7 +46,7 @@ func (w *HistoricalStatsWorker) SendTblToDumpHistoricalStats(tableID int64) {
 	case w.tblCH <- tableID:
 		return
 	default:
-		logutil.BgLogger().Warn("discard dump historical stats task", zap.Int64("table-id", tableID))
+		log.Warn("discard dump historical stats task", zap.Int64("table-id", tableID))
 	}
 }
 

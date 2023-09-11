@@ -18,7 +18,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/fs"
+	// "io/fs"
 	"os"
 	"runtime"
 	"strconv"
@@ -29,7 +29,7 @@ import (
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
@@ -86,7 +86,8 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // Flag Names
@@ -227,7 +228,7 @@ func main() {
 	// It appears in the main function to be set before any use of client-go to prevent data race.
 	if _, err := failpoint.Status("github.com/pingcap/tidb/server/enableTestAPI"); err == nil {
 		warnMsg := "tikv/client-go failpoint is enabled, this should NOT happen in the production environment"
-		logutil.BgLogger().Warn(warnMsg)
+		log.Warn(warnMsg)
 		tikv.EnableFailpoints()
 	}
 	setGlobalVars()
@@ -263,21 +264,21 @@ func main() {
 	}
 	terror.MustNil(svr.Run())
 	<-exited
-	syncLog()
+	// syncLog()
 }
 
-func syncLog() {
-	if err := log.Sync(); err != nil {
-		// Don't complain about /dev/stdout as Fsync will return EINVAL.
-		if pathErr, ok := err.(*fs.PathError); ok {
-			if pathErr.Path == "/dev/stdout" {
-				os.Exit(0)
-			}
-		}
-		fmt.Fprintln(os.Stderr, "sync log err:", err)
-		os.Exit(1)
-	}
-}
+// func syncLog() {
+// 	if err := log.Sync(); err != nil {
+// 		// Don't complain about /dev/stdout as Fsync will return EINVAL.
+// 		if pathErr, ok := err.(*fs.PathError); ok {
+// 			if pathErr.Path == "/dev/stdout" {
+// 				os.Exit(0)
+// 			}
+// 		}
+// 		fmt.Fprintln(os.Stderr, "sync log err:", err)
+// 		os.Exit(1)
+// 	}
+// }
 
 func checkTempStorageQuota() {
 	// check capacity and the quota when EnableTmpStorageOnOOM is enabled
@@ -778,7 +779,7 @@ func setGlobalVars() {
 
 	t, err := time.ParseDuration(cfg.TiKVClient.StoreLivenessTimeout)
 	if err != nil || t < 0 {
-		logutil.BgLogger().Fatal("invalid duration value for store-liveness-timeout",
+		log.Fatal("invalid duration value for store-liveness-timeout",
 			zap.String("currentValue", cfg.TiKVClient.StoreLivenessTimeout))
 	}
 	tikv.SetStoreLivenessTimeout(t)
@@ -794,9 +795,9 @@ func setGlobalVars() {
 }
 
 func setupLog() {
-	cfg := config.GetGlobalConfig()
-	err := logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())
-	terror.MustNil(err)
+	// cfg := config.GetGlobalConfig()
+	// err := logutil.InitLogger(cfg.Log.ToLogConfig(), keyspace.WrapZapcoreWithKeyspace())
+	// terror.MustNil(err)
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
@@ -814,10 +815,10 @@ func setupExtensions() *extension.Extensions {
 
 func printInfo() {
 	// Make sure the TiDB info is always printed.
-	level := log.GetLevel()
-	log.SetLevel(zap.InfoLevel)
+	// level := log.GetLevel()
+	// log.SetLevel(zap.InfoLevel)
 	printer.PrintTiDBInfo()
-	log.SetLevel(level)
+	// log.SetLevel(level)
 }
 
 func createServer(storage kv.Storage, dom *domain.Domain) *server.Server {
@@ -914,7 +915,7 @@ func setupStmtSummary() {
 			FileMaxBackups: instanceCfg.StmtSummaryFileMaxBackups,
 		})
 		if err != nil {
-			logutil.BgLogger().Error("failed to setup statements summary", zap.Error(err))
+			log.Error("failed to setup statements summary", zap.Error(err))
 		}
 	}
 }

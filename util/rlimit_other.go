@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"syscall"
 
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GenRLimit get RLIMIT_NOFILE limit
@@ -29,7 +29,7 @@ func GenRLimit(source string) uint64 {
 	var rl syscall.Rlimit
 	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rl)
 	if err != nil {
-		logutil.BgLogger().Warn(fmt.Sprintf("[%s] get system open file limit error", source), zap.Error(err), zap.String("default", "1024"))
+		log.Warn(fmt.Sprintf("[%s] get system open file limit error", source), zap.Error(err), zap.String("default", "1024"))
 	} else {
 		//nolint: unconvert
 		rLimit = uint64(rl.Cur)

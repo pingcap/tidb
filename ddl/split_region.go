@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatter bool) {
@@ -110,7 +110,7 @@ func preSplitPhysicalTableByShardRowID(ctx context.Context, store kv.SplittableS
 	var err error
 	regionIDs, err := store.SplitRegions(ctx, splitTableKeys, scatter, &tbInfo.ID)
 	if err != nil {
-		logutil.BgLogger().Warn("pre split some table regions failed", zap.String("category", "ddl"),
+		log.Warn("pre split some table regions failed", zap.String("category", "ddl"),
 			zap.Stringer("table", tbInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
 	regionIDs = append(regionIDs, splitIndexRegion(store, tbInfo, scatter)...)
@@ -123,7 +123,7 @@ func SplitRecordRegion(ctx context.Context, store kv.SplittableStore, physicalTa
 	regionIDs, err := store.SplitRegions(ctx, [][]byte{tableStartKey}, scatter, &tableID)
 	if err != nil {
 		// It will be automatically split by TiKV later.
-		logutil.BgLogger().Warn("split table region failed", zap.String("category", "ddl"), zap.Error(err))
+		log.Warn("split table region failed", zap.String("category", "ddl"), zap.Error(err))
 	}
 	if len(regionIDs) == 1 {
 		return regionIDs[0]
@@ -139,7 +139,7 @@ func splitIndexRegion(store kv.SplittableStore, tblInfo *model.TableInfo, scatte
 	}
 	regionIDs, err := store.SplitRegions(context.Background(), splitKeys, scatter, &tblInfo.ID)
 	if err != nil {
-		logutil.BgLogger().Warn("pre split some table index regions failed", zap.String("category", "ddl"),
+		log.Warn("pre split some table index regions failed", zap.String("category", "ddl"),
 			zap.Stringer("table", tblInfo.Name), zap.Int("successful region count", len(regionIDs)), zap.Error(err))
 	}
 	return regionIDs
@@ -150,7 +150,7 @@ func WaitScatterRegionFinish(ctx context.Context, store kv.SplittableStore, regi
 	for _, regionID := range regionIDs {
 		err := store.WaitScatterRegionFinish(ctx, regionID, 0)
 		if err != nil {
-			logutil.BgLogger().Warn("wait scatter region failed", zap.String("category", "ddl"), zap.Uint64("regionID", regionID), zap.Error(err))
+			log.Warn("wait scatter region failed", zap.String("category", "ddl"), zap.Uint64("regionID", regionID), zap.Error(err))
 			// We don't break for PDError because it may caused by ScatterRegion request failed.
 			if _, ok := errors.Cause(err).(*tikverr.PDError); !ok {
 				break

@@ -20,13 +20,14 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/session"
 	ttlcient "github.com/pingcap/tidb/ttl/client"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TTLJobTriggerHandler is used to trigger a TTL job manually

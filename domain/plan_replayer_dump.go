@@ -36,10 +36,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/printer"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -215,26 +215,26 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		sqls = append(sqls, execStmt.Text())
 	}
 	if task.IsCapture {
-		logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
+		log.Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 			zap.String("sql-digest", task.SQLDigest),
 			zap.String("plan-digest", task.PlanDigest),
 			zap.Strings("sql", sqls),
 			zap.Bool("isContinues", task.IsContinuesCapture))
 	} else {
-		logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
+		log.Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 			zap.Strings("sqls", sqls))
 	}
 	defer func() {
 		errMsg := ""
 		if err != nil {
 			if task.IsCapture {
-				logutil.BgLogger().Info("dump file failed", zap.String("category", "plan-replayer-dump"),
+				log.Info("dump file failed", zap.String("category", "plan-replayer-dump"),
 					zap.String("sql-digest", task.SQLDigest),
 					zap.String("plan-digest", task.PlanDigest),
 					zap.Strings("sql", sqls),
 					zap.Bool("isContinues", task.IsContinuesCapture))
 			} else {
-				logutil.BgLogger().Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
+				log.Info("start to dump plan replayer result", zap.String("category", "plan-replayer-dump"),
 					zap.Strings("sqls", sqls))
 			}
 			errMsg = err.Error()
@@ -244,12 +244,12 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 		}
 		err1 := zw.Close()
 		if err1 != nil {
-			logutil.BgLogger().Error("Closing zip writer failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
+			log.Error("Closing zip writer failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err1.Error()
 		}
 		err2 := zf.Close()
 		if err2 != nil {
-			logutil.BgLogger().Error("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
+			log.Error("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err2.Error()
 		}
 		if len(errMsg) > 0 {
@@ -450,7 +450,7 @@ func dumpTiFlashReplica(ctx sessionctx.Context, zw *zip.Writer, pairs map[tableN
 		tableName := model.NewCIStr(pair.TableName)
 		t, err := is.TableByName(dbName, tableName)
 		if err != nil {
-			logutil.BgLogger().Warn("failed to find table info", zap.Error(err),
+			log.Warn("failed to find table info", zap.Error(err),
 				zap.String("dbName", dbName.L), zap.String("tableName", tableName.L))
 			continue
 		}

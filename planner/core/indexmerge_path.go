@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/ranger"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -48,7 +48,7 @@ func (ds *DataSource) generateIndexMergePath() error {
 		if len(ds.indexMergeHints) > 0 && warningMsg != "" {
 			ds.indexMergeHints = nil
 			stmtCtx.AppendWarning(errors.Errorf(warningMsg))
-			logutil.BgLogger().Debug(warningMsg)
+			log.Debug(warningMsg)
 		}
 	}()
 
@@ -179,7 +179,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			accessDNF := expression.ComposeDNFCondition(ds.SCtx(), accessConds...)
 			sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
 			if err != nil {
-				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+				log.Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				sel = SelectionFactor
 			}
 			possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
@@ -254,7 +254,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			err := ds.deriveTablePathStats(path, conditions, true)
 			if err != nil {
-				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
+				log.Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
 			var unsignedIntHandle bool
@@ -284,7 +284,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 			}
 			err := ds.fillIndexPath(path, conditions)
 			if err != nil {
-				logutil.BgLogger().Debug("can not derive statistics of a path", zap.Error(err))
+				log.Debug("can not derive statistics of a path", zap.Error(err))
 				continue
 			}
 			ds.deriveIndexPathStats(path, conditions, true)
@@ -465,7 +465,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	// 3. Estimate the row count after partial paths.
 	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, partialFilters, nil)
 	if err != nil {
-		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+		log.Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		sel = SelectionFactor
 	}
 

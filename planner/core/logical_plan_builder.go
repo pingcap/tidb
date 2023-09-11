@@ -62,7 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
@@ -1823,7 +1823,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 					}
 					scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
 					if !ok {
-						logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
+						log.Warn("Error occurred while maintaining the functional dependency")
 						continue
 					}
 					item.Insert(scalarUniqueID)
@@ -1888,7 +1888,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 					case *expression.ScalarFunction:
 						scalarUniqueID, ok := fds.IsHashCodeRegistered(string(hack.String(x.HashCode(p.SCtx().GetSessionVars().StmtCtx))))
 						if !ok {
-							logutil.BgLogger().Warn("Error occurred while maintaining the functional dependency")
+							log.Warn("Error occurred while maintaining the functional dependency")
 							continue
 						}
 						projectionUniqueIDs.Insert(scalarUniqueID)

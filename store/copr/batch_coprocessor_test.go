@@ -29,7 +29,7 @@ import (
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // StoreID: [1, storeCount]
@@ -274,7 +274,7 @@ func TestTopoFetcherBackoff(t *testing.T) {
 		if err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), expectErr); err != nil {
 			break
 		}
-		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
+		log.Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
 	}
 	dura := time.Since(start)
 	// fetchTopoMaxBackoff is milliseconds.

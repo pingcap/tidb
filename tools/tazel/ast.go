@@ -23,7 +23,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var testMap map[string]uint32

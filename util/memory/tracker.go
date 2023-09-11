@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	atomicutil "go.uber.org/atomic"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.
@@ -461,7 +461,7 @@ func (t *Tracker) Consume(bs int64) {
 		if sessionRootTracker.NeedKill.Load() {
 			sessionRootTracker.NeedKillReceived.Do(
 				func() {
-					logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
+					log.Warn("global memory controller, NeedKill signal is received successfully",
 						zap.Uint64("conn", sessionRootTracker.SessionID.Load()))
 				})
 			tryActionLastOne(&sessionRootTracker.actionMuForHardLimit, sessionRootTracker)

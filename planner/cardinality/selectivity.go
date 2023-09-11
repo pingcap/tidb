@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/ranger"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -328,7 +328,7 @@ OUTER:
 
 			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
-				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+				log.Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				curSelectivity = selectionFactor
 			}
 

@@ -26,7 +26,7 @@ import (
 	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ImporterRangeConcurrencyForTest is only used for test.

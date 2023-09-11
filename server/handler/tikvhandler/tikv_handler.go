@@ -32,7 +32,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -63,7 +63,8 @@ import (
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 func writeError(w http.ResponseWriter, err error) {
@@ -806,7 +807,7 @@ func (h FlashReplicaHandler) handleStatusReport(w http.ResponseWriter, req *http
 		writeError(w, err)
 	}
 
-	logutil.BgLogger().Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
+	log.Info("handle flash replica report", zap.Int64("table ID", status.ID), zap.Uint64("region count",
 		status.RegionCount),
 		zap.Uint64("flash region count", status.FlashRegionCount),
 		zap.Error(err))
@@ -852,7 +853,7 @@ func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *model.CIStr, ta
 	var results sqlexec.RecordSet
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	if results, err = sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, params...); err != nil {
-		logutil.BgLogger().Error(`ExecuteInternal`, zap.Error(err))
+		log.Error(`ExecuteInternal`, zap.Error(err))
 	} else if results != nil {
 		messages = make([]*SchemaTableStorage, 0)
 		defer terror.Call(results.Close)
@@ -1825,7 +1826,7 @@ func (h DBTableHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		dbTblInfo.TableInfo = tbl.Meta()
 		dbInfo, ok := schema.SchemaByTable(dbTblInfo.TableInfo)
 		if !ok {
-			logutil.BgLogger().Error("can not find the database of the table", zap.Int64("table id", dbTblInfo.TableInfo.ID), zap.String("table name", dbTblInfo.TableInfo.Name.L))
+			log.Error("can not find the database of the table", zap.Int64("table id", dbTblInfo.TableInfo.ID), zap.String("table name", dbTblInfo.TableInfo.Name.L))
 			writeError(w, infoschema.ErrTableNotExists.GenWithStack("Table which ID = %s does not exist.", tableID))
 			return
 		}
@@ -2016,7 +2017,7 @@ func (LabelHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		cfg.Labels = labels
 		config.StoreGlobalConfig(&cfg)
-		logutil.BgLogger().Info("update server labels", zap.Any("labels", cfg.Labels))
+		log.Info("update server labels", zap.Any("labels", cfg.Labels))
 	}
 
 	writeData(w, config.GetGlobalConfig().Labels)

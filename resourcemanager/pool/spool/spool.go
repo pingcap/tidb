@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/pool"
 	"github.com/pingcap/tidb/resourcemanager/poolmanager"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sasha-s/go-deadlock"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const waitInterval = 5 * time.Millisecond
@@ -137,7 +137,7 @@ func (p *Pool) run(fn func()) {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logutil.BgLogger().Error("recover panic", zap.Any("recover", r), zap.Stack("stack"))
+				log.Error("recover panic", zap.Any("recover", r), zap.Stack("stack"))
 			}
 			p.wg.Done()
 			p.running.Add(-1)

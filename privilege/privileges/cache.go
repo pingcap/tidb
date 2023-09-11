@@ -38,11 +38,11 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stringutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -340,7 +340,7 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err := p.LoadUserTable(ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("load mysql.user fail", zap.Error(err))
+		log.Warn("load mysql.user fail", zap.Error(err))
 		return errLoadPrivilege.FastGen("mysql.user")
 	}
 
@@ -357,46 +357,46 @@ func (p *MySQLPrivilege) LoadAll(ctx sessionctx.Context) error {
 	err = p.LoadDBTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			logutil.BgLogger().Warn("load mysql.db fail", zap.Error(err))
+			log.Warn("load mysql.db fail", zap.Error(err))
 			return errLoadPrivilege.FastGen("mysql.db")
 		}
-		logutil.BgLogger().Warn("mysql.db maybe missing")
+		log.Warn("mysql.db maybe missing")
 	}
 
 	err = p.LoadTablesPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			logutil.BgLogger().Warn("load mysql.tables_priv fail", zap.Error(err))
+			log.Warn("load mysql.tables_priv fail", zap.Error(err))
 			return errLoadPrivilege.FastGen("mysql.tables_priv")
 		}
-		logutil.BgLogger().Warn("mysql.tables_priv missing")
+		log.Warn("mysql.tables_priv missing")
 	}
 
 	err = p.LoadDefaultRoles(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			logutil.BgLogger().Warn("load mysql.roles", zap.Error(err))
+			log.Warn("load mysql.roles", zap.Error(err))
 			return errLoadPrivilege.FastGen("mysql.roles")
 		}
-		logutil.BgLogger().Warn("mysql.default_roles missing")
+		log.Warn("mysql.default_roles missing")
 	}
 
 	err = p.LoadColumnsPrivTable(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			logutil.BgLogger().Warn("load mysql.columns_priv", zap.Error(err))
+			log.Warn("load mysql.columns_priv", zap.Error(err))
 			return errLoadPrivilege.FastGen("mysql.columns_priv")
 		}
-		logutil.BgLogger().Warn("mysql.columns_priv missing")
+		log.Warn("mysql.columns_priv missing")
 	}
 
 	err = p.LoadRoleGraph(ctx)
 	if err != nil {
 		if !noSuchTable(err) {
-			logutil.BgLogger().Warn("load mysql.role_edges", zap.Error(err))
+			log.Warn("load mysql.role_edges", zap.Error(err))
 			return errLoadPrivilege.FastGen("mysql.role_edges")
 		}
-		logutil.BgLogger().Warn("mysql.role_edges missing")
+		log.Warn("mysql.role_edges missing")
 	}
 	return nil
 }
@@ -749,7 +749,7 @@ func (p *MySQLPrivilege) decodeGlobalPrivTableRow(row chunk.Row, fs []*ast.Resul
 				var privValue GlobalPrivValue
 				err := json.Unmarshal(hack.Slice(privData), &privValue)
 				if err != nil {
-					logutil.BgLogger().Error("one user global priv data is broken, forbidden login until data be fixed",
+					log.Error("one user global priv data is broken, forbidden login until data be fixed",
 						zap.String("user", value.User), zap.String("host", value.Host))
 					value.Broken = true
 				} else {
@@ -915,7 +915,7 @@ func decodeSetToPrivilege(s types.Set) mysql.PrivilegeType {
 	for _, str := range strings.Split(s.Name, ",") {
 		priv, ok := mysql.SetStr2Priv[str]
 		if !ok {
-			logutil.BgLogger().Warn("unsupported privilege", zap.String("type", str))
+			log.Warn("unsupported privilege", zap.String("type", str))
 			continue
 		}
 		ret |= priv
@@ -991,7 +991,7 @@ func (p *MySQLPrivilege) matchIdentity(user, host string, skipNameResolve bool) 
 	if !skipNameResolve && host != variable.DefHostname {
 		addrs, err := net.LookupAddr(host)
 		if err != nil {
-			logutil.BgLogger().Warn(
+			log.Warn(
 				"net.LookupAddr returned an error during auth check",
 				zap.String("host", host),
 				zap.Error(err),

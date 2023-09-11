@@ -37,12 +37,12 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -107,7 +107,7 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, key
 			}
 		})
 		if err != nil {
-			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
+			log.Error("Fail to get peer status from TiFlash.",
 				zap.Int64("tableID", tableID))
 			// Just skip down or offline or tomestone stores, because PD will migrate regions from these stores.
 			if store.Store.StateName == "Up" || store.Store.StateName == "Disconnected" {
@@ -124,31 +124,31 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]helper.StoreStat, key
 func calculateTiFlashProgress(keyspaceID tikv.KeyspaceID, tableID int64, replicaCount uint64, tiFlashStores map[int64]helper.StoreStat) (float64, error) {
 	var regionCount int
 	if err := GetTiFlashRegionCountFromPD(context.Background(), tableID, &regionCount); err != nil {
-		logutil.BgLogger().Error("Fail to get regionCount from PD.",
+		log.Error("Fail to get regionCount from PD.",
 			zap.Int64("tableID", tableID))
 		return 0, errors.Trace(err)
 	}
 
 	if regionCount == 0 {
-		logutil.BgLogger().Warn("region count getting from PD is 0.",
+		log.Warn("region count getting from PD is 0.",
 			zap.Int64("tableID", tableID))
 		return 0, fmt.Errorf("region count getting from PD is 0")
 	}
 
 	tiflashPeerCount, err := getTiFlashPeerWithoutLagCount(tiFlashStores, keyspaceID, tableID)
 	if err != nil {
-		logutil.BgLogger().Error("Fail to get peer count from TiFlash.",
+		log.Error("Fail to get peer count from TiFlash.",
 			zap.Int64("tableID", tableID))
 		return 0, errors.Trace(err)
 	}
 	progress := float64(tiflashPeerCount) / float64(regionCount*int(replicaCount))
 	if progress > 1 { // when pd do balance
-		logutil.BgLogger().Debug("TiFlash peer count > pd peer count, maybe doing balance.",
+		log.Debug("TiFlash peer count > pd peer count, maybe doing balance.",
 			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
 		progress = 1
 	}
 	if progress < 1 {
-		logutil.BgLogger().Debug("TiFlash replica progress < 1.",
+		log.Debug("TiFlash replica progress < 1.",
 			zap.Int64("tableID", tableID), zap.Int("tiflashPeerCount", tiflashPeerCount), zap.Int("regionCount", regionCount), zap.Uint64("replicaCount", replicaCount))
 	}
 	return progress, nil
@@ -687,7 +687,7 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	defer tiflash.Unlock()
 	tiflash.groupIndex = placement.RuleIndexTiFlash
 	if !tiflash.PdEnabled {
-		logutil.BgLogger().Info("pd server is manually disabled, just quit")
+		log.Info("pd server is manually disabled, just quit")
 		return nil
 	}
 
@@ -717,7 +717,7 @@ func (tiflash *MockTiFlash) HandleSetPlacementRule(rule placement.TiFlashRule) e
 	if tiflash.TiflashDelay > 0 {
 		go func() {
 			time.Sleep(tiflash.TiflashDelay)
-			logutil.BgLogger().Warn("TiFlash replica is available after delay", zap.Duration("duration", tiflash.TiflashDelay))
+			log.Warn("TiFlash replica is available after delay", zap.Duration("duration", tiflash.TiflashDelay))
 			f()
 		}()
 	} else {
@@ -1046,7 +1046,7 @@ func (m *mockTiFlashReplicaManagerCtx) DeletePlacementRule(ctx context.Context, 
 	if m.tiflash == nil {
 		return nil
 	}
-	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ruleID", ruleID))
+	log.Info("Remove TiFlash rule", zap.String("ruleID", ruleID))
 	m.tiflash.HandleDeletePlacementRule(group, ruleID)
 	return nil
 }

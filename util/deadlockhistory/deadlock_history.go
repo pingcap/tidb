@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -222,7 +222,7 @@ func ErrDeadlockToDeadlockRecord(dl *tikverr.ErrDeadlock) *DeadlockRecord {
 	for _, rawItem := range dl.WaitChain {
 		sqlDigest, err := resourcegrouptag.DecodeResourceGroupTag(rawItem.ResourceGroupTag)
 		if err != nil {
-			logutil.BgLogger().Warn("decoding resource group tag encounters error", zap.Error(err))
+			log.Warn("decoding resource group tag encounters error", zap.Error(err))
 		}
 		waitChain = append(waitChain, WaitChainItem{
 			TryLockTxn:     rawItem.Txn,

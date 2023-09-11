@@ -17,7 +17,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/dumpling/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (

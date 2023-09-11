@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -60,7 +61,7 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GCWorker periodically triggers GC process on tikv server.
@@ -244,7 +245,7 @@ func createSession(store kv.Storage) session.Session {
 	for {
 		se, err := session.CreateSession(store)
 		if err != nil {
-			logutil.BgLogger().Warn("create session", zap.String("category", "gc worker"), zap.Error(err))
+			log.Warn("create session", zap.String("category", "gc worker"), zap.Error(err))
 			continue
 		}
 		// Disable privilege check for gc worker session.
@@ -669,7 +670,7 @@ func (w *GCWorker) checkGCInterval(now time.Time) (bool, error) {
 	}
 
 	if lastRun != nil && lastRun.Add(*runInterval).After(now) {
-		logutil.BgLogger().Debug("skipping garbage collection because gc interval hasn't elapsed since last run", zap.String("category", "gc worker"),
+		log.Debug("skipping garbage collection because gc interval hasn't elapsed since last run", zap.String("category", "gc worker"),
 			zap.String("leaderTick on", w.uuid),
 			zap.Duration("interval", *runInterval),
 			zap.Time("last run", *lastRun))
@@ -685,7 +686,7 @@ func (w *GCWorker) validateGCLifeTime(lifeTime time.Duration) (time.Duration, er
 		return lifeTime, nil
 	}
 
-	logutil.BgLogger().Info("invalid gc life time", zap.String("category", "gc worker"),
+	log.Info("invalid gc life time", zap.String("category", "gc worker"),
 		zap.Duration("get gc life time", lifeTime),
 		zap.Duration("min gc life time", gcMinLifeTime))
 
@@ -721,7 +722,7 @@ func (w *GCWorker) calcNewSafePoint(ctx context.Context, now time.Time) (*time.T
 	safePoint := oracle.GetTimeFromTS(safePointValue)
 	// We should never decrease safePoint.
 	if lastSafePoint != nil && !safePoint.After(*lastSafePoint) {
-		logutil.BgLogger().Info("last safe point is later than current one."+
+		log.Info("last safe point is later than current one."+
 			"No need to gc."+
 			"This might be caused by manually enlarging gc lifetime",
 			zap.String("category", "gc worker"),
@@ -1048,7 +1049,7 @@ func needsGCOperationForStore(store *metapb.Store) (bool, error) {
 		return false, nil
 
 	case placement.EngineLabelTiFlashCompute:
-		logutil.BgLogger().Debug("will ignore gc tiflash_compute node", zap.String("category", "gc worker"))
+		log.Debug("will ignore gc tiflash_compute node", zap.String("category", "gc worker"))
 		return false, nil
 
 	case placement.EngineLabelTiKV, "":
@@ -1133,14 +1134,14 @@ func (w *GCWorker) checkUseDistributedGC() bool {
 		err = w.saveValueToSysTable(gcModeKey, gcModeDefault)
 	}
 	if err != nil {
-		logutil.BgLogger().Error("failed to load gc mode, fall back to distributed mode", zap.String("category", "gc worker"),
+		log.Error("failed to load gc mode, fall back to distributed mode", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid),
 			zap.Error(err))
 		metrics.GCJobFailureCounter.WithLabelValues("check_gc_mode").Inc()
 	} else if strings.EqualFold(mode, gcModeCentral) {
-		logutil.BgLogger().Warn("distributed mode will be used as central mode is deprecated", zap.String("category", "gc worker"))
+		log.Warn("distributed mode will be used as central mode is deprecated", zap.String("category", "gc worker"))
 	} else if !strings.EqualFold(mode, gcModeDistributed) {
-		logutil.BgLogger().Warn("distributed mode will be used", zap.String("category", "gc worker"),
+		log.Warn("distributed mode will be used", zap.String("category", "gc worker"),
 			zap.String("invalid gc mode", mode))
 	}
 	return true
@@ -1164,7 +1165,7 @@ func (w *GCWorker) checkUsePhysicalScanLock() (bool, error) {
 	if strings.EqualFold(str, gcScanLockModeLegacy) {
 		return false, nil
 	}
-	logutil.BgLogger().Warn("legacy scan lock mode will be used", zap.String("category", "gc worker"),
+	log.Warn("legacy scan lock mode will be used", zap.String("category", "gc worker"),
 		zap.String("invalid scan lock mode", str))
 	return false, nil
 }
@@ -1279,7 +1280,7 @@ func (w *GCWorker) batchResolveExpiredLocks(
 		}
 	}
 
-	logutil.BgLogger().Debug("batchResolveExpiredLocks",
+	log.Debug("batchResolveExpiredLocks",
 		zap.Uint64("force-resolve-locks-ts", forceResolveLocksTS),
 		zap.Uint64("try-resolve-locks-ts", tryResolveLocksTS),
 		zap.Int("force-resolve-locks-count", len(forceResolveLocks)),
@@ -1836,7 +1837,7 @@ func (w *GCWorker) doGCForRange(ctx context.Context, startKey []byte, endKey []b
 		}
 
 		if err != nil {
-			logutil.BgLogger().Warn("[gc worker]",
+			log.Warn("[gc worker]",
 				zap.String("uuid", w.uuid),
 				zap.String("gc for range", fmt.Sprintf("[%d, %d)", startKey, endKey)),
 				zap.Uint64("safePoint", safePoint),
@@ -1939,7 +1940,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 		se.RollbackTxn(ctx)
 		return false, errors.Trace(err)
 	}
-	logutil.BgLogger().Debug("got leader", zap.String("category", "gc worker"), zap.String("uuid", leader))
+	log.Debug("got leader", zap.String("category", "gc worker"), zap.String("uuid", leader))
 	if leader == w.uuid {
 		err = w.saveTime(gcLeaderLeaseKey, time.Now().Add(gcWorkerLease))
 		if err != nil {
@@ -1965,7 +1966,7 @@ func (w *GCWorker) checkLeader(ctx context.Context) (bool, error) {
 		return false, errors.Trace(err)
 	}
 	if lease == nil || lease.Before(time.Now()) {
-		logutil.BgLogger().Debug("register as leader", zap.String("category", "gc worker"),
+		log.Debug("register as leader", zap.String("category", "gc worker"),
 			zap.String("uuid", w.uuid))
 		metrics.GCWorkerCounter.WithLabelValues("register_leader").Inc()
 
@@ -1998,7 +1999,7 @@ func (w *GCWorker) saveSafePoint(kv tikv.SafePointKV, t uint64) error {
 	s := strconv.FormatUint(t, 10)
 	err := kv.Put(tikv.GcSavedSafePoint, s)
 	if err != nil {
-		logutil.BgLogger().Error("save safepoint failed", zap.Error(err))
+		log.Error("save safepoint failed", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil
@@ -2076,12 +2077,12 @@ func (w *GCWorker) loadValueFromSysTable(key string) (string, error) {
 		return "", errors.Trace(err)
 	}
 	if req.NumRows() == 0 {
-		logutil.BgLogger().Debug("load kv", zap.String("category", "gc worker"),
+		log.Debug("load kv", zap.String("category", "gc worker"),
 			zap.String("key", key))
 		return "", nil
 	}
 	value := req.GetRow(0).GetString(0)
-	logutil.BgLogger().Debug("load kv", zap.String("category", "gc worker"),
+	log.Debug("load kv", zap.String("category", "gc worker"),
 		zap.String("key", key),
 		zap.String("value", value))
 	return value, nil
@@ -2097,7 +2098,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 	_, err := se.ExecuteInternal(ctx, stmt,
 		key, value, gcVariableComments[key],
 		value, gcVariableComments[key])
-	logutil.BgLogger().Debug("save kv", zap.String("category", "gc worker"),
+	log.Debug("save kv", zap.String("category", "gc worker"),
 		zap.String("key", key),
 		zap.String("value", value),
 		zap.Error(err))
@@ -2165,11 +2166,11 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 	for _, id := range physicalTableIDs {
 		// Delete pd rule
 		failpoint.Inject("gcDeletePlacementRuleCounter", func() {})
-		logutil.BgLogger().Info("try delete TiFlash pd rule",
+		log.Info("try delete TiFlash pd rule",
 			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
 		ruleID := infosync.MakeRuleID(id)
 		if err := infosync.DeleteTiFlashPlacementRule(context.Background(), "tiflash", ruleID); err != nil {
-			logutil.BgLogger().Error("delete TiFlash pd rule failed when gc",
+			log.Error("delete TiFlash pd rule failed when gc",
 				zap.Error(err), zap.String("ruleID", ruleID), zap.Uint64("safePoint", safePoint))
 		}
 	}

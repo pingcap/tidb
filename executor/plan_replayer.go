@@ -35,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var _ exec.Executor = &PlanReplayerExec{}
@@ -124,15 +124,15 @@ func (e *PlanReplayerExec) removeCaptureTask(ctx context.Context) error {
 	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("delete from mysql.plan_replayer_task where sql_digest = '%s' and plan_digest = '%s'",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
-		logutil.BgLogger().Warn("remove mysql.plan_replayer_status record failed",
+		log.Warn("remove mysql.plan_replayer_status record failed",
 			zap.Error(err))
 		return err
 	}
 	err = domain.GetDomain(e.Ctx()).GetPlanReplayerHandle().CollectPlanReplayerTask()
 	if err != nil {
-		logutil.BgLogger().Warn("collect task failed", zap.Error(err))
+		log.Warn("collect task failed", zap.Error(err))
 	}
-	logutil.BgLogger().Info("collect plan replayer task success")
+	log.Info("collect plan replayer task success")
 	e.endFlag = true
 	return nil
 }
@@ -150,15 +150,15 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	_, _, err = exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%s','%s')",
 		e.CaptureInfo.SQLDigest, e.CaptureInfo.PlanDigest))
 	if err != nil {
-		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+		log.Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
 		return err
 	}
 	err = domain.GetDomain(e.Ctx()).GetPlanReplayerHandle().CollectPlanReplayerTask()
 	if err != nil {
-		logutil.BgLogger().Warn("collect task failed", zap.Error(err))
+		log.Warn("collect task failed", zap.Error(err))
 	}
-	logutil.BgLogger().Info("collect plan replayer task success")
+	log.Info("collect plan replayer task success")
 	e.endFlag = true
 	return nil
 }
@@ -287,7 +287,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				}
 				r := strings.Split(row, "\t")
 				if len(r) < 3 {
-					logutil.BgLogger().Debug("plan replayer: skip error",
+					log.Debug("plan replayer: skip error",
 						zap.Error(errors.New("setting tiflash replicas failed")))
 					continue
 				}
@@ -297,7 +297,7 @@ func loadSetTiFlashReplica(ctx sessionctx.Context, z *zip.Reader) error {
 				// Though we record tiflash replica in txt, we only set 1 tiflash replica as it's enough for reproduce the plan
 				sql := fmt.Sprintf("alter table %s.%s set tiflash replica 1", dbName, tableName)
 				_, err = ctx.(sqlexec.SQLExecutor).Execute(c, sql)
-				logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+				log.Debug("plan replayer: skip error", zap.Error(err))
 			}
 		}
 	}
@@ -382,19 +382,19 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 				sysVar := variable.GetSysVar(name)
 				if sysVar == nil {
 					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					log.Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
 				sVal, err := sysVar.Validate(vars, value, variable.ScopeSession)
 				if err != nil {
 					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
+					log.Warn(fmt.Sprintf("skip variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
 				err = vars.SetSystemVar(name, sVal)
 				if err != nil {
 					unLoadVars = append(unLoadVars, name)
-					logutil.BgLogger().Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
+					log.Warn(fmt.Sprintf("skip set variable %s:%s", name, value), zap.Error(err))
 					continue
 				}
 			}
@@ -428,7 +428,7 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 	c := context.Background()
 	// create database if not exists
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, createDatabaseSQL)
-	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+	log.Debug("plan replayer: skip error", zap.Error(err))
 	// use database
 	_, err = ctx.(sqlexec.SQLExecutor).Execute(c, useDatabaseSQL)
 	if err != nil {
@@ -524,7 +524,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 
 	err = loadAllBindings(e.Ctx, z)
 	if err != nil {
-		logutil.BgLogger().Warn("load bindings failed", zap.Error(err))
+		log.Warn("load bindings failed", zap.Error(err))
 		e.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("load bindings failed, err:%v", err))
 	}
 	return nil

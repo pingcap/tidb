@@ -36,10 +36,11 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (
@@ -483,7 +484,7 @@ func (e *RecoverIndexExec) batchMarkDup(txn kv.Transaction, rows []recoverRows) 
 				}
 
 				if handle.Compare(rows[rowIdx[i]].handle) != 0 {
-					logutil.BgLogger().Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
+					log.Warn("recover index: the constraint of unique index is broken, handle in index is not equal to handle in table",
 						zap.String("index", e.index.Meta().Name.O), zap.ByteString("indexKey", key),
 						zap.Stringer("handleInTable", rows[rowIdx[i]].handle), zap.Stringer("handleInIndex", handle))
 				}
@@ -641,7 +642,7 @@ func (e *CleanupIndexExec) deleteDanglingIdx(txn kv.Transaction, values map[stri
 				}
 				e.removeCnt++
 				if e.removeCnt%e.batchSize == 0 {
-					logutil.BgLogger().Info("clean up dangling index", zap.String("table", e.table.Meta().Name.String()),
+					log.Info("clean up dangling index", zap.String("table", e.table.Meta().Name.String()),
 						zap.String("index", e.index.Meta().Name.String()), zap.Uint64("count", e.removeCnt))
 				}
 			}

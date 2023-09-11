@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 //revive:disable:exported

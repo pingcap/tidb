@@ -32,7 +32,8 @@ import (
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil/zap"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +126,10 @@ func (s *importStepExecutor) SplitSubtask(ctx context.Context, subtask *proto.Su
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), s.logger)
+	
+	panic("TODO")
+	op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), nil)
+	// op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), s.logger)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -256,11 +260,12 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, err
 	}
-	logger := logutil.BgLogger().With(
-		zap.String("type", proto.ImportInto),
-		zap.Int64("task-id", task.ID),
-		zap.String("step", stepStr(task.Step)),
-	)
+	var logger *zap.Logger
+	// logger := log.With(
+	// 	zap.String("type", proto.ImportInto),
+	// 	zap.Int64("task-id", task.ID),
+	// 	zap.String("step", stepStr(task.Step)),
+	// )
 	logger.Info("create step scheduler")
 
 	switch task.Step {

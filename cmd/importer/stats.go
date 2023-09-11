@@ -26,7 +26,7 @@ import (
 	stats "github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {

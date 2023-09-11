@@ -19,7 +19,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // RowContainerReader is a forward-only iterator for the row container. It provides an interface similar to other
@@ -154,7 +154,7 @@ func NewRowContainerReader(rc *RowContainer) *rowContainerReader {
 	reader.Next()
 	runtime.SetFinalizer(reader, func(reader *rowContainerReader) {
 		if reader.ctx.Err() == nil {
-			logutil.BgLogger().Warn("rowContainerReader is closed by finalizer")
+			log.Warn("rowContainerReader is closed by finalizer")
 			reader.Close()
 		}
 	})

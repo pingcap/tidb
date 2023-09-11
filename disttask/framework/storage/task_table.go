@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -118,7 +118,7 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
-			logutil.BgLogger().Error("unmarshal error", zap.Error(err))
+			log.Error("unmarshal error", zap.Error(err))
 			task.Error = err
 		} else {
 			task.Error = stdErr
@@ -297,7 +297,7 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 	}
 	tid, err := strconv.Atoi(r.GetString(3))
 	if err != nil {
-		logutil.BgLogger().Warn("unexpected task ID", zap.String("task ID", r.GetString(3)))
+		log.Warn("unexpected task ID", zap.String("task ID", r.GetString(3)))
 	}
 	task.TaskID = int64(tid)
 	return task
@@ -366,7 +366,7 @@ func (stm *TaskManager) PrintSubtaskInfo(taskKey int) {
 				err = stdErr
 			}
 		}
-		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
+		log.Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
 	}
 }
 

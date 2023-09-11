@@ -21,9 +21,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type binlogExecutor struct {
@@ -76,7 +77,7 @@ func (e *binlogExecutor) Commit(ctx context.Context, commitTS int64) {
 		binlogWriteResult := e.binInfo.WriteBinlog(e.txn.GetClusterID())
 		err := binlogWriteResult.GetError()
 		if err != nil {
-			logutil.BgLogger().Error("failed to write binlog",
+			log.Error("failed to write binlog",
 				zap.Error(err))
 		}
 		logutil.Eventf(ctx, "finish write finish binlog")

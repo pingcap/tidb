@@ -47,9 +47,10 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/plancodec"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type signalsKey struct{}
@@ -154,7 +155,7 @@ func (e *slowQueryRetriever) close() error {
 	for _, f := range e.files {
 		err := f.file.Close()
 		if err != nil {
-			logutil.BgLogger().Error("close slow log file failed.", zap.Error(err))
+			log.Error("close slow log file failed.", zap.Error(err))
 		}
 	}
 	if e.cancel != nil {
@@ -532,9 +533,9 @@ func splitByColon(line string) (fields []string, values []string) {
 	return fields, values
 }
 
-func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, log []string, offset offset) (data [][]types.Datum, err error) {
+func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Context, logs []string, offset offset) (data [][]types.Datum, err error) {
 	start := time.Now()
-	logSize := calculateLogSize(log)
+	logSize := calculateLogSize(logs)
 	defer e.memConsume(-logSize)
 	defer func() {
 		if r := recover(); r != nil {
@@ -542,7 +543,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 			buf := make([]byte, 4096)
 			stackSize := runtime.Stack(buf, false)
 			buf = buf[:stackSize]
-			logutil.BgLogger().Warn("slow query parse slow log panic", zap.Error(err), zap.String("stack", string(buf)))
+			log.Warn("slow query parse slow log panic", zap.Error(err), zap.String("stack", string(buf)))
 		}
 		if e.stats != nil {
 			atomic.AddInt64(&e.stats.parseLog, int64(time.Since(start)))
@@ -558,7 +559,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 	user := ""
 	tz := sctx.GetSessionVars().Location()
 	startFlag := false
-	for index, line := range log {
+	for index, line := range logs {
 		if isCtxDone(ctx) {
 			return nil, ctx.Err()
 		}
@@ -807,7 +808,7 @@ func parsePlan(planString string) string {
 	if err == nil {
 		planString = decodePlanString
 	} else {
-		logutil.BgLogger().Error("decode plan in slow log failed", zap.String("plan", planString), zap.Error(err))
+		log.Error("decode plan in slow log failed", zap.String("plan", planString), zap.Error(err))
 	}
 	return planString
 }

@@ -44,11 +44,11 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // InsertValues is the data to insert.
@@ -277,13 +277,13 @@ func completeInsertErr(col *model.ColumnInfo, val *types.Datum, rowIdx int, err 
 	} else if types.ErrTruncatedWrongVal.Equal(err) && (colTp == mysql.TypeDuration || colTp == mysql.TypeDatetime || colTp == mysql.TypeDate || colTp == mysql.TypeTimestamp) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			logutil.BgLogger().Debug("time truncated error", zap.Error(err1))
+			log.Debug("time truncated error", zap.Error(err1))
 		}
 		err = exeerrors.ErrTruncateWrongInsertValue.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrTruncatedWrongVal.Equal(err) || types.ErrWrongValue.Equal(err) {
 		valStr, err1 := val.ToString()
 		if err1 != nil {
-			logutil.BgLogger().Debug("truncated/wrong value error", zap.Error(err1))
+			log.Debug("truncated/wrong value error", zap.Error(err1))
 		}
 		err = table.ErrTruncatedWrongValueForField.GenWithStackByArgs(types.TypeStr(colTp), valStr, colName, rowIdx+1)
 	} else if types.ErrWarnDataOutOfRange.Equal(err) {
@@ -1330,7 +1330,7 @@ func (e *InsertValues) removeRow(
 	newRow := r.row
 	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
 	if err != nil {
-		logutil.BgLogger().Error(
+		log.Error(
 			"get old row failed when replace",
 			zap.String("handle", handle.String()),
 			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)),

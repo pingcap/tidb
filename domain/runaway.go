@@ -36,12 +36,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (
@@ -67,30 +67,30 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	tbCIStr := model.NewCIStr(tableName)
 	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
 	if err != nil {
-		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		log.Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
 	tbInfo := tbl.Meta()
 	col := tbInfo.FindPublicColumnByName(colName)
 	if col == nil {
-		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
+		log.Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
 	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
 	if err != nil {
-		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		log.Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
 	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
 	if err != nil {
-		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+		log.Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
 	var leftRows [][]types.Datum
 	for {
 		sql := ""
 		if sql, err = generator.NextSQL(leftRows, runawayRecordGCSelectBatchSize); err != nil {
-			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+			log.Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
 		// to remove
@@ -100,7 +100,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 
 		rows, sqlErr := do.execRestrictedSQL(sql, nil)
 		if sqlErr != nil {
-			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
+			log.Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
 		leftRows = make([][]types.Datum, len(rows))
@@ -119,7 +119,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 			}
 			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
 			if err != nil {
-				logutil.BgLogger().Error(
+				log.Error(
 					"build delete SQL failed when deleting system table",
 					zap.Error(err),
 					zap.String("table", tb.Schema.O+"."+tb.Name.O),
@@ -129,7 +129,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 
 			_, err = do.execRestrictedSQL(sql, nil)
 			if err != nil {
-				logutil.BgLogger().Error(
+				log.Error(
 					"delete SQL failed when deleting system table", zap.Error(err), zap.String("SQL", sql),
 				)
 			}
@@ -142,7 +142,7 @@ func (do *Domain) updateNewAndDoneWatch() error {
 	defer do.runawaySyncer.mu.Unlock()
 	records, err := do.runawaySyncer.getNewWatchRecords()
 	if err != nil {
-		logutil.BgLogger().Error("try to get new runaway watch", zap.Error(err))
+		log.Error("try to get new runaway watch", zap.Error(err))
 		return err
 	}
 	for _, r := range records {
@@ -150,7 +150,7 @@ func (do *Domain) updateNewAndDoneWatch() error {
 	}
 	doneRecords, err := do.runawaySyncer.getNewWatchDoneRecords()
 	if err != nil {
-		logutil.BgLogger().Error("try to get done runaway watch", zap.Error(err))
+		log.Error("try to get done runaway watch", zap.Error(err))
 		return err
 	}
 	for _, r := range doneRecords {
@@ -169,7 +169,7 @@ func (do *Domain) runawayWatchSyncLoop() {
 		case <-runawayWatchSyncTicker.C:
 			err := do.updateNewAndDoneWatch()
 			if err != nil {
-				logutil.BgLogger().Warn("get runaway watch record failed", zap.Error(err))
+				log.Warn("get runaway watch record failed", zap.Error(err))
 			}
 		}
 	}
@@ -233,7 +233,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 		}
 		sql, params := resourcegroup.GenRunawayQueriesStmt(records)
 		if _, err := do.execRestrictedSQL(sql, params); err != nil {
-			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
+			log.Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
 		}
 		records = records[:0]
 	}
@@ -263,7 +263,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 			go func() {
 				err := do.handleRunawayWatch(r)
 				if err != nil {
-					logutil.BgLogger().Error("add runaway watch", zap.Error(err))
+					log.Error("add runaway watch", zap.Error(err))
 				}
 			}()
 		case r := <-staleQuarantineRecordCh:
@@ -273,7 +273,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 					if err == nil {
 						break
 					}
-					logutil.BgLogger().Error("remove stale runaway watch", zap.Error(err))
+					log.Error("remove stale runaway watch", zap.Error(err))
 					time.Sleep(time.Second)
 				}
 			}()
@@ -394,7 +394,7 @@ func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.R
 
 func (do *Domain) initResourceGroupsController(ctx context.Context, pdClient pd.Client, uniqueID uint64) error {
 	if pdClient == nil {
-		logutil.BgLogger().Warn("cannot setup up resource controller, not using tikv storage")
+		log.Warn("cannot setup up resource controller, not using tikv storage")
 		// return nil as unistore doesn't support it
 		return nil
 	}

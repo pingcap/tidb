@@ -24,8 +24,8 @@ import (
 
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // DefProfileDuration exports for testing.
@@ -110,7 +110,7 @@ func (p *parallelCPUProfiler) start() error {
 	p.wg.Add(1)
 	go util.WithRecovery(p.profilingLoop, nil)
 
-	logutil.BgLogger().Info("parallel cpu profiler started")
+	log.Info("parallel cpu profiler started")
 	return nil
 }
 
@@ -127,7 +127,7 @@ func (p *parallelCPUProfiler) stop() {
 	p.Unlock()
 
 	p.wg.Wait()
-	logutil.BgLogger().Info("parallel cpu profiler stopped")
+	log.Info("parallel cpu profiler stopped")
 }
 
 func (p *parallelCPUProfiler) register(ch ProfileConsumer) {
@@ -211,7 +211,7 @@ func (p *parallelCPUProfiler) sendToConsumers() {
 	defer func() {
 		p.Unlock()
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r))
+			log.Error("parallel cpu profiler panic", zap.Any("recover", r))
 		}
 	}()
 

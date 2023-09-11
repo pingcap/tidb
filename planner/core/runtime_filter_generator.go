@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // RuntimeFilterGenerator One plan one generator
@@ -80,7 +80,7 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan PhysicalPlan
 func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinPlan *PhysicalHashJoin) {
 	// precondition: the storage type of hash join must be TiFlash
 	if hashJoinPlan.storeTp != kv.TiFlash {
-		logutil.BgLogger().Warn("RF only support TiFlash compute engine while storage type of hash join node is not TiFlash",
+		log.Warn("RF only support TiFlash compute engine while storage type of hash join node is not TiFlash",
 			zap.Int("PhysicalHashJoinId", hashJoinPlan.ID()),
 			zap.String("StoreTP", hashJoinPlan.storeTp.Name()))
 		return
@@ -122,7 +122,7 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 			}
 			// todo support global RF
 			if rfMode == variable.RFGlobal {
-				logutil.BgLogger().Debug("Now we don't support global RF. Remove it",
+				log.Debug("Now we don't support global RF. Remove it",
 					zap.Int("BuildNodeId", runtimeFilter.buildNode.ID()),
 					zap.Int("TargetNodeId", physicalTableScan.ID()))
 				continue
@@ -161,7 +161,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 		// case1: build side is on the right
 		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
 			hashJoinPlan.JoinType == LeftOuterSemiJoin || hashJoinPlan.JoinType == AntiLeftOuterSemiJoin {
-			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the right",
+			log.Debug("Join type does not match RF pattern when build side is on the right",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
 			return false
@@ -169,7 +169,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) b
 	} else {
 		// case2: build side is on the left
 		if hashJoinPlan.JoinType == RightOuterJoin {
-			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the left",
+			log.Debug("Join type does not match RF pattern when build side is on the left",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
 			return false
@@ -182,7 +182,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 	rightIsBuildSide bool) bool {
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
-		logutil.BgLogger().Debug("The runtime filter doesn't support null safe eq predicate",
+		log.Debug("The runtime filter doesn't support null safe eq predicate",
 			zap.String("EQPredicate", eqPredicate.String()))
 		return false
 	}
@@ -199,7 +199,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 	// condition2: the target column has not undergone any transformation
 	// todo: cast expr in target column
 	if targetColumn.IsHidden || targetColumn.OrigName == "" {
-		logutil.BgLogger().Debug("Target column does not match RF pattern",
+		log.Debug("Target column does not match RF pattern",
 			zap.String("EQPredicate", eqPredicate.String()),
 			zap.String("TargetColumn", targetColumn.String()),
 			zap.Bool("IsHidden", targetColumn.IsHidden),
@@ -211,7 +211,7 @@ func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFu
 	if srcColumnType == mysql.TypeJSON || srcColumnType == mysql.TypeBlob ||
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
 		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetType().Hybrid() || srcColumn.GetType().IsArray() {
-		logutil.BgLogger().Debug("Src column type does not match RF pattern",
+		log.Debug("Src column type does not match RF pattern",
 			zap.String("EQPredicate", eqPredicate.String()),
 			zap.String("SrcColumn", srcColumn.String()),
 			zap.String("SrcColumnType", srcColumn.GetType().String()))

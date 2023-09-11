@@ -16,7 +16,7 @@ package importer
 
 import (
 	"github.com/pingcap/log"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // DoProcess generates data.
