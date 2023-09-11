@@ -5270,13 +5270,13 @@ ExplainStmt:
 			},
 		}
 	}
-|	ExplainSym TableName ColumnName
+|	ExplainSym TableName SimpleExpr
 	{
 		$$ = &ast.ExplainStmt{
 			Stmt: &ast.ShowStmt{
 				Tp:     ast.ShowColumns,
 				Table:  $2.(*ast.TableName),
-				Column: $3.(*ast.ColumnName),
+				Pattern: $3.(*ast.PatternLikeOrIlikeExpr),
 			},
 		}
 	}
