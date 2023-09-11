@@ -518,12 +518,73 @@ func TestIssue41828(t *testing.T) {
   KEY U_M_COL4 (COL1,COL2),
   KEY U_M_COL5 (COL3,COL2))`)
 
+<<<<<<< HEAD
 	tk.MustExec(`INSERT INTO IDT_MULTI15840STROBJSTROBJ VALUES ('zzz',1047,'6115-06-05'),('zzz',-23221,'4250-09-03'),('zzz',27138,'1568-07-30'),('zzz',-30903,'6753-08-21'),('zzz',-26875,'6117-10-10')`)
 	tk.MustExec(`prepare stmt from 'select * from IDT_MULTI15840STROBJSTROBJ where col3 <=> ? or col1 in (?, ?, ?) and col2 not between ? and ?'`)
 	tk.MustExec(`set @a="0051-12-23", @b="none", @c="none", @d="none", @e=-32757, @f=-32757`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
 	tk.MustExec(`set @a="9795-01-10", @b="aa", @c="aa", @d="aa", @e=31928, @f=31928`)
 	tk.MustQuery(`execute stmt using @a,@b,@c,@d,@e,@f`).Check(testkit.Rows())
+=======
+	reasons := []string{
+		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
+		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
+		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
+		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
+		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
+		"skip non-prepared plan-cache: access tables in system schema",
+		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
+		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
+		"skip non-prepared plan-cache: queries that access views are not supported",
+		"skip non-prepared plan-cache: query has null constants",
+		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
+	}
+
+	all := append(supported, unsupported...)
+
+	explainFormats := []string{
+		types.ExplainFormatBrief,
+		types.ExplainFormatDOT,
+		types.ExplainFormatHint,
+		types.ExplainFormatROW,
+		types.ExplainFormatVerbose,
+		types.ExplainFormatTraditional,
+		types.ExplainFormatBinary,
+		types.ExplainFormatTiDBJSON,
+		types.ExplainFormatCostTrace,
+	}
+	// all cases no warnings use other format
+	for _, q := range all {
+		tk.MustExec("explain " + q)
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+		tk.MustExec("explain " + q)
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
+	for _, format := range explainFormats {
+		for _, q := range all {
+			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
+			//tk.MustQuery("show warnings").Check(testkit.Rows())
+			tk.MustQuery("show warnings").CheckNotContain("plan cache")
+			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
+			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		}
+	}
+
+	// unsupported case with warning use 'plan_cache' format
+	for idx, q := range unsupported {
+		tk.MustExec("explain format = 'plan_cache'" + q)
+		warn := tk.MustQuery("show warnings").Rows()[0]
+		require.Equal(t, reasons[idx], warn[2])
+	}
+>>>>>>> bc80772052f (planner: Adjust the log level and returned value when `cacheableChecker` check `*ast.TableName` nodes (#46831))
 }
 
 func TestIssue42150(t *testing.T) {

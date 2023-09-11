@@ -42,7 +42,53 @@ import (
 	"go.uber.org/zap"
 )
 
+<<<<<<< HEAD
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
+=======
+var (
+	// PlanCacheKeyTestIssue43667 is only for test.
+	PlanCacheKeyTestIssue43667 struct{}
+	// PlanCacheKeyTestIssue46760 is only for test.
+	PlanCacheKeyTestIssue46760 struct{}
+)
+
+// SetParameterValuesIntoSCtx sets these parameters into session context.
+func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
+	vars := sctx.GetSessionVars()
+	vars.PlanCacheParams.Reset()
+	for i, usingParam := range params {
+		val, err := usingParam.Eval(chunk.Row{})
+		if err != nil {
+			return err
+		}
+		if isGetVarBinaryLiteral(sctx, usingParam) {
+			binVal, convErr := val.ToBytes()
+			if convErr != nil {
+				return convErr
+			}
+			val.SetBinaryLiteral(binVal)
+		}
+		if markers != nil {
+			param := markers[i].(*driver.ParamMarkerExpr)
+			param.Datum = val
+			param.InExecute = true
+		}
+		vars.PlanCacheParams.Append(val)
+	}
+	if vars.StmtCtx.EnableOptimizerDebugTrace && len(vars.PlanCacheParams.AllParamValues()) > 0 {
+		vals := vars.PlanCacheParams.AllParamValues()
+		valStrs := make([]string, len(vals))
+		for i, val := range vals {
+			valStrs[i] = val.String()
+		}
+		debugtrace.RecordAnyValuesWithNames(sctx, "Parameter datums for EXECUTE", valStrs)
+	}
+	vars.PlanCacheParams.SetForNonPrepCache(isNonPrep)
+	return nil
+}
+
+func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrepared bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
+>>>>>>> bc80772052f (planner: Adjust the log level and returned value when `cacheableChecker` check `*ast.TableName` nodes (#46831))
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst
 	vars.StmtCtx.StmtType = stmtAst.StmtType
