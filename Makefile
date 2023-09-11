@@ -32,7 +32,7 @@ buildsucc:
 
 all: dev server benchkv
 
-dev: checklist check explaintest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
+dev: checklist check integrationtest gogenerate br_unit_test test_part_parser_dev ut check-file-perm
 	@>&2 echo "Great, all tests passed."
 
 # Install the check tools.
@@ -94,7 +94,7 @@ clean: failpoint-disable
 test: test_part_1 test_part_2
 	@>&2 echo "Great, all tests passed."
 
-test_part_1: checklist explaintest
+test_part_1: checklist integrationtest
 
 test_part_2: test_part_parser ut gogenerate br_unit_test dumpling_unit_test
 
@@ -118,9 +118,9 @@ test_part_br: br_unit_test br_integration_test
 
 test_part_dumpling: dumpling_unit_test dumpling_integration_test
 
-explaintest: server_check
+integrationtest: server_check
 	@mkdir -p $(TEST_COVERAGE_DIR)
-	@cd cmd/explaintest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
+	@cd tests/integrationtest && GOCOVERDIR=../../$(TEST_COVERAGE_DIR) ./run-tests.sh -s ../../bin/tidb-server
 	@$(GO) tool covdata textfmt -i=$(TEST_COVERAGE_DIR) -o=coverage.dat
 
 ddltest:

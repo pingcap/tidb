@@ -1,6 +1,6 @@
-# ExplainTest
+# IntegrationTest
 
-ExplainTest is a explain test command tool, also with some useful test cases for TiDB execute plan logic, we can run case via `run-tests.sh`.
+IntegrationTest is a integration test command tool, also with some useful test cases for TiDB execute plan logic, we can run case via `run-tests.sh`.
 
 ```
 Usage: ./run-tests.sh [options]
@@ -8,7 +8,7 @@ Usage: ./run-tests.sh [options]
     -h: Print this help message.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
-                           eg. "./run-tests.sh -s ./explaintest_tidb-server"
+                           eg. "./run-tests.sh -s ./integrationtest_tidb-server"
 
     -b <y|Y|n|N>: "y" or "Y" for building test binaries [default "y" if this option is not specified].
                   "n" or "N" for not to build.
@@ -28,7 +28,7 @@ Usage: ./run-tests.sh [options]
 
 ## How it works
 
-ExplainTest will read test case in `t/*.test`, and execute them in TiDB server with `s/*.json` stat, and compare explain result in `r/*.result`.
+IntegrationTest will read test case in `t/*.test`, and execute them in TiDB server with `s/*.json` stat, and compare integration result in `r/*.result`.
 
 For convenience, we can generate new `*.result` and `*.json` from execute by use `-r` parameter for `run-tests.sh`
 
@@ -45,7 +45,7 @@ make dev
 or
 
 ```sh
-make explaintest
+make integrationtest
 ```
 It will identify execute plan change.
 
@@ -54,7 +54,7 @@ It will identify execute plan change.
 First, add new test query in `t/` folder.
 
 ```sh
-cd cmd/explaintest
+cd tests/integrationtest
 ./run-tests.sh -r [casename]
 ``
 It will generate result base on last execution, and then we can reuse them or open editor to do some modify.
