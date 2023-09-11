@@ -15,6 +15,8 @@
 package core
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -31,20 +33,26 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/filter"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/intest"
 )
 
 // Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
+// TODO: only for test, remove this function later on.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	c, _ := CacheableWithCtx(nil, node, is)
+	c, _ := IsASTCacheable(nil, nil, node, is)
 	return c
 }
 
 // CacheableWithCtx checks whether the input ast(query) is cacheable.
+// TODO: only for test, remove this function later on.
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+	return IsASTCacheable(nil, sctx, node, is)
+}
+
+// IsASTCacheable checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
 	_, isSelect := node.(*ast.SelectStmt)
 	_, isUpdate := node.(*ast.UpdateStmt)
 	_, isInsert := node.(*ast.InsertStmt)
@@ -54,6 +62,7 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{
+		ctx:          ctx,
 		sctx:         sctx,
 		cacheable:    true,
 		schema:       is,
@@ -66,6 +75,7 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 
 // cacheableChecker checks whether a query can be cached:
 type cacheableChecker struct {
+	ctx       context.Context
 	sctx      sessionctx.Context
 	cacheable bool
 	schema    infoschema.InfoSchema
@@ -185,7 +195,13 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			if isPartitionTable(checker.schema, node) {
+			isPartitioned, err := isPartitionTable(checker.schema, node)
+			if err != nil {
+				checker.cacheable = false
+				checker.reason = fmt.Errorf("check partition table failed: %w", err).Error()
+				return in, true
+			}
+			if isPartitioned {
 				// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
 				// is fixed and additional tests with dynamic partition prune mode has been added.
 				/*
@@ -197,12 +213,26 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 				checker.reason = "query accesses partitioned tables is un-cacheable"
 				return in, true
 			}
-			if hasGeneratedCol(checker.schema, node) {
+
+			hasGenCols, err := hasGeneratedCol(checker.schema, node)
+			if err != nil {
+				checker.cacheable = false
+				checker.reason = fmt.Errorf("check generated column failed: %w", err).Error()
+				return in, true
+			}
+			if hasGenCols {
 				checker.cacheable = false
 				checker.reason = "query accesses generated columns is un-cacheable"
 				return in, true
 			}
-			if isTempTable(checker.schema, node) {
+
+			isTempTbl, err := isTempTable(checker.ctx, checker.schema, node)
+			if err != nil {
+				checker.cacheable = false
+				checker.reason = fmt.Errorf("check temporary table failed: %w", err).Error()
+				return in, true
+			}
+			if isTempTbl {
 				checker.cacheable = false
 				checker.reason = "query accesses temporary tables is un-cacheable"
 				return in, true
@@ -554,18 +584,17 @@ func (*nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
 	return false
 }
 
-func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+func hasGeneratedCol(schema infoschema.InfoSchema, tn *ast.TableName) (bool, error) {
 	tb, err := schema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
-		return false
+		return false, err
 	}
 	for _, col := range tb.Cols() {
 		if col.IsGenerated() {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.ColumnName) (colType byte, found bool) {
@@ -584,28 +613,30 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 	return 0, false
 }
 
-func isTempTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+func isTempTable(ctx context.Context, schema infoschema.InfoSchema, tn *ast.TableName) (bool, error) {
+	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760) != nil {
+		return false, errors.New("mock error")
+	}
+
 	tb, err := schema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
-		return false
+		return false, err
 	}
 	if tb.Meta().TempTableType != model.TempTableNone {
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
-func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) bool {
+func isPartitionTable(schema infoschema.InfoSchema, tn *ast.TableName) (bool, error) {
 	tb, err := schema.TableByName(tn.Schema, tn.Name)
 	if err != nil {
-		logutil.BgLogger().Error("Error occur in checking cacheable", zap.Error(err))
-		return false
+		return false, err
 	}
 	if tb.Meta().GetPartitionInfo() != nil {
-		return true
+		return true, nil
 	}
-	return false
+	return false, nil
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
