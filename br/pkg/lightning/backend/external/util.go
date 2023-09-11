@@ -168,7 +168,7 @@ func MockExternalEngine(
 		SetMemorySizeLimit(128).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
-		Build(storage, "/mock-test", 0)
+		Build(storage, "/mock-test", "0")
 	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
 }
 

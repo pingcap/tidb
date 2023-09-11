@@ -124,7 +124,7 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 0)
+		Build(store, "/subtask", "0")
 
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
@@ -144,7 +144,7 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 3)
+		Build(store, "/subtask", "3")
 	for i, key := range keys {
 		err := w2.WriteRow(ctx, key, values[i], nil)
 		require.NoError(t, err)
@@ -157,7 +157,7 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 12)
+		Build(store, "/subtask", "12")
 	for i, key := range keys {
 		err := w3.WriteRow(ctx, key, values[i], nil)
 		require.NoError(t, err)
@@ -186,7 +186,7 @@ func TestCleanUpFiles(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 0)
+		Build(store, "/subtask", "0")
 	keys := make([][]byte, 0, 30)
 	values := make([][]byte, 0, 30)
 	for i := 0; i < 30; i++ {

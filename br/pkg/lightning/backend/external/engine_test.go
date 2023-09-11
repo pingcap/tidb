@@ -19,6 +19,7 @@ import (
 	"context"
 	"path"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
@@ -61,7 +62,7 @@ func TestIter(t *testing.T) {
 			SetMemorySizeLimit(uint64(rand.Intn(100)+1)).
 			SetPropSizeDistance(uint64(rand.Intn(50)+1)).
 			SetPropKeysDistance(uint64(rand.Intn(10)+1)).
-			Build(store, "/subtask", i)
+			Build(store, "/subtask", strconv.Itoa(i))
 		kvStart := i * 100
 		kvEnd := (i + 1) * 100
 		for j := kvStart; j < kvEnd; j++ {

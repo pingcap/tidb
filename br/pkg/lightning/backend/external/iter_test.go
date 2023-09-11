@@ -70,7 +70,7 @@ func TestMergeKVIter(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -122,7 +122,7 @@ func TestOneUpstream(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -200,7 +200,7 @@ func TestCorruptContent(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -254,7 +254,7 @@ func generateMockFileReader() *kvReader {
 		propKeysDist: 2,
 	}
 	rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 	if err != nil {
 		panic(err)
 	}

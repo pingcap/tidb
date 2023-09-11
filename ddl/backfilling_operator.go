@@ -18,12 +18,12 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"math/rand"
 	"path"
 	"strconv"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -170,7 +171,8 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 	}
-	readerCnt, writerCnt := expectedIngestWorkerCnt()
+	readerCnt := int(variable.GetDDLReorgWorkerCounter())
+	writerCnt := 1
 
 	// TODO(tangenta): replace uri with global variable.
 	uri := fmt.Sprintf("s3://%s/%s?access-key=%s&secret-access-key=%s&endpoint=http://%s:%s&force-path-style=true",
@@ -465,22 +467,21 @@ func NewWriteExternalStoreOperator(
 	concurrency int,
 	onClose external.OnCloseFunc,
 ) *WriteExternalStoreOperator {
-	builder := external.NewWriterBuilder().
-		SetOnCloseFunc(onClose)
-	if index.Meta().Unique {
-		builder = builder.EnableDuplicationDetection()
-	}
-	rs := rand.NewSource(time.Now().Unix())
-	writerID := rand.New(rs).Int()
-
-	prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
-	writer := builder.Build(store, prefix, writerID)
-
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
+			builder := external.NewWriterBuilder().
+				SetOnCloseFunc(onClose)
+			if index.Meta().Unique {
+				builder = builder.EnableDuplicationDetection()
+			}
+			writerID := uuid.New().String()
+
+			prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+			writer := builder.Build(store, prefix, writerID)
+
 			return &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,
@@ -488,6 +489,7 @@ func NewWriteExternalStoreOperator(
 				copCtx:       copCtx,
 				se:           nil,
 				sessPool:     sessPool,
+				shareWriter:  true,
 				writer:       writer,
 				srcChunkPool: srcChunkPool,
 			}
@@ -540,6 +542,7 @@ func NewIndexIngestOperator(
 				copCtx:       copCtx,
 				se:           nil,
 				sessPool:     sessPool,
+				shareWriter:  false,
 				writer:       writer,
 				srcChunkPool: srcChunkPool,
 			}
@@ -559,6 +562,7 @@ type indexIngestWorker struct {
 	sessPool opSessPool
 	se       *session.Session
 
+	shareWriter  bool
 	writer       ingest.Writer
 	srcChunkPool chan *chunk.Chunk
 }
@@ -599,9 +603,11 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 }
 
 func (w *indexIngestWorker) Close() {
-	err := w.writer.Close(w.ctx)
-	if err != nil {
-		w.ctx.onError(err)
+	if !w.shareWriter {
+		err := w.writer.Close(w.ctx)
+		if err != nil {
+			w.ctx.onError(err)
+		}
 	}
 	if w.se != nil {
 		w.sessPool.Put(w.se.Context)

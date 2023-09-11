@@ -1469,7 +1469,6 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-
 	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {

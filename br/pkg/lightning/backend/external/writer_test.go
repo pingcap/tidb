@@ -43,7 +43,7 @@ func TestWriter(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -106,7 +106,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(60).
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 
 	// 200 bytes key values.
 	kvCnt := 10
@@ -153,7 +153,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
 		EnableDuplicationDetection().
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 	kvCount := 20
 	for i := 0; i < kvCount; i++ {
 		v := i
@@ -235,7 +235,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		SetOnCloseFunc(func(s *WriterSummary) {
 			summary = s
 		}).
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 
 	kvs := make([]common.KvPair, 0, 18)
 	// [key01, key02], [key03, key04], [key05, key06]
@@ -282,10 +282,12 @@ func TestWriterMultiFileStat(t *testing.T) {
 		})
 	}
 
-	rows := kv.MakeRowsFromKvPairs(kvs)
-	err := writer.AppendRows(ctx, nil, rows)
-	require.NoError(t, err)
-	_, err = writer.Close(ctx)
+	for _, pair := range kvs {
+		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
+		require.NoError(t, err)
+	}
+
+	err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	require.Equal(t, 3, len(summary.MultipleFilesStats))

@@ -21,7 +21,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -59,7 +58,7 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID           int
+	WriterID           string
 	Seq                int
 	Min                tidbkv.Key
 	Max                tidbkv.Key
@@ -145,13 +144,13 @@ func (b *WriterBuilder) EnableDuplicationDetection() *WriterBuilder {
 func (b *WriterBuilder) Build(
 	store storage.ExternalStorage,
 	prefix string,
-	writerID int,
+	writerID string,
 ) *Writer {
 	bp := b.bufferPool
 	if bp == nil {
 		bp = membuf.NewPool()
 	}
-	filenamePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
+	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if b.dupeDetectEnabled {
 		keyAdapter = common.DupDetectKeyAdapter{}
@@ -220,7 +219,7 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
-	writerID       int
+	writerID       string
 	currentSeq     int
 	filenamePrefix string
 	keyAdapter     common.KeyAdapter
@@ -232,7 +231,6 @@ type Writer struct {
 
 	kvBuffer   *membuf.Buffer
 	writeBatch []common.KvPair
-	mu         sync.Mutex
 
 	onClose OnCloseFunc
 	closed  bool
@@ -277,10 +275,7 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 // Since flushKVs is thread-safe in external storage writer,
 // this is implemented as noop.
 func (w *Writer) LockForWrite() func() {
-	w.mu.Lock()
-	return func() {
-		w.mu.Unlock()
-	}
+	return func() {}
 }
 
 // Close closes the writer.
@@ -298,7 +293,7 @@ func (w *Writer) Close(ctx context.Context) error {
 	w.multiFileStats = w.multiFileStats[:len(w.multiFileStats)-1]
 
 	logutil.Logger(ctx).Info("close writer",
-		zap.Int("writerID", w.writerID),
+		zap.String("writerID", w.writerID),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
@@ -365,7 +360,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
-	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.writerID, w.currentSeq)
+	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.currentSeq)
 	if err != nil {
 		return err
 	}

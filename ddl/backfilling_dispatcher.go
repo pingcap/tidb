@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
@@ -358,7 +357,7 @@ func getRangeSplitter(
 	}
 	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
 	if err != nil {
-		log.FromContext(ctx).Warn("fail to get region split keys and size", zap.Error(err))
+		logutil.Logger(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
 	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
 	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
