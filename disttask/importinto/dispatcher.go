@@ -304,7 +304,7 @@ func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatche
 		return nil, nil
 	}
 
-	if gTask.Step == StepPostProcess {
+	if gTask.Step == StepImport {
 		err = rollback(ctx, handle, gTask, logger)
 		if err != nil {
 			// TODO: add error code according to spec.
