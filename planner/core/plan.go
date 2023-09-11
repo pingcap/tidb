@@ -285,8 +285,8 @@ type LogicalPlan interface {
 	// constantPropagation generate new constant predicate according to column equivalence relation
 	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan)
 
-	// recursiveGetConstantPredicates recursive find constant predicate, used for the constant propagation rule
-	recursiveFindAndPullUpConstantPredicates() []expression.Expression
+	// pullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
+	pullUpConstantPredicates() []expression.Expression
 
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)

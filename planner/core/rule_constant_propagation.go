@@ -109,7 +109,7 @@ func (*baseLogicalPlan) constantPropagation(_ LogicalPlan, _ int, _ *logicalOpti
 |   s.a>1    |
 +------------+
 */
-//  1. 'recursiveFindAndPullUpConstantPredicates': Call this function until find selection and pull up the constant predicate layer by layer
+//  1. 'pullUpConstantPredicates': Call this function until find selection and pull up the constant predicate layer by layer
 //     LogicalSelection: find the s.a>1
 //     LogicalProjection: get the s.a>1 and pull up it, changed to tmp.a>1
 //  2. 'addCandidateSelection': Add selection above of LogicalJoin,
@@ -158,10 +158,10 @@ func (logicalJoin *LogicalJoin) constantPropagation(parentPlan LogicalPlan, curr
 	}
 	var candidateConstantPredicates []expression.Expression
 	if getConstantPredicateFromLeft {
-		candidateConstantPredicates = logicalJoin.children[0].recursiveFindAndPullUpConstantPredicates()
+		candidateConstantPredicates = logicalJoin.children[0].pullUpConstantPredicates()
 	}
 	if getConstantPredicateFromRight {
-		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.children[1].recursiveFindAndPullUpConstantPredicates()...)
+		candidateConstantPredicates = append(candidateConstantPredicates, logicalJoin.children[1].pullUpConstantPredicates()...)
 	}
 	if len(candidateConstantPredicates) == 0 {
 		return
@@ -171,13 +171,13 @@ func (logicalJoin *LogicalJoin) constantPropagation(parentPlan LogicalPlan, curr
 	return addCandidateSelection(logicalJoin, currentChildIdx, parentPlan, candidateConstantPredicates, opt)
 }
 
-func (*baseLogicalPlan) recursiveFindAndPullUpConstantPredicates() []expression.Expression {
+func (*baseLogicalPlan) pullUpConstantPredicates() []expression.Expression {
 	// Only LogicalProjection and LogicalSelection can get constant predicates
 	// Other Logical plan return nil
 	return nil
 }
 
-func (selection *LogicalSelection) recursiveFindAndPullUpConstantPredicates() []expression.Expression {
+func (selection *LogicalSelection) pullUpConstantPredicates() []expression.Expression {
 	var result []expression.Expression
 	for _, candidatePredicate := range selection.Conditions {
 		// the candidate predicate should be a constant and compare predicate
@@ -189,12 +189,12 @@ func (selection *LogicalSelection) recursiveFindAndPullUpConstantPredicates() []
 	return result
 }
 
-func (projection *LogicalProjection) recursiveFindAndPullUpConstantPredicates() []expression.Expression {
+func (projection *LogicalProjection) pullUpConstantPredicates() []expression.Expression {
 	// projection has no column expr
 	if !canProjectionBeEliminatedLoose(projection) {
 		return nil
 	}
-	candidateConstantPredicates := projection.children[0].recursiveFindAndPullUpConstantPredicates()
+	candidateConstantPredicates := projection.children[0].pullUpConstantPredicates()
 	// replace predicate by projection expr
 	// candidate predicate : a=1
 	// projection: a as a'
