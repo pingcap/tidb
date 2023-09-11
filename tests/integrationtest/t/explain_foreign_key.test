@@ -1,0 +1,44 @@
+set @@foreign_key_checks=1;
+drop table if exists t1,t2;
+create table t1 (id int key);
+create table t2 (id int key, foreign key fk(id) references t1(id) ON UPDATE CASCADE ON DELETE CASCADE);
+create table t3 (id int, unique index idx(id));
+create table t4 (id int, index idx_id(id),foreign key fk(id) references t3(id));
+create table t5 (id int key, id2 int, id3 int, unique index idx2(id2), index idx3(id3));
+create table t6 (id int,     id2 int, id3 int, index idx_id(id), index idx_id2(id2), foreign key fk_1 (id) references t5(id) ON UPDATE CASCADE ON DELETE CASCADE, foreign key fk_2 (id2) references t5(id2) ON UPDATE CASCADE, foreign key fk_3 (id3) references t5(id3) ON DELETE CASCADE);
+
+explain format = 'brief' insert into t2 values (1);
+explain format = 'brief' update t2 set id=id+1 where id = 1;
+explain format = 'brief' delete from t1 where id > 1;
+explain format = 'brief' update t1 set id=id+1 where id = 1;
+explain format = 'brief' insert into t1 values (1);
+explain format = 'brief' insert into t1 values (1) on duplicate key update id = 100;
+explain format = 'brief' insert into t4 values (1);
+explain format = 'brief' update t4 set id=id+1 where id = 1;
+explain format = 'brief' delete from t3 where id > 1;
+explain format = 'brief' update t3 set id=id+1 where id = 1;
+explain format = 'brief' insert into t3 values (1);
+explain format = 'brief' insert into t3 values (1) on duplicate key update id = 100;
+explain format = 'brief' insert into t6 values (1,1,1);
+explain format = 'brief' update t6 set id=id+1, id3=id2+1 where id = 1;
+explain format = 'brief' delete from t5 where id > 1;
+explain format = 'brief' update t5 set id=id+1, id2=id2+1 where id = 1;
+explain format = 'brief' update t5 set id=id+1, id2=id2+1, id3=id3+1 where id = 1;
+explain format = 'brief' insert into t5 values (1,1,1);
+explain format = 'brief' insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100;
+explain format = 'brief' insert into t5 values (1,1,1) on duplicate key update id = 100, id2=100, id3=100;
+drop table if exists t1,t2,t3,t4,t5,t6;
+
+drop table if exists t_1,t_2,t_3,t_4;
+create table t_1 (id int key);
+create table t_2 (id int key);
+create table t_3 (id int key, id2 int, foreign key fk_1(id) references t_1(id), foreign key fk_2(id2) references t_1(id), foreign key fk_3(id) references t_2(id) ON UPDATE CASCADE ON DELETE CASCADE);
+create table t_4 (id int key, id2 int, foreign key fk_1(id) references t_2(id), foreign key fk_2(id2) references t_1(id), foreign key fk_3(id) references t_1(id) ON UPDATE CASCADE ON DELETE CASCADE);
+
+explain format = 'brief' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
+explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
+set @@foreign_key_checks=0;
+explain format = 'brief' update t_1,t_2 set t_1.id=2,t_2.id=2 where t_1.id=t_2.id and t_1.id=1;
+explain format = 'brief' delete t_1,t_2 from t_1 join t_2 where t_1.id=t_2.id and t_1.id > 0;
+drop table if exists t_1,t_2,t_3,t_4;
+set @@foreign_key_checks=0;
