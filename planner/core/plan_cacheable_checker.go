@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/pingcap/tidb/table"
 	"math"
 	"sync"
 
@@ -198,19 +197,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			tb, err := checker.schema.TableByName(node.Schema, node.Name)
-			if intest.InTest && checker.ctx.Value(PlanCacheKeyTestIssue46760) != nil {
-				err = errors.New("mock error")
-			}
-			if err != nil {
-				checker.cacheable = false
-				checker.reason = fmt.Sprintf("find table %s.%s failed: %s", node.Schema, node.Name, err.Error())
-				logutil.BgLogger().Warn("find table failed", zap.Error(err),
-					zap.String("table_schema", node.Schema.O), zap.String("table_name", node.Name.O),
-					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
-				return in, true
-			}
-			checker.cacheable, checker.reason = checkTableCacheable(tb, true)
+			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
 			if !checker.cacheable {
 				return in, true
 			}
@@ -503,16 +490,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			return in, !checker.cacheable
 		}
 		if checker.schema != nil {
-			tb, err := checker.schema.TableByName(node.Schema, node.Name)
-			if err != nil {
-				checker.cacheable = false
-				checker.reason = fmt.Sprintf("find table %s.%s failed: %s", node.Schema, node.Name, err.Error())
-				logutil.BgLogger().Warn("find table failed", zap.Error(err),
-					zap.String("table_schema", node.Schema.O), zap.String("table_name", node.Name.O),
-					zap.String("sql", trimIfTooLong(checker.sctx.GetSessionVars().StmtCtx.OriginalSQL)))
-				return in, true
-			}
-			checker.cacheable, checker.reason = checkTableCacheable(tb, true)
+			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
 		}
 		return in, !checker.cacheable
 	}
@@ -644,7 +622,21 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 }
 
 // checkTableCacheable checks whether a query accessing this table is cacheable.
-func checkTableCacheable(tb table.Table, isNonPrep bool) (cacheable bool, reason string) {
+func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
+	tb, err := schema.TableByName(node.Schema, node.Name)
+	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760) != nil {
+		err = errors.New("mock error")
+	}
+	if err != nil {
+		sql := sctx.GetSessionVars().StmtCtx.OriginalSQL
+		if len(sql) > 256 {
+			sql = sql[:256]
+		}
+		logutil.BgLogger().Warn("find table failed", zap.Error(err), zap.String("sql", sql),
+			zap.String("table_schema", node.Schema.O), zap.String("table_name", node.Name.O))
+		return false, fmt.Sprintf("find table %s.%s failed: %s", node.Schema, node.Name, err.Error())
+	}
+
 	if tb.Meta().GetPartitionInfo() != nil {
 		// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
 		// is fixed and additional tests with dynamic partition prune mode has been added.
@@ -674,11 +666,4 @@ func checkTableCacheable(tb table.Table, isNonPrep bool) (cacheable bool, reason
 	}
 
 	return true, ""
-}
-
-func trimIfTooLong(sql string) string {
-	if len(sql) > 256 {
-		return sql[:256]
-	}
-	return sql
 }
