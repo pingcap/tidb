@@ -218,7 +218,7 @@ func (w *GCWorker) start(ctx context.Context, wg *sync.WaitGroup) {
 		r := recover()
 		if r != nil {
 			logutil.Logger(ctx).Error("gcWorker",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack"))
 			metrics.PanicCounter.WithLabelValues(metrics.LabelGCWorker).Inc()
 		}
