@@ -61,7 +61,7 @@ func (i *ingestIndexStage) Init(ctx context.Context) error {
 	return err
 }
 
-func (*ingestIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (*ingestIndexStage) RunSubtask(ctx context.Context, _ *proto.Subtask) error {
 	logutil.Logger(ctx).Info("ingest index stage split subtask")
 	return nil
 }
