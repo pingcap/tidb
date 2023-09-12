@@ -220,9 +220,9 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	return bf, nil
 }
 
-// newBaseBuiltinFuncWithTp creates a built-in function signature with specified field types of arguments and the return field type of the function.
-// argTps indicates the field types of the args, retType indicates the return field type of the built-in function.
-func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType *types.FieldType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
+// newBaseBuiltinFuncWithTp creates a built-in function signature with specified field types of arguments and the return type of the function.
+// argTps indicates the field types of the args, retType indicates the return type of the built-in function.
+func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
 	}
@@ -236,7 +236,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 	for i := range args {
 		argEvalTps = append(argEvalTps, argTps[i].EvalType())
 	}
-	ec, err := deriveCollation(ctx, funcName, args, retType.EvalType(), argEvalTps...)
+	ec, err := deriveCollation(ctx, funcName, args, retType, argEvalTps...)
 	if err != nil {
 		return
 	}
@@ -264,12 +264,31 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 		}
 	}
 
-	if mysql.HasBinaryFlag(retType.GetFlag()) && retType.GetType() != mysql.TypeJSON {
-		retType.SetCharset(charset.CharsetBin)
-		retType.SetCollate(charset.CollationBin)
+	var fieldType *types.FieldType
+	switch retType {
+	case types.ETInt:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).BuildP()
+	case types.ETReal:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDouble).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxRealWidth).SetDecimal(types.UnspecifiedLength).BuildP()
+	case types.ETDecimal:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlag(mysql.BinaryFlag).SetFlen(11).BuildP()
+	case types.ETString:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeVarString).SetFlen(types.UnspecifiedLength).SetDecimal(types.UnspecifiedLength).SetCharset(ec.Charset).SetCollate(ec.Collation).BuildP()
+	case types.ETDatetime:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
+	case types.ETTimestamp:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeTimestamp).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDatetimeWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
+	case types.ETDuration:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeDuration).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxDurationWidthWithFsp).SetDecimal(types.MaxFsp).BuildP()
+	case types.ETJson:
+		fieldType = types.NewFieldTypeBuilder().SetType(mysql.TypeJSON).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxBlobWidth).SetCharset(mysql.DefaultCharset).SetCollate(mysql.DefaultCollationName).BuildP()
+	}
+	if mysql.HasBinaryFlag(fieldType.GetFlag()) && fieldType.GetType() != mysql.TypeJSON {
+		fieldType.SetCharset(charset.CharsetBin)
+		fieldType.SetCollate(charset.CollationBin)
 	}
 	if _, ok := booleanFunctions[funcName]; ok {
-		retType.AddFlag(mysql.IsBooleanFlag)
+		fieldType.AddFlag(mysql.IsBooleanFlag)
 	}
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
@@ -278,7 +297,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 
 		args: args,
 		ctx:  ctx,
-		tp:   retType,
+		tp:   fieldType,
 	}
 	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
 	bf.setCollator(collate.GetCollator(ec.Collation))

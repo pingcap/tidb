@@ -214,8 +214,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	tempFlag := fieldTp.GetFlag()
 	types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
 	fieldTp.SetFlag(tempFlag)
+	tp := fieldTp.EvalType()
 
-	if fieldTp.EvalType() == types.ETInt {
+	if tp == types.ETInt {
 		decimal = 0
 	}
 	fieldTp.SetDecimal(decimal)
@@ -230,31 +231,33 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		fieldTp.SetDecimal(0)
 		types.SetBinChsClnFlag(fieldTp)
 	}
-
 	argTps := make([]*types.FieldType, 0, l)
 	for i := 0; i < l-1; i += 2 {
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, args[i].GetType(), fieldTp)
+		argTps = append(argTps, args[i].GetType(), fieldTp.Clone())
 	}
 	if l%2 == 1 {
-		argTps = append(argTps, fieldTp)
+		argTps = append(argTps, fieldTp.Clone())
 	}
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, fieldTp, argTps...)
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
-	if bf.tp.GetType() == mysql.TypeEnum || bf.tp.GetType() == mysql.TypeSet {
-		switch bf.tp.EvalType() {
+	fieldTp.SetCharset(bf.tp.GetCharset())
+	fieldTp.SetCollate(bf.tp.GetCollate())
+	bf.tp = fieldTp
+	if fieldTp.GetType() == mysql.TypeEnum || fieldTp.GetType() == mysql.TypeSet {
+		switch tp {
 		case types.ETInt:
-			bf.tp.SetType(mysql.TypeLonglong)
+			fieldTp.SetType(mysql.TypeLonglong)
 		case types.ETString:
-			bf.tp.SetType(mysql.TypeVarchar)
+			fieldTp.SetType(mysql.TypeVarchar)
 		}
 	}
 
-	switch bf.tp.EvalType() {
+	switch tp {
 	case types.ETInt:
 		bf.tp.SetDecimal(0)
 		sig = &builtinCaseWhenIntSig{bf}
@@ -545,17 +548,19 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
+	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
 		return nil, err
 	}
 
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, retTp, args[0].GetType(), retTp, retTp)
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType().Clone(), retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
-
-	switch bf.tp.EvalType() {
+	retTp.AddFlag(bf.tp.GetFlag())
+	bf.tp = retTp
+	switch evalTps {
 	case types.ETInt:
 		sig = &builtinIfIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
@@ -749,12 +754,13 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		retTp.SetDecimal(0)
 		types.SetBinChsClnFlag(retTp)
 	}
-
-	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, retTp, retTp, retTp)
+	evalTps := retTp.EvalType()
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
-	switch bf.tp.EvalType() {
+	bf.tp = retTp
+	switch evalTps {
 	case types.ETInt:
 		sig = &builtinIfNullIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
