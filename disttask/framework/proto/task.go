@@ -48,12 +48,15 @@ const (
 
 // TaskStep is the step of task.
 const (
-	StepInit int64 = -1
+	StepInit int64 = 0
 	StepOne  int64 = 1
 	StepTwo  int64 = 2
 )
 
-// Task represents the task of distribute framework.
+// TaskIDLabelName is the label name of task id.
+const TaskIDLabelName = "task_id"
+
+// Task represents the task of distributed framework.
 type Task struct {
 	ID    int64
 	Key   string
