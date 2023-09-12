@@ -51,16 +51,17 @@ type ProcessInfo struct {
 	DiskTracker           *disk.Tracker
 	StatsInfo             func(interface{}) map[string]uint64
 	RuntimeStatsColl      *execdetails.RuntimeStatsColl
-	DB                    string
+	User                  string
 	Digest                string
 	Host                  string
-	User                  string
+	DB                    string
 	Info                  string
 	Port                  string
 	ResourceGroupName     string
-	PlanExplainRows       [][]string
-	TableIDs              []int64
+	SessionAlias          string
 	IndexNames            []string
+	TableIDs              []int64
+	PlanExplainRows       [][]string
 	OOMAlarmVariablesInfo OOMAlarmVariablesInfo
 	ID                    uint64
 	CurTxnStartTS         uint64
@@ -131,7 +132,7 @@ func (pi *ProcessInfo) ToRow(tz *time.Location) []interface{} {
 			diskConsumed = pi.DiskTracker.BytesConsumed()
 		}
 	}
-	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz), pi.ResourceGroupName)
+	return append(pi.ToRowForShow(true), pi.Digest, bytesConsumed, diskConsumed, pi.txnStartTs(tz), pi.ResourceGroupName, pi.SessionAlias)
 }
 
 // ascServerStatus is a slice of all defined server status in ascending order.
