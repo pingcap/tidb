@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -1114,7 +1115,12 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		log.Warn("pd / etcd client not provided, won't begin Advancer.")
 		return nil
 	}
-	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	tikvStore, ok := do.Store().(tikv.Storage)
+	if !ok {
+		log.Warn("non tikv store, stop begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(tikvStore, pdClient, do.etcdClient, cfg)
 	if err != nil {
 		return err
 	}
