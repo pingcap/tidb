@@ -58,7 +58,6 @@ go_library(
         "//util/mathutil",
         "//util/parser",
         "//util/size",
-        "//util/spill",
         "//util/stringutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

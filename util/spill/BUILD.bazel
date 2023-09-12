@@ -18,6 +18,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/mysql",
+        "//types",
         "//util/dbterror",
+        "//util/hack",
     ],
 )
