@@ -116,6 +116,8 @@ type JobContext struct {
 	cacheNormalizedSQL string
 	cacheDigest        *parser.Digest
 	tp                 string
+
+	resourceGroupName string
 }
 
 // NewJobContext returns a new ddl job context.
@@ -762,10 +764,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 	w.setDDLLabelForTopSQL(job.ID, job.Query)
 	w.setDDLSourceForDiagnosis(job.ID, job.Type)
-	jobContext := w.jobContext(job.ID)
+	jobContext := w.jobContext(job.ID, job.ReorgMeta)
 	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
 		txn.SetOption(kv.ResourceGroupTagger, tagger)
 	}
+	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
+
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
 		if job.IsDone() {
