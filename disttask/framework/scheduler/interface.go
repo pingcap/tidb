@@ -83,8 +83,8 @@ func (*EmptySubtaskExecutor) Cleanup(context.Context) error {
 }
 
 // OnFinished implements the SubtaskExecutor interface.
-func (*EmptySubtaskExecutor) OnFinished(_ context.Context, metaBytes []byte) ([]byte, error) {
-	return metaBytes, nil
+func (*EmptySubtaskExecutor) OnFinished(_ context.Context, _ *proto.Subtask) error {
+	return nil
 }
 
 // Rollback implements the SubtaskExecutor interface.

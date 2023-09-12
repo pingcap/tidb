@@ -125,8 +125,8 @@ func (t *testScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]pro
 	}, nil
 }
 
-func (t *testScheduler) OnFinished(_ context.Context, meta []byte) ([]byte, error) {
-	return meta, nil
+func (t *testScheduler) OnFinished(_ context.Context, _ *proto.Subtask) error {
+	return nil
 }
 
 // Note: the subtask must be Reentrant.

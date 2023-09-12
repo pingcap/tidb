@@ -27,7 +27,6 @@ import (
 )
 
 type ingestIndexStage struct {
-	d     *ddl
 	jobID int64
 	index *model.IndexInfo
 	ptbl  table.PhysicalTable
@@ -48,38 +47,38 @@ func newIngestIndexStage(
 	}
 }
 
-func (i *ingestIndexStage) Init(_ context.Context) error {
-	logutil.BgLogger().Info("ingest index stage init subtask exec env", zap.String("category", "ddl"))
+func (i *ingestIndexStage) Init(ctx context.Context) error {
+	logutil.Logger(ctx).Info("ingest index stage init subtask exec env")
 	_, _, err := i.bc.Flush(i.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
 			err = convertToKeyExistsErr(err, i.index, i.ptbl.Meta())
 			return err
 		}
-		logutil.BgLogger().Error("flush error", zap.String("category", "ddl"), zap.Error(err))
+		logutil.Logger(ctx).Error("flush error", zap.Error(err))
 		return err
 	}
 	return err
 }
 
-func (*ingestIndexStage) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
-	logutil.BgLogger().Info("ingest index stage split subtask", zap.String("category", "ddl"))
+func (*ingestIndexStage) SplitSubtask(ctx context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
+	logutil.Logger(ctx).Info("ingest index stage split subtask")
 	return nil, nil
 }
 
-func (i *ingestIndexStage) Cleanup(_ context.Context) error {
-	logutil.BgLogger().Info("ingest index stage cleanup subtask exec env", zap.String("category", "ddl"))
+func (i *ingestIndexStage) Cleanup(ctx context.Context) error {
+	logutil.Logger(ctx).Info("ingest index stage cleanup subtask exec env")
 	ingest.LitBackCtxMgr.Unregister(i.jobID)
 	return nil
 }
 
-func (*ingestIndexStage) OnFinished(_ context.Context, subtask []byte) ([]byte, error) {
-	return subtask, nil
+func (*ingestIndexStage) OnFinished(ctx context.Context, _ *proto.Subtask) error {
+	logutil.Logger(ctx).Info("ingest index stage finish subtask")
+	return nil
 }
 
-func (i *ingestIndexStage) Rollback(_ context.Context) error {
-	logutil.BgLogger().Info("ingest index stage rollback backfill add index task",
-		zap.String("category", "ddl"), zap.Int64("jobID", i.jobID))
+func (i *ingestIndexStage) Rollback(ctx context.Context) error {
+	logutil.Logger(ctx).Info("ingest index stage rollback backfill add index task")
 	ingest.LitBackCtxMgr.Unregister(i.jobID)
 	return nil
 }

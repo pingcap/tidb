@@ -23,8 +23,6 @@ import (
 	"sort"
 	"strings"
 
-	kv2 "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
@@ -170,7 +168,7 @@ func MockExternalEngine(
 		SetMemorySizeLimit(128).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
-		Build(storage, "/mock-test", 0)
+		Build(storage, "/mock-test", "0")
 	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
 }
 
@@ -184,17 +182,13 @@ func MockExternalEngineWithWriter(
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
 	ctx := context.Background()
-	kvs := make([]common.KvPair, len(keys))
 	for i := range keys {
-		kvs[i].Key = keys[i]
-		kvs[i].Val = values[i]
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	rows := kv2.MakeRowsFromKvPairs(kvs)
-	err = writer.AppendRows(ctx, nil, rows)
-	if err != nil {
-		return nil, nil, err
-	}
-	_, err = writer.Close(ctx)
+	err = writer.Close(ctx)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -25,11 +25,10 @@ import (
 type KeyValueStore struct {
 	dataWriter storage.ExternalFileWriter
 
-	rc       *rangePropertiesCollector
-	ctx      context.Context
-	writerID int
-	seq      int
-	offset   uint64
+	rc     *rangePropertiesCollector
+	ctx    context.Context
+	seq    int
+	offset uint64
 }
 
 // NewKeyValueStore creates a new KeyValueStore. The data will be written to the
@@ -39,14 +38,12 @@ func NewKeyValueStore(
 	ctx context.Context,
 	dataWriter storage.ExternalFileWriter,
 	rangePropertiesCollector *rangePropertiesCollector,
-	writerID int,
 	seq int,
 ) (*KeyValueStore, error) {
 	kvStore := &KeyValueStore{
 		dataWriter: dataWriter,
 		ctx:        ctx,
 		rc:         rangePropertiesCollector,
-		writerID:   writerID,
 		seq:        seq,
 	}
 	return kvStore, nil

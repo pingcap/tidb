@@ -36,13 +36,16 @@ type Engine interface {
 	Flush() error
 	ImportAndClean() error
 	Clean()
-	CreateWriter(id int, unique bool) (Writer, error)
+	CreateWriter(id int) (Writer, error)
 }
 
 // Writer is the interface for the writer that can be used to write key-value pairs.
 type Writer interface {
-	WriteRow(key, idxVal []byte, handle tidbkv.Handle) error
+	// WriteRow writes one row into downstream.
+	// To enable uniqueness check, the handle should be non-empty.
+	WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error
 	LockForWrite() (unlock func())
+	Close(ctx context.Context) error
 }
 
 // engineInfo is the engine for one index reorg task, each task will create several new writers under the
@@ -162,20 +165,19 @@ func (ei *engineInfo) ImportAndClean() error {
 // writerContext is used to keep a lightning local writer for each backfill worker.
 type writerContext struct {
 	ctx    context.Context
-	unique bool
 	lWrite backend.EngineWriter
 	fLock  *sync.RWMutex
 }
 
 // CreateWriter creates a new writerContext.
-func (ei *engineInfo) CreateWriter(id int, unique bool) (Writer, error) {
+func (ei *engineInfo) CreateWriter(id int) (Writer, error) {
 	ei.memRoot.RefreshConsumption()
 	ok := ei.memRoot.CheckConsume(StructSizeWriterCtx)
 	if !ok {
 		return nil, genEngineAllocMemFailedErr(ei.ctx, ei.memRoot, ei.jobID, ei.indexID)
 	}
 
-	wCtx, err := ei.newWriterContext(id, unique)
+	wCtx, err := ei.newWriterContext(id)
 	if err != nil {
 		logutil.Logger(ei.ctx).Error(LitErrCreateContextFail, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID),
@@ -196,7 +198,7 @@ func (ei *engineInfo) CreateWriter(id int, unique bool) (Writer, error) {
 // If local writer not exist, then create new one and store it into engine info writer cache.
 // note: operate ei.writeCache map is not thread safe please make sure there is sync mechanism to
 // make sure the safe.
-func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*writerContext, error) {
+func (ei *engineInfo) newWriterContext(workerID int) (*writerContext, error) {
 	lWrite, exist := ei.writerCache.Load(workerID)
 	if !exist {
 		var err error
@@ -209,7 +211,6 @@ func (ei *engineInfo) newWriterContext(workerID int, unique bool) (*writerContex
 	}
 	wc := &writerContext{
 		ctx:    ei.ctx,
-		unique: unique,
 		lWrite: lWrite,
 		fLock:  ei.flushLock,
 	}
@@ -233,15 +234,15 @@ func (ei *engineInfo) closeWriters() error {
 }
 
 // WriteRow Write one row into local writer buffer.
-func (wCtx *writerContext) WriteRow(key, idxVal []byte, handle tidbkv.Handle) error {
+func (wCtx *writerContext) WriteRow(ctx context.Context, key, idxVal []byte, handle tidbkv.Handle) error {
 	kvs := make([]common.KvPair, 1)
 	kvs[0].Key = key
 	kvs[0].Val = idxVal
-	if wCtx.unique {
+	if handle != nil {
 		kvs[0].RowID = handle.Encoded()
 	}
 	row := kv.MakeRowsFromKvPairs(kvs)
-	return wCtx.lWrite.AppendRows(wCtx.ctx, nil, row)
+	return wCtx.lWrite.AppendRows(ctx, nil, row)
 }
 
 // LockForWrite locks the local writer for write.
@@ -250,4 +251,9 @@ func (wCtx *writerContext) LockForWrite() (unlock func()) {
 	return func() {
 		wCtx.fLock.RUnlock()
 	}
+}
+
+// Close implements ingest.Writer interface.
+func (*writerContext) Close(_ context.Context) error {
+	return nil
 }

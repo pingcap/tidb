@@ -152,38 +152,38 @@ outer:
 	return nil, pipeline.Close()
 }
 
-func (s *importStepExecutor) OnFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
+func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
-	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
-		return nil, err
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return err
 	}
 	s.logger.Info("on subtask finished", zap.Int32("engine-id", subtaskMeta.ID))
 
 	val, ok := s.sharedVars.Load(subtaskMeta.ID)
 	if !ok {
-		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
+		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 	sharedVars, ok := val.(*SharedVars)
 	if !ok {
-		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
+		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
 	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
 	s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
 	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
 	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
-		return nil, err
+		return err
 	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
-		return nil, err
+		return err
 	}
 
 	sharedVars.mu.Lock()
@@ -203,7 +203,12 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtaskMetaBytes []
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
 	s.sharedVars.Delete(subtaskMeta.ID)
-	return json.Marshal(subtaskMeta)
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return err
+	}
+	subtask.Meta = newMeta
+	return nil
 }
 
 func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
