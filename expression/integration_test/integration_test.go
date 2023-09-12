@@ -5700,7 +5700,6 @@ func TestIssue40015(t *testing.T) {
 
 func TestIssue44196(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
 	tk := testkit.NewTestKit(t, store)
 
 	// decimal
