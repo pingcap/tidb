@@ -68,8 +68,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	// todo: this method will load all files, but we only import files related to current subtask.
-	if err := controller.InitDataFiles(ctx); err != nil {
+	if err = controller.InitDataStore(ctx); err != nil {
 		return err
 	}
 

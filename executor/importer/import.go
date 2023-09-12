@@ -891,7 +891,31 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	return csvConfig
 }
 
+// InitDataStore initializes the data store.
+func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+	u, err2 := storage.ParseRawURL(e.Path)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+	}
+	b, err2 := storage.ParseBackendFromURL(u, nil)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
+	}
+
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	s, err := storage.New(ctx, b, opt)
+	if err != nil {
+		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+	}
+	e.dataStore = s
+	return nil
+}
+
 // InitDataFiles initializes the data store and files.
+// it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
@@ -926,25 +950,17 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileNameKey = strings.Trim(u.Path, "/")
 		u.Path = ""
 	}
-	b, err2 := storage.ParseBackendFromURL(u, nil)
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
-	}
 	// try to find pattern error in advance
 	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
 	}
 
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
-	if err != nil {
-		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+	if err2 = e.InitDataStore(ctx); err2 != nil {
+		return err2
 	}
 
+	s := e.dataStore
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(fileNameKey, '*')
@@ -983,7 +999,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
-		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -1008,7 +1024,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
-	e.dataStore = s
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil

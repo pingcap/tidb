@@ -223,7 +223,6 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		},
 		encTable: tbl,
 		dbID:     e.DBID,
-		store:    e.dataStore,
 		kvStore:  kvStore,
 		logger:   e.logger,
 		// this is the value we use for 50TiB data parallel import.
@@ -246,7 +245,6 @@ type TableImporter struct {
 	encTable table.Table
 	dbID     int64
 
-	store storage.ExternalStorage
 	// the kv store we get is a cached store, so we can't close it.
 	kvStore         tidbkv.Storage
 	logger          *zap.Logger
