@@ -571,7 +571,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 	// run in another goroutine
 	// do not block main tick here
 	go func() {
-		failpoint.Inject("AsyncResolveLocks", func() { })
+		failpoint.Inject("AsyncResolveLocks", func() {})
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
 			return tikv.ResolveLocksForRange(
