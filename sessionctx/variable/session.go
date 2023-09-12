@@ -3535,15 +3535,6 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 
 // GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
 func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
-	val, ok := s.stmtVars[TiKVClientReadTimeout]
-	if ok {
-		timeout, err := strconv.ParseUint(val, 10, 64)
-		if err == nil {
-			return timeout
-		}
-		// Normally, we should not go into this branch, because we have checked the type of the variable in `SetStmtVar`.
-		// So just ignore the error here.
-	}
 	return s.TiKVClientReadTimeout
 }
 
