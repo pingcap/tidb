@@ -15,14 +15,10 @@
 package core_test
 
 import (
-<<<<<<< HEAD
-=======
 	"context"
-	"fmt"
-	"strings"
->>>>>>> bc80772052f (planner: Adjust the log level and returned value when `cacheableChecker` check `*ast.TableName` nodes (#46831))
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -34,64 +30,6 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/stretchr/testify/require"
 )
-
-<<<<<<< HEAD
-=======
-func TestFixControl44823(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int)`)
-	var va []string
-	for i := 0; i < 201; i++ {
-		tk.MustExec(fmt.Sprintf(`set @a%v = %v`, i, i))
-		va = append(va, fmt.Sprintf("@a%v", i))
-	}
-
-	// prepared plan cache
-	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: too many values in in-list`))
-	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
-	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-
-	tk.MustExec(`set @@tidb_opt_fix_control = "44823:250"`)
-	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
-	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1")) // can hit
-
-	tk.MustExec(`set @@tidb_opt_fix_control = "44823:0"`)
-	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from t where a in (%v?)'`, strings.Repeat("?,", 200)))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
-	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
-	tk.MustExec(fmt.Sprintf(`execute st using %v`, strings.Join(va, ",")))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-
-	// non prepared plan cache
-	values := make([]string, 0, 201)
-	for i := 0; i < 201; i++ {
-		values = append(values, fmt.Sprintf("%v", i))
-	}
-	query := fmt.Sprintf("select * from t where a in (%v)", strings.Join(values, ","))
-	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
-
-	tk.MustExec(`set @@tidb_opt_fix_control = ""`)
-	tk.MustQuery(query).Check(testkit.Rows())
-	tk.MustQuery(query).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-
-	tk.MustExec(`set @@tidb_opt_fix_control = "44823:250"`)
-	tk.MustQuery(query).Check(testkit.Rows())
-	tk.MustQuery(query).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-
-	tk.MustExec(`set @@tidb_opt_fix_control = "44823:0"`)
-	tk.MustQuery(query).Check(testkit.Rows())
-	tk.MustQuery(query).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-}
 
 func TestIssue46760(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -105,15 +43,16 @@ func TestIssue46760(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
 	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760, struct{}{})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/TestIssue46760", "return(true)"))
 	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.t failed: mock error"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/TestIssue46760"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: find table test.t failed: mock error"))
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
->>>>>>> bc80772052f (planner: Adjust the log level and returned value when `cacheableChecker` check `*ast.TableName` nodes (#46831))
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -340,6 +279,7 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(a), key(b))`)
 	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
@@ -384,12 +324,12 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.False(t, core.GeneralPlanCacheable(stmt, is))
+		require.False(t, core.GeneralPlanCacheableWithCtx(tk.Session(), stmt, is))
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.True(t, core.GeneralPlanCacheable(stmt, is))
+		require.True(t, core.GeneralPlanCacheableWithCtx(tk.Session(), stmt, is))
 	}
 }

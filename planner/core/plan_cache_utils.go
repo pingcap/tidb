@@ -118,16 +118,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	if !vars.EnablePreparedPlanCache {
 		prepared.UseCache = false
 	} else {
-<<<<<<< HEAD
 		cacheable, reason := CacheableWithCtx(sctx, stmt, ret.InfoSchema)
 		prepared.UseCache = cacheable
-=======
-		if isPrepStmt {
-			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
-		} else {
-			cacheable = true // it is already checked here
-		}
->>>>>>> bc80772052f (planner: Adjust the log level and returned value when `cacheableChecker` check `*ast.TableName` nodes (#46831))
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip plan-cache: " + reason))
 		}
