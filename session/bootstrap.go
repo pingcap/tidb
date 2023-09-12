@@ -980,6 +980,10 @@ const (
 	version172 = 172
 	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
 	version173 = 173
+	// version 174
+	//   add column `step`, `error`; delete unique key; and add key idx_state_update_time
+	//   to `mysql.tidb_background_subtask_history`.
+	version174 = 174
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
@@ -1126,6 +1130,7 @@ var (
 		upgradeToVer171,
 		upgradeToVer172,
 		upgradeToVer173,
+		upgradeToVer174,
 	}
 )
 
@@ -1186,7 +1191,7 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 var (
 	// SupportUpgradeHTTPOpVer is exported for testing.
 	// The minimum version of the upgrade by paused user DDL can be notified through the HTTP API.
-	SupportUpgradeHTTPOpVer int64 = version173
+	SupportUpgradeHTTPOpVer int64 = version174
 )
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
@@ -2719,6 +2724,17 @@ func upgradeToVer173(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer174(s Session, ver int64) {
+	if ver >= version174 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history DROP INDEX `namespace`", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_task_key`(`task_key`)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_state_update_time`(`state_update_time`)", dbterror.ErrDupKeyName)
 }
 
 func writeOOMAction(s Session) {

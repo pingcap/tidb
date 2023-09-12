@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
@@ -115,6 +116,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 // Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
+	dm.wg.Run(dm.gcSubtaskHistoryTable)
 	dm.inited = true
 }
 
@@ -191,6 +193,32 @@ func (dm *Manager) dispatchTaskLoop() {
 				}
 				dm.startDispatcher(task)
 				cnt++
+			}
+		}
+	}
+}
+
+func (dm *Manager) gcSubtaskHistoryTable() {
+	logutil.Logger(dm.ctx).Info("task table gc loop start")
+	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
+	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
+		if seconds, ok := val.(int); ok {
+			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
+		}
+	})
+	ticker := time.NewTicker(historySubtaskTableGcInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-dm.ctx.Done():
+			logutil.BgLogger().Info("subtask history table gc loop exits", zap.Error(dm.ctx.Err()))
+			return
+		case <-ticker.C:
+			err := dm.taskMgr.GC()
+			if err != nil {
+				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
+			} else {
+				logutil.Logger(dm.ctx).Info("subtask history table gc")
 			}
 		}
 	}
