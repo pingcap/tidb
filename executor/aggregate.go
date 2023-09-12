@@ -190,10 +190,10 @@ type HashAggExec struct {
 	isChildReturnEmpty bool
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
-	isUnparallelExec        bool
-	parallelExecInitialized bool
-	prepared                bool
-	executed                bool
+	isUnparallelExec  bool
+	parallelExecValid bool
+	prepared          bool
+	executed          bool
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker
@@ -267,7 +267,7 @@ func (e *HashAggExec) Close() error {
 		}
 		return firstErr
 	}
-	if e.parallelExecInitialized {
+	if e.parallelExecValid {
 		// `Close` may be called after `Open` without calling `Next` in test.
 		if !e.prepared {
 			close(e.inputCh)
@@ -294,6 +294,7 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
+		e.parallelExecValid = false
 	}
 	return e.baseExecutor.Close()
 }
@@ -434,7 +435,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		e.finalWorkers[i].finalResultHolderCh <- newFirstChunk(e)
 	}
 
-	e.parallelExecInitialized = true
+	e.parallelExecValid = true
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
