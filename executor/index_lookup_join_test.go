@@ -396,7 +396,7 @@ PARTITIONS 1`)
 }
 
 func TestIndexLookupJoinIssue(t *testing.T) {
-	// Issue2789
+	// Issue27893
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
