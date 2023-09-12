@@ -4539,50 +4539,6 @@ func TestIssue24429(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 }
 
-func TestVitessHashMatchesVitessShards(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(customer_id bigint, id bigint, expected_shard bigint unsigned, computed_shard bigint unsigned null, primary key (customer_id, id));")
-
-	tk.MustExec("insert into t (customer_id, id, expected_shard) values " +
-		"(30370720100, 1, x'd6'), " +
-		"(30370670010, 2, x'd6'), " +
-		"(30370689320, 3, x'e1'), " +
-		"(30370693008, 4, x'e0'), " +
-		"(30370656005, 5, x'89'), " +
-		"(30370702638, 6, x'89'), " +
-		"(30370658809, 7, x'ce'), " +
-		"(30370665369, 8, x'cf'), " +
-		"(30370706138, 9, x'85'), " +
-		"(30370708769, 10, x'85'), " +
-		"(30370711915, 11, x'a3'), " +
-		"(30370712595, 12, x'a3'), " +
-		"(30370656340, 13, x'7d'), " +
-		"(30370660143, 14, x'7c'), " +
-		"(30371738450, 15, x'fc'), " +
-		"(30371683979, 16, x'fd'), " +
-		"(30370664597, 17, x'92'), " +
-		"(30370667361, 18, x'93'), " +
-		"(30370656406, 19, x'd2'), " +
-		"(30370716959, 20, x'd3'), " +
-		"(30375207698, 21, x'9a'), " +
-		"(30375168766, 22, x'9a'), " +
-		"(30370711813, 23, x'ca'), " +
-		"(30370721803, 24, x'ca'), " +
-		"(30370717957, 25, x'97'), " +
-		"(30370734969, 26, x'96'), " +
-		"(30375203572, 27, x'98'), " +
-		"(30375292643, 28, x'99'); ")
-
-	// Sanity check the shards being computed correctly
-	tk.MustExec("update t set computed_shard =  (vitess_hash(customer_id) >> 56);")
-	tk.MustQuery("select customer_id, id, hex(expected_shard), hex(computed_shard) from t where expected_shard <> computed_shard").
-		Check(testkit.Rows())
-}
-
 func TestSecurityEnhancedMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
