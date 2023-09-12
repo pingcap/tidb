@@ -70,13 +70,13 @@ func (p *AnalyzeProgress) Update(rowCount int64) int64 {
 	p.deltaCount.Add(rowCount)
 
 	t := time.Now()
-	lastDumpTime := p.GetLastDumpTime()
-	if p.deltaCount.Load() > maxDelta && t.Sub(lastDumpTime) > dumpTimeInterval {
+	p.lastDumpTimeMu.Lock()
+	if p.deltaCount.Load() > maxDelta && t.Sub(p.lastDumpTime) > dumpTimeInterval {
 		dumpCount = p.deltaCount.Load()
 		p.deltaCount.Store(0)
-
-		p.SetLastDumpTime(t)
+		p.lastDumpTime = t
 	}
+	p.lastDumpTimeMu.Unlock()
 
 	return dumpCount
 }
