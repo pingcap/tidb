@@ -220,6 +220,75 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	return bf, nil
 }
 
+// newBaseBuiltinFuncWithTp creates a built-in function signature with specified field types of arguments and the return field type of the function.
+// argTps indicates the field types of the args, retType indicates the return field type of the built-in function.
+func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType *types.FieldType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
+	if len(args) != len(argTps) {
+		panic("unexpected length of args and argTps")
+	}
+	if ctx == nil {
+		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
+	}
+
+	// derive collation information for string function, and we must do it
+	// before doing implicit cast.
+	argEvalTps := make([]types.EvalType, 0, len(argTps))
+	for i := range args {
+		argEvalTps = append(argEvalTps, argTps[i].EvalType())
+	}
+	ec, err := deriveCollation(ctx, funcName, args, retType.EvalType(), argEvalTps...)
+	if err != nil {
+		return
+	}
+
+	for i := range args {
+		switch argTps[i].EvalType() {
+		case types.ETInt:
+			args[i] = WrapWithCastAsInt(ctx, args[i])
+		case types.ETReal:
+			args[i] = WrapWithCastAsReal(ctx, args[i])
+		case types.ETString:
+			args[i] = WrapWithCastAsString(ctx, args[i])
+			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
+		case types.ETDuration:
+			args[i] = WrapWithCastAsDuration(ctx, args[i])
+		case types.ETJson:
+			args[i] = WrapWithCastAsJSON(ctx, args[i])
+		// https://github.com/pingcap/tidb/issues/44196
+		// For decimal/datetime/timestamp types, it is necessary to ensure that decimal are consistent with the output type,
+		// so adding a cast function here.
+		case types.ETDecimal, types.ETDatetime, types.ETTimestamp:
+			if !args[i].GetType().Equal(argTps[i]) {
+				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
+			}
+		}
+	}
+
+	if mysql.HasBinaryFlag(retType.GetFlag()) && retType.GetType() != mysql.TypeJSON {
+		retType.SetCharset(charset.CharsetBin)
+		retType.SetCollate(charset.CollationBin)
+	}
+	if _, ok := booleanFunctions[funcName]; ok {
+		retType.AddFlag(mysql.IsBooleanFlag)
+	}
+	bf = baseBuiltinFunc{
+		bufAllocator:           newLocalColumnPool(),
+		childrenVectorizedOnce: new(sync.Once),
+		childrenReversedOnce:   new(sync.Once),
+
+		args: args,
+		ctx:  ctx,
+		tp:   retType,
+	}
+	bf.SetCharsetAndCollation(ec.Charset, ec.Collation)
+	bf.setCollator(collate.GetCollator(ec.Collation))
+	bf.SetCoercibility(ec.Coer)
+	bf.SetRepertoire(ec.Repe)
+	// note this function must be called after wrap cast function to the args
+	adjustNullFlagForReturnType(funcName, args, bf)
+	return bf, nil
+}
+
 // newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
 // do not check and compute collation.
 func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {

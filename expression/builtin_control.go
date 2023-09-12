@@ -53,18 +53,6 @@ var (
 	_ builtinFunc = &builtinIfJSONSig{}
 )
 
-func castIfNeed(ctx sessionctx.Context, expectType *types.FieldType, origin Expression) Expression {
-	// https://github.com/pingcap/tidb/issues/44196
-	// For decimals/datetime, it is necessary to ensure that digitsFrac and digitsInt are consistent with the output type,
-	// so adding a cast function here.
-	if (expectType.GetType() == mysql.TypeNewDecimal ||
-		expectType.GetType() == mysql.TypeDatetime) &&
-		!origin.GetType().Equal(expectType) {
-		return BuildCastFunction(ctx, origin, expectType)
-	}
-	return origin
-}
-
 func maxlen(lhsFlen, rhsFlen int) int {
 	// -1 indicates that the length is unknown, such as the case for expressions.
 	if lhsFlen < 0 || rhsFlen < 0 {
@@ -226,9 +214,8 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	tempFlag := fieldTp.GetFlag()
 	types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
 	fieldTp.SetFlag(tempFlag)
-	tp := fieldTp.EvalType()
 
-	if tp == types.ETInt {
+	if fieldTp.EvalType() == types.ETInt {
 		decimal = 0
 	}
 	fieldTp.SetDecimal(decimal)
@@ -244,40 +231,30 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		types.SetBinChsClnFlag(fieldTp)
 	}
 
-	for i := 1; i < l-1; i += 2 {
-		args[i] = castIfNeed(ctx, fieldTp, args[i])
-	}
-	if l%2 == 1 {
-		args[l-1] = castIfNeed(ctx, fieldTp, args[l-1])
-	}
-
-	argTps := make([]types.EvalType, 0, l)
+	argTps := make([]*types.FieldType, 0, l)
 	for i := 0; i < l-1; i += 2 {
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, types.ETInt, tp)
+		argTps = append(argTps, args[i].GetType(), fieldTp)
 	}
 	if l%2 == 1 {
-		argTps = append(argTps, tp)
+		argTps = append(argTps, fieldTp)
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, fieldTp, argTps...)
 	if err != nil {
 		return nil, err
 	}
-	fieldTp.SetCharset(bf.tp.GetCharset())
-	fieldTp.SetCollate(bf.tp.GetCollate())
-	bf.tp = fieldTp
-	if fieldTp.GetType() == mysql.TypeEnum || fieldTp.GetType() == mysql.TypeSet {
-		switch tp {
+	if bf.tp.GetType() == mysql.TypeEnum || bf.tp.GetType() == mysql.TypeSet {
+		switch bf.tp.EvalType() {
 		case types.ETInt:
-			fieldTp.SetType(mysql.TypeLonglong)
+			bf.tp.SetType(mysql.TypeLonglong)
 		case types.ETString:
-			fieldTp.SetType(mysql.TypeVarchar)
+			bf.tp.SetType(mysql.TypeVarchar)
 		}
 	}
 
-	switch tp {
+	switch bf.tp.EvalType() {
 	case types.ETInt:
 		bf.tp.SetDecimal(0)
 		sig = &builtinCaseWhenIntSig{bf}
@@ -568,23 +545,17 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	evalTps := retTp.EvalType()
 	args[0], err = wrapWithIsTrue(ctx, true, args[0], false)
 	if err != nil {
 		return nil, err
 	}
 
-	args[1] = castIfNeed(ctx, retTp, args[1])
-	args[2] = castIfNeed(ctx, retTp, args[2])
-
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, retTp, args[0].GetType(), retTp, retTp)
 	if err != nil {
 		return nil, err
 	}
 
-	retTp.AddFlag(bf.tp.GetFlag())
-	bf.tp = retTp
-	switch evalTps {
+	switch bf.tp.EvalType() {
 	case types.ETInt:
 		sig = &builtinIfIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfInt)
@@ -779,16 +750,11 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 
-	args[0] = castIfNeed(ctx, retTp, args[0])
-	args[1] = castIfNeed(ctx, retTp, args[1])
-
-	evalTps := retTp.EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, retTp, retTp, retTp)
 	if err != nil {
 		return nil, err
 	}
-	bf.tp = retTp
-	switch evalTps {
+	switch bf.tp.EvalType() {
 	case types.ETInt:
 		sig = &builtinIfNullIntSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_IfNullInt)
