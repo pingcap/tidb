@@ -80,7 +80,7 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 
 	switch stage {
 	case proto.StepInit:
-		jc := d.jobContext(jobMeta.ID)
+		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexStage(

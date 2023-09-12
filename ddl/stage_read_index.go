@@ -109,7 +109,9 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 	if err != nil {
 		return nil, err
 	}
-	sessCtx, err := newSessCtx(d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location)
+
+	sessCtx, err := newSessCtx(
+		d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return nil, err
 	}
