@@ -1757,6 +1757,8 @@ type FrameBound struct {
 	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
 	// and plus or minus for frames like `1 preceding`.
 	CalcFuncs []expression.Expression
+	// Sometimes we need to cast order by column to a specific type when frame type is range
+	CastFuncs []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
 }
