@@ -3731,21 +3731,6 @@ func TestIssue18674(t *testing.T) {
 		"-1 1", "0 0", "0 0", "1 1", "<nil> 0"))
 }
 
-func TestJsonObjectCompare(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustQuery("select json_object('k', -1) > json_object('k', 2)").Check(testkit.Rows("0"))
-	tk.MustQuery("select json_object('k', -1) < json_object('k', 2)").Check(testkit.Rows("1"))
-
-	tk.MustExec("drop table if exists tx")
-	tk.MustExec("create table tx(a double, b int)")
-	tk.MustExec("insert into tx values (3.0, 3)")
-	tk.MustQuery("select json_object('k', a) = json_object('k', b) from tx").Check(testkit.Rows("1"))
-}
-
 func TestCrossDCQuery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
