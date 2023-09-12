@@ -9665,3 +9665,34 @@ func (s *testSerialSuite) TestEncodingSet(c *C) {
 	tk.MustQuery("select `set` from `enum-set` use index(PRIMARY)").Check(testkit.Rows("x00,x59"))
 	tk.MustExec("admin check table `enum-set`")
 }
+
+func (s *testSerialSuite) TestIssue41778(c *C) {
+	tk := testkit.NewTestKit(c, s.store)
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE ta (
+		a1 json DEFAULT NULL,
+		a2 decimal(31, 1) DEFAULT '0'
+	);
+	CREATE TABLE tb (
+		b1 smallint(6) DEFAULT '-11385',
+		b2 decimal(63, 14) DEFAULT '-6197127648752447138876497216172307937317445669286.98661563645110'
+	);
+	CREATE TABLE tc (
+		c1 text DEFAULT NULL,
+		c2 float NOT NULL DEFAULT '1.8132474',
+		PRIMARY KEY (c2)
+		/*T![clustered_index] CLUSTERED */
+	);
+	`)
+	tk.MustExec(`
+	insert into ta
+	values (NULL, 1228.0);
+	insert into ta
+	values ('"json string1"', 623.8);
+	insert into ta
+	values (NULL, 1337.0);
+	`)
+	err := tk.QueryToErr("select count(*)from ta where not ( ta.a1 in ( select b2 from tb where not ( ta.a1 in ( select c1 from tc where ta.a2 in ( select b2 from tb where IsNull(ta.a1) ) ) ) ) )")
+	c.Assert(err.Error(), Matches, "*cannot be pushed down")
+}
