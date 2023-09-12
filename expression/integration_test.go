@@ -945,20 +945,18 @@ func TestStringBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("114.57011441 38.04620115 114.57011441,38.04620115",
 		"-38.04620119 38.04620115 -38.04620119,38.04620115"))
 
-<<<<<<< HEAD:expression/integration_test.go
 	// For issue 31603, only affects unistore.
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(c1 varbinary(100));")
 	tk.MustExec("insert into t1 values('abc');")
 	tk.MustQuery("select 1 from t1 where char_length(c1) = 10;").Check(testkit.Rows())
-=======
+
 	// issue 44359
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (c1 INT UNSIGNED NOT NULL )")
 	tk.MustExec("INSERT INTO t1 VALUES (0)")
 	tk.MustQuery("SELECT c1 FROM t1 WHERE c1 <> CAST(POW(-'0', 1) AS BINARY)").Check(testkit.Rows())
 	tk.MustQuery("SELECT c1 FROM t1 WHERE c1 = CAST('-000' AS BINARY)").Check(testkit.Rows("0"))
->>>>>>> 6397d4753f4 (types: fix convert str `-00*` to uint (#46721)):expression/integration_test/integration_test.go
 }
 
 func TestInvalidStrings(t *testing.T) {
