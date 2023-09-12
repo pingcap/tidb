@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -249,6 +250,13 @@ func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable 
 	}
 	s.BaseScheduler.Extension = s
 	return s
+}
+
+func (s *importScheduler) Run(ctx context.Context, task *proto.Task) error {
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
+	defer metricsManager.unregister(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
+	return s.BaseScheduler.Run(subCtx, task)
 }
 
 func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
