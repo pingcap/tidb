@@ -4,12 +4,14 @@ package restore
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,7 +67,6 @@ import (
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -822,8 +823,8 @@ func (rc *Client) CreateTables(
 		newTables = append(newTables, et.Table)
 	}
 	// Let's ensure that it won't break the original order.
-	slices.SortFunc(newTables, func(i, j *model.TableInfo) bool {
-		return tbMapping[i.Name.String()] < tbMapping[j.Name.String()]
+	slices.SortFunc(newTables, func(i, j *model.TableInfo) int {
+		return cmp.Compare(tbMapping[i.Name.String()], tbMapping[j.Name.String()])
 	})
 
 	select {
@@ -1193,8 +1194,8 @@ func (rc *Client) CheckSysTableCompatibility(dom *domain.Domain, tables []*metau
 // ExecDDLs executes the queries of the ddl jobs.
 func (rc *Client) ExecDDLs(ctx context.Context, ddlJobs []*model.Job) error {
 	// Sort the ddl jobs by schema version in ascending order.
-	slices.SortFunc(ddlJobs, func(i, j *model.Job) bool {
-		return i.BinlogInfo.SchemaVersion < j.BinlogInfo.SchemaVersion
+	slices.SortFunc(ddlJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.BinlogInfo.SchemaVersion, j.BinlogInfo.SchemaVersion)
 	})
 
 	for _, job := range ddlJobs {
@@ -1824,11 +1825,28 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 				zap.Stringer("table", tbl.OldTable.Info.Name),
 				zap.Stringer("db", tbl.OldTable.DB.Name))
 			for {
-				progress, err := infosync.CalculateTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, tiFlashStores)
-				if err != nil {
-					log.Warn("failed to get tiflash replica progress, wait for next retry", zap.Error(err))
-					time.Sleep(time.Second)
-					continue
+				var progress float64
+				if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+					for _, p := range pi.Definitions {
+						progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+						if err != nil {
+							log.Warn("failed to get progress for tiflash partition replica, retry it",
+								zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
+							time.Sleep(time.Second)
+							continue
+						}
+						progress += progressOfPartition
+					}
+					progress = progress / float64(len(pi.Definitions))
+				} else {
+					var err error
+					progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+					if err != nil {
+						log.Warn("failed to get progress for tiflash replica, retry it",
+							zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+						time.Sleep(time.Second)
+						continue
+					}
 				}
 				// check until progress is 1
 				if progress == 1 {
@@ -2805,26 +2823,14 @@ func (rc *Client) InitSchemasReplaceForDDL(
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {
-	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) bool {
-		if i.GetMinTs() < j.GetMinTs() {
-			return true
-		} else if i.GetMinTs() > j.GetMinTs() {
-			return false
+	slices.SortFunc(files, func(i, j *backuppb.DataFileInfo) int {
+		if c := cmp.Compare(i.GetMinTs(), j.GetMinTs()); c != 0 {
+			return c
 		}
-
-		if i.GetMaxTs() < j.GetMaxTs() {
-			return true
-		} else if i.GetMaxTs() > j.GetMaxTs() {
-			return false
+		if c := cmp.Compare(i.GetMaxTs(), j.GetMaxTs()); c != 0 {
+			return c
 		}
-
-		if i.GetResolvedTs() < j.GetResolvedTs() {
-			return true
-		} else if i.GetResolvedTs() > j.GetResolvedTs() {
-			return false
-		}
-
-		return true
+		return cmp.Compare(i.GetResolvedTs(), j.GetResolvedTs())
 	})
 	return files
 }
@@ -2864,6 +2870,11 @@ func (rc *Client) RestoreMetaKVFiles(
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
+
+	log.Info("start to restore meta files",
+		zap.Int("total files", len(files)),
+		zap.Int("default files", len(filesInDefaultCF)),
+		zap.Int("write files", len(filesInWriteCF)))
 
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.
@@ -2981,6 +2992,7 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 		if i == 0 {
 			rangeMax = f.MaxTs
 			rangeMin = f.MinTs
+			batchSize = f.Length
 		} else {
 			if f.MinTs <= rangeMax && batchSize+f.Length <= MetaKVBatchSize {
 				rangeMin = mathutil.Min(rangeMin, f.MinTs)
@@ -3013,16 +3025,18 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 				writeIdx = toWriteIdx
 			}
 		}
-		if i == len(defaultFiles)-1 {
-			_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
+	}
+
+	// restore the left meta kv files and entries
+	// Notice: restoreBatch needs to realize the parameter `files` and `kvEntries` might be empty
+	// Assert: defaultIdx <= len(defaultFiles) && writeIdx <= len(writeFiles)
+	_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -3071,8 +3085,8 @@ func (rc *Client) RestoreBatchMetaKVFiles(
 	}
 
 	// sort these entries.
-	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) bool {
-		return i.ts < j.ts
+	slices.SortFunc(curKvEntries, func(i, j *KvEntryWithTS) int {
+		return cmp.Compare(i.ts, j.ts)
 	})
 
 	// restore these entries with rawPut() method.

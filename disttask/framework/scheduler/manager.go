@@ -17,10 +17,14 @@ package scheduler
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -31,13 +35,14 @@ var (
 	schedulerPoolSize       int32 = 4
 	subtaskExecutorPoolSize int32 = 10
 	// same as dispatcher
-	checkTime = 300 * time.Millisecond
+	checkTime        = 300 * time.Millisecond
+	retrySQLTimes    = 3
+	retrySQLInterval = 500 * time.Millisecond
 )
 
 // ManagerBuilder is used to build a Manager.
 type ManagerBuilder struct {
-	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	newScheduler func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
+	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
 }
 
 // NewManagerBuilder creates a new ManagerBuilder.
@@ -46,18 +51,12 @@ func NewManagerBuilder() *ManagerBuilder {
 		newPool: func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
 			return spool.NewPool(name, size, component, options...)
 		},
-		newScheduler: NewInternalScheduler,
 	}
 }
 
 // setPoolFactory sets the poolFactory to mock the Pool in unit test.
 func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)) {
 	b.newPool = poolFactory
-}
-
-// setSchedulerFactory sets the schedulerFactory to mock the InternalScheduler in unit test.
-func (b *ManagerBuilder) setSchedulerFactory(schedulerFactory func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler) {
-	b.newScheduler = schedulerFactory
 }
 
 // Manager monitors the global task table and manages the schedulers.
@@ -73,13 +72,13 @@ type Manager struct {
 		// cancelFunc is used to fast cancel the scheduler.Run.
 		handlingTasks map[int64]context.CancelFunc
 	}
-	id           string
-	wg           sync.WaitGroup
-	ctx          context.Context
-	cancel       context.CancelFunc
-	logCtx       context.Context
-	newPool      func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-	newScheduler func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) InternalScheduler
+	// id, it's the same as server id now, i.e. host:port.
+	id      string
+	wg      sync.WaitGroup
+	ctx     context.Context
+	cancel  context.CancelFunc
+	logCtx  context.Context
+	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
 }
 
 // BuildManager builds a Manager.
@@ -90,7 +89,6 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		subtaskExecutorPools: make(map[string]Pool),
 		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
 		newPool:              b.newPool,
-		newScheduler:         b.newScheduler,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
@@ -116,8 +114,24 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 }
 
 // Start starts the Manager.
-func (m *Manager) Start() {
+func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
+	var err error
+	for i := 0; i < retrySQLTimes; i++ {
+		err = m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+		if err == nil {
+			break
+		}
+		if i%10 == 0 {
+			logutil.Logger(m.logCtx).Warn("start manager failed", zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
+				zap.Int("retry times", retrySQLTimes), zap.Error(err))
+		}
+		time.Sleep(retrySQLInterval)
+	}
+	if err != nil {
+		return err
+	}
+
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
@@ -129,6 +143,7 @@ func (m *Manager) Start() {
 		defer m.wg.Done()
 		m.fetchAndFastCancelTasks(m.ctx)
 	}()
+	return nil
 }
 
 // Stop stops the Manager.
@@ -252,6 +267,14 @@ func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task 
 	return tasks[:i]
 }
 
+// TestContext only used in tests.
+type TestContext struct {
+	TestSyncSubtaskRun chan struct{}
+	mockDown           atomic.Bool
+}
+
+var testContexts sync.Map
+
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType string) {
 	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("task_id", taskID), zap.Any("type", taskType))
@@ -260,15 +283,29 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 		return
 	}
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
-	scheduler := m.newScheduler(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
-	scheduler.Start()
-	defer scheduler.Stop()
+	factory := getSchedulerFactory(taskType)
+	if factory == nil {
+		m.onError(errors.Errorf("task type %s not found", taskType))
+		return
+	}
+	scheduler := factory(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(checkTime):
 		}
+		failpoint.Inject("mockStopManager", func() {
+			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
+			go func() {
+				v, ok := testContexts.Load(m.id)
+				if ok {
+					<-v.(*TestContext).TestSyncSubtaskRun
+					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
+					m.Stop()
+				}
+			}()
+		})
 		task, err := m.taskTable.GetGlobalTaskByID(taskID)
 		if err != nil {
 			m.onError(err)

@@ -287,7 +287,7 @@
       "tools/check/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
-      "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "tests/integrationtest/main.go": "ignore tests/integrationtest code",
       "GOROOT/": "ignore code",
       "server/internal/testserverclient/server_client.go": "ignore server_client code",
       ".*_generated\\.go$": "ignore generated code"
@@ -338,6 +338,7 @@
   },
   "lll": {
     "exclude_files": {
+      ".*_test\\.go$": "ignore test code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
@@ -410,6 +411,7 @@
       "planner/core/": "ignore core code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
+      "planner/cardinality/": "ignore cardinality code",
       "planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
       "planner/funcdep/only_full_group_by_test.go": "ignore only_full_group_by code",
       "dumpling/export": "ignore export code",

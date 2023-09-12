@@ -25,7 +25,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -37,6 +36,8 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/framework/handle"
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -1617,7 +1618,6 @@ type addIndexIngestWorker struct {
 	writer           ingest.Writer
 	copReqSenderPool *copReqSenderPool
 	checkpointMgr    *ingest.CheckpointManager
-	flushLock        *sync.RWMutex
 
 	resultCh   chan *backfillResult
 	jobID      int64
@@ -1653,11 +1653,11 @@ func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlC
 }
 
 // WriteLocal will write index records to lightning engine.
-func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey kv.Key, err error) {
+func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.chunk)
+	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.Chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -1668,7 +1668,7 @@ func (w *addIndexIngestWorker) WriteLocal(rs *idxRecResult) (count int, nextKey 
 }
 
 func writeChunkToLocal(writer ingest.Writer,
-	index table.Index, copCtx *copContext, vars *variable.SessionVars,
+	index table.Index, copCtx *CopContext, vars *variable.SessionVars,
 	copChunk *chunk.Chunk) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
@@ -1901,13 +1901,16 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	})
 
 	g.Go(func() error {
-		ticker := time.NewTicker(CheckBackfillJobFinishInterval)
-		defer ticker.Stop()
+		checkFinishTk := time.NewTicker(CheckBackfillJobFinishInterval)
+		defer checkFinishTk.Stop()
+		updateRowCntTk := time.NewTicker(UpdateBackfillJobRowCountInterval)
+		defer updateRowCntTk.Stop()
 		for {
 			select {
 			case <-done:
+				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 				return nil
-			case <-ticker.C:
+			case <-checkFinishTk.C:
 				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
@@ -1919,10 +1922,32 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 						continue
 					}
 				}
+			case <-updateRowCntTk.C:
+				w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 			}
 		}
 	})
-	return g.Wait()
+	err = g.Wait()
+	return err
+}
+
+func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
+	taskMgr, err := storage.GetTaskManager()
+	if err != nil {
+		logutil.BgLogger().Warn("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	gTask, err := taskMgr.GetGlobalTaskByKey(taskKey)
+	if err != nil || gTask == nil {
+		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	rowCount, err := taskMgr.GetSubtaskRowCount(gTask.ID, proto.StepInit)
+	if err != nil {
+		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+		return
+	}
+	w.getReorgCtx(jobID).setRowCount(rowCount)
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

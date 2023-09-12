@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal/applycache"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
@@ -253,7 +254,7 @@ func (fetcher *probeSideTupleFetcher) fetchProbeSideChunks(ctx context.Context, 
 			required := int(atomic.LoadInt64(&fetcher.requiredRows))
 			probeSideResult.SetRequiredRows(required, maxChunkSize)
 		}
-		err := Next(ctx, fetcher.probeSideExec, probeSideResult)
+		err := exec.Next(ctx, fetcher.probeSideExec, probeSideResult)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			fetcher.joinResultCh <- &hashjoinWorkerResult{
@@ -332,7 +333,7 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 			return
 		}
 		chk := sessVars.GetNewChunkWithCapacity(w.buildSideExec.Base().RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize, w.hashJoinCtx.allocPool)
-		err = Next(ctx, w.buildSideExec, chk)
+		err = exec.Next(ctx, w.buildSideExec, chk)
 		if err != nil {
 			errCh <- errors.Trace(err)
 			return
@@ -372,7 +373,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	e.probeSideTupleFetcher.probeChkResourceCh = make(chan *probeChkResource, e.concurrency)
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeSideTupleFetcher.probeChkResourceCh <- &probeChkResource{
-			chk:  newFirstChunk(e.probeSideTupleFetcher.probeSideExec),
+			chk:  exec.NewFirstChunk(e.probeSideTupleFetcher.probeSideExec),
 			dest: e.probeSideTupleFetcher.probeResultChs[i],
 		}
 	}
@@ -381,7 +382,7 @@ func (e *HashJoinExec) initializeForProbe() {
 	// from the main thread to probe worker goroutines.
 	for i := uint(0); i < e.concurrency; i++ {
 		e.probeWorkers[i].joinChkResourceCh = make(chan *chunk.Chunk, 1)
-		e.probeWorkers[i].joinChkResourceCh <- newFirstChunk(e)
+		e.probeWorkers[i].joinChkResourceCh <- exec.NewFirstChunk(e)
 		e.probeWorkers[i].probeChkResourceCh = e.probeSideTupleFetcher.probeChkResourceCh
 	}
 }
@@ -1120,7 +1121,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			keyColIdx:   e.buildWorker.buildKeyColIdx,
 			naKeyColIdx: e.buildWorker.buildNAKeyColIdx,
 		}
-		e.rowContainer = newHashRowContainer(e.Ctx(), hCtx, retTypes(e.buildWorker.buildSideExec))
+		e.rowContainer = newHashRowContainer(e.Ctx(), hCtx, exec.RetTypes(e.buildWorker.buildSideExec))
 		// we shallow copies rowContainer for each probe worker to avoid lock contention
 		for i := uint(0); i < e.concurrency; i++ {
 			if i == 0 {
@@ -1319,9 +1320,9 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 	}
 	e.cursor = 0
 	e.innerRows = e.innerRows[:0]
-	e.outerChunk = tryNewCacheChunk(e.outerExec)
-	e.innerChunk = tryNewCacheChunk(e.innerExec)
-	e.innerList = chunk.NewList(retTypes(e.innerExec), e.InitCap(), e.MaxChunkSize())
+	e.outerChunk = exec.TryNewCacheChunk(e.outerExec)
+	e.innerChunk = exec.TryNewCacheChunk(e.innerExec)
+	e.innerList = chunk.NewList(exec.RetTypes(e.innerExec), e.InitCap(), e.MaxChunkSize())
 
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
@@ -1365,11 +1366,11 @@ func aggExecutorTreeInputEmpty(e exec.Executor) bool {
 	if aggExecutorTreeInputEmpty(children[0]) {
 		return true
 	}
-	if hashAgg, ok := e.(*HashAggExec); ok {
-		return hashAgg.isChildReturnEmpty
+	if hashAgg, ok := e.(*aggregate.HashAggExec); ok {
+		return hashAgg.IsChildReturnEmpty
 	}
-	if streamAgg, ok := e.(*StreamAggExec); ok {
-		return streamAgg.isChildReturnEmpty
+	if streamAgg, ok := e.(*aggregate.StreamAggExec); ok {
+		return streamAgg.IsChildReturnEmpty
 	}
 	return false
 }
@@ -1378,7 +1379,7 @@ func (e *NestedLoopApplyExec) fetchSelectedOuterRow(ctx context.Context, chk *ch
 	outerIter := chunk.NewIterator4Chunk(e.outerChunk)
 	for {
 		if e.outerChunkCursor >= e.outerChunk.NumRows() {
-			err := Next(ctx, e.outerExec, e.outerChunk)
+			err := exec.Next(ctx, e.outerExec, e.outerChunk)
 			if err != nil {
 				return nil, err
 			}
@@ -1422,13 +1423,13 @@ func (e *NestedLoopApplyExec) fetchAllInners(ctx context.Context) error {
 
 	if e.canUseCache {
 		// create a new one since it may be in the cache
-		e.innerList = chunk.NewList(retTypes(e.innerExec), e.InitCap(), e.MaxChunkSize())
+		e.innerList = chunk.NewList(exec.RetTypes(e.innerExec), e.InitCap(), e.MaxChunkSize())
 	} else {
 		e.innerList.Reset()
 	}
 	innerIter := chunk.NewIterator4Chunk(e.innerChunk)
 	for {
-		err := Next(ctx, e.innerExec, e.innerChunk)
+		err := exec.Next(ctx, e.innerExec, e.innerChunk)
 		if err != nil {
 			return err
 		}

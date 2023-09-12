@@ -104,7 +104,7 @@ func (ds *SingleTargetDataSink) run() (rerun bool) {
 		r := recover()
 		if r != nil {
 			logutil.BgLogger().Error("panic in SingleTargetDataSink, rerun",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			rerun = true
 		}

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -135,7 +136,7 @@ func groupByColumnsSortBySelectivity(sctx sessionctx.Context, conds []expression
 	// Estimate the selectivity of each group and check if it is larger than the selectivityThreshold
 	var exprGroups []expressionGroup
 	for _, group := range groupMap {
-		selectivity, _, err := physicalTableScan.tblColHists.Selectivity(sctx, group, nil)
+		selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, group, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -226,7 +227,7 @@ func predicatePushDownToTableScanImpl(sctx sessionctx.Context, physicalSelection
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
-		selectivity, _, err := physicalTableScan.tblColHists.Selectivity(sctx, mergedConds, nil)
+		selectivity, _, err := cardinality.Selectivity(sctx, physicalTableScan.tblColHists, mergedConds, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue

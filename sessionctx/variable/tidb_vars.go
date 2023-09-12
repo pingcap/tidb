@@ -410,6 +410,12 @@ const (
 	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
+	// TiFlashMemQuotaQueryPerNode is the maximum bytes used by a TiFlash Query on each TiFlash node
+	TiFlashMemQuotaQueryPerNode = "tiflash_mem_quota_query_per_node"
+
+	// TiFlashQuerySpillRatio is the threshold that TiFlash will trigger auto spill when the memory usage is above this percentage
+	TiFlashQuerySpillRatio = "tiflash_query_spill_ratio"
+
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// Default value is `true`, means never use pipeline model in tiflash.
 	// Value set to `true` means try to execute query with pipeline model in tiflash.
@@ -904,6 +910,10 @@ const (
 
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// Please see comments of SessionVars.OptObjective for details.
+	TiDBOptObjective = "tidb_opt_objective"
 )
 
 // TiDB vars that have only global scope
@@ -972,6 +982,8 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
+	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
 	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
@@ -1085,6 +1097,10 @@ const (
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
 	TiDBSessionAlias = "tidb_session_alias"
+	// TiDBServiceScope indicates the role for tidb for distributed task framework.
+	TiDBServiceScope = "tidb_service_scope"
+	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
+	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
 )
 
 // TiDB intentional limits
@@ -1172,6 +1188,8 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
+	DefTiFlashMemQuotaQueryPerNode                 = 0
+	DefTiFlashQuerySpillRatio                      = 0.7
 	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
@@ -1310,7 +1328,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = true
+	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
@@ -1389,6 +1407,8 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptObjective                               = OptObjectiveModerate
+	DefTiDBSchemaVersionCacheLimit                    = 16
 )
 
 // Process global variables.
@@ -1484,6 +1504,9 @@ var (
 	EnableResourceControl     = atomic.NewBool(false)
 	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	ServiceScope              = atomic.NewString("")
+	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
+	CloudStorageURI           = atomic.NewString("")
 )
 
 var (
@@ -1507,6 +1530,10 @@ var (
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
+	// RedactCloudStorageURI redacts the cloud storage URI.
+	RedactCloudStorageURI func(uri string) (string, error)
+	// ValidateCloudStorageURI validates the cloud storage URI.
+	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 )
 
 // Hooks functions for Cluster Resource Control.

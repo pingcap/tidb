@@ -290,11 +290,26 @@ func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64,
 func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint64, error) {
 	str = strings.TrimSpace(str)
 	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
-	if validPrefix[0] == '+' {
-		validPrefix = validPrefix[1:]
+	uVal := uint64(0)
+	hasParseErr := false
+
+	if validPrefix[0] == '-' {
+		// only `-000*` is valid to be converted into unsigned integer
+		for _, v := range validPrefix[1:] {
+			if v != '0' {
+				hasParseErr = true
+				break
+			}
+		}
+	} else {
+		if validPrefix[0] == '+' {
+			validPrefix = validPrefix[1:]
+		}
+		v, e := strconv.ParseUint(validPrefix, 10, 64)
+		uVal, hasParseErr = v, e != nil
 	}
-	uVal, err1 := strconv.ParseUint(validPrefix, 10, 64)
-	if err1 != nil {
+
+	if hasParseErr {
 		return uVal, ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", validPrefix)
 	}
 	return uVal, errors.Trace(err)

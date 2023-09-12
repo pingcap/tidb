@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"golang.org/x/exp/maps"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -636,6 +637,9 @@ func OrderByDependency(names map[string]string) []string {
 
 func init() {
 	sysVars = make(map[string]*SysVar)
+	setHintUpdatable(defaultSysVars)
+	// Destroy the map after init.
+	maps.Clear(isHintUpdatable)
 	for _, v := range defaultSysVars {
 		RegisterSysVar(v)
 	}

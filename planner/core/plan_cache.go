@@ -44,8 +44,10 @@ import (
 )
 
 var (
-	// PlanCacheKeyTestIssue43667 is for test.
+	// PlanCacheKeyTestIssue43667 is only for test.
 	PlanCacheKeyTestIssue43667 struct{}
+	// PlanCacheKeyTestIssue46760 is only for test.
+	PlanCacheKeyTestIssue46760 struct{}
 )
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
