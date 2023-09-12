@@ -50,11 +50,6 @@ go_test(
     ],
     embed = [":gcworker"],
     flaky = True,
-<<<<<<< HEAD
-=======
-    race = "on",
-    shard_count = 29,
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
     deps = [
         "//ddl/placement",
         "//ddl/util",
