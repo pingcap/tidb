@@ -856,12 +856,12 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'check_constraint' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
-				// Sleep 50ms to wait load InforSchema finish.
-				gotime.Sleep(50 * gotime.Millisecond)
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
 		}
+		// Sleep 50ms to wait load InforSchema finish.
+		gotime.Sleep(50 * gotime.Millisecond)
 	}
 	waitFor("nt", "write only", 4)
 
@@ -967,12 +967,12 @@ func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
 			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'check_constraint' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
 			if len(res) == 1 && res[0][pos] == s {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
-				// Sleep 50ms to wait load InforSchema finish.
-				gotime.Sleep(50 * gotime.Millisecond)
 				break
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
 		}
+		// Sleep 50ms to wait load InforSchema finish.
+		gotime.Sleep(50 * gotime.Millisecond)
 	}
 	waitFor("nt", "write only", 4)
 
