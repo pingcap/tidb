@@ -56,7 +56,7 @@ const (
 	maxSkipOffsetByRead = 1 << 16 // 64KB
 
 	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
-	hardcodedS3ChunkSize = 5 * 100 * 1024 * 1024
+	hardcodedS3ChunkSize = 128 * 1024 * 1024
 	defaultRegion        = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
