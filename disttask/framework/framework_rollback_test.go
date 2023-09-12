@@ -30,7 +30,9 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type rollbackDispatcherExt struct{}
+type rollbackDispatcherExt struct {
+	cnt int
+}
 
 var _ dispatcher.Extension = (*rollbackDispatcherExt)(nil)
 var rollbackCnt atomic.Int32
@@ -38,9 +40,9 @@ var rollbackCnt atomic.Int32
 func (*rollbackDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*rollbackDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
-		gTask.Step = proto.StepOne
+func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+	if gTask.Step == proto.StepInit {
+		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -60,6 +62,14 @@ func (*rollbackDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.T
 
 func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 	return true
+}
+
+func (dsp *rollbackDispatcherExt) StageFinished(task *proto.Task) bool {
+	return task.Step == proto.StepInit && dsp.cnt >= 3
+}
+
+func (dsp *rollbackDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == proto.StepInit && dsp.cnt >= 3
 }
 
 type testRollbackMiniTask struct{}
@@ -125,7 +135,7 @@ func TestFrameworkRollback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
 	}()
 
-	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	distContext.Close()

@@ -89,7 +89,7 @@ func TestDispatcherExt(t *testing.T) {
 	// to import stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{}
-	subtaskMetas, err := ext.OnNextStage(ctx, d, task)
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	require.Equal(t, importinto.StepImport, task.Step)
@@ -109,7 +109,8 @@ func TestDispatcherExt(t *testing.T) {
 		require.NoError(t, manager.FinishSubtask(s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextStage(ctx, d, task)
+	task.Step++
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	require.Equal(t, importinto.StepPostProcess, task.Step)
@@ -118,7 +119,8 @@ func TestDispatcherExt(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextStage(ctx, d, task)
+	task.Step++
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
@@ -133,7 +135,8 @@ func TestDispatcherExt(t *testing.T) {
 	bs, err = logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task.Meta = bs
-	task.Step = proto.StepInit
+	// Set step to StepPostProcess to skip the rollback sql.
+	task.Step = importinto.StepPostProcess
 	require.NoError(t, importer.StartJob(ctx, conn, jobID))
 	_, err = ext.OnErrStage(ctx, d, task, []error{errors.New("test")})
 	require.NoError(t, err)

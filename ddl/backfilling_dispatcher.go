@@ -50,11 +50,12 @@ func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 	}, nil
 }
 
+// OnTick implements dispatcher.Extension interface.
 func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-// OnNextStage generate next stage's plan.
-func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
+// OnNextSubtasksBatch generate batch of next stage's plan.
+func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
 	var globalTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
 		return nil, err
@@ -76,7 +77,6 @@ func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher
 		if err != nil {
 			return nil, err
 		}
-		gTask.Step = proto.StepOne
 		return subTaskMetas, nil
 	}
 
@@ -87,7 +87,6 @@ func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher
 		if err != nil {
 			return nil, err
 		}
-		gTask.Step = proto.StepOne
 		return subtaskMeta, nil
 	case proto.StepOne:
 		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
@@ -103,13 +102,20 @@ func (h *backfillingDispatcherExt) OnNextStage(ctx context.Context, _ dispatcher
 		for range serverNodes {
 			subTaskMetas = append(subTaskMetas, metaBytes)
 		}
-		gTask.Step = proto.StepTwo
 		return subTaskMetas, nil
-	case proto.StepTwo:
-		return nil, nil
 	default:
 		return nil, nil
 	}
+}
+
+// StageFinished check if current stage finished.
+func (*backfillingDispatcherExt) StageFinished(_ *proto.Task) bool {
+	return true
+}
+
+// Finished check if current task finished.
+func (*backfillingDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == proto.StepOne
 }
 
 // OnErrStage generate error handling stage's plan.
