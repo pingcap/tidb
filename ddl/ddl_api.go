@@ -4385,7 +4385,6 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	newPartInfo.NewTableID = newID[0]
 	newPartInfo.DDLType = piOld.Type
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
@@ -4394,12 +4393,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		Type:       model.ActionAlterTablePartitioning,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partNames, newPartInfo},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4455,7 +4449,6 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
@@ -4464,12 +4457,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		Type:       model.ActionReorganizePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partNames, partInfo},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4525,7 +4513,6 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 	partInfo.NewTableID = partInfo.Definitions[0].ID
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
@@ -4534,12 +4521,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 		Type:       model.ActionRemovePartitioning,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partNames, partInfo},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -5687,7 +5669,6 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(sctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -5695,14 +5676,9 @@ func GetModifiableColumnJob(
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       sctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		CtxVars: []interface{}{needChangeColData},
-		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		ReorgMeta:  NewDDLReorgMeta(sctx),
+		CtxVars:    []interface{}{needChangeColData},
+		Args:       []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
@@ -5953,8 +5929,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
@@ -5964,13 +5938,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		TableName:  tbl.Meta().Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Args: []interface{}{&newCol, oldColName, spec.Position, 0, 0},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
+		Args:       []interface{}{&newCol, oldColName, spec.Position, 0, 0},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -7090,8 +7059,6 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		}
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
@@ -7101,14 +7068,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
-		Priority: ctx.GetSessionVars().DDLReorgPriority,
+		ReorgMeta:  NewDDLReorgMeta(ctx),
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7342,7 +7304,6 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -7351,16 +7312,11 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
-		Priority: ctx.GetSessionVars().DDLReorgPriority,
-		Charset:  chs,
-		Collate:  coll,
+		ReorgMeta:  NewDDLReorgMeta(ctx),
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		Charset:    chs,
+		Collate:    coll,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -9011,4 +8967,16 @@ func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrN
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+// NewDDLReorgMeta create a DDL ReorgMeta.
+func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	return &model.DDLReorgMeta{
+		SQLMode:           ctx.GetSessionVars().SQLMode,
+		Warnings:          make(map[errors.ErrorID]*terror.Error),
+		WarningsCount:     make(map[errors.ErrorID]int64),
+		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		ResourceGroupName: ctx.GetSessionVars().ResourceGroupName,
+	}
 }

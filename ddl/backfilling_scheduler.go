@@ -128,15 +128,25 @@ func (b *txnBackfillScheduler) receiveResult() (*backfillResult, bool) {
 	return ret, ok
 }
 
-func newSessCtx(store kv.Storage, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) (sessionctx.Context, error) {
+func newSessCtx(
+	store kv.Storage,
+	sqlMode mysql.SQLMode,
+	tzLocation *model.TimeZoneLocation,
+	resourceGroupName string,
+) (sessionctx.Context, error) {
 	sessCtx := newContext(store)
 	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
 		return nil, errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().ResourceGroupName = resourceGroupName
 	return sessCtx, nil
 }
 
-func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) error {
+func initSessCtx(
+	sessCtx sessionctx.Context,
+	sqlMode mysql.SQLMode,
+	tzLocation *model.TimeZoneLocation,
+) error {
 	// Unify the TimeZone settings in newContext.
 	if sessCtx.GetSessionVars().StmtCtx.TimeZone == nil {
 		tz := *time.UTC
@@ -183,7 +193,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location)
+		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
 		if err != nil {
 			return err
 		}
@@ -383,7 +393,7 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
-	sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location)
+	sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		b.poolErr <- err
 		return nil
@@ -425,7 +435,7 @@ func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, e
 		return nil, errors.New("cannot find index info")
 	}
 	ri := b.reorgInfo
-	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta.SQLMode, ri.ReorgMeta.Location)
+	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta.SQLMode, ri.ReorgMeta.Location, ri.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err

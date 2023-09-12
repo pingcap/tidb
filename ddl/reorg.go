@@ -447,6 +447,10 @@ type reorgInfo struct {
 	currElement     *meta.Element
 }
 
+func (r *reorgInfo) NewJobContext() *JobContext {
+	return r.d.jobContext(r.Job.ID, r.Job.ReorgMeta)
+}
+
 func (r *reorgInfo) String() string {
 	var isEnabled bool
 	if ingest.LitInitialized {
@@ -519,9 +523,11 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
-		SetConcurrency(1).SetDesc(true)
+		SetConcurrency(1).
+		SetDesc(true).
+		SetResourceGroupTagger(ctx.getResourceGroupTaggerForTopSQL()).
+		SetResourceGroupName(ctx.resourceGroupName)
 
-	builder.Request.ResourceGroupTagger = ctx.getResourceGroupTaggerForTopSQL()
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
 	builder.RequestSource.RequestSourceInternal = true
