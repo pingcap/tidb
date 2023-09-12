@@ -61,6 +61,7 @@ require (
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/jellydator/ttlcache/v3 v3.0.1
 	github.com/jingyugao/rowserrcheck v1.1.1
+	github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.3
 	github.com/klauspost/compress v1.16.5
@@ -139,7 +140,9 @@ require (
 )
 
 require (
+	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
+	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
 )
 
