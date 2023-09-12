@@ -1361,6 +1361,10 @@ func TestTiDBTiFlashReplicaRead(t *testing.T) {
 }
 
 func TestSetEnableTiFlashPipeline(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
 	enablePipeline := GetSysVar(TiDBEnableTiFlashPipelineMode)
 	// Check default value
 	require.Equal(t, "ON", enablePipeline.Value)
