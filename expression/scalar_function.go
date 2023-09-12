@@ -489,6 +489,23 @@ func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
 	return sf.hashcode
 }
 
+// HistoryStatsHashCode implements Expression interface.
+func (sf *ScalarFunction) HistoryStatsHashCode(sc *stmtctx.StatementContext) []byte {
+	hashcode := make([]byte, 0, len(sf.hashcode))
+	hashcode = append(hashcode, scalarFunctionFlag)
+	hashcode = codec.EncodeCompactBytes(hashcode, hack.Slice(sf.FuncName.L))
+	for _, arg := range sf.GetArgs() {
+		hashcode = append(hashcode, arg.HistoryStatsHashCode(sc)...)
+	}
+	// Cast is a special case. The RetType should also be considered as an argument.
+	// Please see `newFunctionImpl()` for detail.
+	if sf.FuncName.L == ast.Cast {
+		evalTp := sf.RetType.EvalType()
+		hashcode = append(hashcode, byte(evalTp))
+	}
+	return hashcode
+}
+
 // ExpressionsSemanticEqual is used to judge whether two expression tree is semantic equivalent.
 func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) bool {
 	sc := ctx.GetSessionVars().StmtCtx

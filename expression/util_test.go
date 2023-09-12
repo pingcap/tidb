@@ -600,7 +600,35 @@ func TestSortAndGenMD5HashForCNFExprs(t *testing.T) {
 	require.True(t, succ)
 	require.True(t, hashCode10 == hashCode11)
 
-	// TODO: Test constant with param marker
+	// Test constant with param marker
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewDatum(101))
+	paramMarkerConstant := NewInt64Const(100)
+	expr4p := newFunction(ast.LE, newColumn(1), paramMarkerConstant)
+	// Little tricky here, because newFunction will set constant's ParamMarker field to nil, thus replace it here
+	paramMarkerConstant.ParamMarker = &ParamMarker{ctx, 0}
+	expr4p.(*ScalarFunction).Function.getArgs()[1] = paramMarkerConstant
+	// (expr2 or expr3) and (expr4p or expr1)
+	conditions = []Expression{
+		newFunction(ast.LogicOr, expr2, expr3),
+		newFunction(ast.LogicOr, expr4p, expr1),
+	}
+	succ, hashCode12 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, !hashCodeSet[hashCode12])
+	hashCodeSet[hashCode12] = true
+
+	ctx.GetSessionVars().PlanCacheParams.Append(types.NewDatum(100))
+	paramMarkerConstant = NewInt64Const(300)
+	expr4p = newFunction(ast.LE, newColumn(1), paramMarkerConstant)
+	paramMarkerConstant.ParamMarker = &ParamMarker{ctx, 1}
+	expr4p.(*ScalarFunction).Function.getArgs()[1] = paramMarkerConstant
+	conditions = []Expression{
+		newFunction(ast.LogicOr, expr2, expr3),
+		newFunction(ast.LogicOr, expr4p, expr1),
+	}
+	succ, hashCode13 := SortAndGenMD5HashForCNFExprs(sc, conditions)
+	require.True(t, succ)
+	require.True(t, hashCode11 == hashCode13)
 }
 
 func BenchmarkExtractColumns(b *testing.B) {
@@ -729,6 +757,7 @@ func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)         
 func (m *MockExpr) ExplainInfo() string                                           { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
+func (m *MockExpr) HistoryStatsHashCode(sc *stmtctx.StatementContext) []byte      { return nil }
 func (m *MockExpr) Vectorized() bool                                              { return false }
 func (m *MockExpr) SupportReverseEval() bool                                      { return false }
 func (m *MockExpr) HasCoercibility() bool                                         { return false }

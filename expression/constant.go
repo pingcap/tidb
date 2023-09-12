@@ -460,6 +460,22 @@ func (c *Constant) HashCode(sc *stmtctx.StatementContext) []byte {
 	return c.hashcode
 }
 
+// HistoryStatsHashCode implements Expression interface.
+func (c *Constant) HistoryStatsHashCode(sc *stmtctx.StatementContext) []byte {
+	if c.ParamMarker == nil {
+		return c.HashCode(sc)
+	}
+
+	value, err := c.Eval(chunk.Row{})
+	if err != nil {
+		terror.Log(err)
+	}
+	hashcode := make([]byte, 0, len(c.hashcode))
+	hashcode = append(hashcode, constantFlag)
+	hashcode = codec.HashCode(hashcode, value)
+	return hashcode
+}
+
 // ResolveIndices implements Expression interface.
 func (c *Constant) ResolveIndices(_ *Schema) (Expression, error) {
 	return c, nil

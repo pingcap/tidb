@@ -1804,9 +1804,9 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 // Otherwise, return false and 0
 // The differences between this function with CanonicalHashCode is:
 // 1. CanonicalHashCode will treat "a < b" the same with "b >= a", while this function won't
-// 2. This function will treat {"A or B or C", "A or C or B", "B or A or C", "B or C or A", "C or A or B", "C or B or A"} all the same,
+// 2. This function treats {"A or B or C", "A or C or B", "B or A or C", "B or C or A", "C or A or B", "C or B or A"} all the same,
 // while CanonicalHashCode won't
-// TODO: treat "a > 3" the same with "a > ?" whose parameter is set 3. Currently, the hash code of constant with ParamMarker
+// 3. This function treats "a > 3" the same with "a > ?" whose parameter is set 3. While CanonicalHashCode of constant with ParamMarker
 // contains ParamMarker order only, no value included
 func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Expression) (bool, uint64) {
 	cnfHashCodes := make([][]byte, 0, len(conditions))
@@ -1821,7 +1821,7 @@ func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Exp
 			}
 			dnfHashCodes := make([][]byte, 0, len(dnfExprs))
 			for _, dnf := range dnfExprs {
-				dnfHashCode := dnf.HashCode(sc)
+				dnfHashCode := dnf.HistoryStatsHashCode(sc)
 				dnfHashCodes = checkHashLengthAndAppend(dnfHashCode, dnfHashCodes)
 			}
 			sort.Slice(dnfHashCodes, func(i, j int) bool { return bytes.Compare(dnfHashCodes[i], dnfHashCodes[j]) < 0 })
@@ -1829,7 +1829,7 @@ func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Exp
 			flatDnfHashCode := bytes.Join(dnfHashCodes, nil)
 			cnfHashCodes = append(cnfHashCodes, flatDnfHashCode)
 		} else {
-			flatDnfHashCode := arg.HashCode(sc)
+			flatDnfHashCode := arg.HistoryStatsHashCode(sc)
 			cnfHashCodes = checkHashLengthAndAppend(flatDnfHashCode, cnfHashCodes)
 		}
 	}
