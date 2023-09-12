@@ -32,6 +32,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/exp/zapslog"
 )
 
 const (
@@ -123,6 +124,8 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	}
 	log.ReplaceGlobals(gl, props)
 
+	XXX(cfg)
+
 	// init dedicated logger for slow query log
 	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
 	if err != nil {
@@ -132,6 +135,25 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	initGRPCLogger(gl)
 	tikv.SetLogContextKey(CtxLogKey)
 	return nil
+}
+
+func XXX(cfg *LogConfig) {
+	encoder, err := log.NewTextEncoder(&cfg.Config)
+	if err != nil {
+		panic(err)
+	}
+
+	stdOut, _, err := zap.Open([]string{"stdout"}...)
+	if err != nil {
+		panic(err)
+	}
+	output := stdOut
+
+	level := zap.NewAtomicLevel()
+	core := log.NewTextCore(encoder, output, level)
+	handler := zapslog.NewHandler(core, nil)
+	logger := slog.New(handler)
+	slog.SetDefault(logger)
 }
 
 func initGRPCLogger(gl *zap.Logger) {
@@ -199,11 +221,10 @@ var CtxLogKey = ctxLogKeyType{}
 // Logger gets a contextual logger from current context.
 // contextual logger will output common fields from context.
 func Logger(ctx context.Context) *slog.Logger {
-	panic("TODO")
-	// if ctxlogger, ok := ctx.Value(CtxLogKey).(*slog.Logger); ok {
-	// 	return ctxlogger
-	// }
-	// return log.L()
+	if ctxlogger, ok := ctx.Value(CtxLogKey).(*slog.Logger); ok {
+		return ctxlogger
+	}
+	return slog.Default()
 }
 
 // BgLogger is alias of `log()`
@@ -214,8 +235,7 @@ func BgLogger() *slog.Logger {
 // LoggerWithTraceInfo attaches fields from trace info to logger
 func LoggerWithTraceInfo(logger *slog.Logger, info *model.TraceInfo) *slog.Logger {
 	if logger == nil {
-		// logger = log.L()
-		panic("TODO")
+		logger = slog.Default()
 	}
 
 	if fields := fieldsFromTraceInfo(info); len(fields) > 0 {
@@ -274,41 +294,58 @@ func WithTraceLogger(ctx context.Context, info *model.TraceInfo) context.Context
 	if ctxLogger, ok := ctx.Value(CtxLogKey).(*slog.Logger); ok {
 		logger = ctxLogger
 	} else {
-		// logger = log.L()
-		panic("TODO")
+		logger = slog.Default()
 	}
 	return context.WithValue(ctx, CtxLogKey, wrapTraceLogger(ctx, info, logger))
 }
 
-func wrapTraceLogger(ctx context.Context, info *model.TraceInfo, logger *slog.Logger) *zap.Logger {
-	panic("TODO")
-	// return logger.WithOptions(slog.WrapCore(func(core zapcore.Core) zapcore.Core {
-	// 	tl := &traceLog{ctx: ctx}
-	// 	// cfg.Format == "", never return error
-	// 	enc, _ := log.NewTextEncoder(&log.Config{})
-	// 	traceCore := log.NewTextCore(enc, tl, tl)
-	// 	if fields := fieldsFromTraceInfo(info); len(fields) > 0 {
-	// 		traceCore = traceCore.With(fields)
-	// 	}
-	// 	return zapcore.NewTee(traceCore, core)
-	// }))
+// wrapTraceLogger wrap the logger and tee the result to both the logger and trace.Log()
+func wrapTraceLogger(ctx context.Context, info *model.TraceInfo, logger *slog.Logger) *slog.Logger {
+	var handler slog.Handler
+	tl := &traceLog{ctx}
+	h := slog.NewTextHandler(tl, nil)
+	if fields := fieldsFromTraceInfo(info); len(fields) > 0 {
+		handler = h.WithAttrs(fields)
+	} else {
+		handler = h
+	}
+
+	orig := logger.Handler()
+	return slog.New(&extendHandler{orig, tl, handler})
 }
+
+type extendHandler struct {
+	orig slog.Handler
+	tl *traceLog
+	tee slog.Handler
+}
+
+func (h *extendHandler) Enabled(context.Context, slog.Level) bool {
+	return true
+}
+
+func (h *extendHandler) Handle(ctx context.Context, record slog.Record) error {
+	h.tl.ctx = ctx // important! should use the correct context
+	h.tee.Handle(ctx, record)
+	return h.orig.Handle(ctx, record)
+}
+
+func (h *extendHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return h.orig.WithAttrs(attrs)
+}
+
+func (h *extendHandler) WithGroup(name string) slog.Handler {
+	return h.orig.WithGroup(name)
+}
+
 
 type traceLog struct {
 	ctx context.Context
 }
 
-func (*traceLog) Enabled(_ zapcore.Level) bool {
-	return true
-}
-
 func (t *traceLog) Write(p []byte) (n int, err error) {
 	trace.Log(t.ctx, "log", string(p))
 	return len(p), nil
-}
-
-func (*traceLog) Sync() error {
-	return nil
 }
 
 // WithKeyValue attaches key/value to context.
@@ -322,8 +359,7 @@ func WithFields(ctx context.Context, fields ...slog.Attr) context.Context {
 	if ctxLogger, ok := ctx.Value(CtxLogKey).(*slog.Logger); ok {
 		logger = ctxLogger
 	} else {
-		// logger = log.L()
-		panic("TODO")
+		logger = slog.Default()
 	}
 
 	if len(fields) > 0 {
