@@ -74,9 +74,7 @@ func (p *AnalyzeProgress) Update(rowCount int64) int64 {
 		dumpCount = p.deltaCount.Load()
 		p.deltaCount.Store(0)
 
-		p.lastDumpTimeMu.Lock()
-		p.lastDumpTime = t
-		p.lastDumpTimeMu.Unlock()
+		p.SetLastDumpTime(t)
 	}
 
 	return dumpCount
