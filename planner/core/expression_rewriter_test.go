@@ -290,6 +290,17 @@ func TestExpressionRewriterIssue(t *testing.T) {
 	tk.MustExec("create table t(x bigint unsigned);")
 	tk.MustExec("insert into t values( 9999999703771440633);")
 	tk.MustQuery("select ifnull(max(x), 0) from t").Check(testkit.Rows("9999999703771440633"))
+	// Issue22818
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a time);")
+	tk.MustExec("insert into t values(\"23:22:22\");")
+	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(testkit.Rows("23:22:22"))
+	// Issue24705
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
+	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
+	err := tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
+	require.EqualError(t, err, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
 }
 
 func TestCompareMultiFieldsInSubquery(t *testing.T) {
@@ -317,27 +328,6 @@ func TestCompareMultiFieldsInSubquery(t *testing.T) {
 	tk.MustExec("INSERT INTO t4 VALUES (1, 2);")
 	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows())
 	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows())
-}
-
-func TestIssue22818(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a time);")
-	tk.MustExec("insert into t values(\"23:22:22\");")
-	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(testkit.Rows("23:22:22"))
-}
-
-func TestIssue24705(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1,t2;")
-	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
-	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
-	err := tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
-	require.EqualError(t, err, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
 }
 
 func TestBetweenExprCollation(t *testing.T) {
