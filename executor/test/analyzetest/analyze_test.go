@@ -3129,6 +3129,8 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
 }
 
+// TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
+// It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
 	// 1. prepare the table and insert data
 	store, dom := testkit.CreateMockStoreAndDomain(t)
