@@ -1143,6 +1143,25 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 	}
 }
 
+func pushedLimitCountingDown(pushedLimit *plannercore.PushedDownLimit, handles []kv.Handle) (next bool, res []kv.Handle) {
+	fhsLen := uint64(len(handles))
+	// The number of handles is less than the offset, discard all handles.
+	if fhsLen <= pushedLimit.Offset {
+		pushedLimit.Offset -= fhsLen
+		return true, nil
+	}
+	handles = handles[pushedLimit.Offset:]
+	pushedLimit.Offset = 0
+
+	fhsLen = uint64(len(handles))
+	// The number of handles is greater than the limit, only keep limit count.
+	if fhsLen > pushedLimit.Count {
+		handles = handles[:pushedLimit.Count]
+	}
+	pushedLimit.Count -= mathutil.Min(pushedLimit.Count, fhsLen)
+	return false, handles
+}
+
 func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-chan *indexMergeTableTask,
 	workCh chan<- *indexMergeTableTask, resultCh chan<- *indexMergeTableTask, finished <-chan struct{}) {
 	failpoint.Inject("testIndexMergeResultChCloseEarly", func(_ failpoint.Value) {
@@ -1212,21 +1231,11 @@ func (w *indexMergeProcessWorker) fetchLoopUnion(ctx context.Context, fetchCh <-
 			continue
 		}
 		if pushedLimit != nil {
-			fhsLen := uint64(len(fhs))
-			// The number of handles is less than the offset, discard all handles.
-			if fhsLen <= pushedLimit.Offset {
-				pushedLimit.Offset -= fhsLen
+			next, res := pushedLimitCountingDown(pushedLimit, fhs)
+			if next {
 				continue
 			}
-			fhs = fhs[pushedLimit.Offset:]
-			pushedLimit.Offset = 0
-
-			fhsLen = uint64(len(fhs))
-			// The number of handles is greater than the limit, only keep limit count.
-			if fhsLen > pushedLimit.Count {
-				fhs = fhs[:pushedLimit.Count]
-			}
-			pushedLimit.Count -= mathutil.Min(pushedLimit.Count, fhsLen)
+			fhs = res
 		}
 		task = &indexMergeTableTask{
 			lookupTableTask: lookupTableTask{
@@ -1298,22 +1307,11 @@ func (w *intersectionCollectWorker) doIntersectionLimitAndDispatch(ctx context.C
 					close(w.limitDone)
 					return
 				}
-				rows := uint64(len(task.handles))
-				// The number of handles is less than the offset, discard all handles.
-				if rows <= w.pushedLimit.Offset {
-					w.pushedLimit.Offset -= rows
-					// wait next intersection result task
+				next, handles := pushedLimitCountingDown(w.pushedLimit, task.handles)
+				if next {
 					continue
 				}
-				task.handles = task.handles[w.pushedLimit.Offset:]
-				w.pushedLimit.Offset = 0
-
-				rows = uint64(len(task.handles))
-				// The number of handles is greater than the limit, only keep limit count.
-				if rows > w.pushedLimit.Count {
-					task.handles = task.handles[:w.pushedLimit.Count]
-				}
-				w.pushedLimit.Count -= mathutil.Min(w.pushedLimit.Count, rows)
+				task.handles = handles
 			}
 			// dispatch the new task to workCh and resultCh.
 			select {
