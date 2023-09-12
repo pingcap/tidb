@@ -174,6 +174,7 @@ nogo(
            }) +
            select({
                "//build:without_rbe": [
+                   "//build/linter/filepermission",
                ],
                "//conditions:default": [],
            }),
