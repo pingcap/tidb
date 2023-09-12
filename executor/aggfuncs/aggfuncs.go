@@ -142,7 +142,7 @@ type PartialResult unsafe.Pointer
 // AggPartialResultMapper contains aggregate function results
 type AggPartialResultMapper map[string][]PartialResult
 
-type aggSpillHelper interface {
+type serializer interface {
 	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
 	SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
 
@@ -152,7 +152,7 @@ type aggSpillHelper interface {
 
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
-	aggSpillHelper
+	serializer
 
 	// AllocPartialResult allocates a specific data structure to store the
 	// partial result, initializes it, and converts it to PartialResult to
