@@ -349,12 +349,12 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			return
 		}
 		if err1 != nil {
-			logger.Error("close data writer failed", zap.Error(err))
+			logger.Error("close data writer failed", zap.Error(err1))
 			err = err1
 			return
 		}
 		if err2 != nil {
-			logger.Error("close stat writer failed", zap.Error(err))
+			logger.Error("close stat writer failed", zap.Error(err2))
 			err = err2
 			return
 		}
@@ -421,12 +421,12 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	err error,
 ) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, nil)
+	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, nil)
+	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
 		return "", "", nil, nil, err
 	}

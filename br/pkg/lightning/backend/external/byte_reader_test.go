@@ -17,10 +17,19 @@ package external
 import (
 	"context"
 	"io"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/credentials"
+	"github.com/aws/aws-sdk-go/aws/session"
+	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -50,8 +59,26 @@ func (s *mockExtStore) Close() error {
 }
 
 func TestByteReader(t *testing.T) {
+	testByteReaderNormal(t, false)
+	testByteReaderNormal(t, true)
+}
+
+func testByteReaderNormal(t *testing.T, useConcurrency bool) {
+	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
+	defer clean()
+
+	// Prepare
+	err := st.WriteFile(context.Background(), "testfile", []byte("abcde"))
+	require.NoError(t, err)
+
+	newRsc := func() storage.ReadSeekCloser {
+		rsc, err := st.Open(context.Background(), "testfile")
+		require.NoError(t, err)
+		return rsc
+	}
+
 	// Test basic next() usage.
-	br, err := newByteReader(context.Background(), &mockExtStore{src: []byte("abcde")}, 3)
+	br, err := newByteReader(context.Background(), newRsc(), 3, st, "testfile", useConcurrency)
 	require.NoError(t, err)
 	x := br.next(1)
 	require.Equal(t, 1, len(x))
@@ -63,7 +90,7 @@ func TestByteReader(t *testing.T) {
 	require.NoError(t, br.Close())
 
 	// Test basic readNBytes() usage.
-	br, err = newByteReader(context.Background(), &mockExtStore{src: []byte("abcde")}, 3)
+	br, err = newByteReader(context.Background(), newRsc(), 3, st, "testfile", useConcurrency)
 	require.NoError(t, err)
 	y, err := br.readNBytes(2)
 	require.NoError(t, err)
@@ -73,7 +100,7 @@ func TestByteReader(t *testing.T) {
 	require.Equal(t, byte('b'), x[1])
 	require.NoError(t, br.Close())
 
-	br, err = newByteReader(context.Background(), &mockExtStore{src: []byte("abcde")}, 3)
+	br, err = newByteReader(context.Background(), newRsc(), 3, st, "testfile", useConcurrency)
 	require.NoError(t, err)
 	y, err = br.readNBytes(5) // Read all the data.
 	require.NoError(t, err)
@@ -82,13 +109,16 @@ func TestByteReader(t *testing.T) {
 	require.Equal(t, byte('e'), x[4])
 	require.NoError(t, br.Close())
 
-	br, err = newByteReader(context.Background(), &mockExtStore{src: []byte("abcde")}, 3)
+	br, err = newByteReader(context.Background(), newRsc(), 3, st, "testfile", useConcurrency)
 	require.NoError(t, err)
 	_, err = br.readNBytes(7) // EOF
 	require.Error(t, err)
 
+	err = st.WriteFile(context.Background(), "testfile", []byte("abcdef"))
+	require.NoError(t, err)
+
 	ms := &mockExtStore{src: []byte("abcdef")}
-	br, err = newByteReader(context.Background(), ms, 2)
+	br, err = newByteReader(context.Background(), ms, 2, nil, "", false)
 	require.NoError(t, err)
 	y, err = br.readNBytes(3)
 	require.NoError(t, err)
@@ -100,7 +130,7 @@ func TestByteReader(t *testing.T) {
 	require.NoError(t, br.Close())
 
 	ms = &mockExtStore{src: []byte("abcdef")}
-	br, err = newByteReader(context.Background(), ms, 2)
+	br, err = newByteReader(context.Background(), ms, 2, nil, "", false)
 	require.NoError(t, err)
 	y, err = br.readNBytes(2)
 	require.NoError(t, err)
@@ -115,7 +145,7 @@ func TestByteReader(t *testing.T) {
 
 func TestByteReaderClone(t *testing.T) {
 	ms := &mockExtStore{src: []byte("0123456789")}
-	br, err := newByteReader(context.Background(), ms, 4)
+	br, err := newByteReader(context.Background(), ms, 4, nil, "", false)
 	require.NoError(t, err)
 	y1, err := br.readNBytes(2)
 	require.NoError(t, err)
@@ -135,7 +165,7 @@ func TestByteReaderClone(t *testing.T) {
 	require.NoError(t, br.Close())
 
 	ms = &mockExtStore{src: []byte("0123456789")}
-	br, err = newByteReader(context.Background(), ms, 4)
+	br, err = newByteReader(context.Background(), ms, 4, nil, "", false)
 	require.NoError(t, err)
 	y1, err = br.readNBytes(2)
 	require.NoError(t, err)
@@ -158,7 +188,7 @@ func TestByteReaderClone(t *testing.T) {
 
 func TestByteReaderAuxBuf(t *testing.T) {
 	ms := &mockExtStore{src: []byte("0123456789")}
-	br, err := newByteReader(context.Background(), ms, 1)
+	br, err := newByteReader(context.Background(), ms, 1, nil, "", false)
 	require.NoError(t, err)
 	y1, err := br.readNBytes(1)
 	require.NoError(t, err)
@@ -178,6 +208,16 @@ func TestByteReaderAuxBuf(t *testing.T) {
 }
 
 func TestReset(t *testing.T) {
+	testReset(t, false)
+	testReset(t, true)
+}
+
+func testReset(t *testing.T, useConcurrency bool) {
+	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
+	defer func() {
+		clean()
+	}()
+
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
@@ -185,9 +225,17 @@ func TestReset(t *testing.T) {
 	for i := range src {
 		src[i] = byte(i)
 	}
-	ms := &mockExtStore{src: src}
+	// Prepare
+	err := st.WriteFile(context.Background(), "testfile", src)
+	require.NoError(t, err)
+
+	newRsc := func() storage.ReadSeekCloser {
+		rsc, err := st.Open(context.Background(), "testfile")
+		require.NoError(t, err)
+		return rsc
+	}
 	bufSize := rand.Intn(256)
-	br, err := newByteReader(context.Background(), ms, bufSize)
+	br, err := newByteReader(context.Background(), newRsc(), bufSize, st, "testfile", useConcurrency)
 	require.NoError(t, err)
 	end := 0
 	toCheck := make([]*[]byte, 0, 10)
@@ -219,8 +267,27 @@ func TestReset(t *testing.T) {
 }
 
 func TestUnexpectedEOF(t *testing.T) {
-	ms := &mockExtStore{src: []byte("0123456789")}
-	br, err := newByteReader(context.Background(), ms, 3)
+	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
+	defer func() {
+		clean()
+	}()
+
+	// Prepare
+	err := st.WriteFile(context.Background(), "testfile", []byte("0123456789"))
+	require.NoError(t, err)
+
+	newRsc := func() storage.ReadSeekCloser {
+		rsc, err := st.Open(context.Background(), "testfile")
+		require.NoError(t, err)
+		return rsc
+	}
+
+	br, err := newByteReader(context.Background(), newRsc(), 3, st, "testfile", false)
+	require.NoError(t, err)
+	_, err = br.readNBytes(100)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
+
+	br, err = newByteReader(context.Background(), newRsc(), 3, st, "testfile", true)
 	require.NoError(t, err)
 	_, err = br.readNBytes(100)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
@@ -228,6 +295,101 @@ func TestUnexpectedEOF(t *testing.T) {
 
 func TestEmptyContent(t *testing.T) {
 	ms := &mockExtStore{src: []byte{}}
-	_, err := newByteReader(context.Background(), ms, 100)
+	_, err := newByteReader(context.Background(), ms, 100, nil, "", false)
 	require.Equal(t, io.EOF, err)
+
+	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
+	defer clean()
+
+	// Prepare
+	err = st.WriteFile(context.Background(), "testfile", []byte(""))
+	require.NoError(t, err)
+
+	newRsc := func() storage.ReadSeekCloser {
+		rsc, err := st.Open(context.Background(), "testfile")
+		require.NoError(t, err)
+		return rsc
+	}
+	_, err = newByteReader(context.Background(), newRsc(), 100, st, "testfile", true)
+	require.Equal(t, io.EOF, err)
+}
+
+func TestSwitchMode(t *testing.T) {
+	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
+	defer clean()
+
+	// Prepare
+	fileSize := 1024 * 1024
+	err := st.WriteFile(context.Background(), "testfile", make([]byte, fileSize))
+	require.NoError(t, err)
+
+	newRsc := func() storage.ReadSeekCloser {
+		rsc, err := st.Open(context.Background(), "testfile")
+		require.NoError(t, err)
+		return rsc
+	}
+
+	ConcurrentReaderBufferSize = 100
+	br, err := newByteReader(context.Background(), newRsc(), 100, st, "testfile", false)
+
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	totalCnt := 0
+	modeUseCon := false
+	for totalCnt < fileSize {
+		if rand.Intn(5) == 0 {
+			if modeUseCon {
+				br.switchReaderMode(false)
+				modeUseCon = false
+			} else {
+				br.switchReaderMode(true)
+				modeUseCon = true
+			}
+		}
+		n := rand.Intn(100)
+		if n == 0 {
+			n = 1
+		}
+		if totalCnt+n > fileSize {
+			n = fileSize - totalCnt
+		}
+		if n == 0 {
+			break
+		}
+		y, err := br.readNBytes(n)
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+		totalCnt += len(*y)
+	}
+	require.Equal(t, fileSize, totalCnt)
+
+}
+
+// NewS3WithBucketAndPrefix creates a new S3Storage for testing.
+func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*storage.S3Storage, func()) {
+	backend := s3mem.New()
+	faker := gofakes3.New(backend)
+	ts := httptest.NewServer(faker.Server())
+	err := backend.CreateBucket("test")
+	require.NoError(t, err)
+
+	config := aws.NewConfig()
+	config.WithEndpoint(ts.URL)
+	config.WithRegion("region")
+	config.WithCredentials(credentials.NewStaticCredentials("dummy-access", "dummy-secret", ""))
+	config.WithS3ForcePathStyle(true) // Removes need for subdomain
+	svc := s3.New(session.New(), config)
+
+	st := storage.NewS3StorageForTest(svc, &backuppb.S3{
+		Region:       "region",
+		Bucket:       bucketName,
+		Prefix:       prefixName,
+		Acl:          "acl",
+		Sse:          "sse",
+		StorageClass: "sc",
+	})
+	return st, ts.Close
 }
