@@ -4539,36 +4539,6 @@ func TestIssue24429(t *testing.T) {
 	tk.MustExec("drop table if exists t;")
 }
 
-func TestVitessHash(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_int, t_blob, t_varchar;")
-	tk.MustExec("create table t_int(id int, a bigint unsigned null);")
-	tk.MustExec("insert into t_int values " +
-		"(1, 30375298039), " +
-		"(2, 1123), " +
-		"(3, 30573721600), " +
-		"(4, " + strconv.FormatUint(uint64(math.MaxUint64), 10) + ")," +
-		"(5, 116)," +
-		"(6, null);")
-
-	// Integers
-	tk.MustQuery("select hex(vitess_hash(a)) from t_int").
-		Check(testkit.Rows(
-			"31265661E5F1133",
-			"31B565D41BDF8CA",
-			"1EFD6439F2050FFD",
-			"355550B2150E2451",
-			"1E1788FF0FDE093C",
-			"<nil>"))
-
-	// Nested function sanity test
-	tk.MustQuery("select hex(vitess_hash(convert(a, decimal(8,4)))) from t_int where id = 5").
-		Check(testkit.Rows("1E1788FF0FDE093C"))
-}
-
 func TestVitessHashMatchesVitessShards(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
