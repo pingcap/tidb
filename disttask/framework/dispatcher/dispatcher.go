@@ -57,8 +57,6 @@ var (
 type TaskHandle interface {
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
-	// updateTask update the task in tidb_global_task table.
-	updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) error
 	storage.SessionExecutor
 }
 

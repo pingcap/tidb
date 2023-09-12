@@ -536,7 +536,6 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
-				logger.Info("ywq test jobid", zap.Any("jobid", taskMeta.JobID))
 				return importer.StartJob(ctx, exec, taskMeta.JobID)
 			})
 		},
