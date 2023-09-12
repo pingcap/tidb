@@ -90,7 +90,7 @@ binary	1
 gbk_bin	2
 latin1_bin	1
 utf8_bin	3
-utf8mb4_bin	4
+utf8mb4_0900_ai_ci	4
 SELECT character_set_name, id, sortlen FROM information_schema.collations ORDER BY collation_name, id;
 character_set_name	id	sortlen
 ascii	65	1
