@@ -640,8 +640,15 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			return err
 		}
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			retryable = false
-			return errors.New("invalid task state transform, state already changed")
+			rs, err := ExecSQL(stm.ctx, se, "select id from  mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
+			if err != nil {
+				return err
+			}
+			// state have changed.
+			if len(rs) == 0 {
+				retryable = false
+				return errors.New("invalid task state transform, state already changed")
+			}
 		}
 
 		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
@@ -649,23 +656,23 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 				failpoint.Return(errors.New("updateTaskErr"))
 			}
 		})
+		if len(subtasks) > 0 {
+			subtaskState := proto.TaskStatePending
+			if gTask.State == proto.TaskStateReverting {
+				subtaskState = proto.TaskStateRevertPending
+			}
 
-		subtaskState := proto.TaskStatePending
-		if gTask.State == proto.TaskStateReverting {
-			subtaskState = proto.TaskStateRevertPending
-		}
-
-		for _, subtask := range subtasks {
-			// TODO: insert subtasks in batch
-			_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
+			for _, subtask := range subtasks {
+				// TODO: insert subtasks in batch
+				_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
 					(step, task_key, exec_id, meta, state, type, checkpoint, summary)
 					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
-				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
-			if err != nil {
-				return err
+					gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
+				if err != nil {
+					return err
+				}
 			}
 		}
-
 		return nil
 	})
 
