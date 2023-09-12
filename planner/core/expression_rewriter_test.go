@@ -262,7 +262,8 @@ func TestPatternLikeToExpression(t *testing.T) {
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
 
-func TestIssue20007(t *testing.T) {
+func TestExpressionRewriterIssue(t *testing.T) {
+	// Issue20007
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -276,27 +277,30 @@ func TestIssue20007(t *testing.T) {
 		tk.MustQuery("select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str); ").Check(
 			testkit.Rows("2 epic wiles 2020-01-02 23:29:51", "3 silly burnell 2020-02-25 07:43:07"))
 	}
-}
 
-func TestIssue9869(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
+	// Issue9869
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int, b bigint unsigned);")
 	tk.MustExec("insert into t1 (a, b) values (1,4572794622775114594), (2,18196094287899841997),(3,11120436154190595086);")
 	tk.MustQuery("select (case t1.a when 0 then 0 else t1.b end), cast(t1.b as signed)  from t1;").Check(
 		testkit.Rows("4572794622775114594 4572794622775114594", "18196094287899841997 -250649785809709619", "11120436154190595086 -7326307919518956530"))
-}
 
-func TestIssue17652(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
+	// Issue17652
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(x bigint unsigned);")
 	tk.MustExec("insert into t values( 9999999703771440633);")
 	tk.MustQuery("select ifnull(max(x), 0) from t").Check(testkit.Rows("9999999703771440633"))
+	// Issue22818
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a time);")
+	tk.MustExec("insert into t values(\"23:22:22\");")
+	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(testkit.Rows("23:22:22"))
+	// Issue24705
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
+	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
+	err := tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
+	require.EqualError(t, err, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
 }
 
 func TestCompareMultiFieldsInSubquery(t *testing.T) {
@@ -324,27 +328,6 @@ func TestCompareMultiFieldsInSubquery(t *testing.T) {
 	tk.MustExec("INSERT INTO t4 VALUES (1, 2);")
 	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);").Check(testkit.Rows())
 	tk.MustQuery("SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);").Check(testkit.Rows())
-}
-
-func TestIssue22818(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a time);")
-	tk.MustExec("insert into t values(\"23:22:22\");")
-	tk.MustQuery("select * from t where a between \"23:22:22\" and \"23:22:22\"").Check(testkit.Rows("23:22:22"))
-}
-
-func TestIssue24705(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1,t2;")
-	tk.MustExec("create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);")
-	tk.MustExec("create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);")
-	err := tk.ExecToErr("select * from t1 where c_str < any (select c_str from t2 where c_int between 6 and 9);")
-	require.EqualError(t, err, "[expression:1267]Illegal mix of collations (utf8_general_ci,IMPLICIT) and (utf8_unicode_ci,IMPLICIT) for operation '<'")
 }
 
 func TestBetweenExprCollation(t *testing.T) {
