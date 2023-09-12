@@ -262,7 +262,8 @@ func TestPatternLikeToExpression(t *testing.T) {
 	tk.MustQuery("select 0.00 like '0.00';").Check(testkit.Rows("1"))
 }
 
-func TestIssue20007(t *testing.T) {
+func TestExpressionRewriterIssue(t *testing.T) {
+	// Issue20007
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
@@ -276,23 +277,15 @@ func TestIssue20007(t *testing.T) {
 		tk.MustQuery("select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str); ").Check(
 			testkit.Rows("2 epic wiles 2020-01-02 23:29:51", "3 silly burnell 2020-02-25 07:43:07"))
 	}
-}
 
-func TestIssue9869(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
+	// Issue9869
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(a int, b bigint unsigned);")
 	tk.MustExec("insert into t1 (a, b) values (1,4572794622775114594), (2,18196094287899841997),(3,11120436154190595086);")
 	tk.MustQuery("select (case t1.a when 0 then 0 else t1.b end), cast(t1.b as signed)  from t1;").Check(
 		testkit.Rows("4572794622775114594 4572794622775114594", "18196094287899841997 -250649785809709619", "11120436154190595086 -7326307919518956530"))
-}
 
-func TestIssue17652(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
+	// Issue17652
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t(x bigint unsigned);")
 	tk.MustExec("insert into t values( 9999999703771440633);")
