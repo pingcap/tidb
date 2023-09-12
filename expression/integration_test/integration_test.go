@@ -3254,24 +3254,6 @@ func TestValuesEnum(t *testing.T) {
 	tk.MustQuery(`select * from t;`).Check(testkit.Rows(`1 b`))
 }
 
-func TestIssue9325(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue))")
-	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
-	result := tk.MustQuery("select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00'")
-	require.Len(t, result.Rows(), 2)
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a timestamp)")
-	tk.MustExec("insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01')")
-	result = tk.MustQuery("select * from t where a < timestamp'2019-02-16 14:21:00'")
-	result.Check(testkit.Rows("2019-02-16 14:19:59", "2019-02-16 14:20:01"))
-}
-
 func TestIssue9710(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -4026,20 +4008,6 @@ func TestCTEWithDML(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5"))
 }
 
-func TestIssue16505(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("CREATE TABLE t(c varchar(100), index idx(c(100)));")
-	tk.MustExec("INSERT INTO t VALUES (NULL),('1'),('0'),(''),('aaabbb'),('0abc'),('123e456'),('0.0001deadsfeww');")
-	tk.MustQuery("select * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
-	tk.MustQuery("select /*+ USE_INDEX(t, idx) */ * from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
-	tk.MustQuery("select /*+ IGNORE_INDEX(t, idx) */* from t where c;").Sort().Check(testkit.Rows("0.0001deadsfeww", "1", "123e456"))
-	tk.MustExec("drop table t;")
-}
-
 func TestIssue16697(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -4362,20 +4330,6 @@ func TestIssue11333(t *testing.T) {
 	tk.MustQuery(`select 0.000000000000000000000000000000000000000000000000000000000000000000000001;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
 }
 
-// The actual results do not agree with the test results, It should be modified after the test suite is updated
-func TestIssue17726(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t0")
-	tk.MustExec("create table t0 (c1 DATE, c2 TIME, c3 DATETIME, c4 TIMESTAMP)")
-	tk.MustExec("insert into t0 values ('1000-01-01', '-838:59:59', '1000-01-01 00:00:00', '1970-01-01 08:00:01')")
-	tk.MustExec("insert into t0 values ('9999-12-31', '838:59:59', '9999-12-31 23:59:59', '2038-01-19 11:14:07')")
-	result := tk.MustQuery("select avg(c1), avg(c2), avg(c3), avg(c4) from t0")
-	result.Check(testkit.Rows("54995666 0 54995666117979.5 20040110095704"))
-}
-
 func TestDatetimeUserVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -4524,19 +4478,6 @@ func TestApproximatePercentile(t *testing.T) {
 	tk.MustExec("create table t (a bit(10))")
 	tk.MustExec("insert into t values(b'1111')")
 	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
-}
-
-func TestIssue24429(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set @@sql_mode = ANSI_QUOTES;")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int);")
-	tk.MustQuery(`select t."a"=10 from t;`).Check(testkit.Rows())
-	tk.MustExec("drop table if exists t;")
 }
 
 func TestVitessHash(t *testing.T) {
@@ -5376,53 +5317,6 @@ func TestIdentity(t *testing.T) {
 	tk.MustQuery("SELECT @@identity, LAST_INSERT_ID()").Check(testkit.Rows("3 3"))
 }
 
-func TestIssue29417(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (f1 decimal(5,5));")
-	tk.MustExec("insert into t1 values (-0.12345);")
-	tk.MustQuery("select concat(f1) from t1;").Check(testkit.Rows("-0.12345"))
-}
-
-func TestIssue29513(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select '123' union select cast(45678 as char);").Sort().Check(testkit.Rows("123", "45678"))
-	tk.MustQuery("select '123' union select cast(45678 as char(2));").Sort().Check(testkit.Rows("123", "45"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("insert into t values(45678);")
-	tk.MustQuery("select '123' union select cast(a as char) from t;").Sort().Check(testkit.Rows("123", "45678"))
-	tk.MustQuery("select '123' union select cast(a as char(2)) from t;").Sort().Check(testkit.Rows("123", "45"))
-}
-
-func TestIssue28739(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`USE test`)
-	tk.MustExec("SET time_zone = 'Europe/Vilnius'")
-	tk.MustQuery("SELECT UNIX_TIMESTAMP('2020-03-29 03:45:00')").Check(testkit.Rows("1585443600"))
-	tk.MustQuery("SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'))").Check(testkit.Rows("2020-03-29 04:00:00"))
-	tk.MustExec(`DROP TABLE IF EXISTS t`)
-	tk.MustExec(`CREATE TABLE t (dt DATETIME NULL)`)
-	defer tk.MustExec(`DROP TABLE t`)
-	// Test the vector implememtation
-	tk.MustExec(`INSERT INTO t VALUES ('2021-10-31 02:30:00'), ('2021-03-28 02:30:00'), ('2020-10-04 02:15:00'), ('2020-03-29 03:45:00'), (NULL)`)
-	tk.MustQuery(`SELECT dt, UNIX_TIMESTAMP(dt) FROM t`).Sort().Check(testkit.Rows(
-		"2020-03-29 03:45:00 1585443600",
-		"2020-10-04 02:15:00 1601766900",
-		"2021-03-28 02:30:00 1616891400",
-		"2021-10-31 02:30:00 1635636600",
-		"<nil> <nil>"))
-}
-
 func TestTimestampAddWithFractionalSecond(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -5689,19 +5583,4 @@ func TestIfNullParamMarker(t *testing.T) {
 	tk.MustExec(`set @a='1',@b=repeat('x', 80);`)
 	// Should not report 'Data too long for column' error.
 	tk.MustExec(`execute pr1 using @a,@b;`)
-}
-
-func TestIssue40015(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE test ( c1 varchar(20));")
-	tk.MustExec("INSERT INTO test VALUES (101111),(11100),(101111),(101111);")
-	tk.MustExec("set tidb_enable_vectorized_expression = true;")
-	tk.MustQuery("SELECT DATE_ADD(c1, INTERVAL 1 DAY_HOUR) from test;").Sort().Check(testkit.Rows(
-		"2010-11-11 01:00:00",
-		"2010-11-11 01:00:00",
-		"2010-11-11 01:00:00",
-		"<nil>",
-	))
 }

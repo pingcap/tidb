@@ -9,7 +9,7 @@ coverage.out
 *.test.bin
 tags
 profile.coverprofile
-integration_test
+mysql_tester
 tests/integrationtest/integration-test.out
 tests/integrationtest/integrationtest_tidb-server
 tests/integrationtest/portgenerator
