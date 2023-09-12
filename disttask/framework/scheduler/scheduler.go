@@ -215,10 +215,6 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 		s.markErrorHandled()
 		return
 	}
-	if ctx.Err() != nil {
-		s.onError(ctx.Err())
-		return
-	}
 	logutil.Logger(s.logCtx).Info("split subTask",
 		zap.Int("cnt", len(minimalTasks)),
 		zap.Int64("subtask_id", subtask.ID),
