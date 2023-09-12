@@ -117,12 +117,8 @@ func (t *testScheduler) Cleanup(_ context.Context) error { return nil }
 
 func (t *testScheduler) Rollback(_ context.Context) error { return nil }
 
-func (t *testScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
-	return []proto.MinimalTask{
-		testMiniTask{},
-		testMiniTask{},
-		testMiniTask{},
-	}, nil
+func (t *testScheduler) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	return nil
 }
 
 func (t *testScheduler) OnFinished(_ context.Context, _ *proto.Subtask) error {
@@ -215,7 +211,7 @@ func registerTaskMetaInner(t *testing.T, mockExtension scheduler.Extension, disp
 	scheduler.ClearSchedulers()
 	scheduler.RegisterTaskType(proto.TaskTypeExample,
 		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
+			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},
@@ -251,7 +247,7 @@ func RegisterTaskMetaForExample2Inner(t *testing.T, mockExtension scheduler.Exte
 		})
 	scheduler.RegisterTaskType(proto.TaskTypeExample2,
 		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
+			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},
@@ -287,7 +283,7 @@ func RegisterTaskMetaForExample3Inner(t *testing.T, mockExtension scheduler.Exte
 		})
 	scheduler.RegisterTaskType(proto.TaskTypeExample3,
 		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
+			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},

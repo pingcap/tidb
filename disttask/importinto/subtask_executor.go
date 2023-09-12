@@ -82,18 +82,6 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context) error {
 	return nil
 }
 
-type postProcessMinimalTaskExecutor struct {
-	mTask *postProcessStepMinimalTask
-}
-
-func (e *postProcessMinimalTaskExecutor) Run(ctx context.Context) error {
-	mTask := e.mTask
-	failpoint.Inject("waitBeforePostProcess", func() {
-		time.Sleep(5 * time.Second)
-	})
-	return postProcess(ctx, mTask.taskMeta, &mTask.meta, mTask.logger)
-}
-
 // postProcess does the post-processing for the task.
 func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
 	failpoint.Inject("syncBeforePostProcess", func() {
