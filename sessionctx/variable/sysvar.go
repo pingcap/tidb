@@ -2265,7 +2265,7 @@ var defaultSysVars = []*SysVar{
 		}
 		return cloudStorageURI, nil
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
-		if len(val) > 0 {
+		if len(val) > 0 && val != CloudStorageURI.Load() {
 			if err := ValidateCloudStorageURI(ctx, val); err != nil {
 				return err
 			}
