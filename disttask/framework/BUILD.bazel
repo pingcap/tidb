@@ -16,9 +16,9 @@ go_test(
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/mock",
+        "//disttask/framework/mock/execute",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
-        "//disttask/framework/scheduler/execute",
         "//disttask/framework/storage",
         "//domain/infosync",
         "//testkit",
