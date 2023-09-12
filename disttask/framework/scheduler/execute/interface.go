@@ -34,10 +34,3 @@ type SubtaskExecutor interface {
 	// Rollback is used to roll back all subtasks.
 	Rollback(context.Context) error
 }
-
-// MiniTaskExecutor defines the interface of a subtask executor.
-// User should implement this interface to define their own subtask executor.
-// TODO: Rename to minimal task executor.
-type MiniTaskExecutor interface {
-	Run(ctx context.Context) error
-}
