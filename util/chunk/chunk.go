@@ -15,6 +15,7 @@
 package chunk
 
 import (
+	"sync"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -365,6 +366,17 @@ func (c *Chunk) GetRow(idx int) Row {
 		return Row{c: c, idx: c.sel[idx]}
 	}
 	return Row{c: c, idx: idx}
+}
+
+// GetRowDatumFromPool gets the Row in the chunk with the row index.
+func (c *Chunk) GetRowDatumFromPool(
+	idx int, colIdx int,
+	tp *types.FieldType,
+	pool *sync.Pool) *types.Datum {
+	r := c.GetRow(idx)
+	d := pool.Get().(*types.Datum)
+	r.GetDatumWithBuffer(colIdx, tp, d)
+	return d
 }
 
 // AppendRow appends a row to the chunk.
