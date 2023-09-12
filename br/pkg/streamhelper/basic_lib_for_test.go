@@ -625,13 +625,6 @@ func (t *testEnv) getCheckpoint() uint64 {
 	return t.checkpoint
 }
 
-func (t *testEnv) unregisterTask() {
-	t.taskCh <- streamhelper.TaskEvent{
-		Type: streamhelper.EventDel,
-		Name: "whole",
-	}
-}
-
 func (t *testEnv) ScanLocksInOneRegion(bo *tikv.Backoffer, key []byte, maxVersion uint64, limit uint32) ([]*txnlock.Lock, *tikv.KeyLocation, error) {
 	for _, r := range t.regions {
 		if len(r.locks) != 0 {
