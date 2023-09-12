@@ -121,7 +121,6 @@ func (idx *Index) String() string {
 
 // TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
-	idx.CheckStats()
 	if idx.StatsVer >= Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
@@ -183,7 +182,6 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 // QueryBytes is used to query the count of specified bytes.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) {
-	idx.CheckStats()
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
