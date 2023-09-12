@@ -488,6 +488,9 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(sm)
 	require.NoError(t, err)
 	require.Equal(t, 0, historySubTasksCnt)
+	subTasks, err = sm.GetSubtasksForImportInto(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
 
 	// test TransferSubTasks2History
 	require.NoError(t, sm.TransferSubTasks2History(taskID))
@@ -495,10 +498,12 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	subTasks, err = storage.GetSubtasksByTaskIDForTest(sm, taskID)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 0)
-
 	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
 	require.NoError(t, err)
 	require.Equal(t, 3, historySubTasksCnt)
+	subTasks, err = sm.GetSubtasksForImportInto(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
 
 	// test GC
 	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")

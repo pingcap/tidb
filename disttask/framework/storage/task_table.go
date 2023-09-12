@@ -733,6 +733,8 @@ func (stm *TaskManager) GetSubtasksForImportInto(taskID, step int64) ([]*proto.S
 			return err
 		}
 
+		// To avoid the situation that the subtasks has been `TransferSubTasks2History`
+		// when the user show import jobs, we need to check the history table.
 		rsFromHistory, err := ExecSQL(stm.ctx, se,
 			"select * from mysql.tidb_background_subtask_history where task_key = %? and step = %?",
 			taskID, step,

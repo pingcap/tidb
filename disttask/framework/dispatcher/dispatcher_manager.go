@@ -211,14 +211,15 @@ func (dm *Manager) gcSubtaskHistoryTable() {
 	for {
 		select {
 		case <-dm.ctx.Done():
-			logutil.BgLogger().Info("task table gc loop exits", zap.Error(dm.ctx.Err()))
+			logutil.BgLogger().Info("subtask history table gc loop exits", zap.Error(dm.ctx.Err()))
 			return
 		case <-ticker.C:
 			err := dm.taskMgr.GC()
 			if err != nil {
-				logutil.BgLogger().Warn("task table gc failed", zap.Error(err))
+				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
+			} else {
+				logutil.Logger(dm.ctx).Info("subtask history table gc")
 			}
-			logutil.Logger(dm.ctx).Info("task table gc")
 		}
 	}
 }
