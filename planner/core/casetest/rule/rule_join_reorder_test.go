@@ -77,7 +77,7 @@ func TestOptEnableHashJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set tidb_opt_enable_hash_join=no")
+	tk.MustExec("set tidb_opt_enable_hash_join=off")
 	tk.MustExec("create table t1(a int, b int, key(a));")
 	tk.MustExec("create table t2(a int, b int, key(a));")
 	tk.MustExec("create table t3(a int, b int, key(a));")
