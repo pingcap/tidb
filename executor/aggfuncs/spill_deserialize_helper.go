@@ -352,10 +352,95 @@ func (s *spillDeserializeHelper) deserializePartialResult4FirstRowFloat64(dst *p
 	return false
 }
 
-// partialResult4FirstRowDecimal
-// partialResult4FirstRowString
-// partialResult4FirstRowTime
-// partialResult4FirstRowDuration
-// partialResult4FirstRowJSON
-// partialResult4FirstRowEnum
-// partialResult4FirstRowSet
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDecimal(dst *partialResult4FirstRowDecimal) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[readPos]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowString(dst *partialResult4FirstRowString) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = string(hack.String(bytes[readPos:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowTime(dst *partialResult4FirstRowTime) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = *(*types.Time)(unsafe.Pointer(&bytes[readPos]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDuration(dst *partialResult4FirstRowDuration) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.Duration = *(*time.Duration)(unsafe.Pointer(&bytes[readPos]))
+		readPos += durationLen
+		dst.val.Fsp = spill.DeserializeInt(bytes, readPos)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialResult4FirstRowJSON) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.TypeCode = bytes[readPos]
+		readPos++
+		dst.val.Value = make([]byte, len(bytes[readPos:]))
+		copy(dst.val.Value, bytes[readPos:])
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialResult4FirstRowEnum) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.Value = spill.DeserializeUint64(bytes, readPos)
+		readPos += 8
+		dst.val.Name = string(hack.String(bytes[readPos:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowSet(dst *partialResult4FirstRowSet) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.Value = spill.DeserializeUint64(bytes, readPos)
+		readPos += 8
+		dst.val.Name = string(hack.String(bytes[readPos:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}

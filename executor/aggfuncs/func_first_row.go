@@ -163,6 +163,40 @@ func (e *firstRow4Int) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialR
 	return nil
 }
 
+func (c *firstRow4Int) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowInt)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowInt(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4Int) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4Int) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowInt)(pr)
+	success := helper.deserializePartialResult4FirstRowInt(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type firstRow4Float32 struct {
 	baseAggFunc
 }
@@ -209,6 +243,40 @@ func (e *firstRow4Float32) AppendFinalResult2Chunk(_ sessionctx.Context, pr Part
 	return nil
 }
 
+func (c *firstRow4Float32) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowFloat32)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowFloat32(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4Float32) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4Float32) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowFloat32)(pr)
+	success := helper.deserializePartialResult4FirstRowFloat32(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type firstRow4Float64 struct {
 	baseAggFunc
 }
@@ -253,6 +321,40 @@ func (e *firstRow4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr Part
 	}
 	chk.AppendFloat64(e.ordinal, p.val)
 	return nil
+}
+
+func (c *firstRow4Float64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowFloat64(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4Float64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4Float64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowFloat64)(pr)
+	success := helper.deserializePartialResult4FirstRowFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type firstRow4String struct {
@@ -302,6 +404,40 @@ func (e *firstRow4String) AppendFinalResult2Chunk(_ sessionctx.Context, pr Parti
 	return nil
 }
 
+func (c *firstRow4String) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowString)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowString(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4String) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4String) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowString)(pr)
+	success := helper.deserializePartialResult4FirstRowString(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type firstRow4Time struct {
 	baseAggFunc
 }
@@ -346,6 +482,40 @@ func (e *firstRow4Time) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partial
 	}
 	chk.AppendTime(e.ordinal, p.val)
 	return nil
+}
+
+func (c *firstRow4Time) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowTime)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowTime(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4Time) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4Time) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowTime)(pr)
+	success := helper.deserializePartialResult4FirstRowTime(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type firstRow4Duration struct {
@@ -394,6 +564,40 @@ func (e *firstRow4Duration) AppendFinalResult2Chunk(_ sessionctx.Context, pr Par
 	return nil
 }
 
+func (c *firstRow4Duration) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowDuration)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowDuration(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4Duration) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4Duration) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowDuration)(pr)
+	success := helper.deserializePartialResult4FirstRowDuration(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type firstRow4JSON struct {
 	baseAggFunc
 }
@@ -438,6 +642,40 @@ func (e *firstRow4JSON) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partial
 	}
 	chk.AppendJSON(e.ordinal, p.val)
 	return nil
+}
+
+func (c *firstRow4JSON) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowJSON)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowJSON(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4JSON) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4JSON) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowJSON)(pr)
+	success := helper.deserializePartialResult4FirstRowJSON(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type firstRow4Decimal struct {
@@ -500,39 +738,39 @@ func (*firstRow4Decimal) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return memDelta, nil
 }
 
-// func (c *firstRow4Decimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-// 	pr := (*partialResult4FirstRowDecimal)(partialResult)
-// 	resBuf := spillHelper.serializePartialResult4MaxMinDecimal(*pr)
-// 	chk.AppendBytes(c.ordinal, resBuf)
-// }
+func (c *firstRow4Decimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowDecimal(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
 
-// func (c *firstRow4Decimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-// 	dataCol := src.Column(c.ordinal)
-// 	totalMemDelta := int64(0)
-// 	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
-// 	partialResults := make([]PartialResult, 0, src.NumRows())
+func (c *firstRow4Decimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
 
-// 	for {
-// 		pr, memDelta := c.deserializeForSpill(&spillHelper)
-// 		if pr == nil {
-// 			break
-// 		}
-// 		partialResults = append(partialResults, pr)
-// 		totalMemDelta += memDelta
-// 	}
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
 
-// 	return partialResults, totalMemDelta
-// }
+	return partialResults, totalMemDelta
+}
 
-// func (c *firstRow4Decimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
-// 	pr, memDelta := c.AllocPartialResult()
-// 	result := (*partialResult4FirstRowDecimal)(pr)
-// 	success := helper.deserializePartialResult4MaxMinDecimal(result)
-// 	if !success {
-// 		return nil, 0
-// 	}
-// 	return pr, memDelta
-// }
+func (c *firstRow4Decimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowDecimal)(pr)
+	success := helper.deserializePartialResult4FirstRowDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
 
 type firstRow4Enum struct {
 	baseAggFunc
@@ -581,6 +819,40 @@ func (e *firstRow4Enum) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partial
 	return nil
 }
 
+func (c *firstRow4Enum) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowEnum)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowEnum(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4Enum) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4Enum) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowEnum)(pr)
+	success := helper.deserializePartialResult4FirstRowEnum(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type firstRow4Set struct {
 	baseAggFunc
 }
@@ -626,4 +898,38 @@ func (e *firstRow4Set) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialR
 	}
 	chk.AppendSet(e.ordinal, p.val)
 	return nil
+}
+
+func (c *firstRow4Set) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4FirstRowSet)(partialResult)
+	resBuf := spillHelper.serializePartialResult4FirstRowSet(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *firstRow4Set) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *firstRow4Set) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4FirstRowSet)(pr)
+	success := helper.deserializePartialResult4FirstRowSet(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }

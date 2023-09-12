@@ -209,14 +209,12 @@ func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, Partia
 	return 0, nil
 }
 
-// TODO uncomment it
-// func (*baseAggFunc) SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-// }
+func (*baseAggFunc) SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
 
-// TODO uncomment it
-// func (*baseAggFunc) DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
-// 	return nil, 0
-// }
+func (*baseAggFunc) DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
+}
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
 type SlidingWindowAggFunc interface {
