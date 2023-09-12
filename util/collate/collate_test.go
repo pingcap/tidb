@@ -177,7 +177,7 @@ func TestGetCollator(t *testing.T) {
 	require.IsType(t, &zhPinyinTiDBASCSCollator{}, GetCollator("utf8mb4_zh_pinyin_tidb_as_cs"))
 	require.IsType(t, &unicode0900AICICollator{}, GetCollator("utf8mb4_0900_ai_ci"))
 	require.IsType(t, &binCollator{}, GetCollator("utf8mb4_0900_bin"))
-	require.IsType(t, &binPaddingCollator{}, GetCollator("default_test"))
+	require.IsType(t, &unicode0900AICICollator{}, GetCollator("default_test"))
 	require.IsType(t, &binCollator{}, GetCollatorByID(63))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(46))
 	require.IsType(t, &binPaddingCollator{}, GetCollatorByID(83))

@@ -531,8 +531,8 @@ const (
 	UTF8Charset    = "utf8"
 	UTF8MB4Charset = "utf8mb4"
 	DefaultCharset = UTF8MB4Charset
-	// DefaultCollationID is utf8mb4_bin(46)
-	DefaultCollationID        = 46
+	// DefaultCollationID is utf8mb4_0900_ai_ci(255)
+	DefaultCollationID        = 255
 	Latin1DefaultCollationID  = 47
 	ASCIIDefaultCollationID   = 65
 	UTF8DefaultCollationID    = 83
