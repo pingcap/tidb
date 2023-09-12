@@ -533,6 +533,9 @@ func TestStrToNum(t *testing.T) {
 	testStrToUint(t, "11xx", 11, true, ErrTruncatedWrongVal)
 	testStrToUint(t, "xx11", 0, true, ErrTruncatedWrongVal)
 
+	// for issue #44359
+	testStrToUint(t, "-00", 0, true, nil)
+
 	// TODO: makes StrToFloat return truncated value instead of zero to make it pass.
 	testStrToFloat(t, "", 0, true, ErrTruncatedWrongVal)
 	testStrToFloat(t, "-1", -1.0, true, nil)

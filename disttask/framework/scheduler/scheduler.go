@@ -84,7 +84,6 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				return
 			case <-ticker.C:
 				canceled, err := s.taskTable.IsSchedulerCanceled(s.taskID, s.id)
-				logutil.Logger(s.logCtx).Info("scheduler before canceled")
 				if err != nil {
 					continue
 				}
@@ -170,15 +169,25 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 		if err != nil {
-			s.onError(err)
-			break
+			logutil.Logger(s.logCtx).Warn("GetSubtaskInStates meets error", zap.Error(err))
+			continue
 		}
 		if subtask == nil {
-			break
+			newTask, err := s.taskTable.GetGlobalTaskByID(task.ID)
+			if err != nil {
+				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
+				continue
+			}
+			// When the task move to next step or task state changes, the scheduler should exit.
+			if newTask.Step != task.Step || newTask.State != task.State {
+				break
+			}
+			continue
 		}
 		s.startSubtask(subtask.ID)
 		if err := s.getError(); err != nil {
-			break
+			logutil.Logger(s.logCtx).Warn("startSubtask meets error", zap.Error(err))
+			continue
 		}
 		failpoint.Inject("mockCleanScheduler", func() {
 			v, ok := testContexts.Load(s.id)
@@ -216,11 +225,13 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 		zap.Int64("subtask_step", subtask.Step))
 
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
+		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
 			v, ok := testContexts.Load(s.id)
 			if ok {
 				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
 				v.(*TestContext).mockDown.Store(true)
+				logutil.Logger(s.logCtx).Info("mockTiDBDown")
 				time.Sleep(2 * time.Second)
 				failpoint.Return()
 			}
