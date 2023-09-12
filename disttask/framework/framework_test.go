@@ -35,16 +35,18 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type testDispatcherExt struct{}
+type testDispatcherExt struct {
+	cnt int
+}
 
 var _ dispatcher.Extension = (*testDispatcherExt)(nil)
 
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
-		gTask.Step = proto.StepOne
+func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+	if gTask.Step == proto.StepInit {
+		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -52,7 +54,7 @@ func (*testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle
 		}, nil
 	}
 	if gTask.Step == proto.StepOne {
-		gTask.Step = proto.StepTwo
+		dsp.cnt = 4
 		return [][]byte{
 			[]byte("task4"),
 		}, nil
@@ -62,6 +64,20 @@ func (*testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle
 
 func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, nil
+}
+
+func (dsp *testDispatcherExt) StageFinished(task *proto.Task) bool {
+	if task.Step == proto.StepInit && dsp.cnt >= 3 {
+		return true
+	}
+	if task.Step == proto.StepOne && dsp.cnt >= 4 {
+		return true
+	}
+	return false
+}
+
+func (dsp *testDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == proto.StepOne && dsp.cnt >= 4
 }
 
 func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
@@ -174,9 +190,9 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
 			switch step {
-			case proto.StepOne:
+			case proto.StepInit:
 				return &testSubtaskExecutor{m: m}, nil
-			case proto.StepTwo:
+			case proto.StepOne:
 				return &testSubtaskExecutor1{m: m}, nil
 			}
 			panic("invalid step")
@@ -212,9 +228,9 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
 			switch step {
-			case proto.StepOne:
+			case proto.StepInit:
 				return &testSubtaskExecutor2{m: m}, nil
-			case proto.StepTwo:
+			case proto.StepOne:
 				return &testSubtaskExecutor3{m: m}, nil
 			}
 			panic("invalid step")
@@ -223,6 +239,10 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 }
 
 func RegisterTaskMetaForExample2Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
+	t.Cleanup(func() {
+		dispatcher.ClearDispatcherFactory()
+		scheduler.ClearSchedulers()
+	})
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
@@ -244,9 +264,9 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
 			switch step {
-			case proto.StepOne:
+			case proto.StepInit:
 				return &testSubtaskExecutor4{m: m}, nil
-			case proto.StepTwo:
+			case proto.StepOne:
 				return &testSubtaskExecutor5{m: m}, nil
 			}
 			panic("invalid step")
@@ -255,6 +275,10 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 }
 
 func RegisterTaskMetaForExample3Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
+	t.Cleanup(func() {
+		dispatcher.ClearDispatcherFactory()
+		scheduler.ClearSchedulers()
+	})
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample3,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
@@ -500,6 +524,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockExecutorRunErr"))
 	}()
 	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+
 	distContext.Close()
 }
 
@@ -563,7 +588,6 @@ func TestSchedulerDownBasic(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
-
 	distContext.Close()
 }
 
@@ -582,7 +606,6 @@ func TestSchedulerDownManyNodes(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockCleanScheduler"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/mockStopManager"))
-
 	distContext.Close()
 }
 
