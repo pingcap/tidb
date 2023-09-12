@@ -5697,35 +5697,3 @@ func TestIssue40015(t *testing.T) {
 		"<nil>",
 	))
 }
-
-func TestIssue44196(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// decimal
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("CREATE TABLE t1 (c1 INT);")
-	tk.MustExec("INSERT INTO t1 VALUES (1), (null);")
-	tk.MustQuery("SELECT IFNULL(c1, 0.0) from t1;").Check(testkit.Rows("1.0", "0.0"))
-	tk.MustQuery("SELECT if(c1 is not null, c1, 0.0) from t1;").Check(testkit.Rows("1.0", "0.0"))
-	tk.MustQuery("SELECT case when c1 is not null then c1 else 0.0 end from t1;").Check(testkit.Rows("1.0", "0.0"))
-
-	// datetime
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("CREATE TABLE t1 (v1 datetime(3), v2 datetime(4));")
-	tk.MustExec("INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');")
-	tk.MustQuery("SELECT IFNULL(v1, v2) from t1;").Check(testkit.Rows("2020-01-01 11:11:11.1230", "2020-01-01 11:11:11.1234"))
-	tk.MustQuery("SELECT if(v1 is not null, v1, v2) from t1;").Check(testkit.Rows("2020-01-01 11:11:11.1230", "2020-01-01 11:11:11.1234"))
-	tk.MustQuery("SELECT case when v1 is not null then v1 else v2 end from t1;").Check(testkit.Rows("2020-01-01 11:11:11.1230", "2020-01-01 11:11:11.1234"))
-
-	// timestamp
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("CREATE TABLE t1 (v1 timestamp(3), v2 timestamp(4));")
-	tk.MustExec("INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');")
-	tk.MustQuery("SELECT IFNULL(v1, v2) from t1;").Check(testkit.Rows("2020-01-01 11:11:11.1230", "2020-01-01 11:11:11.1234"))
-	tk.MustQuery("SELECT if(v1 is not null, v1, v2) from t1;").Check(testkit.Rows("2020-01-01 11:11:11.1230", "2020-01-01 11:11:11.1234"))
-	tk.MustQuery("SELECT case when v1 is not null then v1 else v2 end from t1;").Check(testkit.Rows("2020-01-01 11:11:11.1230", "2020-01-01 11:11:11.1234"))
-}

@@ -2517,3 +2517,48 @@ INSERT INTO t1 VALUES (0);
 SELECT c1>=CAST('-787360724' AS TIME) FROM t1;
 c1>=CAST('-787360724' AS TIME)
 1
+drop table if exists t1;
+CREATE TABLE t1 (c1 INT);
+INSERT INTO t1 VALUES (1), (null);
+SELECT IFNULL(c1, 0.0) from t1;
+IFNULL(c1, 0.0)
+1.0
+0.0
+SELECT if(c1 is not null, c1, 0.0) from t1;
+if(c1 is not null, c1, 0.0)
+1.0
+0.0
+SELECT case when c1 is not null then c1 else 0.0 end from t1;
+case when c1 is not null then c1 else 0.0 end
+1.0
+0.0
+drop table if exists t1;
+CREATE TABLE t1 (v1 datetime(3), v2 datetime(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+IFNULL(v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT if(v1 is not null, v1, v2) from t1;
+if(v1 is not null, v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT case when v1 is not null then v1 else v2 end from t1;
+case when v1 is not null then v1 else v2 end
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+drop table if exists t1;
+CREATE TABLE t1 (v1 timestamp(3), v2 timestamp(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+IFNULL(v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT if(v1 is not null, v1, v2) from t1;
+if(v1 is not null, v1, v2)
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
+SELECT case when v1 is not null then v1 else v2 end from t1;
+case when v1 is not null then v1 else v2 end
+2020-01-01 11:11:11.1230
+2020-01-01 11:11:11.1234
