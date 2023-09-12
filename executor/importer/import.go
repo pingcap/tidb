@@ -92,6 +92,7 @@ const (
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
+	cloudStorageURIOption       = "cloud_storage_uri"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
 )
@@ -115,6 +116,7 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+		cloudStorageURIOption:       true,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -195,6 +197,7 @@ type Plan struct {
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
+	CloudStorageURI       string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -482,7 +485,7 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions() {
+func (p *Plan) initDefaultOptions(cloudStorageURI string) {
 	threadCnt := runtime.GOMAXPROCS(0)
 	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
 		threadCnt = val.(int)
@@ -497,13 +500,19 @@ func (p *Plan) initDefaultOptions() {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+	p.CloudStorageURI = cloudStorageURI
 
 	v := "utf8mb4"
 	p.Charset = &v
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	p.initDefaultOptions()
+	cloudStorageURI, err1 := seCtx.GetSessionVars().GlobalVarsAccessor.
+		GetGlobalSysVar(variable.TiDBCloudStorageURI)
+	if err1 != nil {
+		return errors.Trace(err1)
+	}
+	p.initDefaultOptions(cloudStorageURI)
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -654,6 +663,21 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
 		p.DisableTiKVImportMode = true
 	}
+	if opt, ok := specifiedOptions[cloudStorageURIOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		b, err := storage.ParseBackend(v, nil)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		// only support s3 and gcs now.
+		if b.GetS3() == nil && b.GetGcs() == nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		p.CloudStorageURI = v
+	}
 	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil {
@@ -715,7 +739,11 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	optionMap := make(map[string]interface{}, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			optionMap[opt.Name] = opt.Value.String()
+			val := opt.Value.String()
+			if opt.Name == cloudStorageURIOption {
+				val = ast.RedactURL(val)
+			}
+			optionMap[opt.Name] = val
 		} else {
 			optionMap[opt.Name] = nil
 		}
