@@ -67,12 +67,12 @@ type AnalyzeProgress struct {
 // dumping it into mysql.analyze_jobs and resets the delta count to 0. Otherwise, it returns 0.
 func (p *AnalyzeProgress) Update(rowCount int64) int64 {
 	dumpCount := int64(0)
-	p.deltaCount.Add(rowCount)
+	newCount := p.deltaCount.Add(rowCount)
 
 	t := time.Now()
 	p.lastDumpTimeMu.Lock()
-	if p.deltaCount.Load() > maxDelta && t.Sub(p.lastDumpTime) > dumpTimeInterval {
-		dumpCount = p.deltaCount.Load()
+	if newCount > maxDelta && t.Sub(p.lastDumpTime) > dumpTimeInterval {
+		dumpCount = newCount
 		p.deltaCount.Store(0)
 		p.lastDumpTime = t
 	}
