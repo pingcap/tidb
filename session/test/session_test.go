@@ -974,16 +974,16 @@ func TestRequestSource(t *testing.T) {
 				case *kvrpcpb.CommitRequest:
 					requestSource = r.GetContext().GetRequestSource()
 				case *coprocessor.Request:
-					readType = "-leader" // read request will be attached with read type
+					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
 				case *kvrpcpb.GetRequest:
-					readType = "-leader" // read request will be attached with read type
+					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
 				case *kvrpcpb.BatchGetRequest:
-					readType = "-leader" // read request will be attached with read type
+					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
 				}
-				require.Equal(t, source+readType, requestSource)
+				require.Equal(t, readType+source, requestSource)
 				return next(target, req)
 			}
 		})
