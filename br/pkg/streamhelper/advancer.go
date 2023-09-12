@@ -97,6 +97,11 @@ func (c *CheckpointAdvancer) Config() config.Config {
 	return c.cfg
 }
 
+// GetInResolvingLock only used for test.
+func (c *CheckpointAdvancer) GetInResolvingLock() bool {
+	return c.inResolvingLock.Load()
+}
+
 // GetCheckpointInRange scans the regions in the range,
 // collect them to the collector.
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte, collector *clusterCollector) error {
@@ -396,6 +401,31 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 }
 
 func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
+<<<<<<< HEAD
+=======
+	// lastCheckpoint is not increased too long enough.
+	// assume the cluster has expired locks for whatever reasons.
+	var targets []spans.Valued
+	if c.lastCheckpoint != nil && c.lastCheckpoint.needResolveLocks() && c.inResolvingLock.CompareAndSwap(false, true) {
+		c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+			// when get locks here. assume these locks are not belong to same txn,
+			// but these locks' start ts are close to 1 minute. try resolve these locks at one time
+			vsf.TraverseValuesLessThan(tsoAfter(c.lastCheckpoint.TS, time.Minute), func(v spans.Valued) bool {
+				targets = append(targets, v)
+				return true
+			})
+		})
+		if len(targets) != 0 {
+			log.Info("Advancer starts to resolve locks", zap.Int("targets", len(targets)))
+			// use new context here to avoid timeout
+			ctx := context.Background()
+			c.asyncResolveLocksForRanges(ctx, targets)
+		} else {
+			// don't forget set state back
+			c.inResolvingLock.Store(false)
+		}
+	}
+>>>>>>> 9f8a412fd8c (br: fix the issue that state not set correctly after resolve locks (#46903))
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
 		log.Warn("[log backup advancer] Subscriber meet error, would polling the checkpoint.", logutil.ShortError(err))
@@ -437,3 +467,51 @@ func (c *CheckpointAdvancer) tick(ctx context.Context) error {
 
 	return errs
 }
+<<<<<<< HEAD
+=======
+
+func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, targets []spans.Valued) {
+	// run in another goroutine
+	// do not block main tick here
+	go func() {
+		failpoint.Inject("AsyncResolveLocks", func() {})
+		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
+			// we will scan all locks and try to resolve them by check txn status.
+			return tikv.ResolveLocksForRange(
+				ctx, c.env, math.MaxUint64, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, tikv.GCScanLockLimit)
+		}
+		workerPool := utils.NewWorkerPool(uint(config.DefaultMaxConcurrencyAdvance), "advancer resolve locks")
+		var wg sync.WaitGroup
+		for _, r := range targets {
+			targetRange := r
+			wg.Add(1)
+			workerPool.Apply(func() {
+				defer wg.Done()
+				// Run resolve lock on the whole TiKV cluster.
+				// it will use startKey/endKey to scan region in PD.
+				// but regionCache already has a codecPDClient. so just use decode key here.
+				// and it almost only include one region here. so set concurrency to 1.
+				runner := rangetask.NewRangeTaskRunner("advancer-resolve-locks-runner",
+					c.env.GetStore(), 1, handler)
+				err := runner.RunOnRange(ctx, targetRange.Key.StartKey, targetRange.Key.EndKey)
+				if err != nil {
+					// wait for next tick
+					log.Warn("resolve locks failed, wait for next tick", zap.String("category", "advancer"),
+						zap.String("uuid", "log backup advancer"),
+						zap.Error(err))
+				}
+			})
+		}
+		wg.Wait()
+		log.Info("finish resolve locks for checkpoint", zap.String("category", "advancer"),
+			zap.String("uuid", "log backup advancer"),
+			logutil.Key("StartKey", c.lastCheckpoint.StartKey),
+			logutil.Key("EndKey", c.lastCheckpoint.EndKey),
+			zap.Int("targets", len(targets)))
+		c.lastCheckpointMu.Lock()
+		c.lastCheckpoint.resolveLockTime = time.Now()
+		c.lastCheckpointMu.Unlock()
+		c.inResolvingLock.Store(false)
+	}()
+}
+>>>>>>> 9f8a412fd8c (br: fix the issue that state not set correctly after resolve locks (#46903))
