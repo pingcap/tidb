@@ -546,6 +546,12 @@
   {
     "name": "TestOuterJoinEliminator",
     "cases": [
+      // Test no column reference from left outer join
+      "select count(*) from t t1 left outer join t t2 on t1.a = t2.a",
+      "select 1 from t t1 left outer join t t2 on t1.a = t2.a",
+      // Test no column reference from right outer join
+      "select count(*) from t t1 right outer join t t2 on t1.a = t2.a",
+      "select 2 from t t1 right outer join t t2 on t1.a = t2.a",
       // Test left outer join + distinct
       "select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b",
       // Test right outer join + distinct
