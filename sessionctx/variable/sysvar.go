@@ -2817,13 +2817,23 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			if len(normalizedValue) > 64 {
+			chars := []rune(normalizedValue)
+			warningAdded := false
+			if len(chars) > 64 {
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
-				normalizedValue = normalizedValue[:64]
+				warningAdded = true
+				chars = chars[:64]
+				normalizedValue = string(chars)
 			}
 
-			if len(normalizedValue) > 0 && util.IsInCorrectIdentifierName(normalizedValue) {
-				return "", ErrWrongValueForVar.GenWithStack("Incorrect value for variable @@%s '%s'", TiDBSessionAlias, normalizedValue)
+			// truncate to a valid identifier
+			for normalizedValue != "" && util.IsInCorrectIdentifierName(normalizedValue) {
+				if !warningAdded {
+					s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
+					warningAdded = true
+				}
+				chars = chars[:len(chars)-1]
+				normalizedValue = string(chars)
 			}
 
 			return normalizedValue, nil
