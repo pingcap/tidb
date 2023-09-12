@@ -338,6 +338,13 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 		return errors.New("inject an error before start partialIndexWorker")
 	})
 
+	// for union case, the push-downLimit can be utilized to limit index fetched handles.
+	// for intersection case, the push-downLimit can only be conducted after all index path/table finished.
+	pushedIndexLimit := e.pushedLimit
+	if e.isIntersection {
+		pushedIndexLimit = nil
+	}
+
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialIndexWorker").End()
 		defer e.idxWorkerWg.Done()
@@ -358,7 +365,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					partitionTableMode: e.partitionTableMode,
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            is.ByItems,
-					pushedLimit:        e.pushedLimit,
+					pushedLimit:        pushedIndexLimit,
 				}
 				if e.isCorColInPartialFilters[workID] {
 					// We got correlated column, so need to refresh Selection operator.
@@ -452,6 +459,13 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 		tbls = append(tbls, e.table)
 	}
 
+	// for union case, the push-downLimit can be utilized to limit index fetched handles.
+	// for intersection case, the push-downLimit can only be conducted after all index/table path finished.
+	pushedTableLimit := e.pushedLimit
+	if e.isIntersection {
+		pushedTableLimit = nil
+	}
+
 	go func() {
 		defer trace.StartRegion(ctx, "IndexMergePartialTableWorker").End()
 		defer e.idxWorkerWg.Done()
@@ -484,7 +498,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					partitionTableMode: e.partitionTableMode,
 					prunedPartitions:   e.prunedPartitions,
 					byItems:            ts.ByItems,
-					pushedLimit:        e.pushedLimit,
+					pushedLimit:        pushedTableLimit,
 				}
 
 				if len(e.prunedPartitions) != 0 && len(e.byItems) != 0 {
