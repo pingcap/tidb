@@ -253,6 +253,30 @@ func needNotifyAndStopReorgWorker(job *model.Job) bool {
 	return false
 }
 
+// rollbackExchangeTablePartition will clear the non-partitioned
+// table's ExchangePartitionInfo state.
+func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (int64, error) {
+	tblInfo.ExchangePartitionInfo = nil
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StatePublic
+	return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+}
+
+func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {
+	if job.SchemaState == model.StateNone {
+		// Nothing is changed
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	}
+	var nt *model.TableInfo
+	nt, err = GetTableInfoAndCancelFaultJob(t, job, job.SchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	ver, err = rollbackExchangeTablePartition(d, t, job, nt)
+	return ver, errors.Trace(err)
+}
+
 func convertAddTablePartitionJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, otherwiseErr error, tblInfo *model.TableInfo) (ver int64, err error) {
 	addingDefinitions := tblInfo.Partition.AddingDefinitions
 	partNames := make([]string, 0, len(addingDefinitions))
@@ -373,6 +397,8 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		err = rollingbackDropTableOrView(t, job)
 	case model.ActionDropTablePartition:
 		ver, err = rollingbackDropTablePartition(t, job)
+	case model.ActionExchangeTablePartition:
+		ver, err = rollingbackExchangeTablePartition(d, t, job)
 	case model.ActionDropSchema:
 		err = rollingbackDropSchema(t, job)
 	case model.ActionRenameIndex:
@@ -388,7 +414,7 @@ func convertJob2RollbackJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) 
 		model.ActionModifyTableCharsetAndCollate, model.ActionTruncateTablePartition,
 		model.ActionModifySchemaCharsetAndCollate, model.ActionRepairTable,
 		model.ActionModifyTableAutoIdCache, model.ActionAlterIndexVisibility,
-		model.ActionExchangeTablePartition, model.ActionModifySchemaDefaultPlacement,
+		model.ActionModifySchemaDefaultPlacement,
 		model.ActionRecoverSchema:
 		ver, err = cancelOnlyNotHandledJob(job, model.StateNone)
 	case model.ActionMultiSchemaChange:

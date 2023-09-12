@@ -675,7 +675,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 	}
 	tbl := e.Table.Meta()
 	// Handle exchange partition
-	if tbl.ExchangePartitionInfo != nil && tbl.ExchangePartitionInfo.ExchangePartitionFlag {
+	if tbl.ExchangePartitionInfo != nil {
 		is := e.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
 		if !tableFound {

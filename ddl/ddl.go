@@ -1229,6 +1229,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 
+	logutil.BgLogger().Info("Switch EnableMDL 1", zap.Bool("arg", enable), zap.Bool("value", variable.EnableMDL.Load()))
 	// Disable MDL for test.
 	if enable && !variable.DefTiDBEnableConcurrentDDL {
 		sql := fmt.Sprintf("UPDATE HIGH_PRIORITY %[1]s.%[2]s SET VARIABLE_VALUE = %[4]d WHERE VARIABLE_NAME = '%[3]s'",
@@ -1247,6 +1248,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return nil
 	}
 
+	logutil.BgLogger().Info("Switch EnableMDL 2", zap.Bool("arg", enable), zap.Bool("value", variable.EnableMDL.Load()))
 	isEnableBefore := variable.EnableMDL.Load()
 	if isEnableBefore == enable {
 		return nil
@@ -1268,7 +1270,10 @@ func (d *ddl) SwitchMDL(enable bool) error {
 		return errors.New("please wait for all jobs done")
 	}
 
+	logutil.BgLogger().Info("Switch EnableMDL 3", zap.Bool("arg", enable), zap.Bool("value", variable.EnableMDL.Load()))
 	variable.EnableMDL.Store(enable)
+	logutil.BgLogger().Info("Switch EnableMDL 4", zap.Bool("arg", enable), zap.Bool("value", variable.EnableMDL.Load()))
+
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
 		oldEnable, _, err := m.GetMetadataLock()

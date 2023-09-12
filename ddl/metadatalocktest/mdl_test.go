@@ -18,6 +18,7 @@ package metadatalocktest
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,8 +26,11 @@ import (
 	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/server"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestMDLBasicSelect(t *testing.T) {
@@ -1133,4 +1137,209 @@ func TestMDLUpdateEtcdFail(t *testing.T) {
 	}()
 
 	tk.MustExec("alter table test.t add column c int")
+}
+
+// Tests that require MDL.
+// They are here, since they must run without 'featuretag' defined
+func TestExchangePartitionStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "partSchemaVer"
+	tk.MustExec("create database " + dbName)
+	tk.MustExec("use " + dbName)
+	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use " + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec("use " + dbName)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec("use " + dbName)
+	tk.MustExec(`create table t (a int primary key, b varchar(255), key (b))`)
+	tk.MustExec(`create table tp (a int primary key, b varchar(255), key (b)) partition by range (a) (partition p0 values less than (1000000), partition p1M values less than (2000000))`)
+	tk.MustExec(`insert into t values (1, "1")`)
+	tk.MustExec(`insert into tp values (2, "2")`)
+	tk.MustExec(`analyze table t,tp`)
+	tk.MustQuery(`select * from information_schema.global_variables`).Check(testkit.Rows())
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
+	tk.MustExec("BEGIN")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
+	//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
+	alterChan := make(chan error)
+	go func() {
+		// WITH VALIDATION is the default
+		err := tk2.ExecToErr(`alter table tp exchange partition p0 with table t`)
+		alterChan <- err
+	}()
+	waitFor := func(tableName, s string, pos int) {
+		for {
+			select {
+			case alterErr := <-alterChan:
+				require.Fail(t, "Alter completed unexpectedly", "With error %v", alterErr)
+			default:
+				// Alter still running
+			}
+			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
+			if len(res) == 1 && res[0][pos] == s {
+				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	waitFor("t", "write only", 4)
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t values (4,"4")`)
+	tk3.MustContainErrMsg(`insert into t values (1000004,"1000004")`, "[table:1748]Found a row not matching the given partition set")
+	tk.MustExec(`insert into t values (5,"5")`)
+	// This should fail the alter table!
+	tk.MustExec(`insert into t values (1000005,"1000005")`)
+
+	// MDL will block the alter to not continue until all clients
+	// are in StateWriteOnly, which tk is blocking until it commits
+	tk.MustExec(`COMMIT`)
+	//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	waitFor("t", "rollback done", 11)
+	// MDL will block the alter from finish, tk is in 'rollbacked' schema version
+	// but the alter is still waiting for tk3 to commit, before continuing
+	tk.MustExec("BEGIN")
+	tk.MustExec(`insert into t values (1000006,"1000006")`)
+	tk.MustExec(`insert into t values (6,"6")`)
+	tk3.MustExec(`insert into t values (7,"7")`)
+	tk3.MustContainErrMsg(`insert into t values (1000007,"1000007")`,
+		"[table:1748]Found a row not matching the given partition set")
+	tk3.MustExec("COMMIT")
+	require.ErrorContains(t, <-alterChan,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk3.MustExec(`BEGIN`)
+	tk.MustQuery(`select * from t`).Sort().Check(testkit.Rows(
+		"1 1", "1000005 1000005", "1000006 1000006", "5 5", "6 6"))
+	tk.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
+	tk3.MustQuery(`select * from t`).Sort().Check(testkit.Rows(
+		"1 1", "1000005 1000005", "4 4", "5 5", "7 7"))
+	tk3.MustQuery(`select * from tp`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustContainErrMsg(`insert into t values (7,"7")`,
+		"[kv:1062]Duplicate entry '7' for key 't.PRIMARY'")
+	tk.MustExec(`insert into t values (8,"8")`)
+	tk.MustExec(`insert into t values (1000008,"1000008")`)
+	tk.MustExec(`insert into tp values (9,"9")`)
+	tk.MustExec(`insert into tp values (1000009,"1000009")`)
+	tk3.MustExec(`insert into t values (10,"10")`)
+	tk3.MustExec(`insert into t values (1000010,"1000010")`)
+
+	tk3.MustExec(`COMMIT`)
+	tk.MustQuery(`show create table tp`).Check(testkit.Rows("" +
+		"tp CREATE TABLE `tp` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `p1M` VALUES LESS THAN (2000000))"))
+	tk.MustQuery(`show create table t`).Check(testkit.Rows("" +
+		"t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n" +
+		"  KEY `b` (`b`)\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec(`commit`)
+	tk.MustExec(`insert into t values (11,"11")`)
+	tk.MustExec(`insert into t values (1000011,"1000011")`)
+	tk.MustExec(`insert into tp values (12,"12")`)
+	tk.MustExec(`insert into tp values (1000012,"1000012")`)
+}
+
+func TestExchangePartitionMultiTable(t *testing.T) {
+	logutil.BgLogger().Info("mdl related variable status before bootstrap", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	logutil.BgLogger().Info("mdl related variable status after bootstrap", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
+
+	dbName := "ExchangeMultiTable"
+	tk1.MustExec(`create schema ` + dbName)
+	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`set global tidb_enable_metadata_lock = 'ON'`)
+	tk1.MustExec(`CREATE TABLE t1 (a int)`)
+	tk1.MustExec(`CREATE TABLE t2 (a int)`)
+	tk1.MustExec(`CREATE TABLE tp (a int) partition by hash(a) partitions 3`)
+	tk1.MustExec(`insert into t1 values (0)`)
+	tk1.MustExec(`insert into t2 values (3)`)
+	tk1.MustExec(`insert into tp values (6)`)
+	logutil.BgLogger().Info("mdl related variable status after inserting rows", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use ` + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use ` + dbName)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec(`use ` + dbName)
+	waitFor := func(col int, tableName, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`
+			res := tk4.MustQuery(sql).Rows()
+			if len(res) == 1 && res[0][col] == s {
+				break
+			}
+			logutil.BgLogger().Info("No match", zap.String("sql", sql), zap.String("s", s))
+			sql = `admin show ddl jobs`
+			res = tk4.MustQuery(sql).Rows()
+			for _, row := range res {
+				strs := make([]string, 0, len(row))
+				for _, c := range row {
+					strs = append(strs, c.(string))
+				}
+				logutil.BgLogger().Info("admin show ddl jobs", zap.Strings("row", strs))
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 20*time.Second)
+	alterChan1 := make(chan error)
+	alterChan2 := make(chan error)
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t1 values (1)`)
+	tk3.MustExec(`insert into t2 values (2)`)
+	tk3.MustExec(`insert into tp values (3)`)
+	//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
+	go func() {
+		alterChan1 <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t1`)
+	}()
+	waitFor(11, "t1", "running")
+	go func() {
+		alterChan2 <- tk2.ExecToErr(`alter table tp exchange partition p0 with table t2`)
+	}()
+	waitFor(11, "t2", "queueing")
+	tk3.MustExec(`rollback`)
+	logutil.BgLogger().Info("rollback done")
+	//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
+	require.NoError(t, <-alterChan1)
+	logutil.BgLogger().Info("alter1 done")
+	err := <-alterChan2
+	logutil.BgLogger().Info("alter2 done")
+	tk3.MustQuery(`select * from t1`).Check(testkit.Rows("6"))
+	logutil.BgLogger().Info("select t1 done")
+	tk3.MustQuery(`select * from t2`).Check(testkit.Rows("0"))
+	logutil.BgLogger().Info("select t2 done")
+	tk3.MustQuery(`select * from tp`).Check(testkit.Rows("3"))
+	logutil.BgLogger().Info("select tp done")
+	require.NoError(t, err)
 }
