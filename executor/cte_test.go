@@ -357,8 +357,6 @@ func TestCTEWithLimit(t *testing.T) {
 }
 
 func TestCTEPanic(t *testing.T) {
-	t.Parallel()
-
 	store, close := testkit.CreateMockStore(t)
 	defer close()
 	tk := testkit.NewTestKit(t, store)
