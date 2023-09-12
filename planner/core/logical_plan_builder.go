@@ -6759,6 +6759,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	}
 
 	bound.CalcFuncs = make([]expression.Expression, len(orderByItems))
+	bound.CastFuncs = make([]expression.Expression, len(orderByItems))
 	bound.CmpFuncs = make([]expression.CompareFunc, len(orderByItems))
 	if bound.Type == ast.CurrentRow {
 		for i, item := range orderByItems {
@@ -6823,6 +6824,11 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		funcName = ast.Minus
 	}
 	bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+	if err != nil {
+		return nil, err
+	}
+	funcName = ast.Cast
+	bound.CastFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, bound.CalcFuncs[0].GetType(), col)
 	if err != nil {
 		return nil, err
 	}
