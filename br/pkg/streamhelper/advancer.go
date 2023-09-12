@@ -81,7 +81,6 @@ type CheckpointAdvancer struct {
 // checkpoint represents the TS with specific range.
 // it's only used in advancer.go.
 type checkpoint struct {
-	sync.Mutex
 	StartKey []byte
 	EndKey   []byte
 	TS       uint64
@@ -520,6 +519,7 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 			ctx := context.Background()
 			c.asyncResolveLocksForRanges(ctx, targets)
 		}
+		c.inResolvingLock.Store(false)
 	}
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
@@ -600,6 +600,5 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		c.lastCheckpointMu.Lock()
 		c.lastCheckpoint.resolveLockTime = time.Now()
 		c.lastCheckpointMu.Unlock()
-		c.inResolvingLock.Store(false)
 	}()
 }
