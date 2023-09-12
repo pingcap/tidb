@@ -98,11 +98,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	if len(ranges) == 0 {
 		return nil
 	}
-
-	db, err := local.g.GetDB()
-	if err != nil {
-		return errors.Trace(err)
-	}
+	var err error
 
 	minKey := codec.EncodeBytes([]byte{}, ranges[0].start)
 	maxKey := codec.EncodeBytes([]byte{}, ranges[len(ranges)-1].end)
@@ -111,6 +107,8 @@ func (local *local) SplitAndScatterRegionByRanges(
 	var retryKeys [][]byte
 	waitTime := splitRegionBaseBackOffTime
 	skippedKeys := 0
+	var skipped_scatter bool
+	skipped_scatter = false
 	for i := 0; i < splitRetryTimes; i++ {
 		log.FromContext(ctx).Info("split and scatter region",
 			logutil.Key("minKey", minKey),
@@ -118,6 +116,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			zap.Int("retry", i),
 		)
 		err = nil
+		// wait time
 		if i > 0 {
 			select {
 			case <-time.After(waitTime):
@@ -130,6 +129,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 			}
 		}
 		var regions []*split.RegionInfo
+		//scan all regions
 		regions, err = split.PaginateScanRegion(ctx, local.splitCli, minKey, maxKey, 128)
 		log.FromContext(ctx).Info("paginate scan regions", zap.Int("count", len(regions)),
 			logutil.Key("start", minKey), logutil.Key("end", maxKey))
@@ -145,6 +145,25 @@ func (local *local) SplitAndScatterRegionByRanges(
 		if !needSplit {
 			scatterRegions = append(scatterRegions, regions...)
 			break
+		}
+
+		if !skipped_scatter {
+			log.FromContext(ctx).Info("scattering initial scan region", zap.Int("regions", len(regions)))
+			for _, region := range regions {
+				local.ScatterRegions(ctx, region)
+			}
+			scatterCount, err := local.waitForScatterRegions(ctx, regions)
+			if scatterCount == len(regions) {
+				log.FromContext(ctx).Info("waiting for scattering initial regions done",
+					zap.Int("regions", len(regions)))
+			} else {
+				log.FromContext(ctx).Warn("waiting for scattering initial regions timeout",
+					zap.Int("skipped_keys", skippedKeys),
+					zap.Int("scatterCount", scatterCount),
+					zap.Int("regions", len(regions)),
+					zap.Error(err))
+			}
+			skipped_scatter = true
 		}
 
 		needSplitRanges := make([]Range, 0, len(ranges))
@@ -170,16 +189,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 		if len(ranges) == 0 {
 			log.FromContext(ctx).Info("no ranges need to be split, skipped.")
 			return nil
-		}
-
-		var tableRegionStats map[uint64]int64
-		if tableInfo != nil {
-			tableRegionStats, err = fetchTableRegionSizeStats(ctx, db, tableInfo.ID)
-			if err != nil {
-				log.FromContext(ctx).Warn("fetch table region size statistics failed",
-					zap.String("table", tableInfo.Name), zap.Error(err))
-				tableRegionStats, err = make(map[uint64]int64), nil
-			}
 		}
 
 		regionMap := make(map[uint64]*split.RegionInfo)
@@ -291,15 +300,6 @@ func (local *local) SplitAndScatterRegionByRanges(
 		}
 	sendLoop:
 		for regionID, keys := range splitKeyMap {
-			// if region not in tableRegionStats, that means this region is newly split, so
-			// we can skip split it again.
-			regionSize, ok := tableRegionStats[regionID]
-			if !ok {
-				log.FromContext(ctx).Warn("region stats not found", zap.Uint64("region", regionID))
-			}
-			if len(keys) == 1 && regionSize < regionSplitSize {
-				skippedKeys++
-			}
 			select {
 			case ch <- &splitInfo{region: regionMap[regionID], keys: keys}:
 			case <-ctx.Done():
@@ -335,10 +335,9 @@ func (local *local) SplitAndScatterRegionByRanges(
 	scatterCount, err := local.waitForScatterRegions(ctx, scatterRegions)
 	if scatterCount == len(scatterRegions) {
 		log.FromContext(ctx).Info("waiting for scattering regions done",
-			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
-		log.FromContext(ctx).Info("waiting for scattering regions timeout",
+		log.FromContext(ctx).Warn("waiting for scattering regions timeout",
 			zap.Int("skipped_keys", skippedKeys),
 			zap.Int("scatterCount", scatterCount),
 			zap.Int("regions", len(scatterRegions)),
@@ -380,6 +379,28 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 	return stats, errors.Trace(err)
 }
 
+func (local *local) ScatterRegions(ctx context.Context, regionInfo *split.RegionInfo) error {
+	var err error
+	waitTime := time.Second
+	for i := 0; i < 10; i++ {
+		myArray := []*split.RegionInfo{regionInfo}
+		if err = local.splitCli.ScatterRegions(ctx, myArray); err != nil {
+			select {
+			case <-time.After(waitTime):
+			case <-ctx.Done():
+				log.FromContext(ctx).Warn("scatter region failed", zap.Error(ctx.Err()), zap.Int("retry", i))
+				return ctx.Err()
+			}
+		} else {
+			break
+		}
+	}
+	if err != nil {
+		log.FromContext(ctx).Warn("scatter region failed", zap.Error(err))
+	}
+	return err
+}
+
 func (local *local) BatchSplitRegions(
 	ctx context.Context,
 	region *split.RegionInfo,
@@ -400,7 +421,7 @@ func (local *local) BatchSplitRegions(
 		for _, region := range scatterRegions {
 			// Wait for a while until the regions successfully splits.
 			local.waitForSplit(ctx, region.Region.Id)
-			if err = local.splitCli.ScatterRegion(ctx, region); err != nil {
+			if err = local.ScatterRegions(ctx, region); err != nil {
 				failedErr = err
 				retryRegions = append(retryRegions, region)
 			}
@@ -410,7 +431,7 @@ func (local *local) BatchSplitRegions(
 		}
 		// the scatter operation likely fails because region replicate not finish yet
 		// pack them to one log to avoid printing a lot warn logs.
-		log.FromContext(ctx).Warn("scatter region failed", zap.Int("regionCount", len(newRegions)),
+		log.FromContext(ctx).Warn("scatter region failed", zap.Int("regionCount", len(scatterRegions)),
 			zap.Int("failedCount", len(retryRegions)), zap.Error(failedErr), zap.Int("retry", i))
 		scatterRegions = retryRegions
 		retryRegions = make([]*split.RegionInfo, 0)
@@ -509,7 +530,7 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 	default:
 		log.FromContext(ctx).Debug("scatter-region operator status is abnormal, will scatter region again",
 			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
-		return false, local.splitCli.ScatterRegion(ctx, regionInfo)
+		return false, local.ScatterRegions(ctx, regionInfo)
 	}
 }
 
@@ -618,18 +639,10 @@ type storeWriteLimiter struct {
 }
 
 func newStoreWriteLimiter(limit int) *storeWriteLimiter {
-	var burst int
-	// Allow burst of at most 20% of the limit.
-	if limit <= math.MaxInt-limit/5 {
-		burst = limit + limit/5
-	} else {
-		// If overflowed, set burst to math.MaxInt.
-		burst = math.MaxInt
-	}
 	return &storeWriteLimiter{
 		limiters: make(map[uint64]*rate.Limiter),
 		limit:    limit,
-		burst:    burst,
+		burst:    limit,
 	}
 }
 

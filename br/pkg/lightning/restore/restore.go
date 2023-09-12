@@ -135,7 +135,7 @@ var DeliverPauser = common.NewPauser()
 // nolint:gochecknoinits // TODO: refactor
 func init() {
 	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
-		minDeliverBytes = uint64(v.(int))
+		maxDeliverBytes = uint64(v.(int))
 	})
 }
 
@@ -247,6 +247,7 @@ type LightningStatus struct {
 	backend          string
 	FinishedFileSize atomic.Int64
 	TotalFileSize    atomic.Int64
+	TotalImportSize  atomic.Uint64
 }
 
 // ControllerParam contains many parameters for creating a Controller.
@@ -413,7 +414,7 @@ func NewRestoreControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdCli,
 	)
 
 	rc := &Controller{
@@ -462,6 +463,8 @@ func (rc *Controller) Close() {
 }
 
 func (rc *Controller) Run(ctx context.Context) error {
+	failpoint.Inject("beforeRun", func() {})
+
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
 		rc.restoreSchema,
@@ -1351,7 +1354,7 @@ const (
 
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.pdCli.GetLeaderAddr()}, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1512,8 +1515,13 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 		}
 
 		// Disable GC because TiDB enables GC already.
+
+		currentLeaderAddr := rc.pdCli.GetLeaderAddr()
+		// remove URL scheme
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "http://")
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "https://")
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true", rc.cfg.TiDB.PdAddr),
+			fmt.Sprintf("tikv://%s?disableGC=true", currentLeaderAddr),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
@@ -1685,6 +1693,7 @@ func (rc *Controller) restoreTables(ctx context.Context) (finalErr error) {
 			}()
 		}
 		wg.Wait()
+		logTask.Warn("total import size", zap.Uint64("total import size", rc.status.TotalImportSize.Load()))
 		return restoreErr.Get()
 	}
 
@@ -2114,7 +2123,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
 	if isLocalBackend(rc.cfg) {
-		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+		pdController, err := pdutil.NewPdController(ctx, rc.pdCli.GetLeaderAddr(),
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
@@ -2223,7 +2232,12 @@ func newChunkRestore(
 	tableInfo *checkpoints.TidbTableInfo,
 ) (*chunkRestore, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-
+	if cfg.App.MaxDeliverBytes > 0 {
+		maxDeliverBytes = cfg.App.MaxDeliverBytes
+	}
+	if cfg.App.MaxDeliverRows > 0 {
+		maxDeliverRows = cfg.App.MaxDeliverRows
+	}
 	reader, err := openReader(ctx, chunk.FileMeta, store)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -2308,7 +2322,8 @@ func getColumnNames(tableInfo *model.TableInfo, permutation []int) []string {
 
 var (
 	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
-	minDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
+	maxDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). send at most this amount of bytes at a time
+	maxDeliverRows  uint64 = 5000           // send at most this amount of rows at a time
 )
 
 type deliveredKVs struct {
@@ -2361,7 +2376,7 @@ func (cr *chunkRestore) deliverLoop(
 		rowID := cr.chunk.Chunk.PrevRowIDMax
 
 	populate:
-		for dataChecksum.SumSize()+indexChecksum.SumSize() < minDeliverBytes {
+		for dataChecksum.SumSize()+indexChecksum.SumSize() < maxDeliverBytes && dataChecksum.SumKVS()+indexChecksum.SumKVS() < maxDeliverRows {
 			select {
 			case kvPacket = <-kvsCh:
 				if len(kvPacket) == 0 {
@@ -2732,10 +2747,11 @@ func (cr *chunkRestore) encodeLoop(
 			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
 				kvSize += uint64(val.(int))
 			})
+			rc.status.TotalImportSize.Add(kvs.Size())
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
-			if kvSize >= minDeliverBytes || len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
+			if kvSize >= maxDeliverBytes || len(kvPacket) >= maxKvPairsCnt || newOffset == cr.chunk.Chunk.EndOffset {
 				canDeliver = true
 				kvSize = 0
 			}
