@@ -68,11 +68,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
     shard_count = 20,
-=======
-    shard_count = 19,
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
     deps = [
         ":streamhelper",
         "//br/pkg/errors",

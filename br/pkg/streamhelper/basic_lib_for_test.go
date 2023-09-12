@@ -624,8 +624,6 @@ func (t *testEnv) getCheckpoint() uint64 {
 
 	return t.checkpoint
 }
-<<<<<<< HEAD
-=======
 
 func (t *testEnv) unregisterTask() {
 	t.taskCh <- streamhelper.TaskEvent{
@@ -735,4 +733,3 @@ func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 		Leader: leader,
 	}
 }
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))

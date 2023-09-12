@@ -233,9 +233,6 @@ func tsoBefore(n time.Duration) uint64 {
 	return oracle.ComposeTS(now.UnixMilli()-n.Milliseconds(), 0)
 }
 
-<<<<<<< HEAD
-func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context, threshold time.Duration) (uint64, error) {
-=======
 func tsoAfter(ts uint64, n time.Duration) uint64 {
 	return oracle.GoTimeToTS(oracle.GetTimeFromTS(ts).Add(n))
 }
@@ -254,20 +251,17 @@ func (c *CheckpointAdvancer) NewCheckpoints(cps *spans.ValueSortedFull) {
 
 func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 	threshold time.Duration) (spans.Valued, error) {
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
 	var targets []spans.Valued
-	c.checkpoints.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
-		targets = append(targets, v)
-		return true
+	var minValue spans.Valued
+	c.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		c.checkpoints.TraverseValuesLessThan(tsoBefore(threshold), func(v spans.Valued) bool {
+			targets = append(targets, v)
+			return true
+		})
+		minValue = vsf.Min()
 	})
 	if len(targets) == 0 {
-<<<<<<< HEAD
-		c.checkpointsMu.Lock()
-		defer c.checkpointsMu.Unlock()
-		return c.checkpoints.MinValue(), nil
-=======
 		return minValue, nil
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
 	}
 	samples := targets
 	if len(targets) > 3 {
@@ -281,14 +275,7 @@ func (c *CheckpointAdvancer) CalculateGlobalCheckpointLight(ctx context.Context,
 	if err != nil {
 		return minValue, err
 	}
-<<<<<<< HEAD
-	c.checkpointsMu.Lock()
-	ts := c.checkpoints.MinValue()
-	c.checkpointsMu.Unlock()
-	return ts, nil
-=======
 	return minValue, nil
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
 }
 
 func (c *CheckpointAdvancer) consumeAllTask(ctx context.Context, ch <-chan TaskEvent) error {
@@ -380,18 +367,9 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		c.task = e.Info
 		c.taskRange = spans.Collapse(len(e.Ranges), func(i int) kv.KeyRange { return e.Ranges[i] })
 		c.checkpoints = spans.Sorted(spans.NewFullWith(e.Ranges, 0))
-<<<<<<< HEAD
-		c.lastCheckpoint = e.Info.StartTs
-		log.Info("added event", zap.Stringer("task", e.Info), zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
-=======
 		c.lastCheckpoint = newCheckpointWithTS(e.Info.StartTs)
-		p, err := c.env.BlockGCUntil(ctx, c.task.StartTs)
-		if err != nil {
-			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
-		}
 		log.Info("added event", zap.Stringer("task", e.Info),
-			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)), zap.Uint64("current-checkpoint", p))
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
+			zap.Stringer("ranges", logutil.StringifyKeys(c.taskRange)))
 	case EventDel:
 		utils.LogBackupTaskCountDec()
 		c.task = nil
@@ -412,17 +390,11 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 	return nil
 }
 
-<<<<<<< HEAD
-func (c *CheckpointAdvancer) setCheckpoint(cp uint64) bool {
-	if cp < c.lastCheckpoint {
-		log.Warn("failed to update global checkpoint: stale", zap.Uint64("old", c.lastCheckpoint), zap.Uint64("new", cp))
-=======
 func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) bool {
 	cp := NewCheckpointWithSpan(s)
 	if cp.TS < c.lastCheckpoint.TS {
 		log.Warn("failed to update global checkpoint: stale",
 			zap.Uint64("old", c.lastCheckpoint.TS), zap.Uint64("new", cp.TS))
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
 		return false
 	}
 	// Need resolve lock for different range and same TS
@@ -430,22 +402,14 @@ func (c *CheckpointAdvancer) setCheckpoint(ctx context.Context, s spans.Valued) 
 	if cp.equal(c.lastCheckpoint) {
 		return false
 	}
-<<<<<<< HEAD
-	c.lastCheckpoint = cp
-=======
 	c.UpdateLastCheckpoint(cp)
 	metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint.TS))
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
 	return true
 }
 
 // advanceCheckpointBy advances the checkpoint by a checkpoint getter function.
-<<<<<<< HEAD
-func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context, getCheckpoint func(context.Context) (uint64, error)) error {
-=======
 func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 	getCheckpoint func(context.Context) (spans.Valued, error)) error {
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
 	start := time.Now()
 	cp, err := getCheckpoint(ctx)
 	if err != nil {
@@ -458,7 +422,7 @@ func (c *CheckpointAdvancer) advanceCheckpointBy(ctx context.Context,
 			zap.Uint64("checkpoint", cp.Value),
 			zap.String("task", c.task.Name),
 			zap.Stringer("take", time.Since(start)))
-		metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint))
+		metrics.LastCheckpoint.WithLabelValues(c.task.GetName()).Set(float64(c.lastCheckpoint.TS))
 	}
 	return nil
 }
@@ -514,23 +478,6 @@ func (c *CheckpointAdvancer) importantTick(ctx context.Context) error {
 	if err := c.env.UploadV3GlobalCheckpointForTask(ctx, c.task.Name, c.lastCheckpoint.TS); err != nil {
 		return errors.Annotate(err, "failed to upload global checkpoint")
 	}
-<<<<<<< HEAD
-=======
-	p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
-	if err != nil {
-		return errors.Annotatef(err,
-			"failed to update service GC safe point, current checkpoint is %d, target checkpoint is %d",
-			c.lastCheckpoint.safeTS(), p)
-	}
-	if p <= c.lastCheckpoint.safeTS() {
-		log.Info("updated log backup GC safe point.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
-	}
-	if p > c.lastCheckpoint.safeTS() {
-		log.Warn("update log backup GC safe point failed: stale.",
-			zap.Uint64("checkpoint", p), zap.Uint64("target", c.lastCheckpoint.safeTS()))
-	}
->>>>>>> 8af15b1225d (Log Backup: decouple log backup resolve locks from GCWorker. (#45904))
 	return nil
 }
 
