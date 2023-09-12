@@ -385,6 +385,8 @@ func getSummaryFromLastStep(
 		if err != nil {
 			return nil, nil, 0, nil, nil, errors.Trace(err)
 		}
+		// Skip empty subtask.MinKey/MaxKey because it means
+		// no records need to be written in this subtask.
 		minKey = notNilMin(minKey, subtask.MinKey)
 		maxKey = notNilMax(maxKey, subtask.MaxKey)
 		totalKVSize += subtask.TotalKVSize
@@ -409,6 +411,7 @@ func redactCloudStorageURI(
 	gTask.Meta = metaBytes
 }
 
+// notNilMin returns the smaller of a and b, ignoring nil values.
 func notNilMin(a, b []byte) []byte {
 	if len(a) == 0 {
 		return b
@@ -422,6 +425,7 @@ func notNilMin(a, b []byte) []byte {
 	return b
 }
 
+// notNilMax returns the larger of a and b, ignoring nil values.
 func notNilMax(a, b []byte) []byte {
 	if len(a) == 0 {
 		return b
