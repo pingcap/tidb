@@ -34,6 +34,7 @@ Tests <!-- At least one of them must be included. -->
 - [ ] Integration test
 - [ ] Manual test (add detailed scripts or steps below)
 - [ ] No code
+  > - [ ] I checked and no code files have been changed.
 
 Side effects
 
