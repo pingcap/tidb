@@ -4480,19 +4480,6 @@ func TestApproximatePercentile(t *testing.T) {
 	tk.MustQuery("select approx_percentile(a, 10) from t").Check(testkit.Rows("<nil>"))
 }
 
-func TestIssue24429(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set @@sql_mode = ANSI_QUOTES;")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a int);")
-	tk.MustQuery(`select t."a"=10 from t;`).Check(testkit.Rows())
-	tk.MustExec("drop table if exists t;")
-}
-
 func TestVitessHash(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
