@@ -385,14 +385,8 @@ func getSummaryFromLastStep(
 		if err != nil {
 			return nil, nil, 0, nil, nil, errors.Trace(err)
 		}
-		subTaskMin := kv.Key(subtask.MinKey)
-		if len(minKey) == 0 || (len(subTaskMin) > 0 && subTaskMin.Cmp(minKey) < 0) {
-			minKey = subtask.MinKey
-		}
-		subTaskMax := kv.Key(subtask.MaxKey)
-		if len(maxKey) == 0 || (len(subTaskMax) > 0 && subTaskMax.Cmp(maxKey) > 0) {
-			maxKey = subtask.MaxKey
-		}
+		minKey = notNilMin(minKey, subtask.MinKey)
+		maxKey = notNilMax(maxKey, subtask.MaxKey)
 		totalKVSize += subtask.TotalKVSize
 
 		allDataFiles = append(allDataFiles, subtask.DataFiles...)
@@ -413,4 +407,30 @@ func redactCloudStorageURI(
 		return
 	}
 	gTask.Meta = metaBytes
+}
+
+func notNilMin(a, b []byte) []byte {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	if bytes.Compare(a, b) < 0 {
+		return a
+	}
+	return b
+}
+
+func notNilMax(a, b []byte) []byte {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	if bytes.Compare(a, b) > 0 {
+		return a
+	}
+	return b
 }
