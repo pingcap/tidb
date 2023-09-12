@@ -39,6 +39,8 @@ const (
 	MaxSubtaskConcurrency = 256
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
+	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
+	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 )
 
 var (
@@ -119,7 +121,6 @@ func (d *BaseDispatcher) ExecuteTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
 		zap.String("state", d.Task.State), zap.Uint64("concurrency", d.Task.Concurrency))
 	d.scheduleTask()
-	// TODO: manage history task table.
 }
 
 // Close closes the dispatcher.
@@ -167,7 +168,9 @@ func (d *BaseDispatcher) scheduleTask() {
 			case proto.TaskStateRunning:
 				err = d.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
-				logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.Task.State))
+				if err := d.onFinished(); err != nil {
+					logutil.Logger(d.logCtx).Error("schedule task meet error", zap.String("state", d.Task.State), zap.Error(err))
+				}
 				return
 			}
 			if err != nil {
@@ -260,6 +263,11 @@ func (d *BaseDispatcher) onRunning() error {
 	d.OnTick(d.ctx, d.Task)
 	logutil.Logger(d.logCtx).Debug("on running state, this task keeps current state", zap.String("state", d.Task.State))
 	return nil
+}
+
+func (d *BaseDispatcher) onFinished() error {
+	logutil.Logger(d.logCtx).Debug("schedule task, task is finished", zap.String("state", d.Task.State))
+	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
 }
 
 func (d *BaseDispatcher) replaceDeadNodesIfAny() error {

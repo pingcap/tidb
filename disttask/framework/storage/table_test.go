@@ -446,3 +446,79 @@ func TestDistFrameworkMeta(t *testing.T) {
 		":4001": true,
 	}, nodes)
 }
+
+func TestSubtaskHistoryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	sm := storage.NewTaskManager(context.Background(), pool)
+
+	storage.SetTaskManager(sm)
+	sm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	const (
+		taskID       = 1
+		taskID2      = 2
+		subTask1     = 1
+		subTask2     = 2
+		subTask3     = 3
+		subTask4     = 4 // taskID2
+		tidb1        = "tidb1"
+		tidb2        = "tidb2"
+		tidb3        = "tidb3"
+		meta         = "test"
+		finishedMeta = "finished"
+	)
+
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.FinishSubtask(subTask1, []byte(finishedMeta)))
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb2, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask2, proto.TaskStateCanceled, nil))
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask3, proto.TaskStateFailed, nil))
+
+	subTasks, err := storage.GetSubtasksByTaskIDForTest(sm, taskID)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
+	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 0, historySubTasksCnt)
+	subTasks, err = sm.GetSubtasksForImportInto(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
+
+	// test TransferSubTasks2History
+	require.NoError(t, sm.TransferSubTasks2History(taskID))
+
+	subTasks, err = storage.GetSubtasksByTaskIDForTest(sm, taskID)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 0)
+	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 3, historySubTasksCnt)
+	subTasks, err = sm.GetSubtasksForImportInto(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
+
+	// test GC
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
+	}()
+	time.Sleep(2 * time.Second)
+
+	require.NoError(t, sm.AddNewSubTask(taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask4, proto.TaskStateFailed, nil))
+	require.NoError(t, sm.TransferSubTasks2History(taskID2))
+
+	require.NoError(t, sm.GC())
+
+	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 1, historySubTasksCnt)
+}

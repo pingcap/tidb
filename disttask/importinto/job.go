@@ -265,7 +265,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 	if globalTask == nil {
 		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
-	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, StepImport)
+	subtasks, err := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, StepImport)
 	if err != nil {
 		return 0, err
 	}

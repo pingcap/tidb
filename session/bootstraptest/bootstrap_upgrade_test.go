@@ -879,3 +879,40 @@ func TestDDLBackgroundSubtaskTableSummary(t *testing.T) {
 	r := tk.MustQuery("select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;")
 	r.Check(testkit.Rows("54"))
 }
+
+func TestDDLBackgroundSubtaskHistoryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	tk.MustExec("use mysql")
+	tk.MustQuery("show create table mysql.tidb_background_subtask_history").Check(testkit.Rows(
+		"tidb_background_subtask_history CREATE TABLE `tidb_background_subtask_history` (\n" +
+			"  `id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
+			"  `step` int(11) DEFAULT NULL,\n" +
+			"  `namespace` varchar(256) DEFAULT NULL,\n" +
+			"  `task_key` varchar(256) DEFAULT NULL,\n" +
+			"  `ddl_physical_tid` bigint(20) DEFAULT NULL,\n" +
+			"  `type` int(11) DEFAULT NULL,\n" +
+			"  `exec_id` varchar(256) DEFAULT NULL,\n" +
+			"  `exec_expired` timestamp NULL DEFAULT NULL,\n" +
+			"  `state` varchar(64) NOT NULL,\n" +
+			"  `checkpoint` longblob NOT NULL,\n" +
+			"  `start_time` bigint(20) DEFAULT NULL,\n" +
+			"  `state_update_time` bigint(20) DEFAULT NULL,\n" +
+			"  `meta` longblob DEFAULT NULL,\n" +
+			"  `error` blob DEFAULT NULL,\n" +
+			"  `summary` json DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `idx_task_key` (`task_key`),\n" +
+			"  KEY `idx_state_update_time` (`state_update_time`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec(`insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");`)
+	tk.MustExec(`insert into tidb_background_subtask_history select * from tidb_background_subtask;`)
+	r := tk.MustQuery("select * from tidb_background_subtask_history;")
+	r.Check(testkit.Rows("1 <nil> <nil> <nil> <nil> <nil> <nil> <nil> 0  <nil> <nil> <nil> <nil> <nil>"))
+}
