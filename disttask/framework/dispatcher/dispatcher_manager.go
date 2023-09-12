@@ -210,6 +210,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 	_ = dm.gPool.Run(func() {
 		dispatcherFactory := GetDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
+		defer dispatcher.Close()
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)

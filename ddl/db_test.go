@@ -953,7 +953,7 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 }
 
-func TestCreateTableWithIntegerLengthWaring(t *testing.T) {
+func TestCreateTableWithIntegerLengthWarning(t *testing.T) {
 	// Inject the strict-integer-display-width variable in parser directly.
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	defer func() { parsertypes.TiDBStrictIntegerDisplayWidth = false }()
@@ -963,47 +963,47 @@ func TestCreateTableWithIntegerLengthWaring(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t(a tinyint(1))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a smallint(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a mediumint(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a integer(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int1(1))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustExec("create table t(a int1(1))") // Note that int1(1) is tinyint(1) which is boolean-ish
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int2(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int3(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int4(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int8(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 }

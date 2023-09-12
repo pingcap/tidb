@@ -301,8 +301,8 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 				v, ok := testContexts.Load(m.id)
 				if ok {
 					<-v.(*TestContext).TestSyncSubtaskRun
-					m.Stop()
 					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
+					m.Stop()
 				}
 			}()
 		})

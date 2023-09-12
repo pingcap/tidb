@@ -98,9 +98,9 @@ func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, task
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
-	case proto.StepOne:
+	case proto.StepInit:
 		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, false, summary)
-	case proto.StepTwo:
+	case proto.StepOne:
 		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, true, nil)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

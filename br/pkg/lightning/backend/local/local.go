@@ -474,7 +474,7 @@ type Backend struct {
 	importClientFactory ImportClientFactory
 
 	bufferPool   *membuf.Pool
-	metrics      *metric.Metrics
+	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
 }
@@ -506,7 +506,13 @@ func NewBackend(
 	tls *common.TLS,
 	config BackendConfig,
 	regionSizeGetter TableRegionSizeGetter,
-) (*Backend, error) {
+) (b *Backend, err error) {
+	var duplicateDB *pebble.DB
+	defer func() {
+		if err != nil && duplicateDB != nil {
+			_ = duplicateDB.Close()
+		}
+	}()
 	config.adjust()
 	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
 	if err != nil {
@@ -532,7 +538,6 @@ func NewBackend(
 		}
 	}
 
-	var duplicateDB *pebble.DB
 	if config.DupeDetectEnabled {
 		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
 		if err != nil {
@@ -597,7 +602,7 @@ func NewBackend(
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
-	if m, ok := metric.FromContext(ctx); ok {
+	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
