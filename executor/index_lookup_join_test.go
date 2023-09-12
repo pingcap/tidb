@@ -305,53 +305,6 @@ func TestIndexJoinEnumSetIssue19233(t *testing.T) {
 	}
 }
 
-func TestIssue19411(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1  (c_int int, primary key (c_int))")
-	tk.MustExec("create table t2  (c_int int, primary key (c_int)) partition by hash (c_int) partitions 4")
-	tk.MustExec("insert into t1 values (1)")
-	tk.MustExec("insert into t2 values (1)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 values (2)")
-	tk.MustExec("insert into t2 values (2)")
-	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
-		"1 1",
-		"2 2"))
-	tk.MustExec("commit")
-}
-
-func TestIssue23653(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key(c_str), unique key(c_int), unique key(c_str))")
-	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)), key(c_int), unique key(c_str))")
-	tk.MustExec("insert into t1 values (1, 'cool buck'), (2, 'reverent keller')")
-	tk.MustExec("insert into t2 select * from t1")
-	tk.MustQuery("select /*+ inl_join(t2) */ * from t1, t2 where t1.c_str = t2.c_str and t1.c_int = t2.c_int and t1.c_int = 2").Check(testkit.Rows(
-		"2 reverent keller 2 reverent keller"))
-}
-
-func TestIssue23656(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)))")
-	tk.MustExec("create table t2 like t1")
-	tk.MustExec("insert into t1 values (1, 'clever jang'), (2, 'blissful aryabhata')")
-	tk.MustExec("insert into t2 select * from t1")
-	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;").Check(testkit.Rows(
-		"1 clever jang 1 clever jang",
-		"2 blissful aryabhata 2 blissful aryabhata"))
-}
-
 func TestIssue23722(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -388,20 +341,6 @@ func TestIssue23722(t *testing.T) {
 	tk.MustQuery("select  t.* from t where col_19 in  " +
 		"( select col_19 from t where t.col_18 <> 'David' and t.col_19 >= 'jDzNn' ) " +
 		"order by col_15 , col_16 , col_17 , col_18 , col_19;").Check(testkit.Rows("38799.400 20301 KETeFZhkoxnwMAhA Charlie zyhXEppZdqyqNV"))
-}
-
-func TestIssue24547(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists a")
-	tk.MustExec("drop table if exists b")
-	tk.MustExec("CREATE TABLE `a` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3)),\n  UNIQUE KEY `uk1` (`v`)\n)")
-	tk.MustExec("CREATE TABLE `b` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3))\n)")
-	tk.MustExec("insert into a(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('3444', '3444', '3444'), ('444', '444', '444')")
-	tk.MustExec("insert into b(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('2333', '2333', '2333'), ('555', '555', '555')")
-	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
 }
 
 func TestIssue27138(t *testing.T) {
@@ -456,7 +395,8 @@ PARTITIONS 1`)
 	tk.MustQuery("select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 )").Check(testkit.Rows())
 }
 
-func TestIssue27893(t *testing.T) {
+func TestIndexLookupJoinIssue(t *testing.T) {
+	// Issue27893
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -471,6 +411,43 @@ func TestIssue27893(t *testing.T) {
 	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ inl_hash_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a").Check(testkit.Rows("1"))
 	tk.MustQuery("select @@last_sql_use_alloc").Check(testkit.Rows("1"))
+	// Issue24547
+	tk.MustExec("drop table if exists a,b")
+	tk.MustExec("CREATE TABLE `a` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3)),\n  UNIQUE KEY `uk1` (`v`)\n)")
+	tk.MustExec("CREATE TABLE `b` (\n  `v` varchar(100) DEFAULT NULL,\n  `k1` varchar(100) NOT NULL,\n  `k2` varchar(100) NOT NULL,\n  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,\n  KEY `kk2` (`k2`(3))\n)")
+	tk.MustExec("insert into a(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('3444', '3444', '3444'), ('444', '444', '444')")
+	tk.MustExec("insert into b(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('2333', '2333', '2333'), ('555', '555', '555')")
+	tk.MustExec("delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333'")
+	// Issue19411
+	tk.MustExec("drop table if exists t1,t2")
+	tk.MustExec("create table t1  (c_int int, primary key (c_int))")
+	tk.MustExec("create table t2  (c_int int, primary key (c_int)) partition by hash (c_int) partitions 4")
+	tk.MustExec("insert into t1 values (1)")
+	tk.MustExec("insert into t2 values (1)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t1 values (2)")
+	tk.MustExec("insert into t2 values (2)")
+	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int").Sort().Check(testkit.Rows(
+		"1 1",
+		"2 2"))
+	tk.MustExec("commit")
+	// Issue23653
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key(c_str), unique key(c_int), unique key(c_str))")
+	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)), key(c_int), unique key(c_str))")
+	tk.MustExec("insert into t1 values (1, 'cool buck'), (2, 'reverent keller')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1, t2 where t1.c_str = t2.c_str and t1.c_int = t2.c_int and t1.c_int = 2").Check(testkit.Rows(
+		"2 reverent keller 2 reverent keller"))
+	// Issue23656
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)))")
+	tk.MustExec("create table t2 like t1")
+	tk.MustExec("insert into t1 values (1, 'clever jang'), (2, 'blissful aryabhata')")
+	tk.MustExec("insert into t2 select * from t1")
+	tk.MustQuery("select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;").Check(testkit.Rows(
+		"1 clever jang 1 clever jang",
+		"2 blissful aryabhata 2 blissful aryabhata"))
 }
 
 func TestPartitionTableIndexJoinAndIndexReader(t *testing.T) {

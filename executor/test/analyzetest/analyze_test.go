@@ -252,42 +252,26 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	require.Equal(t, int64(65559), tbl.Columns[1].TotColSize)
 }
 
-func TestIssue15993(t *testing.T) {
+func TestAnlyzeIssue(t *testing.T) {
+	// Issue15993
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
+	tk.MustExec("set @@tidb_enable_fast_analyze=1;")
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT PRIMARY KEY);")
-	tk.MustExec("set @@tidb_enable_fast_analyze=1;")
-	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX PRIMARY;")
-}
-
-func TestIssue15751(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
+	// Issue15751
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
 	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
-	tk.MustExec("set @@tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0")
-}
-
-func TestIssue15752(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
+	// Issue15752
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT)")
 	tk.MustExec("INSERT INTO t0 VALUES (0)")
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
-	tk.MustExec("set @@tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
 }
 
