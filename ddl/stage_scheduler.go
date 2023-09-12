@@ -79,16 +79,17 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 	}
 
 	switch stage {
-	case stageReadIndex:
+	case proto.StepInit:
 		jc := d.jobContext(jobMeta.ID)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexStage(
 			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
-	case stageInstanceIngest:
+	case proto.StepOne:
+		if len(bgm.CloudStorageURI) > 0 {
+			return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		}
 		return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
-	case stageMergeSort:
-		return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 	default:
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
@@ -113,7 +114,7 @@ func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, task
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
-	case stageReadIndex, stageInstanceIngest, stageMergeSort:
+	case proto.StepInit, proto.StepOne:
 		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

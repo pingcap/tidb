@@ -42,13 +42,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const stageInit = proto.StepInit
-const (
-	stageReadIndex = iota + 1
-	stageInstanceIngest
-	stageMergeSort
-)
-
 type backfillingDispatcherExt struct {
 	d *ddl
 }
@@ -85,6 +78,9 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 		// Only redact when the task is complete.
 		if len(taskMeta) == 0 && useExtStore {
 			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
+			if err := taskHandle.UpdateTask(gTask.State, nil, dispatcher.RetrySQLTimes); err != nil {
+				logutil.Logger(ctx).Error("failed to UpdateTask", zap.Error(err))
+			}
 		}
 	}()
 
@@ -96,12 +92,10 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 	// generate partition table's plan.
 	if tblInfo.Partition != nil {
 		switch gTask.Step {
-		case stageInit:
-			gTask.Step = stageReadIndex
+		case proto.StepInit:
 			return generatePartitionPlan(tblInfo)
-		case stageReadIndex:
+		case proto.StepOne:
 			if useExtStore {
-				gTask.Step = stageMergeSort
 				return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 			}
 			return nil, nil
@@ -111,18 +105,13 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 	}
 	// generate non-partition table's plan.
 	switch gTask.Step {
-	case stageInit:
-		gTask.Step = stageReadIndex
+	case proto.StepInit:
 		return generateNonPartitionPlan(h.d, tblInfo, job)
-	case stageReadIndex:
+	case proto.StepOne:
 		if useExtStore {
-			gTask.Step = stageMergeSort
 			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 		}
-		gTask.Step = stageInstanceIngest
 		return generateIngestTaskPlan(ctx)
-	case stageMergeSort, stageInstanceIngest:
-		return nil, nil
 	default:
 		return nil, nil
 	}
@@ -383,7 +372,7 @@ func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, stageReadIndex)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepInit)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
