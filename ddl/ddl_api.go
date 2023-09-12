@@ -4195,7 +4195,6 @@ func checkExchangePartition(pt *model.TableInfo, nt *model.TableInfo) error {
 		return errors.Trace(dbterror.ErrPartitionExchangeForeignKey.GenWithStackByArgs(nt.Name))
 	}
 
-	// NOTE: if nt is temporary table, it should be checked
 	return nil
 }
 
@@ -6878,7 +6877,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 		switch colType.GetType() {
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
-			case types.KindString, types.KindBytes:
+			case types.KindString, types.KindBytes, types.KindNull:
 			default:
 				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
