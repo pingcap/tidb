@@ -384,11 +384,11 @@ func (d *BaseDispatcher) onErrHandlingStage(receiveErr []error) error {
 	}
 
 	// 2. dispatch revert dist-plan to EligibleInstances.
-	return d.dispatchSubTask4Revert(d.Task, meta)
+	return d.dispatchSubTask4Revert(meta)
 }
 
-func (d *BaseDispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) error {
-	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, task)
+func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
+	instanceIDs, err := d.GetAllSchedulerIDs(d.ctx, d.Task)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("get task's all instances failed", zap.Error(err))
 		return err
@@ -396,7 +396,7 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(task *proto.Task, meta []byte) e
 
 	subTasks := make([]*proto.Subtask, 0, len(instanceIDs))
 	for _, id := range instanceIDs {
-		subTasks = append(subTasks, proto.NewSubtask(task.ID, task.Type, id, meta))
+		subTasks = append(subTasks, proto.NewSubtask(d.Task.ID, d.Task.Type, id, meta))
 	}
 	return d.UpdateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
