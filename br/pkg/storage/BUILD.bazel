@@ -23,6 +23,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/errors",
+        "//br/pkg/lightning/log",
         "//br/pkg/logutil",
         "//sessionctx/variable",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials",
