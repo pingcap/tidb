@@ -1530,8 +1530,6 @@ var (
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
-	// RedactCloudStorageURI redacts the cloud storage URI.
-	RedactCloudStorageURI func(uri string) (string, error)
 	// ValidateCloudStorageURI validates the cloud storage URI.
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 )
