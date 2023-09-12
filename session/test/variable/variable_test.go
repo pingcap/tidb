@@ -616,16 +616,28 @@ func TestSessionAlias(t *testing.T) {
 	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(""))
 	// normal set
 	tk.MustExec("set @@tidb_session_alias='alias123'")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows("alias123"))
 	// set a long value
 	val := "0123456789012345678901234567890123456789012345678901234567890123456789"
 	tk.MustExec("set @@tidb_session_alias=?", val)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_session_alias value: '0123456789012345678901234567890123456789012345678901234567890123456789'"))
 	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(val[:64]))
-	// an invalid value
-	err := tk.ExecToErr("set @@tidb_session_alias='abc '")
-	require.EqualError(t, err, "[variable:1231]Incorrect value for variable @@tidb_session_alias 'abc '")
-	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(val[:64]))
+	// set a long value with unicode
+	val = "中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试c"
+	tk.MustExec("set @@tidb_session_alias=?", val)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_session_alias value: '中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试c'"))
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows("中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试"))
+	// end with space
+	tk.MustExec("set @@tidb_session_alias='abc  '")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_session_alias value: 'abc  '"))
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows("abc"))
+	// end with space after truncate
+	tk.MustExec("set @@tidb_session_alias='abc                                                                    1'")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_session_alias value: 'abc                                                                    1'"))
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows("abc"))
 	// reset to empty
 	tk.MustExec("set @@tidb_session_alias=''")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows(""))
 }
