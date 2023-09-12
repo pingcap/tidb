@@ -278,3 +278,84 @@ func TestBlocked(t *testing.T) {
 	})
 	req.ErrorIs(errors.Cause(err), context.DeadlineExceeded)
 }
+<<<<<<< HEAD
+=======
+
+func TestResolveLock(t *testing.T) {
+	c := createFakeCluster(t, 4, false)
+	defer func() {
+		if t.Failed() {
+			fmt.Println(c)
+		}
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
+	// make sure asyncResolveLocks stuck in optionalTick later.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks", `pause`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
+	}()
+
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	ctx := context.Background()
+	minCheckpoint := c.advanceCheckpoints()
+	env := &testEnv{fakeCluster: c, testCtx: t}
+
+	lockRegion := c.findRegionByKey([]byte("01"))
+	allLocks := []*txnlock.Lock{
+		{
+			Key: []byte{1},
+			// TxnID == minCheckpoint
+			TxnID: minCheckpoint,
+		},
+		{
+			Key: []byte{2},
+			// TxnID > minCheckpoint
+			TxnID: minCheckpoint + 1,
+		},
+	}
+	c.LockRegion(lockRegion, allLocks)
+
+	// ensure resolve locks triggered and collect all locks from scan locks
+	resolveLockRef := atomic.NewBool(false)
+	env.resolveLocks = func(locks []*txnlock.Lock, loc *tikv.KeyLocation) (*tikv.KeyLocation, error) {
+		resolveLockRef.Store(true)
+		require.ElementsMatch(t, locks, allLocks)
+		return loc, nil
+	}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	// make lastCheckpoint stuck at 123
+	adv.UpdateLastCheckpoint(streamhelper.NewCheckpointWithSpan(spans.Valued{
+		Key: kv.KeyRange{
+			StartKey: kv.Key([]byte("1")),
+			EndKey:   kv.Key([]byte("2")),
+		},
+		Value: 123,
+	}))
+	adv.NewCheckpoints(
+		spans.Sorted(spans.NewFullWith([]kv.KeyRange{
+			{
+				StartKey: kv.Key([]byte("1")),
+				EndKey:   kv.Key([]byte("2")),
+			},
+		}, 0)),
+	)
+	adv.StartTaskListener(ctx)
+	require.Eventually(t, func() bool { return adv.OnTick(ctx) == nil },
+		time.Second, 50*time.Millisecond)
+	coll := streamhelper.NewClusterCollector(ctx, env)
+	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
+	require.NoError(t, err)
+	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
+	require.True(t, adv.GetInResolvingLock())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks"))
+	require.Eventually(t, func() bool { return resolveLockRef.Load() },
+		8*time.Second, 50*time.Microsecond)
+	// state must set to false after tick
+	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
+		8*time.Second, 50*time.Microsecond)
+	r, err := coll.Finish(ctx)
+	require.NoError(t, err)
+	require.Len(t, r.FailureSubRanges, 0)
+	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
+}
+>>>>>>> 9f8a412fd8c (br: fix the issue that state not set correctly after resolve locks (#46903))
