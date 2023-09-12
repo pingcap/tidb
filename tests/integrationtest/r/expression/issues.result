@@ -2512,12 +2512,6 @@ select * from t where t.b < t.c;
 b	c
 z	26.18040000000000000000
 drop table if exists t1;
-CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL);
-INSERT INTO t1 VALUES (0);
-SELECT c1>=CAST('-787360724' AS TIME) FROM t1;
-c1>=CAST('-787360724' AS TIME)
-1
-drop table if exists t1;
 CREATE TABLE t1 (c1 INT);
 INSERT INTO t1 VALUES (1), (null);
 SELECT IFNULL(c1, 0.0) from t1;
@@ -2562,3 +2556,9 @@ SELECT case when v1 is not null then v1 else v2 end from t1;
 case when v1 is not null then v1 else v2 end
 2020-01-01 11:11:11.1230
 2020-01-01 11:11:11.1234
+drop table if exists t1;
+CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL);
+INSERT INTO t1 VALUES (0);
+SELECT c1>=CAST('-787360724' AS TIME) FROM t1;
+c1>=CAST('-787360724' AS TIME)
+1
