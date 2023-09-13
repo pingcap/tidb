@@ -160,6 +160,11 @@ func (c *CheckpointAdvancer) Config() config.Config {
 	return c.cfg
 }
 
+// GetInResolvingLock only used for test.
+func (c *CheckpointAdvancer) GetInResolvingLock() bool {
+	return c.inResolvingLock.Load()
+}
+
 // GetCheckpointInRange scans the regions in the range,
 // collect them to the collector.
 func (c *CheckpointAdvancer) GetCheckpointInRange(ctx context.Context, start, end []byte,
@@ -518,8 +523,10 @@ func (c *CheckpointAdvancer) optionalTick(cx context.Context) error {
 			// use new context here to avoid timeout
 			ctx := context.Background()
 			c.asyncResolveLocksForRanges(ctx, targets)
+		} else {
+			// don't forget set state back
+			c.inResolvingLock.Store(false)
 		}
-		c.inResolvingLock.Store(false)
 	}
 	threshold := c.Config().GetDefaultStartPollThreshold()
 	if err := c.subscribeTick(cx); err != nil {
@@ -564,6 +571,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 	// run in another goroutine
 	// do not block main tick here
 	go func() {
+		failpoint.Inject("AsyncResolveLocks", func() {})
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
 			return tikv.ResolveLocksForRange(
@@ -600,5 +608,6 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 		c.lastCheckpointMu.Lock()
 		c.lastCheckpoint.resolveLockTime = time.Now()
 		c.lastCheckpointMu.Unlock()
+		c.inResolvingLock.Store(false)
 	}()
 }

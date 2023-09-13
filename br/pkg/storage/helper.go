@@ -9,7 +9,6 @@ import (
 )
 
 func init() {
-	variable.RedactCloudStorageURI = RedactURL
 	variable.ValidateCloudStorageURI = ValidateCloudStorageURI
 }
 

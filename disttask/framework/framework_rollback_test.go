@@ -102,8 +102,8 @@ func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([
 	}, nil
 }
 
-func (t *rollbackScheduler) OnFinished(_ context.Context, meta []byte) ([]byte, error) {
-	return meta, nil
+func (t *rollbackScheduler) OnFinished(_ context.Context, _ *proto.Subtask) error {
+	return nil
 }
 
 type rollbackSubtaskExecutor struct {
