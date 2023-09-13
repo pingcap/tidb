@@ -53,10 +53,10 @@ func (s *StatsCachePointer) Replace(newCache *StatsCache) {
 }
 
 // UpdateStatsCache updates the cache with the new cache.
-func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
+func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64) {
 	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
-		s.Load().Update(tables, deletedIDs, opts...)
+		s.Load().Update(tables, deletedIDs)
 	} else {
-		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs, opts...))
+		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs))
 	}
 }

@@ -278,7 +278,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) error {
+func (h *Handle) Update(is infoschema.InfoSchema) error {
 	oldCache := h.statsCache.Load()
 	lastVersion := oldCache.Version()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -297,10 +297,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	option := &cache.TableStatsOption{}
-	for _, opt := range opts {
-		opt(option)
-	}
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
@@ -315,7 +311,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.GetFromInternal(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -335,7 +331,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache, tables, deletedTableIDs, opts...)
+	h.updateStatsCache(oldCache, tables, deletedTableIDs)
 	return nil
 }
 
@@ -724,12 +720,12 @@ func (h *Handle) GetMemConsumed() (size int64) {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...cache.TableStatsOpt) *statistics.Table {
-	return h.GetPartitionStats(tblInfo, tblInfo.ID, opts...)
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
+	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...cache.TableStatsOpt) *statistics.Table {
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
 		tbl = statistics.PseudoTable(tblInfo, false)
@@ -737,16 +733,7 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...
 		return tbl
 	}
 	statsCache := h.statsCache.Load()
-	var ok bool
-	option := &cache.TableStatsOption{}
-	for _, opt := range opts {
-		opt(option)
-	}
-	if option.ByQuery() {
-		tbl, ok = statsCache.GetFromUser(pid)
-	} else {
-		tbl, ok = statsCache.GetFromInternal(pid)
-	}
+	tbl, ok := statsCache.Get(pid)
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo, false)
 		tbl.PhysicalID = pid
@@ -770,9 +757,8 @@ func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
 // If it is in the COW mode. it overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64,
-	opts ...cache.TableStatsOpt) (updated bool) {
-	h.statsCache.UpdateStatsCache(newCache, tables, deletedIDs, opts...)
+func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool) {
+	h.statsCache.UpdateStatsCache(newCache, tables, deletedIDs)
 	return true
 }
 
@@ -807,7 +793,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 
 func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.GetFromInternal(col.TableID)
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -856,7 +842,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.GetFromInternal(col.TableID)
+	tbl, ok = oldCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -870,7 +856,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 
 func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.GetFromInternal(idx.TableID)
+	tbl, ok := oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -909,7 +895,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
 	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.GetFromInternal(idx.TableID)
+	tbl, ok = oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -951,7 +937,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	statsTbl, ok := h.statsCache.Load().GetFromInternal(physicalID)
+	statsTbl, ok := h.statsCache.Load().Get(physicalID)
 	if !ok {
 		statsTbl = nil
 	}
@@ -1539,7 +1525,7 @@ const updateStatsCacheRetryCnt = 5
 func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load()
-		tbl, ok := oldCache.GetFromInternal(tableID)
+		tbl, ok := oldCache.Get(tableID)
 		if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
 			return
 		}

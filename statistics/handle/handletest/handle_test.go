@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -187,7 +186,7 @@ func TestVersion(t *testing.T) {
 	// We can read it without analyze again! Thanks for PrevLastVersion.
 	require.NotNil(t, statsTbl2.Columns[int64(3)])
 	// assert WithGetTableStatsByQuery get the same result
-	statsTbl2 = h.GetTableStats(tableInfo2, cache.WithTableStatsByQuery())
+	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 	require.NotNil(t, statsTbl2.Columns[int64(3)])
 }
