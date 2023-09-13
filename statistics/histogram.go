@@ -141,7 +141,7 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 
 // UpperToDatum gets the upper bound of bucket `idx` to datum.
 func (hg *Histogram) UpperToDatum(idx int, d *types.Datum) {
-	hg.Bounds.GetRow(2*idx).DatumWithBuffer(0, hg.Tp, d)
+	hg.Bounds.GetRow(2*idx+1).DatumWithBuffer(0, hg.Tp, d)
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
