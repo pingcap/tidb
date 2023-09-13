@@ -73,14 +73,11 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 		return nil, errors.New("index info not found")
 	}
 
-	var backendCtx ingest.BackendCtx
-	if bc, ok := ingest.LitBackCtxMgr.Load(jobMeta.ID); ok {
-		backendCtx = bc
-	} else {
-		backendCtx, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	// Unregister the previous BackendCtx if possible because the context has been changed.
+	ingest.LitBackCtxMgr.Unregister(jobMeta.ID)
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 
 	switch stage {
@@ -89,12 +86,12 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexStage(
-			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, backendCtx, summary, bgm.CloudStorageURI), nil
+			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case proto.StepOne:
 		if len(bgm.CloudStorageURI) > 0 {
-			return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), backendCtx, bgm.CloudStorageURI)
+			return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
-		return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), backendCtx), nil
+		return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
