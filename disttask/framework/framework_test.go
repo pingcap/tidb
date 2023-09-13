@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/mock"
+	mockexecute "github.com/pingcap/tidb/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
@@ -101,121 +101,48 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-type testMiniTask struct{}
-
-func (testMiniTask) IsMinimalTask() {}
-
-func (testMiniTask) String() string {
-	return "testMiniTask"
-}
-
-type testScheduler struct{}
-
-func (*testScheduler) Init(_ context.Context) error { return nil }
-
-func (t *testScheduler) Cleanup(_ context.Context) error { return nil }
-
-func (t *testScheduler) Rollback(_ context.Context) error { return nil }
-
-func (t *testScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
-	return []proto.MinimalTask{
-		testMiniTask{},
-		testMiniTask{},
-		testMiniTask{},
-	}, nil
-}
-
-func (t *testScheduler) OnFinished(_ context.Context, _ *proto.Subtask) error {
-	return nil
-}
-
-// Note: the subtask must be Reentrant.
-type testSubtaskExecutor struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor) Run(_ context.Context) error {
-	e.m.Store("0", "0")
-	return nil
-}
-
-type testSubtaskExecutor1 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor1) Run(_ context.Context) error {
-	e.m.Store("1", "1")
-	return nil
-}
-
-type testSubtaskExecutor2 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor2) Run(_ context.Context) error {
-	e.m.Store("2", "2")
-	return nil
-}
-
-type testSubtaskExecutor3 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor3) Run(_ context.Context) error {
-	e.m.Store("3", "3")
-	return nil
-}
-
-type testSubtaskExecutor4 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor4) Run(_ context.Context) error {
-	e.m.Store("4", "4")
-	return nil
-}
-
-type testSubtaskExecutor5 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor5) Run(_ context.Context) error {
-	e.m.Store("5", "5")
-	return nil
+func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExecutor {
+	executor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().Rollback(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return executor
 }
 
 func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&testScheduler{}, nil).AnyTimes()
-	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
-			switch step {
+	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
 			case proto.StepInit:
-				return &testSubtaskExecutor{m: m}, nil
+				m.Store("0", "0")
 			case proto.StepOne:
-				return &testSubtaskExecutor1{m: m}, nil
+				m.Store("1", "1")
+			default:
+				panic("invalid step")
 			}
-			panic("invalid step")
+			return nil
 		}).AnyTimes()
-	registerTaskMetaInner(t, mockExtension, dispatcherHandle)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, dispatcherHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType string, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
 	t.Cleanup(func() {
 		dispatcher.ClearDispatcherFactory()
 		scheduler.ClearSchedulers()
 	})
-	dispatcher.ClearDispatcherFactory()
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+	dispatcher.RegisterDispatcherFactory(taskType,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
 			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher
 		})
-	scheduler.ClearSchedulers()
-	scheduler.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
+	scheduler.RegisterTaskType(taskType,
+		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable) scheduler.Scheduler {
+			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},
@@ -224,74 +151,40 @@ func registerTaskMetaInner(t *testing.T, mockExtension scheduler.Extension, disp
 
 func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&testScheduler{}, nil).AnyTimes()
-	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
-			switch step {
+	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
 			case proto.StepInit:
-				return &testSubtaskExecutor2{m: m}, nil
+				m.Store("2", "2")
 			case proto.StepOne:
-				return &testSubtaskExecutor3{m: m}, nil
+				m.Store("3", "3")
+			default:
+				panic("invalid step")
 			}
-			panic("invalid step")
+			return nil
 		}).AnyTimes()
-	RegisterTaskMetaForExample2Inner(t, mockExtension, dispatcherHandle)
-}
-
-func RegisterTaskMetaForExample2Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
-	t.Cleanup(func() {
-		dispatcher.ClearDispatcherFactory()
-		scheduler.ClearSchedulers()
-	})
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-			baseDispatcher.Extension = dispatcherHandle
-			return baseDispatcher
-		})
-	scheduler.RegisterTaskType(proto.TaskTypeExample2,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
-			s.Extension = mockExtension
-			return s
-		},
-	)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample2, mockExtension, dispatcherHandle)
 }
 
 func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&testScheduler{}, nil).AnyTimes()
-	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
-			switch step {
+	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
 			case proto.StepInit:
-				return &testSubtaskExecutor4{m: m}, nil
+				m.Store("4", "4")
 			case proto.StepOne:
-				return &testSubtaskExecutor5{m: m}, nil
+				m.Store("5", "5")
+			default:
+				panic("invalid step")
 			}
-			panic("invalid step")
+			return nil
 		}).AnyTimes()
-	RegisterTaskMetaForExample3Inner(t, mockExtension, dispatcherHandle)
-}
-
-func RegisterTaskMetaForExample3Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
-	t.Cleanup(func() {
-		dispatcher.ClearDispatcherFactory()
-		scheduler.ClearSchedulers()
-	})
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample3,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-			baseDispatcher.Extension = dispatcherHandle
-			return baseDispatcher
-		})
-	scheduler.RegisterTaskType(proto.TaskTypeExample3,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
-			s.Extension = mockExtension
-			return s
-		},
-	)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample3, mockExtension, dispatcherHandle)
 }
 
 func DispatchTask(taskKey string, t *testing.T) *proto.Task {

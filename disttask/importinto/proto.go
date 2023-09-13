@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
-	"go.uber.org/zap"
 )
 
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
@@ -107,19 +106,6 @@ func (*importStepMinimalTask) IsMinimalTask() {}
 
 func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
-}
-
-// postProcessStepMinimalTask is the minimal task of post process step.
-type postProcessStepMinimalTask struct {
-	meta     PostProcessStepMeta
-	taskMeta *TaskMeta
-	logger   *zap.Logger
-}
-
-func (*postProcessStepMinimalTask) IsMinimalTask() {}
-
-func (*postProcessStepMinimalTask) String() string {
-	return "post process"
 }
 
 // Chunk records the chunk information.
