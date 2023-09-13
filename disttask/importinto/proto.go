@@ -70,6 +70,10 @@ type ImportStepMeta struct {
 	// the max id is same among all allocator types for now, since we're using same base, see
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
+
+	SortedDataMeta *external.SortedDataMeta
+	// SortedIndexMetas is a map from index id to its sorted kv meta.
+	SortedIndexMetas map[int64]*external.SortedDataMeta
 }
 
 // PostProcessStepMeta is the meta of post process step.
@@ -92,21 +96,31 @@ type SharedVars struct {
 	mu       sync.Mutex
 	Checksum *verification.KVChecksum
 
-	SortedDataSummary *external.WriterSummary
-	// SortedIndexSummaries is a map from index id to its sorted kv summary.
-	SortedIndexSummaries map[int64]*external.WriterSummary
+	SortedDataMeta *external.SortedDataMeta
+	// SortedIndexMetas is a map from index id to its sorted kv meta.
+	SortedIndexMetas map[int64]*external.SortedDataMeta
 }
 
-func (sv *SharedVars) setDataSummary(summary *external.WriterSummary) {
+func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
-	sv.SortedDataSummary = summary
+	if sv.SortedDataMeta == nil {
+		sv.SortedDataMeta = external.NewSortedDataMeta(summary)
+		return
+	}
+	sv.SortedDataMeta.MergeSummary(summary)
 }
 
-func (sv *SharedVars) addIndexSummary(indexID int64, summary *external.WriterSummary) {
+func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
-	sv.SortedIndexSummaries[indexID] = summary
+	meta, ok := sv.SortedIndexMetas[indexID]
+	if !ok {
+		meta = external.NewSortedDataMeta(summary)
+		sv.SortedIndexMetas[indexID] = meta
+		return
+	}
+	meta.MergeSummary(summary)
 }
 
 // importStepMinimalTask is the minimal task of IMPORT INTO.

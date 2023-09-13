@@ -126,12 +126,12 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		}
 	}
 	sharedVars := &SharedVars{
-		TableImporter:        s.tableImporter,
-		DataEngine:           dataEngine,
-		IndexEngine:          indexEngine,
-		Progress:             asyncloaddata.NewProgress(false),
-		Checksum:             &verification.KVChecksum{},
-		SortedIndexSummaries: make(map[int64]*external.WriterSummary),
+		TableImporter:    s.tableImporter,
+		DataEngine:       dataEngine,
+		IndexEngine:      indexEngine,
+		Progress:         asyncloaddata.NewProgress(false),
+		Checksum:         &verification.KVChecksum{},
+		SortedIndexMetas: make(map[int64]*external.SortedDataMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
@@ -216,6 +216,8 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
+	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {

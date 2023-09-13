@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -44,12 +45,8 @@ type BackfillSubTaskMeta struct {
 	StartKey        []byte `json:"start_key"`
 	EndKey          []byte `json:"end_key"`
 
-	DataFiles      []string `json:"data_files"`
-	StatFiles      []string `json:"stat_files"`
-	RangeSplitKeys [][]byte `json:"range_split_keys"`
-	MinKey         []byte   `json:"min_key"`
-	MaxKey         []byte   `json:"max_key"`
-	TotalKVSize    uint64   `json:"total_kv_size"`
+	RangeSplitKeys          [][]byte `json:"range_split_keys"`
+	external.SortedDataMeta `json:",inline"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.

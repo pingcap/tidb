@@ -241,3 +241,79 @@ func GetMaxOverlapping(points []Endpoint) int {
 	}
 	return int(maxWeight)
 }
+
+// SortedDataMeta is the meta of sorted data.
+type SortedDataMeta struct {
+	MinKey      []byte   `json:"min_key"`
+	MaxKey      []byte   `json:"max_key"`
+	TotalKVSize uint64   `json:"total_kv_size"`
+	DataFiles   []string `json:"data_files"`
+	StatFiles   []string `json:"stat_files"`
+}
+
+// NewSortedDataMeta creates a SortedDataMeta from a WriterSummary.
+func NewSortedDataMeta(summary *WriterSummary) *SortedDataMeta {
+	meta := &SortedDataMeta{
+		MinKey:      summary.Min.Clone(),
+		MaxKey:      summary.Max.Clone(),
+		TotalKVSize: summary.TotalSize,
+	}
+	for _, f := range summary.MultipleFilesStats {
+		for _, filename := range f.Filenames {
+			meta.DataFiles = append(meta.DataFiles, filename[0])
+			meta.StatFiles = append(meta.StatFiles, filename[1])
+		}
+	}
+	return meta
+}
+
+// Merge merges the other SortedDataMeta into this one.
+func (m *SortedDataMeta) Merge(other *SortedDataMeta) {
+	m.MinKey = NotNilMin(m.MinKey, other.MinKey)
+	m.MaxKey = NotNilMax(m.MaxKey, other.MaxKey)
+	m.TotalKVSize += other.TotalKVSize
+
+	m.DataFiles = append(m.DataFiles, other.DataFiles...)
+	m.StatFiles = append(m.StatFiles, other.StatFiles...)
+}
+
+// MergeSummary merges the WriterSummary into this SortedDataMeta.
+func (m *SortedDataMeta) MergeSummary(summary *WriterSummary) {
+	m.MinKey = NotNilMin(m.MinKey, summary.Min)
+	m.MaxKey = NotNilMax(m.MaxKey, summary.Max)
+	m.TotalKVSize += summary.TotalSize
+	for _, f := range summary.MultipleFilesStats {
+		for _, filename := range f.Filenames {
+			m.DataFiles = append(m.DataFiles, filename[0])
+			m.StatFiles = append(m.StatFiles, filename[1])
+		}
+	}
+}
+
+// NotNilMin returns the smallest of a and b, ignoring nil values.
+func NotNilMin(a, b []byte) []byte {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	if bytes.Compare(a, b) < 0 {
+		return a
+	}
+	return b
+}
+
+// NotNilMax returns the largest of a and b, ignoring nil values.
+func NotNilMax(a, b []byte) []byte {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	if bytes.Compare(a, b) > 0 {
+		return a
+	}
+	return b
+}

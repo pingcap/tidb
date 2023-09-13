@@ -141,7 +141,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, workerID int
 		indexWriterFn := func(indexID int64) *external.Writer {
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
-					op.sharedVars.addIndexSummary(indexID, summary)
+					op.sharedVars.mergeIndexSummary(indexID, summary)
 				})
 			prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), strconv.Itoa(int(workerID)))
@@ -151,7 +151,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, workerID int
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(op.sharedVars.setDataSummary)
+			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
 		prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
 		writerID := path.Join("data", strconv.Itoa(int(workerID)))
 		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
