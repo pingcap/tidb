@@ -634,21 +634,15 @@ func (stm *TaskManager) AddSubTasks(task *proto.Task, subtasks []*proto.Subtask)
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
 	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %? and state = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
+		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = unix_timestamp(), concurrency = %?, meta = %?, error = %? where id = %? and state = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
 		if err != nil {
 			return err
 		}
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			rs, err := ExecSQL(stm.ctx, se, "select id from  mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
-			if err != nil {
-				return err
-			}
-			// state have changed.
-			if len(rs) == 0 {
-				retryable = false
-				return errors.New("invalid task state transform, state already changed")
-			}
+			// task state have changed by other admin command
+			retryable = false
+			return errors.New("invalid task state transform, state already changed")
 		}
 
 		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {

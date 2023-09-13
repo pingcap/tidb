@@ -239,7 +239,6 @@ func (d *BaseDispatcher) onRunning() error {
 		logutil.Logger(d.logCtx).Info("previous subtasks finished, generate dist plan", zap.Int64("stage", d.Task.Step))
 		// When all subtasks dispatched and processed, mark task as succeed.
 		if d.Finished(d.Task) {
-			d.Task.StateUpdateTime = time.Now().UTC()
 			logutil.Logger(d.logCtx).Info("all subtasks dispatched and processed, finish the task")
 			err := d.updateTask(proto.TaskStateSucceed, nil, RetrySQLTimes)
 			if err != nil {
@@ -392,7 +391,6 @@ func (d *BaseDispatcher) onNextStage() error {
 		if d.Task.Concurrency > MaxSubtaskConcurrency {
 			d.Task.Concurrency = MaxSubtaskConcurrency
 		}
-		d.Task.StateUpdateTime = time.Now().UTC()
 		if err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes); err != nil {
 			return err
 		}
@@ -400,7 +398,6 @@ func (d *BaseDispatcher) onNextStage() error {
 		// 2. when previous stage finished, update to next stage.
 		d.Task.Step++
 		logutil.Logger(d.logCtx).Info("previous stage finished, run into next stage", zap.Int64("from", d.Task.Step-1), zap.Int64("to", d.Task.Step))
-		d.Task.StateUpdateTime = time.Now().UTC()
 		err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
 		if err != nil {
 			return err
