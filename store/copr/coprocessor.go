@@ -270,8 +270,8 @@ type copTask struct {
 	batchTaskList    map[uint64]*batchedCopTask
 	meetLockFallback bool
 
-	// timeout value for one kv readonly reqeust
-	tidbKvReadTimeout uint64
+	// timeout value for one kv readonly request
+	tikvClientReadTimeout uint64
 }
 
 type batchedCopTask struct {
@@ -416,7 +416,7 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 				tasks = append(tasks, task)
 			}
 			if !ignoreTiDBKVReadTimeout {
-				task.tidbKvReadTimeout = req.TidbKvReadTimeout
+				task.tikvClientReadTimeout = req.TiKVClientReadTimeout
 			}
 
 			i = nextI
@@ -1028,8 +1028,8 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		worker.req.ResourceGroupTagger(req)
 	}
 	timeout := tikv.ReadTimeoutMedium
-	if task.tidbKvReadTimeout > 0 {
-		timeout = time.Duration(task.tidbKvReadTimeout) * time.Millisecond
+	if task.tikvClientReadTimeout> 0 {
+		timeout = time.Duration(task.tikvClientReadTimeout) * time.Millisecond
 	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
