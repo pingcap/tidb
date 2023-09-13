@@ -100,12 +100,8 @@ func TestOnRunnableTasks(t *testing.T) {
 	// no task
 	m.onRunnableTasks(context.Background(), nil)
 
-	// unknown task type
-	m.onRunnableTasks(context.Background(), []*proto.Task{task})
-
-	m.subtaskExecutorPools["type"] = mockPool
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) Scheduler {
+		func(ctx context.Context, id string, taskID int64, taskTable TaskTable) Scheduler {
 			return mockInternalScheduler
 		})
 
@@ -168,10 +164,9 @@ func TestManager(t *testing.T) {
 		return mockPool, nil
 	})
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) Scheduler {
+		func(ctx context.Context, id string, taskID int64, taskTable TaskTable) Scheduler {
 			return mockInternalScheduler
-		},
-		WithPoolSize(1))
+		})
 	id := "test"
 	taskID1 := int64(1)
 	taskID2 := int64(2)
@@ -209,10 +204,10 @@ func TestManager(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(false, nil).AnyTimes()
-	// once for scheduler pool, once for subtask pool
+	// for scheduler pool
 	mockPool.EXPECT().ReleaseAndWait().Do(func() {
 		wg.Wait()
-	}).Times(2)
+	})
 	m, err := b.BuildManager(context.Background(), id, mockTaskTable)
 	require.NoError(t, err)
 	require.NoError(t, m.Start())

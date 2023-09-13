@@ -17,10 +17,11 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	"runtime"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -93,18 +94,18 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *importStepExecutor) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
+func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	s.logger.Info("split and run subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
 	dataEngine, err := s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Unlike in Lightning, we start an index engine for each subtask, whereas previously there was only a single index engine globally.
 	// This is because the scheduler currently does not have a post-processing mechanism.
@@ -114,7 +115,7 @@ func (s *importStepExecutor) SplitSubtask(ctx context.Context, subtask *proto.Su
 	// engineID = -1, -2, -3, ...
 	indexEngine, err := s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	sharedVars := &SharedVars{
 		TableImporter: s.tableImporter,
@@ -130,7 +131,7 @@ func (s *importStepExecutor) SplitSubtask(ctx context.Context, subtask *proto.Su
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
-		return nil, err
+		return err
 	}
 
 outer:
@@ -149,7 +150,7 @@ outer:
 	}
 	source.Finish()
 
-	return nil, pipeline.Close()
+	return pipeline.Close()
 }
 
 func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
@@ -233,25 +234,24 @@ type postStepExecutor struct {
 
 var _ execute.SubtaskExecutor = &postStepExecutor{}
 
-func (p *postStepExecutor) SplitSubtask(_ context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
-	mTask := &postProcessStepMinimalTask{
-		taskMeta: p.taskMeta,
-		logger:   p.logger,
+func (p *postStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	stepMeta := PostProcessStepMeta{}
+	if err := json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
+		return err
 	}
-	metaBytes := subtask.Meta
-	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
-		return nil, err
-	}
-	return []proto.MinimalTask{mTask}, nil
+	failpoint.Inject("waitBeforePostProcess", func() {
+		time.Sleep(5 * time.Second)
+	})
+	return postProcess(ctx, p.taskMeta, &stepMeta, p.logger)
 }
 
 type importScheduler struct {
 	*scheduler.BaseScheduler
 }
 
-func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
+func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable) scheduler.Scheduler {
 	s := &importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable),
 	}
 	s.BaseScheduler.Extension = s
 	return s
@@ -294,21 +294,6 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 	}
 }
 
-func (*importScheduler) GetMiniTaskExecutor(minimalTask proto.MinimalTask, _ string, step int64) (execute.MiniTaskExecutor, error) {
-	switch step {
-	case StepPostProcess:
-		mTask, ok := minimalTask.(*postProcessStepMinimalTask)
-		if !ok {
-			return nil, errors.Errorf("invalid task type %T", minimalTask)
-		}
-		return &postProcessMinimalTaskExecutor{mTask: mTask}, nil
-	default:
-		return nil, errors.Errorf("unknown step %d for mini task", step)
-	}
-}
-
 func init() {
-	scheduler.RegisterTaskType(proto.ImportInto, newImportScheduler,
-		scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))),
-	)
+	scheduler.RegisterTaskType(proto.ImportInto, newImportScheduler)
 }

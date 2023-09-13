@@ -24,8 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	mockexecute "github.com/pingcap/tidb/disttask/framework/mock/execute"
-	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/disttask/importinto/mock"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -46,12 +45,12 @@ func TestEncodeAndSortOperator(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	executor := mockexecute.NewMockMiniTaskExecutor(ctrl)
+	executor := mock.NewMockMiniTaskExecutor(ctrl)
 	backup := newImportMinimalTaskExecutor
 	t.Cleanup(func() {
 		newImportMinimalTaskExecutor = backup
 	})
-	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) execute.MiniTaskExecutor {
+	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) MiniTaskExecutor {
 		return executor
 	}
 
@@ -78,10 +77,10 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
 	op = newEncodeAndSortOperator(context.Background(), 2, logger)
 	op.SetSource(source)
-	executor1 := mockexecute.NewMockMiniTaskExecutor(ctrl)
-	executor2 := mockexecute.NewMockMiniTaskExecutor(ctrl)
+	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
+	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
 	var id atomic.Int32
-	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) execute.MiniTaskExecutor {
+	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) MiniTaskExecutor {
 		if id.Add(1) == 1 {
 			return executor1
 		}

@@ -48,6 +48,6 @@ header:
     - "build/image/.ci_bazel"
     - "**/OWNERS"
     - "OWNERS_ALIASES"
-    - "disttask/framework/mock/**/*_mock.go"
+    - "disttask/**/mock/**/*_mock.go"
     - "util/sqlexec/mock/*_mock.go"
   comment: on-failure

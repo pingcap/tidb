@@ -57,7 +57,6 @@ type Extension interface {
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
-	GetMiniTaskExecutor(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error)
 }
 
 // EmptySubtaskExecutor is an empty scheduler.
@@ -72,9 +71,9 @@ func (*EmptySubtaskExecutor) Init(context.Context) error {
 	return nil
 }
 
-// SplitSubtask implements the SubtaskExecutor interface.
-func (*EmptySubtaskExecutor) SplitSubtask(context.Context, *proto.Subtask) ([]proto.MinimalTask, error) {
-	return nil, nil
+// RunSubtask implements the SubtaskExecutor interface.
+func (*EmptySubtaskExecutor) RunSubtask(context.Context, *proto.Subtask) error {
+	return nil
 }
 
 // Cleanup implements the SubtaskExecutor interface.
@@ -89,17 +88,5 @@ func (*EmptySubtaskExecutor) OnFinished(_ context.Context, _ *proto.Subtask) err
 
 // Rollback implements the SubtaskExecutor interface.
 func (*EmptySubtaskExecutor) Rollback(context.Context) error {
-	return nil
-}
-
-// EmptyMiniTaskExecutor is an empty minimal task executor.
-// it can be used for the task that does not need to split into minimal tasks.
-type EmptyMiniTaskExecutor struct {
-}
-
-var _ execute.MiniTaskExecutor = &EmptyMiniTaskExecutor{}
-
-// Run implements the MiniTaskExecutor interface.
-func (*EmptyMiniTaskExecutor) Run(context.Context) error {
 	return nil
 }

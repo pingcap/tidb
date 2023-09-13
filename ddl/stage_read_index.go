@@ -89,7 +89,7 @@ func (*readIndexStage) Init(_ context.Context) error {
 	return nil
 }
 
-func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
+func (r *readIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.BgLogger().Info("read index stage run subtask",
 		zap.String("category", "ddl"))
 
@@ -102,18 +102,18 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 		logutil.BgLogger().Error("unmarshal error",
 			zap.String("category", "ddl"),
 			zap.Error(err))
-		return nil, err
+		return err
 	}
 
 	startKey, endKey, tbl, err := r.getTableStartEndKey(sm)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	sessCtx, err := newSessCtx(
 		d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	opCtx := NewOperatorCtx(ctx)
@@ -127,23 +127,23 @@ func (r *readIndexStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 		pipe, err = r.buildLocalStorePipeline(opCtx, d, sessCtx, tbl, startKey, endKey, totalRowCount)
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	err = pipe.Execute()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	err = pipe.Close()
 	if opCtx.OperatorErr() != nil {
-		return nil, opCtx.OperatorErr()
+		return opCtx.OperatorErr()
 	}
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
-	return nil, nil
+	return nil
 }
 
 func (r *readIndexStage) Cleanup(ctx context.Context) error {

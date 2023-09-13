@@ -58,7 +58,7 @@ func (*mergeSortStage) Init(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtask) ([]proto.MinimalTask, error) {
+func (m *mergeSortStage) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort stage split subtask")
 
 	sm := &BackfillSubTaskMeta{}
@@ -67,13 +67,12 @@ func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 		logutil.BgLogger().Error("unmarshal error",
 			zap.String("category", "ddl"),
 			zap.Error(err))
-		return nil, err
+		return err
 	}
 
 	local := m.bc.GetLocalBackend()
 	if local == nil {
-		return nil,
-			errors.Errorf("local backend not found")
+		return errors.Errorf("local backend not found")
 	}
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, int32(m.index.ID))
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
@@ -89,10 +88,10 @@ func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 		},
 	}, engineUUID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
-	return nil, err
+	return err
 }
 
 func (m *mergeSortStage) Cleanup(ctx context.Context) error {

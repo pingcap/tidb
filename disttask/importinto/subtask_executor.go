@@ -29,7 +29,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
@@ -44,6 +43,12 @@ import (
 // TestSyncChan is used to test.
 var TestSyncChan = make(chan struct{})
 
+// MiniTaskExecutor is the interface for a minimal task executor.
+// exported for testing.
+type MiniTaskExecutor interface {
+	Run(ctx context.Context) error
+}
+
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
 type importMinimalTaskExecutor struct {
 	mTtask *importStepMinimalTask
@@ -51,7 +56,7 @@ type importMinimalTaskExecutor struct {
 
 var newImportMinimalTaskExecutor = newImportMinimalTaskExecutor0
 
-func newImportMinimalTaskExecutor0(t *importStepMinimalTask) execute.MiniTaskExecutor {
+func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	return &importMinimalTaskExecutor{
 		mTtask: t,
 	}
@@ -80,18 +85,6 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context) error {
 	defer sharedVars.mu.Unlock()
 	sharedVars.Checksum.Add(&chunkCheckpoint.Checksum)
 	return nil
-}
-
-type postProcessMinimalTaskExecutor struct {
-	mTask *postProcessStepMinimalTask
-}
-
-func (e *postProcessMinimalTaskExecutor) Run(ctx context.Context) error {
-	mTask := e.mTask
-	failpoint.Inject("waitBeforePostProcess", func() {
-		time.Sleep(5 * time.Second)
-	})
-	return postProcess(ctx, mTask.taskMeta, &mTask.meta, mTask.logger)
 }
 
 // postProcess does the post-processing for the task.
