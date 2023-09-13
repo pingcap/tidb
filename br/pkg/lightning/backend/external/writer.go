@@ -360,6 +360,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
+	logger.Info("sort data", zap.Duration("time", time.Since(ts)), zap.Int("rows", len(w.writeBatch)))
+
 	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.currentSeq)
 	if err != nil {
 		return err
@@ -379,6 +381,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if err != nil {
 		return err
 	}
+
+	ts1 := time.Now()
 
 	w.recordMinMax(w.writeBatch[0].Key, w.writeBatch[len(w.writeBatch)-1].Key, kvSize)
 
@@ -404,6 +408,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.kvBuffer.Reset()
 	savedBytes = w.batchSize
 	w.batchSize = 0
+
+	logger.Info("misc", zap.Duration("time", time.Since(ts1)))
+
 	return nil
 }
 

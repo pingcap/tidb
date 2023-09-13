@@ -957,6 +957,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			Key:    aws.String(rs.options.Prefix + name),
 			Body:   rd,
 		}
+		log.Info("create s3 writer", zap.String("filename", name), zap.Int("concurrency", option.Concurrency))
 		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
