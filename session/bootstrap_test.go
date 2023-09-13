@@ -2248,6 +2248,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	// bootstrap as version174
 	ver174 := version174
 	seV174 := CreateSessionAndSetID(t, store)
+	defer seV174.Close()
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -2280,6 +2281,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 				records = append(records, fmt.Sprintf("%s:%s", bindSQL, originalSQL))
 			}
 		}
+		require.NoError(t, res.Close())
 		sort.Strings(records)
 		return
 	}
@@ -2294,6 +2296,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	require.NoError(t, err)
 	defer domCurVer.Close()
 	seCurVer := CreateSessionAndSetID(t, store)
+	defer seCurVer.Close()
 	ver, err := getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
@@ -2309,6 +2312,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 		chk := res.NewChunk(nil)
 		require.NoError(t, res.Next(ctx, chk))
 		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
+		require.NoError(t, res.Close())
 	}
 	planFromBinding(seCurVer, "select * from test.t where a in (1)")
 	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3)")
