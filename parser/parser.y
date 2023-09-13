@@ -5178,7 +5178,7 @@ DropStatsStmt:
 	}
 |	"DROP" "STATS" TableName "PARTITION" PartitionNameList
 	{
-		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("'DROP STATS ... PARTITION ...'",""))
+		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("'DROP STATS ... PARTITION ...'", ""))
 		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
 			Tables:         []*ast.TableName{$3.(*ast.TableName)},
@@ -14663,32 +14663,32 @@ LoadStatsStmt:
 	}
 
 LockTableStatsStmt:
-	"LOCK" "STATS" "TABLE" TableNameList
+	"LOCK" "STATS" TableNameList
 	{
 		$$ = &ast.LockTableStatsStmt{
-			Tables: $4.([]*ast.TableName),
+			Tables: $3.([]*ast.TableName),
 		}
 	}
-|	"LOCK" "STATS" "TABLE" TableName "PARTITION" PartitionNameList
+|	"LOCK" "STATS" TableName "PARTITION" PartitionNameList
 	{
 		$$ = &ast.LockTableStatsStmt{
-			Tables:         []*ast.TableName{$4.(*ast.TableName)},
-			PartitionNames: $6.([]model.CIStr),
+			Tables:         []*ast.TableName{$3.(*ast.TableName)},
+			PartitionNames: $5.([]model.CIStr),
 		}
 	}
 
 UnlockTableStatsStmt:
-	"UNLOCK" "STATS" "TABLE" TableNameList
+	"UNLOCK" "STATS" TableNameList
 	{
 		$$ = &ast.UnlockTableStatsStmt{
-			Tables: $4.([]*ast.TableName),
+			Tables: $3.([]*ast.TableName),
 		}
 	}
-|	"UNLOCK" "STATS" "TABLE" TableName "PARTITION" PartitionNameList
+|	"UNLOCK" "STATS" TableName "PARTITION" PartitionNameList
 	{
 		$$ = &ast.UnlockTableStatsStmt{
-			Tables:         []*ast.TableName{$4.(*ast.TableName)},
-			PartitionNames: $6.([]model.CIStr),
+			Tables:         []*ast.TableName{$3.(*ast.TableName)},
+			PartitionNames: $5.([]model.CIStr),
 		}
 	}
 

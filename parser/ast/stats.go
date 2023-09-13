@@ -279,7 +279,7 @@ type LockTableStatsStmt struct {
 
 // Restore implements Node interface.
 func (n *LockTableStatsStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("LOCK STATS TABLE ")
+	ctx.WriteKeyWord("LOCK STATS ")
 	for index, table := range n.Tables {
 		if index != 0 {
 			ctx.WritePlain(", ")
@@ -327,7 +327,7 @@ type UnlockTableStatsStmt struct {
 
 // Restore implements Node interface.
 func (n *UnlockTableStatsStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("UNLOCK STATS TABLE ")
+	ctx.WriteKeyWord("UNLOCK STATS ")
 	for index, table := range n.Tables {
 		if index != 0 {
 			ctx.WritePlain(", ")

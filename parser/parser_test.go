@@ -1264,13 +1264,13 @@ func TestDBAStmt(t *testing.T) {
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
 		// for lock stats
-		{"lock stats table test.t", true, "LOCK STATS TABLE `test`.`t`"},
-		{"lock stats table t, t2", true, "LOCK STATS TABLE `t`, `t2`"},
-		{"lock stats table t partition p0,p1", true, "LOCK STATS TABLE `t` PARTITION `p0`,`p1`"},
+		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
+		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
+		{"lock stats t partition p0,p1", true, "LOCK STATS `t` PARTITION `p0`,`p1`"},
 		// for unlock stats
-		{"unlock stats table test.t", true, "UNLOCK STATS TABLE `test`.`t`"},
-		{"unlock stats table t, t2", true, "UNLOCK STATS TABLE `t`, `t2`"},
-		{"unlock stats table t partition p0,p1", true, "UNLOCK STATS TABLE `t` PARTITION `p0`,`p1`"},
+		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
+		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
+		{"unlock stats t partition p0,p1", true, "UNLOCK STATS `t` PARTITION `p0`,`p1`"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
