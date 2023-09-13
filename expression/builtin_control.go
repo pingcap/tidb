@@ -61,7 +61,7 @@ func maxlen(lhsFlen, rhsFlen int) int {
 	return mathutil.Max(lhsFlen, rhsFlen)
 }
 
-func fixFlenOfDecimal(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+func fixFlenFromArgs(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
 	maxArgFlen := 0
 	for i := range argTps {
 		unsignedFlag := mysql.HasUnsignedFlag(argTps[i].GetFlag())
@@ -79,7 +79,7 @@ func fixFlenOfDecimal(resultFieldType *types.FieldType, argTps ...*types.FieldTy
 	resultFieldType.SetFlenUnderLimit(resultFlen)
 }
 
-func setDecimal(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+func setDecimalFromArgs(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
 	maxDecimal := 0
 	for i := range argTps {
 		if argTps[i].GetDecimal() == types.UnspecifiedLength {
@@ -121,7 +121,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		if evalType == types.ETInt {
 			resultFieldType.SetDecimal(0)
 		} else {
-			setDecimal(resultFieldType, lhs, rhs)
+			setDecimalFromArgs(resultFieldType, lhs, rhs)
 		}
 
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
@@ -154,7 +154,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			resultFieldType.SetFlag(0)
 		}
 		if evalType == types.ETDecimal || evalType == types.ETInt {
-			fixFlenOfDecimal(resultFieldType, lhs, rhs)
+			fixFlenFromArgs(resultFieldType, lhs, rhs)
 		} else if evalType == types.ETString {
 			lhsLen, rhsLen := lhs.GetFlen(), rhs.GetFlen()
 			if lhsLen != types.UnspecifiedLength && rhsLen != types.UnspecifiedLength {
@@ -226,11 +226,11 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	if tp == types.ETInt {
 		fieldTp.SetDecimal(0)
 	} else {
-		setDecimal(fieldTp, fieldTps...)
+		setDecimalFromArgs(fieldTp, fieldTps...)
 	}
 
 	if tp == types.ETDecimal {
-		fixFlenOfDecimal(fieldTp, fieldTps...)
+		fixFlenFromArgs(fieldTp, fieldTps...)
 	} else {
 		fieldTp.SetFlen(flen)
 	}

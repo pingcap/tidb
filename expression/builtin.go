@@ -136,7 +136,7 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	return bf, nil
 }
 
-func newFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalType, ec *ExprCollation) *types.FieldType {
+func newReturnFieldTypeForBaseBuiltinFunc(funcName string, retType types.EvalType, ec *ExprCollation) *types.FieldType {
 	var fieldType *types.FieldType
 	switch retType {
 	case types.ETInt:
@@ -206,7 +206,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 		}
 	}
 
-	fieldType := newFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
+	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
@@ -269,7 +269,7 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 		}
 	}
 
-	fieldType := newFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
+	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
