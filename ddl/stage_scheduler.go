@@ -34,6 +34,8 @@ type BackfillGlobalMeta struct {
 	Job        model.Job `json:"job"`
 	EleID      int64     `json:"ele_id"`
 	EleTypeKey []byte    `json:"ele_type_key"`
+
+	CloudStorageURI string `json:"cloud_storage_uri"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
@@ -41,12 +43,18 @@ type BackfillSubTaskMeta struct {
 	PhysicalTableID int64  `json:"physical_table_id"`
 	StartKey        []byte `json:"start_key"`
 	EndKey          []byte `json:"end_key"`
-	RowCount        int64  `json:"row_count"`
+
+	DataFiles      []string `json:"data_files"`
+	StatFiles      []string `json:"stat_files"`
+	RangeSplitKeys [][]byte `json:"range_split_keys"`
+	MinKey         []byte   `json:"min_key"`
+	MaxKey         []byte   `json:"max_key"`
+	TotalKVSize    uint64   `json:"total_kv_size"`
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
 func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
-	stepForImport bool, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+	stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -70,13 +78,21 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 		return nil, errors.Trace(err)
 	}
 
-	if !stepForImport {
-		jc := d.jobContext(jobMeta.ID)
+	switch stage {
+	case proto.StepInit:
+		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexToLocalStage(d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary), nil
+		return newReadIndexStage(
+			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
+	case proto.StepOne:
+		if len(bgm.CloudStorageURI) > 0 {
+			return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		}
+		return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
+	default:
+		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
-	return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
 }
 
 // BackfillTaskType is the type of backfill task.
@@ -98,10 +114,8 @@ func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, task
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
-	case proto.StepInit:
-		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, false, summary)
-	case proto.StepOne:
-		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, true, nil)
+	case proto.StepInit, proto.StepOne:
+		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
