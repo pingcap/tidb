@@ -84,7 +84,6 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				return
 			case <-ticker.C:
 				canceled, err := s.taskTable.IsSchedulerCanceled(s.taskID, s.id)
-				logutil.Logger(s.logCtx).Info("scheduler before canceled")
 				if err != nil {
 					continue
 				}
@@ -100,8 +99,18 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 }
 
 // Run runs the scheduler task.
-func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) error {
-	err := s.run(ctx, task)
+func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("BaseScheduler panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err4Panic := errors.Errorf("%v", r)
+			err1 := s.taskTable.UpdateErrorToSubtask(s.id, task.ID, err4Panic)
+			if err == nil {
+				err = err1
+			}
+		}
+	}()
+	err = s.run(ctx, task)
 	if s.mu.handled {
 		return err
 	}
@@ -170,15 +179,25 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 
 		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 		if err != nil {
-			s.onError(err)
-			break
+			logutil.Logger(s.logCtx).Warn("GetSubtaskInStates meets error", zap.Error(err))
+			continue
 		}
 		if subtask == nil {
-			break
+			newTask, err := s.taskTable.GetGlobalTaskByID(task.ID)
+			if err != nil {
+				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
+				continue
+			}
+			// When the task move to next step or task state changes, the scheduler should exit.
+			if newTask.Step != task.Step || newTask.State != task.State {
+				break
+			}
+			continue
 		}
 		s.startSubtask(subtask.ID)
 		if err := s.getError(); err != nil {
-			break
+			logutil.Logger(s.logCtx).Warn("startSubtask meets error", zap.Error(err))
+			continue
 		}
 		failpoint.Inject("mockCleanScheduler", func() {
 			v, ok := testContexts.Load(s.id)
@@ -216,11 +235,13 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 		zap.Int64("subtask_step", subtask.Step))
 
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
+		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
 			v, ok := testContexts.Load(s.id)
 			if ok {
 				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
 				v.(*TestContext).mockDown.Store(true)
+				logutil.Logger(s.logCtx).Info("mockTiDBDown")
 				time.Sleep(2 * time.Second)
 				failpoint.Return()
 			}
@@ -267,9 +288,8 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 }
 
 func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
-	var subtaskMeta []byte
 	if err := s.getError(); err == nil {
-		if subtaskMeta, err = scheduler.OnFinished(ctx, subtask.Meta); err != nil {
+		if err = scheduler.OnFinished(ctx, subtask); err != nil {
 			s.onError(err)
 		}
 	}
@@ -282,7 +302,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 		s.markErrorHandled()
 		return
 	}
-	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
 		s.onError(err)
 	}
 	failpoint.Inject("syncAfterSubtaskFinish", func() {

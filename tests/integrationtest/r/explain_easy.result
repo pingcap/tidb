@@ -378,28 +378,22 @@ Projection	5.00	root		Column#17
 └─Apply	5.00	root		CARTESIAN left outer semi join, other cond:eq(explain_easy.t.c, Column#16)
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#16
-    └─MergeJoin	12.00	root		left outer join, left key:explain_easy.t.a, right key:explain_easy.t.a
-      ├─TableReader(Build)	20.00	root		data:Selection
-      │ └─Selection	20.00	cop[tikv]		eq(3, explain_easy.t.a)
-      │   └─TableFullScan	25.00	cop[tikv]	table:t1	keep order:true
-      └─IndexReader(Probe)	12.00	root		index:Selection
+  └─StreamAgg(Probe)	5.00	root		funcs:count(Column#19)->Column#16
+    └─IndexReader	5.00	root		index:StreamAgg
+      └─StreamAgg	5.00	cop[tikv]		funcs:count(1)->Column#19
         └─Selection	12.00	cop[tikv]		eq(3, explain_easy.t.a)
-          └─IndexRangeScan	15.00	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:true
+          └─IndexRangeScan	15.00	cop[tikv]	table:s, index:idx(b)	range:[3,3], keep order:false
 explain format = 'brief' select t.c in (select count(*) from t s right join t t1 on s.a = t1.a where 3 = t.a and t1.b = 3) from t;
 id	estRows	task	access object	operator info
 Projection	5.00	root		Column#17
 └─Apply	5.00	root		CARTESIAN left outer semi join, other cond:eq(explain_easy.t.c, Column#16)
   ├─TableReader(Build)	5.00	root		data:TableFullScan
   │ └─TableFullScan	5.00	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	5.00	root		funcs:count(1)->Column#16
-    └─MergeJoin	12.00	root		right outer join, left key:explain_easy.t.a, right key:explain_easy.t.a
-      ├─TableReader(Build)	20.00	root		data:Selection
-      │ └─Selection	20.00	cop[tikv]		eq(3, explain_easy.t.a)
-      │   └─TableFullScan	25.00	cop[tikv]	table:s	keep order:true
-      └─IndexReader(Probe)	12.00	root		index:Selection
+  └─StreamAgg(Probe)	5.00	root		funcs:count(Column#19)->Column#16
+    └─IndexReader	5.00	root		index:StreamAgg
+      └─StreamAgg	5.00	cop[tikv]		funcs:count(1)->Column#19
         └─Selection	12.00	cop[tikv]		eq(3, explain_easy.t.a)
-          └─IndexRangeScan	15.00	cop[tikv]	table:t1, index:idx(b)	range:[3,3], keep order:true
+          └─IndexRangeScan	15.00	cop[tikv]	table:t1, index:idx(b)	range:[3,3], keep order:false
 drop table if exists t;
 create table t(a int unsigned not null);
 explain format = 'brief' select t.a = '123455' from t;

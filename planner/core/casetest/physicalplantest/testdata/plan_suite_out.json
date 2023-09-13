@@ -7988,5 +7988,150 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexMergeSinkLimit",
+    "Cases": [
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 and c=1 limit 2; -- test sink limit to table side of union index merge case, because of table side selection",
+        "Plan": [
+          "Limit 2.00 root  offset:0, count:2",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 2.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 2.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 0.00 cop[tikv]  offset:0, count:2",
+          "    └─Selection 0.00 cop[tikv]  or(eq(test.t2.a, 1), and(eq(test.t2.b, 1), eq(test.t2.c, 1)))",
+          "      └─TableRowIDScan 3.99 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2; -- test sink limit to table side of intersection index merge case, because of table side selection",
+        "Plan": [
+          "Limit 0.00 root  offset:0, count:2",
+          "└─IndexMerge 0.01 root  type: intersection",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 0.01 cop[tikv]  offset:0, count:2",
+          "    └─Selection 0.01 cop[tikv]  eq(test.t2.c, 1)",
+          "      └─TableRowIDScan 0.01 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 and c=1 limit 2",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 or b=1 limit 2; -- test sink limit to index side of union index merge case, because of table side is pure table scan",
+        "Plan": [
+          "IndexMerge 2.00 root  type: union, limit embedded(offset:0, count:2)",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─Limit(Build) 1.00 cop[tikv]  offset:0, count:2",
+          "│ └─IndexRangeScan 1.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 2.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2; -- test sink limit to table side of intersection index merge case, because of intersection case special",
+        "Plan": [
+          "Limit 0.01 root  offset:0, count:2",
+          "└─IndexMerge 0.01 root  type: intersection",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 0.01 cop[tikv]  offset:0, count:2",
+          "    └─TableRowIDScan 0.01 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2",
+        "Plan": null,
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j)) limit 1; -- index merge union case, sink limit into index side and embed another one inside index merge reader",
+        "Plan": [
+          "IndexMerge 0.00 root  type: union, limit embedded(offset:0, count:1)",
+          "├─Limit(Build) 0.00 cop[tikv]  offset:0, count:1",
+          "│ └─IndexRangeScan 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1; -- index merge intersection case, sink limit into table side",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexMerge 0.00 root  type: intersection",
+          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 0.00 cop[tikv]  offset:0, count:1",
+          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─Selection 1.00 root  json_overlaps(test.t.j, cast(\"[1, 2, 3]\", json BINARY))",
+          "  └─IndexMerge 0.00 root  type: union",
+          "    ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "    └─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now."
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1; -- index merge union case, sink limit to table side, because selection exists on table side",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexMerge 0.00 root  type: union",
+          "  ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 0.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 0.00 cop[tikv]  eq(test.t.a, 1)",
+          "      └─TableRowIDScan 1.25 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') and a=1 limit 1; -- index merge intersection case, sink limit to table side because selection exists on table side",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─IndexMerge 0.00 root  type: intersection",
+          "  ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "  └─Limit(Probe) 0.00 cop[tikv]  offset:0, count:1",
+          "    └─Selection 0.00 cop[tikv]  eq(test.t.a, 1)",
+          "      └─TableRowIDScan 1.25 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_overlaps(j, '[1, 2, 3]') and a=1 limit 1; -- index merge union case, sink limit above selection above index merge reader, because json_overlaps can't be pushed down",
+        "Plan": [
+          "Limit 1.00 root  offset:0, count:1",
+          "└─Selection 1.00 root  json_overlaps(test.t.j, cast(\"[1, 2, 3]\", json BINARY))",
+          "  └─IndexMerge 1.00 root  type: union",
+          "    ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "    ├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 1.00 cop[tikv]  eq(test.t.a, 1)",
+          "      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint(20)) is not supported to push down to storage layer now."
+        ]
+      }
+    ]
   }
 ]
