@@ -1205,9 +1205,9 @@ func TestIndexMergeLimitPushedAsIntersectionEmbeddedLimit(t *testing.T) {
 		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
 		queryTableScan := fmt.Sprintf("select * from t use index() where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
-		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
+		tk.MustHasPlan(queryWithIndexMerge, "IndexMerge")
 		require.True(t, tk.HasKeywordInOperatorInfo(queryWithIndexMerge, "limit embedded"))
-		require.True(t, tk.HasPlan(queryTableScan, "TableFullScan"))
+		tk.MustHasPlan(queryTableScan, "TableFullScan")
 		// index merge with embedded limit couldn't compare the exactly results with normal plan, because limit admission control has some difference, while we can only check
 		// the row count is exactly the same with tableFullScan plan, in case of index pushedLimit and table pushedLimit cut down the source table rows.
 		require.Equal(t, len(tk.MustQuery(queryWithIndexMerge).Rows()), len(tk.MustQuery(queryTableScan).Rows()))
