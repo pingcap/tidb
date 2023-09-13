@@ -2557,6 +2557,21 @@ case when v1 is not null then v1 else v2 end
 2020-01-01 11:11:11.1230
 2020-01-01 11:11:11.1234
 drop table if exists t1;
+CREATE TABLE t1 (var_fld int(11) DEFAULT '0' );
+INSERT INTO t1 VALUES (4500), (6000);
+SELECT IF ( var_fld  > 5000, ( 00001 / var_fld ) , 5000 ) if_var FROM t1;
+if_var
+5000.0000
+0.0002
+SELECT CASE WHEN var_fld  > 5000 THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+case_var
+5000.0000
+0.0002
+SELECT CASE var_fld  > 5000 WHEN TRUE THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+case_var
+5000.0000
+0.0002
+drop table if exists t1;
 CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL);
 INSERT INTO t1 VALUES (0);
 SELECT c1>=CAST('-787360724' AS TIME) FROM t1;
