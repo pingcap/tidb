@@ -2248,7 +2248,6 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	// bootstrap as version174
 	ver174 := version174
 	seV174 := CreateSessionAndSetID(t, store)
-	defer seV174.Close()
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMeta(txn)
@@ -2296,7 +2295,6 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	require.NoError(t, err)
 	defer domCurVer.Close()
 	seCurVer := CreateSessionAndSetID(t, store)
-	defer seCurVer.Close()
 	ver, err := getBootstrapVersion(seCurVer)
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)

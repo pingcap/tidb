@@ -2782,14 +2782,11 @@ func upgradeToVer175(s Session, ver int64) {
 			if originalNormalizedSQL == newNormalizedSQL {
 				continue // no need to update
 			}
-			_, err = s.ExecuteInternal(ctx, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
-			if err != nil {
-				logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
-				return
-			}
+			mustExecute(s, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
 		}
 		req.Reset()
 	}
+	rs.Close()
 }
 
 func writeOOMAction(s Session) {
