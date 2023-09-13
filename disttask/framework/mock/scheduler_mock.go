@@ -281,6 +281,18 @@ func (m *MockScheduler) EXPECT() *MockSchedulerMockRecorder {
 	return m.recorder
 }
 
+// Close mocks base method.
+func (m *MockScheduler) Close() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Close")
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockSchedulerMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockScheduler)(nil).Close))
+}
+
 // Rollback mocks base method.
 func (m *MockScheduler) Rollback(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()

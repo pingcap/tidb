@@ -149,9 +149,6 @@ func (r *readIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask)
 func (r *readIndexStage) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("read index stage cleanup subtask exec env",
 		zap.String("category", "ddl"))
-	if _, ok := r.ptbl.(table.PartitionedTable); ok {
-		ingest.LitBackCtxMgr.Unregister(r.job.ID)
-	}
 	return nil
 }
 
@@ -197,7 +194,6 @@ func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask)
 func (r *readIndexStage) Rollback(ctx context.Context) error {
 	logutil.Logger(ctx).Info("read index stage rollback backfill add index task",
 		zap.String("category", "ddl"), zap.Int64("jobID", r.job.ID))
-	ingest.LitBackCtxMgr.Unregister(r.job.ID)
 	return nil
 }
 

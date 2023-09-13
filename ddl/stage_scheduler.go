@@ -54,7 +54,7 @@ type BackfillSubTaskMeta struct {
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
 func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
-	stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+	bc ingest.BackendCtx, stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -71,11 +71,6 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 		logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
 			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", bgm.EleID))
 		return nil, errors.New("index info not found")
-	}
-
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli, jobMeta.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		return nil, errors.Trace(err)
 	}
 
 	switch stage {
@@ -100,23 +95,66 @@ const BackfillTaskType = "backfill"
 
 type backfillDistScheduler struct {
 	*scheduler.BaseScheduler
-	d *ddl
+	d          *ddl
+	backendCtx ingest.BackendCtx
+	jobID      int64
 }
 
-func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, d *ddl) scheduler.Scheduler {
+func newBackfillDistScheduler(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable, d *ddl) scheduler.Scheduler {
 	s := &backfillDistScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable),
 		d:             d,
 	}
 	s.BaseScheduler.Extension = s
+
+	wrapErr := func(err error) scheduler.Scheduler {
+		s.BaseScheduler.Extension = &failedExtension{err: err}
+		return s
+	}
+
+	bgm := &BackfillGlobalMeta{}
+	err := json.Unmarshal(task.Meta, bgm)
+	if err != nil {
+		return wrapErr(err)
+	}
+	job := &bgm.Job
+	_, tbl, err := d.getTableByTxn(d.store, job.SchemaID, job.TableID)
+	if err != nil {
+		return wrapErr(err)
+	}
+	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
+	if idx == nil {
+		return wrapErr(errors.Trace(errors.New("index info not found")))
+	}
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		return wrapErr(errors.Trace(err))
+	}
+	s.backendCtx = bc
+	s.jobID = job.ID
 	return s
 }
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
 	case proto.StepInit, proto.StepOne:
-		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, task.Step, summary)
+		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
+}
+
+func (s *backfillDistScheduler) Close() {
+	if s.backendCtx != nil {
+		ingest.LitBackCtxMgr.Unregister(s.jobID)
+	}
+}
+
+type failedExtension struct {
+	err error
+}
+
+func (e *failedExtension) GetSubtaskExecutor(_ context.Context, _ *proto.Task, _ *execute.Summary) (
+	execute.SubtaskExecutor, error) {
+	return nil, e.err
 }

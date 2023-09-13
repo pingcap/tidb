@@ -141,8 +141,8 @@ func registerTaskMetaInner(t *testing.T, taskType string, mockExtension schedule
 			return baseDispatcher
 		})
 	scheduler.RegisterTaskType(taskType,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable)
+		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
+			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},

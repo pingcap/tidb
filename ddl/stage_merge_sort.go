@@ -96,7 +96,6 @@ func (m *mergeSortStage) RunSubtask(ctx context.Context, subtask *proto.Subtask)
 
 func (m *mergeSortStage) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort stage clean up subtask env")
-	ingest.LitBackCtxMgr.Unregister(m.jobID)
 	return nil
 }
 

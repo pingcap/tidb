@@ -49,6 +49,7 @@ type Pool interface {
 type Scheduler interface {
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
+	Close()
 }
 
 // Extension extends the scheduler.

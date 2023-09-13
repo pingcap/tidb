@@ -164,13 +164,13 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 	if !exist {
 		return
 	}
+	m.Delete(jobID)
 	bc.unregisterAll(jobID)
 	bc.backend.Close()
 	if bc.checkpointMgr != nil {
 		bc.checkpointMgr.Close()
 	}
 	m.memRoot.Release(StructSizeBackendCtx)
-	m.Delete(jobID)
 	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
