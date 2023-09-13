@@ -17,7 +17,10 @@ package expression
 import (
 	"bytes"
 	"context"
+	"crypto/md5" // #nosec
+	"encoding/binary"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -31,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
@@ -1793,4 +1797,58 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 			quote)
 	}
 	return strs
+}
+
+// SortAndGenMD5HashForCNFExprs sorts cnf exprs by their hash codes: (A or B or C) and (D or E or F) and (G or H or I)
+// Return true and the hash code if none DNF expressions' length > 1000;
+// Otherwise, return false and 0
+// The differences between this function with CanonicalHashCode is:
+// 1. CanonicalHashCode will treat "a < b" the same with "b >= a", while this function won't
+// 2. This function treats {"A or B or C", "A or C or B", "B or A or C", "B or C or A", "C or A or B", "C or B or A"} all the same,
+// while CanonicalHashCode won't
+// 3. This function treats "a > 3" the same with "a > ?" whose parameter is set 3. While CanonicalHashCode of constant with ParamMarker
+// contains ParamMarker order only, no value included
+func SortAndGenMD5HashForCNFExprs(sc *stmtctx.StatementContext, conditions []Expression) (bool, uint64) {
+	cnfHashCodes := make([][]byte, 0, len(conditions))
+	for _, arg := range conditions {
+		if sf, ok := arg.(*ScalarFunction); ok && sf.FuncName.L == ast.LogicOr {
+			dnfExprs := FlattenDNFConditions(sf)
+			if len(dnfExprs) > 1000 {
+				// It might consume too much cpu and memory resource to compute hash code
+				logutil.BgLogger().Warn("Expression is too complex to record history stat.",
+					zap.Int("DNFExprLen", len(dnfExprs)))
+				return false, 0
+			}
+			dnfHashCodes := make([][]byte, 0, len(dnfExprs))
+			for _, dnf := range dnfExprs {
+				dnfHashCode := dnf.HistoryStatsHashCode(sc)
+				dnfHashCodes = checkHashLengthAndAppend(dnfHashCode, dnfHashCodes)
+			}
+			sort.Slice(dnfHashCodes, func(i, j int) bool { return bytes.Compare(dnfHashCodes[i], dnfHashCodes[j]) < 0 })
+
+			flatDnfHashCode := bytes.Join(dnfHashCodes, nil)
+			cnfHashCodes = append(cnfHashCodes, flatDnfHashCode)
+		} else {
+			flatDnfHashCode := arg.HistoryStatsHashCode(sc)
+			cnfHashCodes = checkHashLengthAndAppend(flatDnfHashCode, cnfHashCodes)
+		}
+	}
+	sort.Slice(cnfHashCodes, func(i, j int) bool { return bytes.Compare(cnfHashCodes[i], cnfHashCodes[j]) < 0 })
+	flatCnfHashCode := bytes.Join(cnfHashCodes, []byte(","))
+	md5Sum := md5.Sum(flatCnfHashCode) // #nosec
+	firstHalf := binary.BigEndian.Uint64(md5Sum[:8])
+	secondHalf := binary.BigEndian.Uint64(md5Sum[8:])
+	finalHash := firstHalf ^ secondHalf
+	return true, finalHash
+}
+
+func checkHashLengthAndAppend(hashCode []byte, hashCodes [][]byte) [][]byte {
+	if len(hashCode) > 256 {
+		/// Avoid large hash code here
+		newHashCode := md5.Sum(hashCode) // #nosec
+		hashCodes = append(hashCodes, newHashCode[:])
+	} else {
+		hashCodes = append(hashCodes, hashCode)
+	}
+	return hashCodes
 }

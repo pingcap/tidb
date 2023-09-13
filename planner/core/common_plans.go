@@ -1227,6 +1227,11 @@ func binaryOpTreeFromFlatOps(explainCtx sessionctx.Context, ops FlatPlanTree) *t
 	return &s[0]
 }
 
+// GetPhysicalPlanEstRowCount is just a wrapper for PhysicalPlan's getEstRowCountForDisplay
+func GetPhysicalPlanEstRowCount(p PhysicalPlan) float64 {
+	return p.getEstRowCountForDisplay()
+}
+
 func binaryOpFromFlatOp(explainCtx sessionctx.Context, op *FlatOperator, out *tipb.ExplainOperator) {
 	out.Name = op.Origin.ExplainID().String()
 	switch op.Label {

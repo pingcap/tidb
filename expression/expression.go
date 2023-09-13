@@ -190,6 +190,12 @@ type Expression interface {
 	// ScalarFunction: SFFlag+encoded function name + encoded arg_1 + encoded arg_2 + ...
 	HashCode(sc *stmtctx.StatementContext) []byte
 
+	// HistoryStatsHashCode is only used for optimizer history stats usage, main difference with HashCode:
+	// 1. No cache usage now, thus won't read or write existing cached hash code for ScalarFunction,
+	//might consider add new cached hash code in future to improve performance
+	// 2. For Constant expression with ParamMarker, use ConstantFlag+encoded value instead of ParameterFlag+encoded order
+	HistoryStatsHashCode(sc *stmtctx.StatementContext) []byte
+
 	// MemoryUsage return the memory usage of Expression
 	MemoryUsage() int64
 }

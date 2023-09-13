@@ -2887,6 +2887,16 @@ var defaultSysVars = []*SysVar{
 			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
 			return nil
 		}},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBOptimizerHistoryStats,
+		Value: BoolToOnOff(DefTiDBOptimizerHistoryStats),
+		Type:  TypeBool,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.EnableOptimizerHistoryStats = TiDBOptOn(s)
+			return nil
+		},
+	},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

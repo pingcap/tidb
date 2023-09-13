@@ -522,9 +522,19 @@ func (col *Column) HashCode(_ *stmtctx.StatementContext) []byte {
 		return col.hashcode
 	}
 	col.hashcode = make([]byte, 0, 9)
-	col.hashcode = append(col.hashcode, columnFlag)
-	col.hashcode = codec.EncodeInt(col.hashcode, col.UniqueID)
+	col.hashcode = col.hashCodeImpl(nil, col.hashcode)
 	return col.hashcode
+}
+
+// HistoryStatsHashCode implements Expression interface.
+func (col *Column) HistoryStatsHashCode(_ *stmtctx.StatementContext) []byte {
+	return col.HashCode(nil)
+}
+
+func (col *Column) hashCodeImpl(_ *stmtctx.StatementContext, hashcode []byte) []byte {
+	hashcode = append(hashcode, columnFlag)
+	hashcode = codec.EncodeInt(hashcode, col.UniqueID)
+	return hashcode
 }
 
 // CleanHashCode will clean the hashcode you may be cached before. It's used especially in schema-cloned & reallocated-uniqueID's cases.

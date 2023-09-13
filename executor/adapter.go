@@ -78,6 +78,11 @@ import (
 	"go.uber.org/zap/zapcore"
 )
 
+const (
+	// HistoryStatsUpdateThreshold represents the threshold to check if history stats needs to be updated
+	HistoryStatsUpdateThreshold = 2.0
+)
+
 // processinfoSetter is the interface use to set current running process info.
 type processinfoSetter interface {
 	SetProcessInfo(string, time.Time, byte, uint64)
@@ -1370,6 +1375,11 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		// but we set it again in case we missed some code paths.
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
+
+	/// Triage for historical stats
+	if succ {
+		a.RecordHistoryStats()
+	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
@@ -1490,6 +1500,92 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	}
 	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
 	return nil
+}
+
+// RecordHistoryStats is used to record history stats that is more accurate than estimation
+// Currently, only support "Selection + TableScan" pattern
+func (a *ExecStmt) RecordHistoryStats() {
+	sessVars := a.Ctx.GetSessionVars()
+	if !sessVars.EnableOptimizerHistoryStats || sessVars.InRestrictedSQL || !sessVars.StmtCtx.InSelectStmt {
+		return
+	}
+
+	sql := FormatSQL(a.GetTextToLog(true))()
+	stmtCtx := sessVars.StmtCtx
+	flat := getFlatPlan(stmtCtx)
+	if flat == nil || len(flat.Main) == 0 {
+		return
+	}
+
+	for _, flatCTEPlanTree := range flat.CTEs {
+		traverseFlatPlanForHistoryStats(stmtCtx, flatCTEPlanTree, sql)
+	}
+	for _, flatSubQueryPlanTree := range flat.ScalarSubQueries {
+		traverseFlatPlanForHistoryStats(stmtCtx, flatSubQueryPlanTree, sql)
+	}
+	traverseFlatPlanForHistoryStats(stmtCtx, flat.Main, sql)
+}
+
+func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlanTree plannercore.FlatPlanTree, sql string) {
+	for _, flatOp := range flatPlanTree {
+		pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
+		if !isPhysicalPlan {
+			continue
+		}
+		switch x := pp.(type) {
+		case *plannercore.PhysicalSelection:
+			if tableScan, ok := x.Children()[0].(*plannercore.PhysicalTableScan); ok {
+				if tableScan.HasRFFilters() {
+					break
+				}
+				needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
+				if !needRecord {
+					break
+				}
+				succ, hashCode := genHistoryStatsHashCodeForSelection(stmtCtx, x)
+				if !succ {
+					break
+				}
+				recordHistoryStats(sql, tableScan.Table.ID, x.ID(), false, hashCode, estRows, actualRows)
+			}
+		case *plannercore.PhysicalTableScan:
+			if x.HasRFFilters() {
+				break
+			}
+			needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
+			if !needRecord {
+				break
+			}
+			recordHistoryStats(sql, x.Table.ID, x.ID(), true, 0, estRows, actualRows)
+		}
+	}
+}
+
+func recordHistoryStats(sql string, tableID int64, planID int, nullHashCode bool, hashCode uint64, estRows float64, actualRows int64) {
+	logutil.BgLogger().Info(
+		sql,
+		zap.Int64("TableID", tableID),
+		zap.Int("PlanID", planID),
+		zap.Bool("NullHashCode", nullHashCode),
+		zap.Uint64("FinalHash", hashCode),
+		zap.Float64("EstRows", estRows),
+		zap.Int64("ActRows", actualRows))
+}
+
+func genHistoryStatsHashCodeForSelection(stmtCtx *stmtctx.StatementContext, x *plannercore.PhysicalSelection) (bool, uint64) {
+	return expression.SortAndGenMD5HashForCNFExprs(stmtCtx, x.Conditions)
+}
+
+func needRecordHistoryStats(stmtCtx *stmtctx.StatementContext, x plannercore.PhysicalPlan) (bool, float64, int64) {
+	estRows := plannercore.GetPhysicalPlanEstRowCount(x)
+	hasCopStats, actualRows := GetResultRowsCountForCopStats(stmtCtx, x.ID())
+	if !hasCopStats {
+		return false, estRows, actualRows
+	}
+	actualRowsFloat := float64(actualRows)
+	max := math.Max(actualRowsFloat, estRows)
+	min := math.Min(actualRowsFloat, estRows)
+	return max > min*HistoryStatsUpdateThreshold, estRows, actualRows
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
@@ -1698,6 +1794,20 @@ func GetResultRowsCount(stmtCtx *stmtctx.StatementContext, p plannercore.Plan) i
 	}
 	rootStats := runtimeStatsColl.GetRootStats(rootPlanID)
 	return rootStats.GetActRows()
+}
+
+// GetResultRowsCountForCopStats gets the count of the statement result rows of cop stats
+// Return false, -1 if no cop stats exists
+func GetResultRowsCountForCopStats(stmtCtx *stmtctx.StatementContext, planID int) (bool, int64) {
+	runtimeStatsColl := stmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return false, -1
+	}
+	copStats := runtimeStatsColl.GetCopStats(planID)
+	if copStats == nil {
+		return false, -1
+	}
+	return true, copStats.GetActRows()
 }
 
 // getFlatPlan generates a FlatPhysicalPlan from the plan stored in stmtCtx.plan,

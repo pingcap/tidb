@@ -1554,6 +1554,9 @@ type SessionVars struct {
 	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
 	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
 	OptObjective string
+
+	// Whether collect and using history stats for plan optimization
+	EnableOptimizerHistoryStats bool
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.

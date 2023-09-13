@@ -932,6 +932,11 @@ func (ts *PhysicalTableScan) IsPartition() (bool, int64) {
 	return ts.isPartition, ts.physicalTableID
 }
 
+// HasRFFilters returns true when runtimeFilterList length > 0.
+func (ts *PhysicalTableScan) HasRFFilters() bool {
+	return len(ts.runtimeFilterList) > 0
+}
+
 // ResolveCorrelatedColumns resolves the correlated columns in range access.
 // We already limit range mem usage when building ranges in optimizer phase, so we don't need and shouldn't limit range
 // mem usage when rebuilding ranges during the execution phase.
