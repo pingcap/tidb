@@ -72,6 +72,8 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", bgm.EleID))
 		return nil, errors.New("index info not found")
 	}
+	// Unregister the previous BackendCtx if possible because the context has been changed.
+	ingest.LitBackCtxMgr.Unregister(jobMeta.ID)
 
 	bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli)
 	if err != nil {

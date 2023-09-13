@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
@@ -172,8 +171,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	for i := 0; i < poolSize; i++ {
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
 	}
-	readerCnt := int(variable.GetDDLReorgWorkerCounter())
-	writerCnt := 1
+	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
