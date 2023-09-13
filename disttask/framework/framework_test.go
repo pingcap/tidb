@@ -683,7 +683,7 @@ func TestGC(t *testing.T) {
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/historySubtaskTableGcInterval", "return(10)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/historySubtaskTableGcInterval", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/historySubtaskTableGcInterval"))
@@ -703,6 +703,8 @@ func TestGC(t *testing.T) {
 		}
 		return historySubTasksCnt > 0
 	}, 10*time.Second, 500*time.Millisecond)
+
+	dispatcher.WaitTaskFinished <- struct{}{}
 
 	require.Eventually(t, func() bool {
 		historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(mgr)
