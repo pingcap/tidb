@@ -995,7 +995,7 @@ func (do *Domain) Close() {
 	}
 	ttlJobManager := do.ttlJobManager.Load()
 	if ttlJobManager != nil {
-		logutil.BgLogger().Info("stop ttlJobManager")
+		logutil.BgLogger().Info("stopping ttlJobManager")
 		ttlJobManager.Stop()
 		err := ttlJobManager.WaitStopped(context.Background(), func() time.Duration {
 			if intest.InTest {
