@@ -593,7 +593,7 @@ type partialTableWorker struct {
 	pushedLimit        *plannercore.PushedDownLimit
 }
 
-// needPartitionHandle indicates whether we need create a partitonHandle or not.
+// needPartitionHandle indicates whether we need create a partitionHandle or not.
 // If the schema from planner part contains ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
@@ -1504,7 +1504,7 @@ func syncErr(ctx context.Context, finished <-chan struct{}, errCh chan<- *indexM
 	}
 }
 
-// needPartitionHandle indicates whether we need create a partitonHandle or not.
+// needPartitionHandle indicates whether we need create a partitionHandle or not.
 // If the schema from planner part contains ExtraPidColID or ExtraPhysTblID,
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
@@ -1692,7 +1692,7 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 			}
 		}
 		// Make sure panic failpoint is after fetch task from workCh.
-		// Otherwise cannot send error to task.doneCh.
+		// Otherwise, cannot send error to task.doneCh.
 		failpoint.Inject("testIndexMergePanicTableScanWorker", nil)
 		execStart := time.Now()
 		err := w.executeTask(ctx, *task)

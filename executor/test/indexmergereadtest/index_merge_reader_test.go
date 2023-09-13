@@ -611,8 +611,6 @@ func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
 	require.Equal(t, <-ch, int32(1))
 	require.Equal(t, <-ch, int32(0))
 	<-ch // wait for goroutine to quit.
-
-	// TODO: add support for index merge reader in dynamic tidb_partition_prune_mode
 }
 
 func TestIndexMergeIntersectionConcurrency(t *testing.T) {
@@ -736,7 +734,7 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 					tk.MustQuery(fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > %d", c3)).Sort().Check(res)
 				}
 
-				// In tranaction
+				// In transaction
 				for i := 0; i < queryCnt; i++ {
 					tk.MustExec("begin;")
 					r := rand.Intn(3)
