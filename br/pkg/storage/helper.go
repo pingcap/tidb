@@ -4,10 +4,7 @@ package storage
 
 import (
 	"context"
-	"strings"
-	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/variable"
 )
 
@@ -21,18 +18,12 @@ func ValidateCloudStorageURI(ctx context.Context, uri string) error {
 	if err != nil {
 		return err
 	}
-	vCtx, cancel := context.WithDeadline(
-		ctx, time.Now().Add(5*time.Second))
-	_, err = New(vCtx, b, &ExternalStorageOptions{
+	_, err = New(ctx, b, &ExternalStorageOptions{
 		CheckPermissions: []Permission{
 			ListObjects,
 			GetObject,
 			AccessBuckets,
 		},
 	})
-	cancel()
-	if strings.Contains(err.Error(), "context deadline exceeded") {
-		return errors.New("validate cloud storage uri timeout")
-	}
 	return err
 }
