@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -79,7 +80,7 @@ type PostProcessStepMeta struct {
 	MaxIDs map[autoid.AllocatorType]int64
 }
 
-// SharedVars is the shared variables between subtask and minimal tasks.
+// SharedVars is the shared variables of all minimal tasks in a subtask.
 // This is because subtasks cannot directly obtain the results of the minimal subtask.
 // All the fields should be concurrent safe.
 type SharedVars struct {
@@ -90,6 +91,22 @@ type SharedVars struct {
 
 	mu       sync.Mutex
 	Checksum *verification.KVChecksum
+
+	SortedDataSummary *external.WriterSummary
+	// SortedIndexSummaries is a map from index id to its sorted kv summary.
+	SortedIndexSummaries map[int64]*external.WriterSummary
+}
+
+func (sv *SharedVars) setDataSummary(summary *external.WriterSummary) {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	sv.SortedDataSummary = summary
+}
+
+func (sv *SharedVars) addIndexSummary(indexID int64, summary *external.WriterSummary) {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	sv.SortedIndexSummaries[indexID] = summary
 }
 
 // importStepMinimalTask is the minimal task of IMPORT INTO.

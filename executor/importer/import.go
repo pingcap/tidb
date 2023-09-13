@@ -251,6 +251,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
+	// GlobalSortStore is used to store sorted data when using global sort.
+	GlobalSortStore storage.ExternalStorage
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -668,13 +670,17 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if err != nil {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		b, err := storage.ParseBackend(v, nil)
-		if err != nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
-		}
-		// only support s3 and gcs now.
-		if b.GetS3() == nil && b.GetGcs() == nil {
-			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		// set cloud storage uri to empty string to force uses local sort when
+		// the global variable is set.
+		if v != "" {
+			b, err := storage.ParseBackend(v, nil)
+			if err != nil {
+				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			}
+			// only support s3 and gcs now.
+			if b.GetS3() == nil && b.GetGcs() == nil {
+				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			}
 		}
 		p.CloudStorageURI = v
 	}
@@ -893,13 +899,29 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, err2 := storage.ParseRawURL(e.Path)
+	s, err := e.initExternalStore(ctx, e.Path, plannercore.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	e.dataStore = s
+
+	if e.IsGlobalSort() {
+		s, err = e.initExternalStore(ctx, e.Plan.CloudStorageURI, "cloud storage")
+		if err != nil {
+			return err
+		}
+		e.GlobalSortStore = s
+	}
+	return nil
+}
+func (*LoadDataController) initExternalStore(ctx context.Context, url string, target string) (storage.ExternalStorage, error) {
+	u, err2 := storage.ParseRawURL(url)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err2.Error())
 	}
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
 	}
 
 	opt := &storage.ExternalStorageOptions{}
@@ -908,10 +930,9 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	}
 	s, err := storage.New(ctx, b, opt)
 	if err != nil {
-		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
 	}
-	e.dataStore = s
-	return nil
+	return s, nil
 }
 
 // InitDataFiles initializes the data store and files.
@@ -919,7 +940,8 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
 	}
 
 	var fileNameKey string
@@ -930,18 +952,21 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		if !filepath.IsAbs(e.Path) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("file location should be absolute path when import from server disk")
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				"file location should be absolute path when import from server disk")
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
 		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("the file suffix is not supported when import from server disk")
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				"the file suffix is not supported when import from server disk")
 		}
 		dir := filepath.Dir(e.Path)
 		_, err := os.Stat(dir)
 		if err != nil {
 			// permission denied / file not exist error, etc.
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				err.Error())
 		}
 
 		fileNameKey = filepath.Base(e.Path)
@@ -953,7 +978,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	// try to find pattern error in advance
 	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			"Glob pattern error: "+err2.Error())
 	}
 
 	if err2 = e.InitDataStore(ctx); err2 != nil {
@@ -1172,6 +1198,16 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 		})
 	}
 	return res
+}
+
+// IsLocalSort returns true if we sort data on local disk.
+func (e *LoadDataController) IsLocalSort() bool {
+	return e.Plan.CloudStorageURI == ""
+}
+
+// IsGlobalSort returns true if we sort data on global storage.
+func (e *LoadDataController) IsGlobalSort() bool {
+	return !e.IsLocalSort()
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.

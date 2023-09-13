@@ -66,10 +66,11 @@ func ProcessChunk(
 		}
 	}()
 
-	return processChunk(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
+	return ProcessChunkWith(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
 }
 
-func processChunk(
+// ProcessChunkWith processes a chunk, and write kv pairs to dataWriter and indexWriter.
+func ProcessChunkWith(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	tableImporter *TableImporter,

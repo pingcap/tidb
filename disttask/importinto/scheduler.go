@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
@@ -85,11 +87,14 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.tableImporter.CheckDiskQuota(s.importCtx)
-	}()
+	// only need to check disk quota when we are using local sort.
+	if s.tableImporter.IsLocalSort() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.tableImporter.CheckDiskQuota(s.importCtx)
+		}()
+	}
 	return nil
 }
 
@@ -102,31 +107,36 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.logger.Info("split and run subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
-	dataEngine, err := s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
-	if err != nil {
-		return err
-	}
-	// Unlike in Lightning, we start an index engine for each subtask, whereas previously there was only a single index engine globally.
-	// This is because the scheduler currently does not have a post-processing mechanism.
-	// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
-	// Multiple index engines may suffer performance degradation due to range overlap.
-	// These issues will be alleviated after we integrate s3 sorter.
-	// engineID = -1, -2, -3, ...
-	indexEngine, err := s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
-	if err != nil {
-		return err
+	var dataEngine, indexEngine *backend.OpenedEngine
+	if s.tableImporter.IsLocalSort() {
+		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
+		if err != nil {
+			return err
+		}
+		// Unlike in Lightning, we start an index engine for each subtask,
+		// whereas previously there was only a single index engine globally.
+		// This is because the scheduler currently does not have a post-processing mechanism.
+		// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
+		// Multiple index engines may suffer performance degradation due to range overlap.
+		// These issues will be alleviated after we integrate s3 sorter.
+		// engineID = -1, -2, -3, ...
+		indexEngine, err = s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
+		if err != nil {
+			return err
+		}
 	}
 	sharedVars := &SharedVars{
-		TableImporter: s.tableImporter,
-		DataEngine:    dataEngine,
-		IndexEngine:   indexEngine,
-		Progress:      asyncloaddata.NewProgress(false),
-		Checksum:      &verification.KVChecksum{},
+		TableImporter:        s.tableImporter,
+		DataEngine:           dataEngine,
+		IndexEngine:          indexEngine,
+		Progress:             asyncloaddata.NewProgress(false),
+		Checksum:             &verification.KVChecksum{},
+		SortedIndexSummaries: make(map[int64]*external.WriterSummary),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), s.logger)
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -168,23 +178,27 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
-	s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
-	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
-	if err != nil {
-		return err
-	}
-	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
-	if err != nil {
-		return err
-	}
+	var dataKVCount int64
+	if s.tableImporter.IsLocalSort() {
+		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
+		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
+		closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
+		if err != nil {
+			return err
+		}
+		dataKVCount, err = s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+		if err != nil {
+			return err
+		}
 
-	s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
-	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
-		return err
-	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
-		return err
+		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
+		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
+			return err
+		} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+			return err
+		}
 	}
+	// there's no imported dataKVCount on this stage when using global sort.
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
