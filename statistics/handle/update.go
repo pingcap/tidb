@@ -92,6 +92,9 @@ func (m *statsUsage) getUsageAndReset() map[model.TableItemID]time.Time {
 }
 
 func (m *statsUsage) merge(other map[model.TableItemID]time.Time) {
+	if len(other) == 0 {
+		return
+	}
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	for id, t := range other {
