@@ -53,7 +53,7 @@ type BackfillSubTaskMeta struct {
 }
 
 // NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
+func NewBackfillSchedulerHandle(_ context.Context, taskMeta []byte, d *ddl,
 	bc ingest.BackendCtx, stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)

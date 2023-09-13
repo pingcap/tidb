@@ -66,7 +66,7 @@ func (*ingestIndexStage) RunSubtask(ctx context.Context, _ *proto.Subtask) error
 	return nil
 }
 
-func (i *ingestIndexStage) Cleanup(ctx context.Context) error {
+func (*ingestIndexStage) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("ingest index stage cleanup subtask exec env")
 	return nil
 }
@@ -76,7 +76,7 @@ func (*ingestIndexStage) OnFinished(ctx context.Context, _ *proto.Subtask) error
 	return nil
 }
 
-func (i *ingestIndexStage) Rollback(ctx context.Context) error {
+func (*ingestIndexStage) Rollback(ctx context.Context) error {
 	logutil.Logger(ctx).Info("ingest index stage rollback backfill add index task")
 	return nil
 }

@@ -351,7 +351,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 }
 
 // Close closes the scheduler when all the subtasks are complete.
-func (s *BaseScheduler) Close() {
+func (*BaseScheduler) Close() {
 }
 
 func runSummaryCollectLoop(

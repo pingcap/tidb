@@ -146,7 +146,7 @@ func (r *readIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask)
 	return nil
 }
 
-func (r *readIndexStage) Cleanup(ctx context.Context) error {
+func (*readIndexStage) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("read index stage cleanup subtask exec env",
 		zap.String("category", "ddl"))
 	return nil

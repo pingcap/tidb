@@ -44,7 +44,7 @@ func (m *SyncMap[K, V]) Load(key K) (V, bool) {
 	return val, exist
 }
 
-// LoadAndDelete
+// LoadAndDelete loads and deletes a key value atomically.
 func (m *SyncMap[K, V]) LoadAndDelete(key K) (V, bool) {
 	m.mu.Lock()
 	val, exist := m.item[key]

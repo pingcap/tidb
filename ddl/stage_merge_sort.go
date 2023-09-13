@@ -94,7 +94,7 @@ func (m *mergeSortStage) RunSubtask(ctx context.Context, subtask *proto.Subtask)
 	return err
 }
 
-func (m *mergeSortStage) Cleanup(ctx context.Context) error {
+func (*mergeSortStage) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort stage clean up subtask env")
 	return nil
 }
