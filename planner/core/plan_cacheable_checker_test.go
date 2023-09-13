@@ -15,8 +15,10 @@
 package core_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -28,6 +30,28 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/stretchr/testify/require"
 )
+
+func TestIssue46760(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760, struct{}{})
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/planner/core/TestIssue46760", "return(true)"))
+	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/planner/core/TestIssue46760"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: find table test.t failed: mock error"))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
 
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -255,6 +279,7 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(a), key(b))`)
 	tk.MustExec("create table t1(a int, b int, index idx_b(b)) partition by range(a) ( partition p0 values less than (6), partition p1 values less than (11) )")
 	tk.MustExec("create table t2(a int, b int) partition by hash(a) partitions 11")
 	tk.MustExec("create table t3(a int, b int)")
@@ -299,12 +324,12 @@ func TestGeneralPlanCacheable(t *testing.T) {
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.False(t, core.GeneralPlanCacheable(stmt, is))
+		require.False(t, core.GeneralPlanCacheableWithCtx(tk.Session(), stmt, is))
 	}
 
 	for _, q := range supported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		require.True(t, core.GeneralPlanCacheable(stmt, is))
+		require.True(t, core.GeneralPlanCacheableWithCtx(tk.Session(), stmt, is))
 	}
 }
