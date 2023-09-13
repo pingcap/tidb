@@ -71,7 +71,7 @@ type statsUsage struct {
 	lock  sync.RWMutex
 }
 
-func newColStatsUsageMap() *statsUsage {
+func newStatsUsage() *statsUsage {
 	return &statsUsage{
 		usage: make(map[model.TableItemID]time.Time),
 	}
@@ -125,7 +125,7 @@ type SessionStatsCollector struct {
 func NewSessionStatsCollector() *SessionStatsCollector {
 	return &SessionStatsCollector{
 		mapper: make(tableDeltaMap),
-		colMap: newColStatsUsageMap(),
+		colMap: newStatsUsage(),
 	}
 }
 
@@ -148,7 +148,7 @@ func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
 	s.mapper = make(tableDeltaMap)
-	s.colMap = newColStatsUsageMap()
+	s.colMap = newStatsUsage()
 	s.next = nil
 	s.deleted = false
 }
@@ -167,7 +167,7 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	newCollector := &SessionStatsCollector{
 		mapper: make(tableDeltaMap),
 		next:   h.listHead.next,
-		colMap: newColStatsUsageMap(),
+		colMap: newStatsUsage(),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -377,7 +377,7 @@ const (
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
 	deltaMap := make(tableDeltaMap)
-	colMap := newColStatsUsageMap()
+	colMap := newStatsUsage()
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
