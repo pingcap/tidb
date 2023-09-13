@@ -90,10 +90,17 @@ require (
 	github.com/stretchr/testify v1.8.0
 	github.com/tdakkota/asciicheck v0.1.1
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.4-0.20230912041415-9c163cc8574b
 	github.com/tikv/pd/client v0.0.0-20230904040343-947701a32c05
 	github.com/timakin/bodyclose v0.0.0-20210704033933-f49887972144
 	github.com/twmb/murmur3 v1.1.3
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20230911065915-f9e28714c62c
+	github.com/tikv/pd/client v0.0.0-20230912103610-2f57a9f050eb
+	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
+	github.com/twmb/murmur3 v1.1.6
+>>>>>>> d3c75eece3d (gomod: update pdclient to support backoff mechanism for memberLoop (#46769))
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/vbauerster/mpb/v7 v7.5.3
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f

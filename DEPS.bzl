@@ -3710,8 +3710,19 @@ def go_deps():
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
+<<<<<<< HEAD
         sum = "h1:e4hLUKfgfPeJPZwOfU+/I/03G0sn6IZqVcbX/5o+hvM=",
         version = "v0.0.0-20230904040343-947701a32c05",
+=======
+        sha256 = "79a51a978de81c8a893e2b33c279ac84e3f95ccdf70cb7f62fef9a76472cd92b",
+        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20230912103610-2f57a9f050eb",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20230912103610-2f57a9f050eb.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20230912103610-2f57a9f050eb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20230912103610-2f57a9f050eb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20230912103610-2f57a9f050eb.zip",
+        ],
+>>>>>>> d3c75eece3d (gomod: update pdclient to support backoff mechanism for memberLoop (#46769))
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
