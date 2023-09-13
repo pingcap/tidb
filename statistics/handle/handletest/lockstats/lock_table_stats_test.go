@@ -37,7 +37,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 	for _, col := range tblStats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
-	tk.MustExec("lock stats table t")
+	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
@@ -57,7 +57,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, 1, len(lockedTables))
 
-	tk.MustExec("unlock stats table t")
+	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
@@ -76,7 +76,7 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 
-	tk.MustExec("lock stats table t")
+	tk.MustExec("lock stats t")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 3)
@@ -89,7 +89,7 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 		"Warning 1105 skip analyze locked tables: t partition (p0), t partition (p1)",
 	))
 
-	tk.MustExec("unlock stats table t")
+	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
@@ -106,7 +106,7 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 	for _, col := range tblStats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
-	tk.MustExec("lock stats table t")
+	tk.MustExec("lock stats t")
 
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
@@ -122,7 +122,7 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 	// Lock the table again and check the warning.
 	lockedTables1, err := handle.GetTableLockedAndClearForTest()
 	require.Nil(t, err)
-	tk.MustExec("lock stats table t")
+	tk.MustExec("lock stats t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t",
 	))
@@ -132,7 +132,7 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 	require.Equal(t, lockedTables1, lockedTables2)
 
 	// Unlock the table.
-	tk.MustExec("unlock stats table t")
+	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
@@ -142,7 +142,7 @@ func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 
 	// Unlock the table again and check the warning.
-	tk.MustExec("unlock stats table t")
+	tk.MustExec("unlock stats t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip unlocking unlocked table: test.t",
 	))
@@ -182,7 +182,7 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 		}, 1*time.Second, 100*time.Millisecond)
 	}
 
-	tk.MustExec("lock stats table t1, t2")
+	tk.MustExec("lock stats t1, t2")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 2)
@@ -203,7 +203,7 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, 2, len(lockedTables))
 
-	tk.MustExec("unlock stats table test.t1, test.t2")
+	tk.MustExec("unlock stats test.t1, test.t2")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
@@ -224,11 +224,11 @@ func TestLockAndUnlockTablePrivilege(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 	// With privilege.
-	tk.MustExec("lock stats table t")
+	tk.MustExec("lock stats t")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 1)
-	tk.MustExec("unlock stats table t")
+	tk.MustExec("unlock stats t")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
@@ -247,10 +247,10 @@ func TestLockAndUnlockTablePrivilege(t *testing.T) {
 	tk1.SetSession(se)
 
 	tk1.MustExec("use test")
-	_, err = tk1.Exec("lock stats table t")
+	_, err = tk1.Exec("lock stats t")
 	require.Error(t, err)
 	require.Equal(t, "[planner:1142]INSERT command denied to user 'myuser'@'localhost' for table 't'", err.Error())
-	_, err = tk1.Exec("unlock stats table t")
+	_, err = tk1.Exec("unlock stats t")
 	require.Error(t, err)
 	require.Equal(t, "[planner:1142]INSERT command denied to user 'myuser'@'localhost' for table 't'", err.Error())
 
@@ -259,10 +259,10 @@ func TestLockAndUnlockTablePrivilege(t *testing.T) {
 	tk.MustExec("flush privileges")
 
 	// Try again.
-	_, err = tk1.Exec("lock stats table t")
+	_, err = tk1.Exec("lock stats t")
 	require.Error(t, err)
 	require.Equal(t, "[planner:1142]SELECT command denied to user 'myuser'@'localhost' for table 't'", err.Error())
-	_, err = tk1.Exec("unlock stats table t")
+	_, err = tk1.Exec("unlock stats t")
 	require.Error(t, err)
 	require.Equal(t, "[planner:1142]SELECT command denied to user 'myuser'@'localhost' for table 't'", err.Error())
 
@@ -271,8 +271,8 @@ func TestLockAndUnlockTablePrivilege(t *testing.T) {
 	tk.MustExec("flush privileges")
 
 	// Try again
-	tk1.MustExec("lock stats table t")
-	tk1.MustExec("unlock stats table t")
+	tk1.MustExec("lock stats t")
+	tk1.MustExec("unlock stats t")
 }
 
 func TestShowStatsLockedTablePrivilege(t *testing.T) {
@@ -284,7 +284,7 @@ func TestShowStatsLockedTablePrivilege(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 	// With privilege.
-	tk.MustExec("lock stats table t")
+	tk.MustExec("lock stats t")
 	rows := tk.MustQuery("show stats_locked").Rows()
 	require.Len(t, rows, 1)
 

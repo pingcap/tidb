@@ -37,7 +37,7 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 
-	tk.MustExec("lock stats table t partition p0")
+	tk.MustExec("lock stats t partition p0")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 1, num)
@@ -56,7 +56,7 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 	require.Equal(t, partitionStats, partitionStats1)
 	require.Equal(t, int64(0), partitionStats1.RealtimeCount)
 
-	tk.MustExec("unlock stats table t partition p0")
+	tk.MustExec("unlock stats t partition p0")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 0, num)
@@ -85,7 +85,7 @@ func TestLockAndUnlockPartitionsStats(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 
-	tk.MustExec("lock stats table t partition p0, p1")
+	tk.MustExec("lock stats t partition p0, p1")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 2, num)
@@ -106,7 +106,7 @@ func TestLockAndUnlockPartitionsStats(t *testing.T) {
 	rows = tk.MustQuery("show stats_locked").Rows()
 	require.Len(t, rows, 2)
 
-	tk.MustExec("unlock stats table t partition p0, p1")
+	tk.MustExec("unlock stats t partition p0, p1")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 0, num)
@@ -140,25 +140,25 @@ func TestLockAndUnlockPartitionStatsRepeatedly(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 
-	tk.MustExec("lock stats table t partition p0")
+	tk.MustExec("lock stats t partition p0")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 1, num)
 
 	// Lock the partition again and check the warning.
-	tk.MustExec("lock stats table t partition p0")
+	tk.MustExec("lock stats t partition p0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking locked table: test.t partition (p0)",
 	))
 
 	// Unlock the partition.
-	tk.MustExec("unlock stats table t partition p0")
+	tk.MustExec("unlock stats t partition p0")
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 0, num)
 
 	// Unlock the partition again and check the warning.
-	tk.MustExec("unlock stats table t partition p0")
+	tk.MustExec("unlock stats t partition p0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip unlocking unlocked table: test.t partition (p0)",
 	))
@@ -182,13 +182,13 @@ func TestSkipLockPartition(t *testing.T) {
 		require.True(t, col.IsStatsInitialized())
 	}
 
-	tk.MustExec("lock stats table t")
+	tk.MustExec("lock stats t")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 3, num)
 
 	// Lock the partition and check the warning.
-	tk.MustExec("lock stats table t partition p0")
+	tk.MustExec("lock stats t partition p0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip locking partitions of locked table: test.t",
 	))
@@ -210,13 +210,13 @@ func TestUnlockTheWholeTableWouldUnlockLockedPartitionsAndGenerateWarning(t *tes
 		require.True(t, col.IsStatsInitialized())
 	}
 
-	tk.MustExec("lock stats table t partition p0")
+	tk.MustExec("lock stats t partition p0")
 	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 1, num)
 
 	// Unlock the whole table and check the warning.
-	tk.MustExec("unlock stats table t")
+	tk.MustExec("unlock stats t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip unlocking unlocked table: test.t",
 	))
