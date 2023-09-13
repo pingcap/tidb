@@ -52,8 +52,8 @@ type BackfillSubTaskMeta struct {
 	TotalKVSize    uint64   `json:"total_kv_size"`
 }
 
-// NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(_ context.Context, taskMeta []byte, d *ddl,
+// NewBackfillSubtaskExecutor creates a new backfill backfill subtask executor.
+func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	bc ingest.BackendCtx, stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
@@ -78,13 +78,13 @@ func NewBackfillSchedulerHandle(_ context.Context, taskMeta []byte, d *ddl,
 		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexStage(
+		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case proto.StepOne:
 		if len(bgm.CloudStorageURI) > 0 {
-			return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+			return newCloudImportExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
-		return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
+		return newImportFromLocalStepExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
@@ -138,7 +138,7 @@ func newBackfillDistScheduler(ctx context.Context, id string, task *proto.Task, 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
 	case proto.StepInit, proto.StepOne:
-		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
+		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
