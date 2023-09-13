@@ -128,10 +128,20 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 	return &d
 }
 
+// LowerToDatum gets the lower bound of bucket `idx` to datum.
+func (hg *Histogram) LowerToDatum(idx int, d *types.Datum) {
+	hg.Bounds.GetRow(2*idx).DatumWithBuffer(0, hg.Tp, d)
+}
+
 // GetUpper gets the upper bound of bucket `idx`.
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
 	return &d
+}
+
+// UpperToDatum gets the upper bound of bucket `idx` to datum.
+func (hg *Histogram) UpperToDatum(idx int, d *types.Datum) {
+	hg.Bounds.GetRow(2*idx+1).DatumWithBuffer(0, hg.Tp, d)
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
@@ -1141,8 +1151,8 @@ func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 	buckets := make([]*bucket4Merging, 0, hg.Len())
 	for i := 0; i < hg.Len(); i++ {
 		b := newbucket4MergingForRecycle()
-		hg.GetLower(i).Copy(b.lower)
-		hg.GetUpper(i).Copy(b.upper)
+		hg.LowerToDatum(i, b.lower)
+		hg.UpperToDatum(i, b.upper)
 		b.Repeat = hg.Buckets[i].Repeat
 		b.NDV = hg.Buckets[i].NDV
 		b.Count = hg.Buckets[i].Count
@@ -1349,12 +1359,13 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				minValue = hist.GetLower(0).Clone()
 				continue
 			}
-			res, err := hist.GetLower(0).Compare(sc, minValue, collate.GetBinaryCollator())
+			tmpValue := hist.GetLower(0)
+			res, err := tmpValue.Compare(sc, minValue, collate.GetBinaryCollator())
 			if err != nil {
 				return nil, err
 			}
 			if res < 0 {
-				minValue = hist.GetLower(0).Clone()
+				minValue = tmpValue.Clone()
 			}
 		}
 	}
