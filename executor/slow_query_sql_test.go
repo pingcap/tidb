@@ -212,6 +212,12 @@ func TestSlowQuerySessionAlias(t *testing.T) {
 	tk.MustQuery("select Session_alias from `information_schema`.`slow_query` " +
 		"where Query='select sleep(0.0123);' limit 1").
 		Check(testkit.Rows("alias123"))
+
+	tk.MustExec("set @@tidb_session_alias='alias中文'")
+	tk.MustQuery("select sleep(0.0456);")
+	tk.MustQuery("select Session_alias from `information_schema`.`slow_query` " +
+		"where Query='select sleep(0.0456);' limit 1").
+		Check(testkit.Rows("alias中文"))
 }
 
 func TestSlowQuery(t *testing.T) {

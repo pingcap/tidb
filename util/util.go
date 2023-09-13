@@ -178,6 +178,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
+	logFields = append(logFields, zap.String("session_alias", info.SessionAlias))
 	return logFields
 }
 
