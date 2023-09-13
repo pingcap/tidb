@@ -292,6 +292,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 	for {
 		select {
 		case <-ctx.Done():
+			logutil.Logger(m.logCtx).Warn("onRunnableTask exit by cancel")
 			return
 		case <-time.After(checkTime):
 		}
