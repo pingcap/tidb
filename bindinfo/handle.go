@@ -136,9 +136,9 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 func (h *BindHandle) Update(fullLoad bool) (err error) {
 	h.bindInfo.Lock()
 	lastUpdateTime := h.bindInfo.lastUpdateTime
-	timeCondition := fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
-	if fullLoad {
-		timeCondition = ""
+	var timeCondition string
+	if !fullLoad {
+		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
