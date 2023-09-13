@@ -2784,6 +2784,7 @@ func upgradeToVer175(s Session, ver int64) {
 			}
 			_, err = s.ExecuteInternal(ctx, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
 			if err != nil {
+				logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
 				return
 			}
 		}
