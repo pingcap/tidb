@@ -1190,6 +1190,30 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/testCancelContext")
 }
 
+func TestIndexMergeLimitPushedAsIntersectionEmbeddedLimit(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
+	valsInsert := make([]string, 0, 1000)
+	for i := 0; i < 500; i++ {
+		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
+	}
+	tk.MustExec("analyze table t")
+	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
+	for i := 0; i < 10; i++ {
+		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
+		queryTableScan := fmt.Sprintf("select * from t use index() where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
+		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
+		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
+		require.True(t, tk.HasKeywordInOperatorInfo(queryWithIndexMerge, "limit embedded"))
+		require.True(t, tk.HasPlan(queryTableScan, "TableFullScan"))
+		// index merge with embedded limit couldn't compare the exactly results with normal plan, because limit admission control has some difference, while we can only check
+		// the row count is exactly the same with tableFullScan plan, in case of index pushedLimit and table pushedLimit cut down the source table rows.
+		require.Equal(t, len(tk.MustQuery(queryWithIndexMerge).Rows()), len(tk.MustQuery(queryTableScan).Rows()))
+	}
+}
+
 func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
