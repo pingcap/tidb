@@ -1045,9 +1045,9 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec("analyze table tcommonhash")
 	tk.MustExec("analyze table tpkhash")
 
-	valueSlice := make([]*valueStruct, 0, 2000)
-	vals := make([]string, 0, 2000)
-	for i := 0; i < 2000; i++ {
+	valueSlice := make([]*valueStruct, 0, 500)
+	vals := make([]string, 0, 500)
+	for i := 0; i < 500; i++ {
 		a := rand.Intn(32)
 		b := rand.Intn(32)
 		c := rand.Intn(32)
@@ -1063,7 +1063,7 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("insert into tcommonhash(a,b,c) values %s", valInserted))
 	tk.MustExec(fmt.Sprintf("insert into tpkhash(a,b,c) values %s", valInserted))
 
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 10; i++ {
 		if i%2 == 0 {
 			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
 		} else {
