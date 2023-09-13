@@ -67,8 +67,8 @@ func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
 
 // statsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).
 type statsUsage struct {
-	lock  sync.RWMutex
 	usage map[model.TableItemID]time.Time
+	lock  sync.RWMutex
 }
 
 func newColStatsUsageMap() *statsUsage {
