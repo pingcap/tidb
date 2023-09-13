@@ -1483,7 +1483,7 @@ func (w *intersectionProcessWorker) doIntersectionPerPartition(ctx context.Conte
 // goto Loop start:
 //
 // encapsulate all the recorded handles (already in index order) as index merge table tasks, sending them out.
-func (_ *indexMergeProcessWorker) fetchLoopIntersectionWithOrderBy(_ context.Context, _ <-chan *indexMergeTableTask,
+func (*indexMergeProcessWorker) fetchLoopIntersectionWithOrderBy(_ context.Context, _ <-chan *indexMergeTableTask,
 	_ chan<- *indexMergeTableTask, _ chan<- *indexMergeTableTask, _ <-chan struct{}) {
 	// todo: pushed sort property with partial index plan and limit.
 }
