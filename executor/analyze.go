@@ -163,11 +163,6 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-
-	if sessionVars.InRestrictedSQL {
-		return statsHandle.Update(infoSchema)
-	}
-
 	return statsHandle.Update(infoSchema)
 }
 
