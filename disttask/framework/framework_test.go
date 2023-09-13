@@ -701,7 +701,7 @@ func TestGC(t *testing.T) {
 		if err != nil {
 			return false
 		}
-		return historySubTasksCnt ==4
+		return historySubTasksCnt == 4
 	}, 10*time.Second, 500*time.Millisecond)
 
 	require.Eventually(t, func() bool {
