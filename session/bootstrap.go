@@ -2742,13 +2742,14 @@ func upgradeToVer174(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_state_update_time`(`state_update_time`)", dbterror.ErrDupKeyName)
 }
 
+// upgradeToVer175 updates normalized bindings of `in (?)` to `in (...)` to solve
+// the issue #44298 that bindings for `in (?)` can't work for `in (?, ?, ?)`.
+// After this update, multiple bindings may have the same `original_sql`, but it's OK, and
+// for safety, don't remove duplicated bindings when upgrading.
 func upgradeToVer175(s Session, ver int64) {
 	if ver >= version175 {
 		return
 	}
-	// update normalized bindings of `in (?)` to `in (...)` to solve the issue #44298 that
-	//  bindings for `in (?)` can't work for `in (?, ?, ?)`.
-	// after this update, multiple bindings may have the same `original_sql`, but it's OK.
 
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
@@ -2786,7 +2787,9 @@ func upgradeToVer175(s Session, ver int64) {
 		}
 		req.Reset()
 	}
-	rs.Close()
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+	}
 }
 
 func writeOOMAction(s Session) {
