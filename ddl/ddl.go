@@ -673,8 +673,8 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	}
 
 	scheduler.RegisterTaskType(BackfillTaskType,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			return newBackfillDistScheduler(ctx, id, taskID, taskTable, pool, d)
+		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable) scheduler.Scheduler {
+			return newBackfillDistScheduler(ctx, id, taskID, taskTable, d)
 		}, scheduler.WithSummary,
 	)
 

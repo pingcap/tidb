@@ -24,20 +24,17 @@ import (
 func TestRegisterTaskType(t *testing.T) {
 	// other case might add task types, so we need to clear it first
 	ClearSchedulers()
-	factoryFn := func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) Scheduler {
+	factoryFn := func(ctx context.Context, id string, taskID int64, taskTable TaskTable) Scheduler {
 		return nil
 	}
 	RegisterTaskType("test1", factoryFn)
 	require.Len(t, taskTypes, 1)
 	require.Len(t, taskSchedulerFactories, 1)
-	require.Equal(t, int32(0), taskTypes["test1"].PoolSize)
-	RegisterTaskType("test2", factoryFn, WithPoolSize(10))
+	RegisterTaskType("test2", factoryFn)
 	require.Len(t, taskTypes, 2)
 	require.Len(t, taskSchedulerFactories, 2)
-	require.Equal(t, int32(10), taskTypes["test2"].PoolSize)
 	// register again
-	RegisterTaskType("test2", factoryFn, WithPoolSize(123))
+	RegisterTaskType("test2", factoryFn)
 	require.Len(t, taskTypes, 2)
 	require.Len(t, taskSchedulerFactories, 2)
-	require.Equal(t, int32(123), taskTypes["test2"].PoolSize)
 }

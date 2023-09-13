@@ -892,11 +892,6 @@ type SessionVars struct {
 	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
 	TiFlashQuerySpillRatio float64
 
-	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `true`, means never use pipeline model in tiflash.
-	// Value set to `true` means try to execute query with pipeline model in tiflash.
-	TiFlashEnablePipelineMode bool
-
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -976,6 +971,9 @@ type SessionVars struct {
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
+
+	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
+	DefaultCollationForUTF8MB4 string
 
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
@@ -2013,6 +2011,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2053,7 +2052,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
 	vars.TiFlashMaxQueryMemoryPerNode = DefTiFlashMemQuotaQueryPerNode
 	vars.TiFlashQuerySpillRatio = DefTiFlashQuerySpillRatio
-	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)

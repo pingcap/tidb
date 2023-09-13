@@ -740,9 +740,9 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 				return model.ReorgTypeNone, err
 			}
 			if variable.EnableDistTask.Load() {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli)
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
 			} else {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil)
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, job.ReorgMeta.ResourceGroupName)
 			}
 			if err != nil {
 				return model.ReorgTypeNone, err
@@ -921,7 +921,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return true, 0, nil
 	}
 	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, job.ID, nil)
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, job.ID, nil, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), indexInfo, err)
 		return false, ver, errors.Trace(err)
@@ -1833,7 +1833,7 @@ func (w *worker) addPhysicalTableIndex(t table.PhysicalTable, reorgInfo *reorgIn
 // addTableIndex handles the add index reorganization state for a table.
 func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 	// TODO: Support typeAddIndexMergeTmpWorker.
-	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
+	if reorgInfo.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
 		if reorgInfo.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
 			err := w.executeDistGlobalTask(reorgInfo)
 			if err != nil {
@@ -1845,7 +1845,7 @@ func (w *worker) addTableIndex(t table.Table, reorgInfo *reorgInfo) error {
 			}
 			if indexInfo.Unique {
 				ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
-				bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil)
+				bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, reorgInfo.ReorgMeta.ResourceGroupName)
 				if err != nil {
 					return err
 				}
