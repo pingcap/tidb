@@ -192,7 +192,7 @@ func TestManager(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID1, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(false, nil).AnyTimes()
-	// mockInternalScheduler.EXPECT().Close()
+	mockInternalScheduler.EXPECT().Close()
 	// task2
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
@@ -206,7 +206,7 @@ func TestManager(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(false, nil).AnyTimes()
-	// mockInternalScheduler.EXPECT().Close()
+	mockInternalScheduler.EXPECT().Close()
 	// for scheduler pool
 	mockPool.EXPECT().ReleaseAndWait().Do(func() {
 		wg.Wait()

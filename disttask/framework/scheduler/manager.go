@@ -192,9 +192,10 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("task_id", task.ID))
 		m.addHandlingTask(task.ID)
+		t := task
 		err = m.schedulerPool.Run(func() {
-			m.onRunnableTask(ctx, task)
-			m.removeHandlingTask(task.ID)
+			m.onRunnableTask(ctx, t)
+			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
 		if err != nil {
@@ -262,7 +263,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		return
 	}
 	scheduler := factory(ctx, m.id, task, m.taskTable)
-	// defer scheduler.Close()
+	defer scheduler.Close()
 	for {
 		select {
 		case <-ctx.Done():
