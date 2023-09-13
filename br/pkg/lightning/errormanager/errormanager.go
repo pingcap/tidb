@@ -95,7 +95,9 @@ const (
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
 			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
 			KEY (task_id, table_name),
-			INDEX (index_name)
+			INDEX (index_name),
+			INDEX (raw_key),
+			INDEX (table_name, index_name)
 		);
 	`
 
