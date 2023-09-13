@@ -905,7 +905,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			// IndexMerge.PushedLimit is applied before table scan fetching, limiting the indexPartialPlan rows returned (it maybe ordered if orderBy items not empty)
 			// TableProbeSide sink limit is applied on the top of table plan, which will quickly shut down the both fetch-back and read-back process.
 			if len(cop.rootTaskConds) == 0 {
-				if cop.indexPlanFinished == true {
+				if cop.indexPlanFinished {
 					// indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
 					suspendLimitAboveTablePlan()
 				} else {
