@@ -75,6 +75,7 @@ const (
 	defaultChecksumTableConcurrency   = 2
 	defaultTableConcurrency           = 6
 	defaultIndexConcurrency           = 2
+	defaultEnableAsyncCommit          = "ON"
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -134,6 +135,7 @@ type DBStore struct {
 	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
+	EnableAsyncCommit          string            `toml:"enable-async-commit" json:"enable-async-commit"`
 	Vars                       map[string]string `toml:"-" json:"vars"`
 
 	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
@@ -788,6 +790,7 @@ func NewConfig() *Config {
 			DistSQLScanConcurrency:     defaultDistSQLScanConcurrency,
 			IndexSerialScanConcurrency: defaultIndexSerialScanConcurrency,
 			ChecksumTableConcurrency:   defaultChecksumTableConcurrency,
+			EnableAsyncCommit:          defaultEnableAsyncCommit,
 		},
 		Cron: Cron{
 			SwitchMode:     Duration{Duration: 5 * time.Minute},
@@ -1129,6 +1132,9 @@ func (cfg *Config) DefaultVarsForImporterAndLocalBackend() {
 	}
 	if cfg.TiDB.ChecksumTableConcurrency == 0 {
 		cfg.TiDB.ChecksumTableConcurrency = defaultChecksumTableConcurrency
+	}
+	if len(cfg.TiDB.EnableAsyncCommit) == 0 {
+		cfg.TiDB.EnableAsyncCommit = defaultEnableAsyncCommit
 	}
 }
 
