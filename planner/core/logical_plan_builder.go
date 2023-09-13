@@ -6442,10 +6442,14 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	if err != nil {
 		return nil, err
 	}
-	funcName = ast.Cast
-	bound.CastFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, bound.CalcFuncs[0].GetType(), col)
-	if err != nil {
-		return nil, err
+	if bound.CalcFuncs[0].GetType() != col.GetType() {
+		funcName = ast.Cast
+		bound.CastFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, bound.CalcFuncs[0].GetType(), col)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		bound.CastFuncs[0] = col
 	}
 	bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
 	return bound, nil
