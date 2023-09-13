@@ -913,3 +913,1068 @@ a
 NULL
 aaaaaaaaa
 天王盖地虎宝塔镇河妖
+drop table if exists t;
+create table t (a char(10) collate utf8mb4_bin, b char(10) collate utf8mb4_general_ci);
+insert into t values ('a', 'A');
+select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_general_ci;
+a	b	a	b
+select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_general_ci;
+a	b	a	b
+drop table t;
+create table t (a char(10) collate utf8mb4_general_ci, b char(10) collate utf8mb4_general_ci);
+insert into t values ('A', 'a');
+select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_bin;
+a	b	a	b
+A	a	A	a
+select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_bin;
+a	b	a	b
+A	a	A	a
+drop table t;
+set names utf8mb4;
+create table t (a char(10) collate utf8mb4_general_ci, b char(10) collate utf8_general_ci);
+insert into t values ('a', 'A');
+select * from t t1, t t2 where t1.a=t2.b and t2.b='A';
+a	b	a	b
+a	A	a	A
+drop table t;
+create table t(a char collate utf8_general_ci, b char collate utf8mb4_general_ci, c char collate utf8_bin);
+insert into t values ('b', 'B', 'B');
+select * from t t1, t t2 where t1.a=t2.b and t2.b=t2.c;
+a	b	c	a	b	c
+b	B	B	b	B	B
+drop table t;
+create table t(a char collate utf8_bin, b char collate utf8_general_ci);
+insert into t values ('a', 'A');
+select * from t t1, t t2 where t1.b=t2.b and t2.b=t1.a collate utf8_general_ci;
+a	b	a	b
+a	A	a	A
+drop table if exists t1, t2;
+set names utf8mb4 collate utf8mb4_general_ci;
+create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_general_ci;
+create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_bin;
+insert into t1 values ('A', 'a');
+insert into t2 values ('a', 'a');
+select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a';
+a	b	a	b
+A	a	NULL	NULL
+drop table t;
+set names utf8mb4 collate utf8mb4_general_ci;
+create table t(a char collate utf8mb4_bin, b char collate utf8mb4_general_ci);
+insert into t values ('a', 'a');
+select * from t t1, t t2 where  t2.b = 'A' and lower(concat(t1.a , '' ))  = t2.b;
+a	b	a	b
+a	a	a	a
+drop table t;
+create table t(a char collate utf8_unicode_ci, b char collate utf8mb4_unicode_ci, c char collate utf8_bin);
+insert into t values ('b', 'B', 'B');
+select * from t t1, t t2 where t1.a=t2.b and t2.b=t2.c;
+a	b	c	a	b	c
+b	B	B	b	B	B
+drop table if exists t1, t2;
+set names utf8mb4 collate utf8mb4_unicode_ci;
+create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;
+create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_bin;
+insert into t1 values ('A', 'a');
+insert into t2 values ('a', 'a');
+select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a';
+a	b	a	b
+A	a	NULL	NULL
+drop table if exists t1, t2;
+set names utf8mb4 collate utf8mb4_general_ci;
+create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_general_ci;
+create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;
+insert into t1 values ('ß', 's');
+insert into t2 values ('s', 's');
+select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';
+a	b	a	b
+ß	s	NULL	NULL
+drop table if exists t1, t2;
+create table t1(a char(10) collate utf8mb4_general_ci, index (a));
+create table t2(a char(10) collate utf8_bin, index (a));
+insert into t1 values ('a');
+insert into t2 values ('A');
+set names utf8 collate utf8_general_ci;
+select * from t1, t2 where t1.a=t2.a and t1.a= 'a';
+a	a
+a	A
+select * from t1 where a='a' and a = 'A';
+a
+a
+set names default;
+drop table if exists t;
+drop table if exists t_bin;
+CREATE TABLE `t` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL);
+CREATE TABLE `t_bin` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET binary);
+insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b order by t1.a;
+a	b
+1	a
+1	a
+1	a
+1	a
+2	À
+2	À
+2	À
+2	À
+3	á
+3	á
+3	á
+3	á
+4	à
+4	à
+4	à
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b order by t1.a;
+a	b
+1	a
+2	À
+3	á
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+4	à
+4	à
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+4	à
+4	à
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+a	b
+2	À
+3	á
+3	á
+4	à
+4	à
+4	à
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+a	b
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b order by t1.a;
+a	b
+1	a
+1	a
+1	a
+1	a
+2	À
+2	À
+2	À
+2	À
+3	á
+3	á
+3	á
+3	á
+4	à
+4	à
+4	à
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b order by t1.a;
+a	b
+1	a
+2	À
+3	á
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+4	à
+4	à
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+4	à
+4	à
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+a	b
+4	à
+5	b
+6	c
+7	 
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+a	b
+2	À
+3	á
+3	á
+4	à
+4	à
+4	à
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+a	b
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (id int, v varchar(5) character set binary, key(v));
+create table t2 (v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, key(v));
+insert into t1 values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t2 values ('a'), ('À'), ('á'), ('à'), ('b'), ('c'), (' ');
+select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id;
+id	v	v
+1	a	a
+2	À	À
+3	á	á
+4	à	à
+5	b	b
+6	c	c
+7	 	 
+select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id;
+id	v	v
+1	a	a
+2	À	À
+3	á	á
+4	à	à
+5	b	b
+6	c	c
+7	 	 
+drop table if exists t;
+create table t (a varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, key(a), key(b));
+insert into t values ('a', 'x'), ('x', 'À'), ('á', 'x'), ('à', 'à'), ('à', 'x');
+select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 'a' or b = 'a';
+a	b
+a	x
+x	À
+à	x
+à	à
+á	x
+select field('a', 'b', 'a');
+field('a', 'b', 'a')
+2
+select field('a', 'b', 'A');
+field('a', 'b', 'A')
+0
+select field('a', 'b', 'A' collate utf8mb4_bin);
+field('a', 'b', 'A' collate utf8mb4_bin)
+0
+select field('a', 'b', 'a ' collate utf8mb4_bin);
+field('a', 'b', 'a ' collate utf8mb4_bin)
+2
+select field('a', 'b', 'A' collate utf8mb4_unicode_ci);
+field('a', 'b', 'A' collate utf8mb4_unicode_ci)
+2
+select field('a', 'b', 'a ' collate utf8mb4_unicode_ci);
+field('a', 'b', 'a ' collate utf8mb4_unicode_ci)
+2
+select field('a', 'b', 'A' collate utf8mb4_general_ci);
+field('a', 'b', 'A' collate utf8mb4_general_ci)
+2
+select field('a', 'b', 'a ' collate utf8mb4_general_ci);
+field('a', 'b', 'a ' collate utf8mb4_general_ci)
+2
+drop table if exists t;
+create table t(a char(10), b char (10)) collate utf8mb4_general_ci;
+insert into t values ('a', 'A');
+select field(a, b) from t;
+field(a, b)
+1
+select FIND_IN_SET('a','b,a,c,d');
+FIND_IN_SET('a','b,a,c,d')
+2
+select FIND_IN_SET('a','b,A,c,d');
+FIND_IN_SET('a','b,A,c,d')
+0
+select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_bin);
+FIND_IN_SET('a','b,A,c,d' collate utf8mb4_bin)
+0
+select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin);
+FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin)
+2
+select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci);
+FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci)
+2
+select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);
+FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci)
+2
+set names utf8mb4 collate utf8mb4_general_ci;
+select collation(cast('a' as char));
+collation(cast('a' as char))
+utf8mb4_general_ci
+select collation(cast('a' as binary));
+collation(cast('a' as binary))
+binary
+select collation(cast('a' collate utf8mb4_bin as char));
+collation(cast('a' collate utf8mb4_bin as char))
+utf8mb4_general_ci
+select collation(cast('a' collate utf8mb4_bin as binary));
+collation(cast('a' collate utf8mb4_bin as binary))
+binary
+select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_unicode_ci);
+FIND_IN_SET('a','b,A,c,d' collate utf8mb4_unicode_ci)
+2
+select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_unicode_ci);
+FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_unicode_ci)
+2
+select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin);
+concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin)
+ab
+select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);
+Error 1267: Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'concat'
+drop table if exists t;
+create table t(a char);
+select * from t t1 join t t2 on t1.a collate utf8mb4_bin = t2.a collate utf8mb4_general_ci;
+Error 1267: Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation '='
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 ( a int, p1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,p2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , p3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,p4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci ,n1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,n2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , n3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,n4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci );
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values(1,'  0aA1!测试テストמבחן  ','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0Aa1!测试テストמבחן  ','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	');
+select INSTR(p1,n1) from t1;
+INSTR(p1,n1)
+0
+select INSTR(p1,n2) from t1;
+INSTR(p1,n2)
+0
+select INSTR(p1,n3) from t1;
+INSTR(p1,n3)
+0
+select INSTR(p1,n4) from t1;
+INSTR(p1,n4)
+0
+select INSTR(p2,n1) from t1;
+INSTR(p2,n1)
+0
+select INSTR(p2,n2) from t1;
+INSTR(p2,n2)
+1
+select INSTR(p2,n3) from t1;
+INSTR(p2,n3)
+0
+select INSTR(p2,n4) from t1;
+INSTR(p2,n4)
+1
+select INSTR(p3,n1) from t1;
+INSTR(p3,n1)
+0
+select INSTR(p3,n2) from t1;
+INSTR(p3,n2)
+0
+select INSTR(p3,n3) from t1;
+INSTR(p3,n3)
+0
+select INSTR(p3,n4) from t1;
+INSTR(p3,n4)
+0
+select INSTR(p4,n1) from t1;
+INSTR(p4,n1)
+0
+select INSTR(p4,n2) from t1;
+INSTR(p4,n2)
+1
+select INSTR(p4,n3) from t1;
+INSTR(p4,n3)
+0
+select INSTR(p4,n4) from t1;
+INSTR(p4,n4)
+1
+truncate table t1;
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (1,'0aA1!测试テストמבחן  ','0aA1!测试テストמבחן 	','0aA1!测试テストמבחן 	','0aA1!测试テストמבחן 	','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (2,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (3,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ');
+select LOCATE(p1,n1) from t1;
+LOCATE(p1,n1)
+0
+0
+0
+select LOCATE(p1,n2) from t1;
+LOCATE(p1,n2)
+0
+0
+0
+select LOCATE(p1,n3) from t1;
+LOCATE(p1,n3)
+0
+0
+0
+select LOCATE(p1,n4) from t1;
+LOCATE(p1,n4)
+0
+1
+1
+select LOCATE(p2,n1) from t1;
+LOCATE(p2,n1)
+0
+0
+0
+select LOCATE(p2,n2) from t1;
+LOCATE(p2,n2)
+0
+1
+1
+select LOCATE(p2,n3) from t1;
+LOCATE(p2,n3)
+0
+0
+0
+select LOCATE(p2,n4) from t1;
+LOCATE(p2,n4)
+0
+1
+1
+select LOCATE(p3,n1) from t1;
+LOCATE(p3,n1)
+0
+0
+0
+select LOCATE(p3,n2) from t1;
+LOCATE(p3,n2)
+0
+0
+0
+select LOCATE(p3,n3) from t1;
+LOCATE(p3,n3)
+0
+0
+0
+select LOCATE(p3,n4) from t1;
+LOCATE(p3,n4)
+0
+0
+0
+select LOCATE(p4,n1) from t1;
+LOCATE(p4,n1)
+0
+1
+1
+select LOCATE(p4,n2) from t1;
+LOCATE(p4,n2)
+0
+1
+1
+select LOCATE(p4,n3) from t1;
+LOCATE(p4,n3)
+0
+0
+0
+select LOCATE(p4,n4) from t1;
+LOCATE(p4,n4)
+0
+1
+1
+select locate('S', 's' collate utf8mb4_general_ci);
+locate('S', 's' collate utf8mb4_general_ci)
+1
+select locate('S', 'a' collate utf8mb4_general_ci);
+locate('S', 'a' collate utf8mb4_general_ci)
+0
+select locate('ß', 's' collate utf8mb4_general_ci);
+locate('ß', 's' collate utf8mb4_general_ci)
+1
+select locate('world', 'hello world' collate utf8mb4_general_ci);
+locate('world', 'hello world' collate utf8mb4_general_ci)
+7
+select locate(' ', 'hello world' collate utf8mb4_general_ci);
+locate(' ', 'hello world' collate utf8mb4_general_ci)
+6
+select locate('  ', 'hello world' collate utf8mb4_general_ci);
+locate('  ', 'hello world' collate utf8mb4_general_ci)
+0
+select locate('S', 's' collate utf8mb4_unicode_ci);
+locate('S', 's' collate utf8mb4_unicode_ci)
+1
+select locate('S', 'a' collate utf8mb4_unicode_ci);
+locate('S', 'a' collate utf8mb4_unicode_ci)
+0
+select locate('ß', 'ss' collate utf8mb4_unicode_ci);
+locate('ß', 'ss' collate utf8mb4_unicode_ci)
+1
+select locate('world', 'hello world' collate utf8mb4_unicode_ci);
+locate('world', 'hello world' collate utf8mb4_unicode_ci)
+7
+select locate(' ', 'hello world' collate utf8mb4_unicode_ci);
+locate(' ', 'hello world' collate utf8mb4_unicode_ci)
+6
+select locate('  ', 'hello world' collate utf8mb4_unicode_ci);
+locate('  ', 'hello world' collate utf8mb4_unicode_ci)
+0
+truncate table t1;
+insert into t1 (a) values (1);
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (2,'0aA1!测试テストמבחן  ','0aA1!测试テストמבחן       ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (3,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (4,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (5,'0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0Aa1!测试','0Aa1!测试','0Aa1!测试','0Aa1!测试');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (6,'0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试','0aA1!测试','0aA1!测试','0aA1!测试');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (7,'0aA1!测试テストמבחן  ','0aA1!测试テストמבחן       ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (8,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ');
+select p1 REGEXP n1 from t1;
+p1 REGEXP n1
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p1 REGEXP n2 from t1;
+p1 REGEXP n2
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p1 REGEXP n3 from t1;
+p1 REGEXP n3
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p1 REGEXP n4 from t1;
+p1 REGEXP n4
+NULL
+1
+1
+0
+1
+1
+1
+0
+select p2 REGEXP n1 from t1;
+p2 REGEXP n1
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p2 REGEXP n2 from t1;
+p2 REGEXP n2
+NULL
+1
+1
+0
+1
+1
+1
+0
+select p2 REGEXP n3 from t1;
+p2 REGEXP n3
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p2 REGEXP n4 from t1;
+p2 REGEXP n4
+NULL
+1
+1
+0
+1
+1
+1
+0
+select p3 REGEXP n1 from t1;
+p3 REGEXP n1
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p3 REGEXP n2 from t1;
+p3 REGEXP n2
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p3 REGEXP n3 from t1;
+p3 REGEXP n3
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p3 REGEXP n4 from t1;
+p3 REGEXP n4
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p4 REGEXP n1 from t1;
+p4 REGEXP n1
+NULL
+1
+1
+0
+1
+1
+1
+0
+select p4 REGEXP n2 from t1;
+p4 REGEXP n2
+NULL
+1
+1
+0
+1
+1
+1
+0
+select p4 REGEXP n3 from t1;
+p4 REGEXP n3
+NULL
+0
+0
+0
+0
+1
+1
+0
+select p4 REGEXP n4 from t1;
+p4 REGEXP n4
+NULL
+1
+1
+0
+1
+1
+1
+0
+set names default;
+set names utf8mb4 collate utf8mb4_general_ci;
+select 'a' like 'A';
+'a' like 'A'
+1
+select 'a' like 'A' collate utf8mb4_general_ci;
+'a' like 'A' collate utf8mb4_general_ci
+1
+select 'a' like 'À';
+'a' like 'À'
+1
+select 'a' like '%À';
+'a' like '%À'
+1
+select 'a' like '%À ';
+'a' like '%À '
+0
+select 'a' like 'À%';
+'a' like 'À%'
+1
+select 'a' like 'À_';
+'a' like 'À_'
+0
+select 'a' like '%À%';
+'a' like '%À%'
+1
+select 'aaa' like '%ÀAa%';
+'aaa' like '%ÀAa%'
+1
+set names utf8mb4 collate utf8mb4_bin;
+drop table if exists t_like;
+create table t_like(id int, b varchar(20) collate utf8mb4_general_ci);
+insert into t_like values (1, 'aaa'), (2, 'abc'), (3, 'aac');
+select b like 'AaÀ' from t_like order by id;
+b like 'AaÀ'
+1
+0
+0
+select b like 'Aa_' from t_like order by id;
+b like 'Aa_'
+1
+0
+1
+select b like '_A_' from t_like order by id;
+b like '_A_'
+1
+0
+1
+select b from t_like where b like 'Aa_' order by id;
+b
+aaa
+aac
+select b from t_like where b like 'A%' order by id;
+b
+aaa
+abc
+aac
+select b from t_like where b like '%A%' order by id;
+b
+aaa
+abc
+aac
+alter table t_like add index idx_b(b);
+select b from t_like use index(idx_b) where b like 'Aa_' order by id;
+b
+aaa
+aac
+select b from t_like use index(idx_b) where b like 'A%' order by id;
+b
+aaa
+abc
+aac
+select b from t_like use index(idx_b) where b like '%A%' order by id;
+b
+aaa
+abc
+aac
+set names default;
+drop table if exists t;
+drop table if exists t_bin;
+create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL );
+create table t_bin (id int, v varchar(5) CHARACTER SET binary );
+insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+select v from t where v='a' order by id;
+v
+a
+À
+á
+à
+select v from t_bin where v='a' order by id;
+v
+a
+select v from t where v<'b' and id<=3;
+v
+a
+À
+á
+select v from t_bin where v<'b' and id<=3;
+v
+a
+select id from t order by v, id;
+id
+7
+1
+2
+3
+4
+5
+6
+select id from t_bin order by v, id;
+id
+7
+1
+5
+6
+2
+4
+3
+explain format="brief" select distinct(v) from t_bin;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:expression__charset_and_collation.t_bin.v, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
+└─TableReader	8000.00	root		data:HashAgg
+  └─HashAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, 
+    └─TableFullScan	10000.00	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
+select distinct(v) from t_bin;
+v
+ 
+a
+b
+c
+À
+à
+á
+explain format="brief" select distinct(v) from t;
+id	estRows	task	access object	operator info
+HashAgg	8000.00	root		group by:expression__charset_and_collation.t.v, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
+└─TableReader	8000.00	root		data:HashAgg
+  └─HashAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t.v, 
+    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select distinct(v) from t;
+v
+ 
+a
+b
+c
+explain format="brief" select v, count(*) from t_bin group by v;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		expression__charset_and_collation.t_bin.v, Column#4
+└─HashAgg	8000.00	root		group by:expression__charset_and_collation.t_bin.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
+  └─TableReader	8000.00	root		data:HashAgg
+    └─HashAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, funcs:count(1)->Column#5
+      └─TableFullScan	10000.00	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
+select v, count(*) from t_bin group by v;
+v	count(*)
+ 	1
+a	1
+b	1
+c	1
+À	1
+à	1
+á	1
+explain format="brief" select v, count(*) from t group by v;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		expression__charset_and_collation.t.v, Column#4
+└─HashAgg	8000.00	root		group by:expression__charset_and_collation.t.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
+  └─TableReader	8000.00	root		data:HashAgg
+    └─HashAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t.v, funcs:count(1)->Column#5
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select v, count(*) from t group by v;
+v	count(*)
+ 	1
+a	4
+b	1
+c	1
+drop table if exists t;
+create table t(a char(10) collate utf8mb4_general_ci, key(a));
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+select * from t order by a collate utf8mb4_bin;
+a
+A
+A
+A
+a
+a
+a
+b
+b
+b
+select * from t order by a collate utf8mb4_general_ci;
+a
+a
+A
+a
+A
+a
+A
+b
+b
+b
+select * from t order by a collate utf8mb4_unicode_ci;
+a
+a
+A
+a
+A
+a
+A
+b
+b
+b
+drop table if exists t;
+create table t(a char(10) collate utf8mb4_general_ci, key(a));
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('s'), ('ss'), ('ß');
+select count(1) from t group by a collate utf8mb4_bin order by a collate utf8mb4_bin;
+count(1)
+3
+3
+3
+1
+1
+1
+select count(1) from t group by a collate utf8mb4_unicode_ci order by a collate utf8mb4_unicode_ci;
+count(1)
+6
+3
+1
+2
+select count(1) from t group by a collate utf8mb4_general_ci order by a collate utf8mb4_general_ci;
+count(1)
+6
+3
+2
+1
+drop table if exists t;
+drop table if exists t_bin;
+create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL , key(v));
+create table t_bin (id int, v varchar(5) CHARACTER SET binary , key(v));
+insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t_bin;
+id	estRows	task	access object	operator info
+StreamAgg	8000.00	root		group by:expression__charset_and_collation.t_bin.v, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
+└─IndexReader	8000.00	root		index:StreamAgg
+  └─StreamAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, 
+    └─IndexFullScan	10000.00	cop[tikv]	table:t_bin, index:v(v)	keep order:true, stats:pseudo
+select /*+ STREAM_AGG() */ distinct(v) from t_bin;
+v
+ 
+a
+b
+c
+À
+à
+á
+explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t;
+id	estRows	task	access object	operator info
+StreamAgg	8000.00	root		group by:expression__charset_and_collation.t.v, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
+└─IndexReader	8000.00	root		index:StreamAgg
+  └─StreamAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t.v, 
+    └─IndexFullScan	10000.00	cop[tikv]	table:t, index:v(v)	keep order:true, stats:pseudo
+select /*+ STREAM_AGG() */ distinct(v) from t;
+v
+ 
+a
+b
+c
+explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		expression__charset_and_collation.t_bin.v, Column#4
+└─StreamAgg	8000.00	root		group by:expression__charset_and_collation.t_bin.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t_bin.v)->expression__charset_and_collation.t_bin.v
+  └─IndexReader	8000.00	root		index:StreamAgg
+    └─StreamAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t_bin.v, funcs:count(1)->Column#5
+      └─IndexFullScan	10000.00	cop[tikv]	table:t_bin, index:v(v)	keep order:true, stats:pseudo
+select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
+v	count(*)
+ 	1
+a	1
+b	1
+c	1
+À	1
+à	1
+á	1
+explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t group by v;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		expression__charset_and_collation.t.v, Column#4
+└─StreamAgg	8000.00	root		group by:expression__charset_and_collation.t.v, funcs:count(Column#5)->Column#4, funcs:firstrow(expression__charset_and_collation.t.v)->expression__charset_and_collation.t.v
+  └─IndexReader	8000.00	root		index:StreamAgg
+    └─StreamAgg	8000.00	cop[tikv]		group by:expression__charset_and_collation.t.v, funcs:count(1)->Column#5
+      └─IndexFullScan	10000.00	cop[tikv]	table:t, index:v(v)	keep order:true, stats:pseudo
+select /*+ STREAM_AGG() */ v, count(*) from t group by v;
+v	count(*)
+ 	1
+a	4
+b	1
+c	1
+explain format="brief" select v from t where v < 'b'  order by v;
+id	estRows	task	access object	operator info
+IndexReader	3323.33	root		index:IndexRangeScan
+└─IndexRangeScan	3323.33	cop[tikv]	table:t, index:v(v)	range:[-inf,"b"), keep order:true, stats:pseudo
+select v from t where v < 'b' order by v;
+v
+ 
+a
+À
+á
+à
+explain format="brief" select v from t where v < 'b' and v > ' ' order by v;
+id	estRows	task	access object	operator info
+IndexReader	250.00	root		index:IndexRangeScan
+└─IndexRangeScan	250.00	cop[tikv]	table:t, index:v(v)	range:(" ","b"), keep order:true, stats:pseudo
+select v from t where v < 'b' and v > ' ' order by v;
+v
+a
+À
+á
+à
+explain format="brief" select v from t_bin where v < 'b' order by v;
+id	estRows	task	access object	operator info
+IndexReader	3323.33	root		index:IndexRangeScan
+└─IndexRangeScan	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,0x62), keep order:true, stats:pseudo
+select v from t_bin where v < 'b' order by v;
+v
+ 
+a
+explain format="brief" select v from t_bin where v < 'b' and v > ' ' order by v;
+id	estRows	task	access object	operator info
+IndexReader	250.00	root		index:IndexRangeScan
+└─IndexRangeScan	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(0x20,0x62), keep order:true, stats:pseudo
+select v from t_bin where v < 'b' and v > ' ' order by v;
+v
+a
+explain format="brief" select id from t use index(v) where v < 'b';
+id	estRows	task	access object	operator info
+Projection	3323.33	root		expression__charset_and_collation.t.id
+└─IndexLookUp	3323.33	root		
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t, index:v(v)	range:[-inf,"b"), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(v) where v < 'b';
+id
+1
+2
+3
+4
+7
+explain format="brief" select id from t use index(v) where v < 'b' and v > ' ';
+id	estRows	task	access object	operator info
+Projection	250.00	root		expression__charset_and_collation.t.id
+└─IndexLookUp	250.00	root		
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:v(v)	range:(" ","b"), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select id from t use index(v) where v < 'b' and v > ' ';
+id
+1
+2
+3
+4
+explain format="brief" select id from t_bin use index(v) where v < 'b';
+id	estRows	task	access object	operator info
+Projection	3323.33	root		expression__charset_and_collation.t_bin.id
+└─IndexLookUp	3323.33	root		
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,0x62), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	3323.33	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
+select id from t_bin use index(v) where v < 'b';
+id
+1
+7
+explain format="brief" select id from t_bin use index(v) where v < 'b' and v > ' ';
+id	estRows	task	access object	operator info
+Projection	250.00	root		expression__charset_and_collation.t_bin.id
+└─IndexLookUp	250.00	root		
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(0x20,0x62), keep order:false, stats:pseudo
+  └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
+select id from t_bin use index(v) where v < 'b' and v > ' ';
+id
+1

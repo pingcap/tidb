@@ -465,3 +465,341 @@ select collation(a) from (select a from t limit 1) aaa;
 select * from (select null as a union all select a from t) aaa order by a;
 select * from (select a from t) aaa union all select null as a order by a;
 
+# TestCollateConstantPropagation
+drop table if exists t;
+create table t (a char(10) collate utf8mb4_bin, b char(10) collate utf8mb4_general_ci);
+insert into t values ('a', 'A');
+select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_general_ci;
+select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_general_ci;
+drop table t;
+create table t (a char(10) collate utf8mb4_general_ci, b char(10) collate utf8mb4_general_ci);
+insert into t values ('A', 'a');
+select * from t t1, t t2 where t1.a=t2.b and t2.b='a' collate utf8mb4_bin;
+select * from t t1, t t2 where t1.a=t2.b and t2.b>='a' collate utf8mb4_bin;
+drop table t;
+set names utf8mb4;
+create table t (a char(10) collate utf8mb4_general_ci, b char(10) collate utf8_general_ci);
+insert into t values ('a', 'A');
+select * from t t1, t t2 where t1.a=t2.b and t2.b='A';
+drop table t;
+create table t(a char collate utf8_general_ci, b char collate utf8mb4_general_ci, c char collate utf8_bin);
+insert into t values ('b', 'B', 'B');
+select * from t t1, t t2 where t1.a=t2.b and t2.b=t2.c;
+drop table t;
+create table t(a char collate utf8_bin, b char collate utf8_general_ci);
+insert into t values ('a', 'A');
+select * from t t1, t t2 where t1.b=t2.b and t2.b=t1.a collate utf8_general_ci;
+drop table if exists t1, t2;
+set names utf8mb4 collate utf8mb4_general_ci;
+create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_general_ci;
+create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_bin;
+insert into t1 values ('A', 'a');
+insert into t2 values ('a', 'a');
+select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a';
+drop table t;
+set names utf8mb4 collate utf8mb4_general_ci;
+create table t(a char collate utf8mb4_bin, b char collate utf8mb4_general_ci);
+insert into t values ('a', 'a');
+select * from t t1, t t2 where  t2.b = 'A' and lower(concat(t1.a , '' ))  = t2.b;
+drop table t;
+create table t(a char collate utf8_unicode_ci, b char collate utf8mb4_unicode_ci, c char collate utf8_bin);
+insert into t values ('b', 'B', 'B');
+select * from t t1, t t2 where t1.a=t2.b and t2.b=t2.c;
+drop table if exists t1, t2;
+set names utf8mb4 collate utf8mb4_unicode_ci;
+create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;
+create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_bin;
+insert into t1 values ('A', 'a');
+insert into t2 values ('a', 'a');
+select * from t1 left join t2 on t1.a = t2.a where t1.a = 'a';
+drop table if exists t1, t2;
+set names utf8mb4 collate utf8mb4_general_ci;
+create table t1(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_general_ci;
+create table t2(a char, b varchar(10)) charset utf8mb4 collate utf8mb4_unicode_ci;
+insert into t1 values ('ß', 's');
+insert into t2 values ('s', 's');
+select * from t1 left join t2 on t1.a = t2.a collate utf8mb4_unicode_ci where t1.a = 's';
+drop table if exists t1, t2;
+create table t1(a char(10) collate utf8mb4_general_ci, index (a));
+create table t2(a char(10) collate utf8_bin, index (a));
+insert into t1 values ('a');
+insert into t2 values ('A');
+set names utf8 collate utf8_general_ci;
+select * from t1, t2 where t1.a=t2.a and t1.a= 'a';
+select * from t1 where a='a' and a = 'A';
+set names default;
+
+drop table if exists t;
+drop table if exists t_bin;
+CREATE TABLE `t` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL);
+CREATE TABLE `t_bin` ( `a` int(11) NOT NULL,`b` varchar(5) CHARACTER SET binary);
+insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+# TestCollateHashJoin
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b order by t1.a;
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b order by t1.a;
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+select /*+ TIDB_HJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+# TestCollateMergeJoin
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b order by t1.a;
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b order by t1.a;
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>3 order by t1.a;
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t t1, t t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+select /*+ TIDB_SMJ(t1, t2) */ t1.a, t1.b from t_bin t1, t_bin t2 where t1.b=t2.b and t1.a>t2.a order by t1.a;
+
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (id int, v varchar(5) character set binary, key(v));
+create table t2 (v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, key(v));
+insert into t1 values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t2 values ('a'), ('À'), ('á'), ('à'), ('b'), ('c'), (' ');
+# TestCollateHashJoin2
+select /*+ TIDB_HJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id;
+# TestCollateMergeJoin2
+select /*+ TIDB_SMJ(t1, t2) */ * from t1, t2 where t1.v=t2.v order by t1.id;
+
+# TestCollateIndexMergeJoin
+drop table if exists t;
+create table t (a varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, b varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci, key(a), key(b));
+insert into t values ('a', 'x'), ('x', 'À'), ('á', 'x'), ('à', 'à'), ('à', 'x');
+-- sorted_result
+select /*+ USE_INDEX_MERGE(t, a, b) */ * from t where a = 'a' or b = 'a';
+
+# TestCollateStringFunction
+select field('a', 'b', 'a');
+select field('a', 'b', 'A');
+select field('a', 'b', 'A' collate utf8mb4_bin);
+select field('a', 'b', 'a ' collate utf8mb4_bin);
+select field('a', 'b', 'A' collate utf8mb4_unicode_ci);
+select field('a', 'b', 'a ' collate utf8mb4_unicode_ci);
+select field('a', 'b', 'A' collate utf8mb4_general_ci);
+select field('a', 'b', 'a ' collate utf8mb4_general_ci);
+drop table if exists t;
+create table t(a char(10), b char (10)) collate utf8mb4_general_ci;
+insert into t values ('a', 'A');
+select field(a, b) from t;
+select FIND_IN_SET('a','b,a,c,d');
+select FIND_IN_SET('a','b,A,c,d');
+select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_bin);
+select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_bin);
+select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_general_ci);
+select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_general_ci);
+set names utf8mb4 collate utf8mb4_general_ci;
+select collation(cast('a' as char));
+select collation(cast('a' as binary));
+select collation(cast('a' collate utf8mb4_bin as char));
+select collation(cast('a' collate utf8mb4_bin as binary));
+select FIND_IN_SET('a','b,A,c,d' collate utf8mb4_unicode_ci);
+select FIND_IN_SET('a','b,a ,c,d' collate utf8mb4_unicode_ci);
+select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin);
+-- error 1267
+select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);
+drop table if exists t;
+create table t(a char);
+-- error 1267
+select * from t t1 join t t2 on t1.a collate utf8mb4_bin = t2.a collate utf8mb4_general_ci;
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 ( a int, p1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,p2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , p3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,p4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci ,n1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,n2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , n3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,n4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci );
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values(1,'  0aA1!测试テストמבחן  ','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0Aa1!测试テストמבחן  ','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	');
+select INSTR(p1,n1) from t1;
+select INSTR(p1,n2) from t1;
+select INSTR(p1,n3) from t1;
+select INSTR(p1,n4) from t1;
+select INSTR(p2,n1) from t1;
+select INSTR(p2,n2) from t1;
+select INSTR(p2,n3) from t1;
+select INSTR(p2,n4) from t1;
+select INSTR(p3,n1) from t1;
+select INSTR(p3,n2) from t1;
+select INSTR(p3,n3) from t1;
+select INSTR(p3,n4) from t1;
+select INSTR(p4,n1) from t1;
+select INSTR(p4,n2) from t1;
+select INSTR(p4,n3) from t1;
+select INSTR(p4,n4) from t1;
+truncate table t1;
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (1,'0aA1!测试テストמבחן  ','0aA1!测试テストמבחן 	','0aA1!测试テストמבחן 	','0aA1!测试テストמבחן 	','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (2,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (3,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ');
+select LOCATE(p1,n1) from t1;
+select LOCATE(p1,n2) from t1;
+select LOCATE(p1,n3) from t1;
+select LOCATE(p1,n4) from t1;
+select LOCATE(p2,n1) from t1;
+select LOCATE(p2,n2) from t1;
+select LOCATE(p2,n3) from t1;
+select LOCATE(p2,n4) from t1;
+select LOCATE(p3,n1) from t1;
+select LOCATE(p3,n2) from t1;
+select LOCATE(p3,n3) from t1;
+select LOCATE(p3,n4) from t1;
+select LOCATE(p4,n1) from t1;
+select LOCATE(p4,n2) from t1;
+select LOCATE(p4,n3) from t1;
+select LOCATE(p4,n4) from t1;
+select locate('S', 's' collate utf8mb4_general_ci);
+select locate('S', 'a' collate utf8mb4_general_ci);
+select locate('ß', 's' collate utf8mb4_general_ci);
+select locate('world', 'hello world' collate utf8mb4_general_ci);
+select locate(' ', 'hello world' collate utf8mb4_general_ci);
+select locate('  ', 'hello world' collate utf8mb4_general_ci);
+select locate('S', 's' collate utf8mb4_unicode_ci);
+select locate('S', 'a' collate utf8mb4_unicode_ci);
+select locate('ß', 'ss' collate utf8mb4_unicode_ci);
+select locate('world', 'hello world' collate utf8mb4_unicode_ci);
+select locate(' ', 'hello world' collate utf8mb4_unicode_ci);
+select locate('  ', 'hello world' collate utf8mb4_unicode_ci);
+truncate table t1;
+insert into t1 (a) values (1);
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (2,'0aA1!测试テストמבחן  ','0aA1!测试テストמבחן       ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (3,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן','0Aa1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (4,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ','0Aa1!测试テストמבחן  ');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (5,'0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0Aa1!测试','0Aa1!测试','0Aa1!测试','0Aa1!测试');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (6,'0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试テストמבחן0aA1!测试','0aA1!测试','0aA1!测试','0aA1!测试','0aA1!测试');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (7,'0aA1!测试テストמבחן  ','0aA1!测试テストמבחן       ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן');
+insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values (8,'0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ','0aA1!测试テストמבחן  ');
+select p1 REGEXP n1 from t1;
+select p1 REGEXP n2 from t1;
+select p1 REGEXP n3 from t1;
+select p1 REGEXP n4 from t1;
+select p2 REGEXP n1 from t1;
+select p2 REGEXP n2 from t1;
+select p2 REGEXP n3 from t1;
+select p2 REGEXP n4 from t1;
+select p3 REGEXP n1 from t1;
+select p3 REGEXP n2 from t1;
+select p3 REGEXP n3 from t1;
+select p3 REGEXP n4 from t1;
+select p4 REGEXP n1 from t1;
+select p4 REGEXP n2 from t1;
+select p4 REGEXP n3 from t1;
+select p4 REGEXP n4 from t1;
+set names default;
+
+# TestCollateLike
+set names utf8mb4 collate utf8mb4_general_ci;
+select 'a' like 'A';
+select 'a' like 'A' collate utf8mb4_general_ci;
+select 'a' like 'À';
+select 'a' like '%À';
+select 'a' like '%À ';
+select 'a' like 'À%';
+select 'a' like 'À_';
+select 'a' like '%À%';
+select 'aaa' like '%ÀAa%';
+set names utf8mb4 collate utf8mb4_bin;
+drop table if exists t_like;
+create table t_like(id int, b varchar(20) collate utf8mb4_general_ci);
+insert into t_like values (1, 'aaa'), (2, 'abc'), (3, 'aac');
+select b like 'AaÀ' from t_like order by id;
+select b like 'Aa_' from t_like order by id;
+select b like '_A_' from t_like order by id;
+select b from t_like where b like 'Aa_' order by id;
+select b from t_like where b like 'A%' order by id;
+select b from t_like where b like '%A%' order by id;
+alter table t_like add index idx_b(b);
+select b from t_like use index(idx_b) where b like 'Aa_' order by id;
+select b from t_like use index(idx_b) where b like 'A%' order by id;
+select b from t_like use index(idx_b) where b like '%A%' order by id;
+set names default;
+
+drop table if exists t;
+drop table if exists t_bin;
+create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL );
+create table t_bin (id int, v varchar(5) CHARACTER SET binary );
+insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+# TestCollateSelection
+select v from t where v='a' order by id;
+select v from t_bin where v='a' order by id;
+-- sorted_result
+select v from t where v<'b' and id<=3;
+-- sorted_result
+select v from t_bin where v<'b' and id<=3;
+# TestCollateSort
+select id from t order by v, id;
+select id from t_bin order by v, id;
+# TestCollateHashAgg
+explain format="brief" select distinct(v) from t_bin;
+-- sorted_result
+select distinct(v) from t_bin;
+explain format="brief" select distinct(v) from t;
+-- sorted_result
+select distinct(v) from t;
+explain format="brief" select v, count(*) from t_bin group by v;
+-- sorted_result
+select v, count(*) from t_bin group by v;
+explain format="brief" select v, count(*) from t group by v;
+-- sorted_result
+select v, count(*) from t group by v;
+
+# TestCollateSort
+drop table if exists t;
+create table t(a char(10) collate utf8mb4_general_ci, key(a));
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+select * from t order by a collate utf8mb4_bin;
+select * from t order by a collate utf8mb4_general_ci;
+select * from t order by a collate utf8mb4_unicode_ci;
+
+# TestCollateHashAgg
+drop table if exists t;
+create table t(a char(10) collate utf8mb4_general_ci, key(a));
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('a'), ('A'), ('b');
+insert into t values ('s'), ('ss'), ('ß');
+select count(1) from t group by a collate utf8mb4_bin order by a collate utf8mb4_bin;
+select count(1) from t group by a collate utf8mb4_unicode_ci order by a collate utf8mb4_unicode_ci;
+select count(1) from t group by a collate utf8mb4_general_ci order by a collate utf8mb4_general_ci;
+
+# TestCollateStreamAgg
+drop table if exists t;
+drop table if exists t_bin;
+create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci DEFAULT NULL , key(v));
+create table t_bin (id int, v varchar(5) CHARACTER SET binary , key(v));
+insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
+explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t_bin;
+-- sorted_result
+select /*+ STREAM_AGG() */ distinct(v) from t_bin;
+explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t;
+-- sorted_result
+select /*+ STREAM_AGG() */ distinct(v) from t;
+explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
+-- sorted_result
+select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
+explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t group by v;
+-- sorted_result
+select /*+ STREAM_AGG() */ v, count(*) from t group by v;
+# TestCollateIndexReader
+explain format="brief" select v from t where v < 'b'  order by v;
+select v from t where v < 'b' order by v;
+explain format="brief" select v from t where v < 'b' and v > ' ' order by v;
+select v from t where v < 'b' and v > ' ' order by v;
+explain format="brief" select v from t_bin where v < 'b' order by v;
+select v from t_bin where v < 'b' order by v;
+explain format="brief" select v from t_bin where v < 'b' and v > ' ' order by v;
+select v from t_bin where v < 'b' and v > ' ' order by v;
+# TestCollateIndexLookup
+explain format="brief" select id from t use index(v) where v < 'b';
+-- sorted_result
+select id from t use index(v) where v < 'b';
+explain format="brief" select id from t use index(v) where v < 'b' and v > ' ';
+-- sorted_result
+select id from t use index(v) where v < 'b' and v > ' ';
+explain format="brief" select id from t_bin use index(v) where v < 'b';
+-- sorted_result
+select id from t_bin use index(v) where v < 'b';
+explain format="brief" select id from t_bin use index(v) where v < 'b' and v > ' ';
+-- sorted_result
+select id from t_bin use index(v) where v < 'b' and v > ' ';
+
