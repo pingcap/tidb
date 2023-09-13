@@ -79,7 +79,7 @@ var CharsetIDs = map[string]uint8{
 }
 
 // Collations maps MySQL collation ID to its name.
-var Collations = map[uint8]string{
+var Collations = map[uint16]string{
 	1:   "big5_chinese_ci",
 	2:   "latin2_czech_cs",
 	3:   "dec8_swedish_ci",
@@ -300,10 +300,11 @@ var Collations = map[uint8]string{
 	246: "utf8mb4_unicode_520_ci",
 	247: "utf8mb4_vietnamese_ci",
 	255: "utf8mb4_0900_ai_ci",
+	309: "utf8mb4_0900_bin",
 }
 
 // CollationNames maps MySQL collation name to its ID
-var CollationNames = map[string]uint8{
+var CollationNames = map[string]uint16{
 	"big5_chinese_ci":          1,
 	"latin2_czech_cs":          2,
 	"dec8_swedish_ci":          3,
@@ -524,6 +525,7 @@ var CollationNames = map[string]uint8{
 	"utf8mb4_unicode_520_ci":   246,
 	"utf8mb4_vietnamese_ci":    247,
 	"utf8mb4_0900_ai_ci":       255,
+	"utf8mb4_0900_bin":         309,
 }
 
 // MySQL collation information.

@@ -191,7 +191,10 @@ func (cc *clientConn) SetCtx(ctx *TiDBContext) {
 }
 
 func (cc *clientConn) String() string {
-	collationStr := mysql.Collations[cc.collation]
+	// MySQL converts a collation from u32 to char in the protocol, so the value could be wrong. It works fine for the
+	// default parameters (and libmysql seems not to provide any way to specify the collation other than the default
+	// one), so it's not a big problem.
+	collationStr := mysql.Collations[uint16(cc.collation)]
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
