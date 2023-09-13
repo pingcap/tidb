@@ -107,14 +107,14 @@ func (m *statsUsage) merge(other map[model.TableItemID]time.Time) {
 func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap *statsUsage) {
 	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
-	colMap.merge(s.colMap.getUsageAndReset())
+	colMap.merge(s.statsUsage.getUsageAndReset())
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	mapper tableDeltaMap
-	colMap *statsUsage
-	next   *SessionStatsCollector
+	mapper     tableDeltaMap
+	statsUsage *statsUsage
+	next       *SessionStatsCollector
 	sync.Mutex
 
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
@@ -124,8 +124,8 @@ type SessionStatsCollector struct {
 // NewSessionStatsCollector initializes a new SessionStatsCollector.
 func NewSessionStatsCollector() *SessionStatsCollector {
 	return &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		colMap: newStatsUsage(),
+		mapper:     make(tableDeltaMap),
+		statsUsage: newStatsUsage(),
 	}
 }
 
@@ -148,7 +148,7 @@ func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
 	s.mapper = make(tableDeltaMap)
-	s.colMap = newStatsUsage()
+	s.statsUsage = newStatsUsage()
 	s.next = nil
 	s.deleted = false
 }
@@ -157,7 +157,7 @@ func (s *SessionStatsCollector) ClearForTest() {
 func (s *SessionStatsCollector) UpdateColStatsUsage(colMap map[model.TableItemID]time.Time) {
 	s.Lock()
 	defer s.Unlock()
-	s.colMap.merge(colMap)
+	s.statsUsage.merge(colMap)
 }
 
 // NewSessionStatsCollector allocates a stats collector for a session.
@@ -165,9 +165,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		next:   h.listHead.next,
-		colMap: newStatsUsage(),
+		mapper:     make(tableDeltaMap),
+		next:       h.listHead.next,
+		statsUsage: newStatsUsage(),
 	}
 	h.listHead.next = newCollector
 	return newCollector
