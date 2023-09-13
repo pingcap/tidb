@@ -348,6 +348,11 @@ func TestSetVarHint(t *testing.T) {
 	tk.MustQuery("SELECT /*+ set_var(tikv_client_read_timeout='-10') */ @@tikv_client_read_timeout;").Check(testkit.Rows("0"))
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
 	require.Equal(t, "[variable:1292]Truncated incorrect tikv_client_read_timeout value: '-10'", tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err.Error())
+	tk.MustExec("prepare stmt01 from 'select /*+ set_var(tikv_client_read_timeout=1) */ @@tikv_client_read_timeout'")
+	tk.MustQuery("execute stmt01").Check(testkit.Rows("1"))
+	require.Equal(t, tk.Session().GetSessionVars().GetTiKVClientReadTimeout(), uint64(1))
+	tk.MustQuery("SELECT @@tikv_client_read_timeout;").Check(testkit.Rows("5"))
+	require.Equal(t, tk.Session().GetSessionVars().GetTiKVClientReadTimeout(), uint64(5))
 
 	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar("time_zone", "SYSTEM"))
 	tk.MustQuery("SELECT /*+ SET_VAR(time_zone='+12:00') */ @@time_zone;").Check(testkit.Rows("+12:00"))
