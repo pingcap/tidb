@@ -101,12 +101,6 @@ type scalar struct {
 // EmptyScalarSize is the size of empty scalar.
 const EmptyScalarSize = int64(unsafe.Sizeof(scalar{}))
 
-var datumPool = sync.Pool{
-	New: func() any {
-		return &types.Datum{}
-	},
-}
-
 // NewHistogram creates a new histogram.
 func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType, bucketSize int, totColSize int64) *Histogram {
 	if tp.EvalType() == types.ETString {
@@ -134,9 +128,9 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 	return &d
 }
 
-// GetLowerFromPool gets the lower bound of bucket `idx` from pool.
-func (hg *Histogram) GetLowerFromPool(idx int) *types.Datum {
-	return hg.Bounds.GetRowDatumFromPool(2*idx, 0, hg.Tp, &datumPool)
+// GetLowerToDatum gets the lower bound of bucket `idx` to datum.
+func (hg *Histogram) GetLowerToDatum(idx int, d *types.Datum) {
+	hg.Bounds.GetRow(2*idx).DatumWithBuffer(0, hg.Tp, d)
 }
 
 // GetUpper gets the upper bound of bucket `idx`.
@@ -145,9 +139,9 @@ func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	return &d
 }
 
-// GetUpperFromPool gets the upper bound of bucket `idx` from pool.
-func (hg *Histogram) GetUpperFromPool(idx int) *types.Datum {
-	return hg.Bounds.GetRowDatumFromPool(2*idx+1, 0, hg.Tp, &datumPool)
+// GetUpperToDatum gets the upper bound of bucket `idx` to datum.
+func (hg *Histogram) GetUpperToDatum(idx int, d *types.Datum) {
+	hg.Bounds.GetRow(2*idx).DatumWithBuffer(0, hg.Tp, d)
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
@@ -1157,12 +1151,8 @@ func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 	buckets := make([]*bucket4Merging, 0, hg.Len())
 	for i := 0; i < hg.Len(); i++ {
 		b := newbucket4MergingForRecycle()
-		lower := hg.GetLowerFromPool(i)
-		lower.Copy(b.lower)
-		datumPool.Put(lower)
-		upper := hg.GetUpperFromPool(i)
-		upper.Copy(b.upper)
-		datumPool.Put(upper)
+		hg.GetLowerToDatum(i, b.lower)
+		hg.GetUpperToDatum(i, b.upper)
 		b.Repeat = hg.Buckets[i].Repeat
 		b.NDV = hg.Buckets[i].NDV
 		b.Count = hg.Buckets[i].Count
@@ -1532,7 +1522,6 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 		globalHist.AppendBucketWithNDV(bucket.lower, bucket.upper, bucket.Count, bucket.Repeat, bucket.NDV)
 	}
-	datumPool.Put(minValue)
 	return globalHist, nil
 }
 
