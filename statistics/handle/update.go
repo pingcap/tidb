@@ -65,25 +65,25 @@ func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
 	}
 }
 
-// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
-type colStatsUsageMap struct {
+// statsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).
+type statsUsage struct {
 	lock  sync.RWMutex
 	usage map[model.TableItemID]time.Time
 }
 
-func newColStatsUsageMap() *colStatsUsageMap {
-	return &colStatsUsageMap{
+func newColStatsUsageMap() *statsUsage {
+	return &statsUsage{
 		usage: make(map[model.TableItemID]time.Time),
 	}
 }
 
-func (m *colStatsUsageMap) reset() {
+func (m *statsUsage) reset() {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	m.usage = make(map[model.TableItemID]time.Time)
 }
 
-func (m *colStatsUsageMap) getUsageAndReset() map[model.TableItemID]time.Time {
+func (m *statsUsage) getUsageAndReset() map[model.TableItemID]time.Time {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	ret := m.usage
@@ -91,7 +91,7 @@ func (m *colStatsUsageMap) getUsageAndReset() map[model.TableItemID]time.Time {
 	return ret
 }
 
-func (m *colStatsUsageMap) merge(other map[model.TableItemID]time.Time) {
+func (m *statsUsage) merge(other map[model.TableItemID]time.Time) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	for id, t := range other {
@@ -101,7 +101,7 @@ func (m *colStatsUsageMap) merge(other map[model.TableItemID]time.Time) {
 	}
 }
 
-func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap *colStatsUsageMap) {
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap *statsUsage) {
 	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
 	colMap.merge(s.colMap.getUsageAndReset())
@@ -110,7 +110,7 @@ func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap *colStatsUsa
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
 	mapper tableDeltaMap
-	colMap *colStatsUsageMap
+	colMap *statsUsage
 	next   *SessionStatsCollector
 	sync.Mutex
 

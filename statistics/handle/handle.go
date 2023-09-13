@@ -99,7 +99,7 @@ type Handle struct {
 	}
 
 	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap *colStatsUsageMap
+	colMap *statsUsage
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
