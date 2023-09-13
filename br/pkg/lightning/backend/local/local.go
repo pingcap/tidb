@@ -474,7 +474,7 @@ type Backend struct {
 	importClientFactory ImportClientFactory
 
 	bufferPool   *membuf.Pool
-	metrics      *metric.Metrics
+	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
 }
@@ -602,7 +602,7 @@ func NewBackend(
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
-	if m, ok := metric.FromContext(ctx); ok {
+	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
@@ -1545,6 +1545,11 @@ func (local *Backend) ImportEngine(
 			zap.Int64("importedCount", importedLength))
 	}
 	return err
+}
+
+// GetRegionSplitSizeKeys gets the region split size and keys from PD.
+func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
+	return getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 }
 
 // expose these variables to unit test.

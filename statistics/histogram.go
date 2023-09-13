@@ -21,6 +21,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -1096,6 +1097,20 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	return nil
 }
 
+var bucket4MergingPool = sync.Pool{
+	New: func() any {
+		return newBucket4Meging()
+	},
+}
+
+func newbucket4MergingForRecycle() *bucket4Merging {
+	return bucket4MergingPool.Get().(*bucket4Merging)
+}
+
+func releasebucket4MergingForRecycle(b *bucket4Merging) {
+	bucket4MergingPool.Put(b)
+}
+
 // bucket4Merging is only used for merging partition hists to global hist.
 type bucket4Merging struct {
 	lower *types.Datum
@@ -1105,6 +1120,8 @@ type bucket4Merging struct {
 	disjointNDV int64
 }
 
+// newBucket4Meging creates a new bucket4Merging.
+// but we create it from bucket4MergingPool as soon as possible to reduce the cost of GC.
 func newBucket4Meging() *bucket4Merging {
 	return &bucket4Merging{
 		lower: new(types.Datum),
@@ -1123,7 +1140,7 @@ func newBucket4Meging() *bucket4Merging {
 func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 	buckets := make([]*bucket4Merging, 0, hg.Len())
 	for i := 0; i < hg.Len(); i++ {
-		b := newBucket4Meging()
+		b := newbucket4MergingForRecycle()
 		hg.GetLower(i).Copy(b.lower)
 		hg.GetUpper(i).Copy(b.upper)
 		b.Repeat = hg.Buckets[i].Repeat
@@ -1138,16 +1155,14 @@ func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 }
 
 func (b *bucket4Merging) Clone() bucket4Merging {
-	return bucket4Merging{
-		lower: b.lower.Clone(),
-		upper: b.upper.Clone(),
-		Bucket: Bucket{
-			Repeat: b.Repeat,
-			NDV:    b.NDV,
-			Count:  b.Count,
-		},
-		disjointNDV: b.disjointNDV,
-	}
+	result := newbucket4MergingForRecycle()
+	result.Repeat = b.Repeat
+	result.NDV = b.NDV
+	b.upper.Copy(result.upper)
+	b.lower.Copy(result.lower)
+	result.Count = b.Count
+	result.disjointNDV = b.disjointNDV
+	return *result
 }
 
 // mergeBucketNDV merges bucket NDV from tow bucket `right` & `left`.
@@ -1158,8 +1173,8 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		return &res, nil
 	}
 	if right.NDV == 0 {
-		res.lower = left.lower.Clone()
-		res.upper = left.upper.Clone()
+		left.lower.Copy(res.lower)
+		left.upper.Copy(res.upper)
 		res.NDV = left.NDV
 		return &res, nil
 	}
@@ -1218,8 +1233,8 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// We add right.ndv in `disjointNDV`, and let `right.ndv = left.ndv` be used for subsequent merge.
 	// This is because, for the merging of many buckets, we merge them from back to front.
 	if lowerCompareUpper >= 0 {
-		res.upper = left.upper.Clone()
-		res.lower = left.lower.Clone()
+		left.upper.Copy(res.upper)
+		left.lower.Copy(res.lower)
 		res.disjointNDV += right.NDV
 		res.NDV = left.NDV
 		return &res, nil
@@ -1271,8 +1286,8 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	if len(buckets) == 0 {
 		return nil, errors.Errorf("not enough buckets to merge")
 	}
-	res := bucket4Merging{}
-	res.upper = buckets[len(buckets)-1].upper.Clone()
+	res := newbucket4MergingForRecycle()
+	buckets[len(buckets)-1].upper.Copy(res.upper)
 	right := buckets[len(buckets)-1].Clone()
 
 	totNDV := int64(0)
@@ -1303,13 +1318,13 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	if res.NDV > totNDV {
 		res.NDV = totNDV
 	}
-	return &res, nil
+	return res, nil
 }
 
 func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
-	res := newBucket4Meging()
-	res.lower = d.Clone()
-	res.upper = d.Clone()
+	res := newbucket4MergingForRecycle()
+	d.Copy(res.lower)
+	d.Copy(res.upper)
 	res.Count = int64(t.Count)
 	res.Repeat = int64(t.Count)
 	res.NDV = int64(1)
@@ -1381,6 +1396,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			tail++
 		}
 	}
+	for n := tail; n < len(buckets); n++ {
+		releasebucket4MergingForRecycle(buckets[n])
+	}
 	buckets = buckets[:tail]
 
 	var sortError error
@@ -1451,6 +1469,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 		globalBuckets = append(globalBuckets, merged)
 	}
+	for i := 0; i < len(buckets); i++ {
+		releasebucket4MergingForRecycle(buckets[i])
+	}
 	// Because we merge backwards, we need to flip the slices.
 	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
 		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
@@ -1460,12 +1481,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
-	globalBuckets[0].lower = minValue.Clone()
+	minValue.Copy(globalBuckets[0].lower)
 	for i := 1; i < len(globalBuckets); i++ {
 		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
-			globalBuckets[i].lower = globalBuckets[i].upper.Clone()
+			globalBuckets[i].upper.Copy(globalBuckets[i].lower)
 		} else {
-			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+			globalBuckets[i-1].upper.Copy(globalBuckets[i].lower)
 		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}

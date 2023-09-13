@@ -40,7 +40,7 @@ func newKVReader(
 	if err != nil {
 		return nil, err
 	}
-	br, err := newByteReader(ctx, sr, bufSize)
+	br, err := newByteReader(ctx, sr, bufSize, store, name, false)
 	if err != nil {
 		br.Close()
 		return nil, err

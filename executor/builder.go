@@ -5226,16 +5226,22 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
 		handles := make([]kv.Handle, 0, len(plan.Handles))
 		dedup := kv.NewHandleMap()
+		// Used for clear paritionIDs of duplicated rows.
+		dupPartPos := 0
 		if plan.IndexInfo == nil {
-			for _, handle := range plan.Handles {
+			for idx, handle := range plan.Handles {
 				if _, found := dedup.Get(handle); found {
 					continue
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		} else {
-			for _, value := range plan.IndexValues {
+			for idx, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
 				}
@@ -5257,9 +5263,16 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		}
 		e.handles = handles
+		if dupPartPos > 0 {
+			e.planPhysIDs = e.planPhysIDs[:dupPartPos]
+		}
 		capacity = len(e.handles)
 	}
 	e.Base().SetInitCap(capacity)
