@@ -109,6 +109,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(false, errors.New("get subtask failed"))
+	mockInternalScheduler.EXPECT().Close()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// no subtask
