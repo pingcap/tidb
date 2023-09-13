@@ -375,7 +375,7 @@ func (c *Chunk) GetRowDatumFromPool(
 	pool *sync.Pool) *types.Datum {
 	r := c.GetRow(idx)
 	d := pool.Get().(*types.Datum)
-	r.GetDatumWithBuffer(colIdx, tp, d)
+	r.DatumWithBuffer(colIdx, tp, d)
 	return d
 }
 
