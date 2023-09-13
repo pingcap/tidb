@@ -97,7 +97,7 @@ func InitLogger(cfg *Config, _ string) error {
 	// Disable annoying TiDB Log.
 	// TODO: some error logs outputs randomly, we need to fix them in TiDB.
 	// this LEVEL only affects SlowQueryLogger, later ReplaceGlobals will overwrite it.
-	tidbLogCfg.Level = "debug"
+	tidbLogCfg.Level = "fatal"
 	// this also init GRPCLogger, controlled by GRPC_DEBUG env.
 	err := logutil.InitLogger(&tidbLogCfg)
 	if err != nil {
