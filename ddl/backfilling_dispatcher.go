@@ -374,7 +374,7 @@ func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepInit)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
