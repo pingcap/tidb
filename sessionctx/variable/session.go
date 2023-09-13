@@ -977,6 +977,9 @@ type SessionVars struct {
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
 
+	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
+	DefaultCollationForUTF8MB4 string
+
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
 
@@ -2013,6 +2016,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
