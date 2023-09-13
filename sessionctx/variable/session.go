@@ -2510,20 +2510,6 @@ func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (stri
 	return sv.GetGlobalFromHook(ctx, s)
 }
 
-// SetStmtVar sets system variable and updates SessionVars states.
-func (s *SessionVars) SetStmtVar(name string, value string) error {
-	name = strings.ToLower(name)
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(s, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return s.setStmtVar(name, sVal)
-}
-
 // SetSystemVar sets the value of a system variable for session scope.
 // Values are automatically normalized (i.e. oN / on / 1 => ON)
 // and the validation function is run. To set with less validation, see
@@ -2538,6 +2524,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return err
 	}
 	return sv.SetSessionFromHook(s, val)
+}
+
+// SetSystemVarWithOldValAsRet is wrapper of SetSystemVar. Return the old value for later use.
+func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	val, err := sv.Validate(s, val, ScopeSession)
+	if err != nil {
+		return "", err
+	}
+	// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
+	// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
+	oldV, err := s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+	if err != nil {
+		return "", err
+	}
+	return oldV, sv.SetSessionFromHook(s, val)
 }
 
 // SetSystemVarWithoutValidation sets the value of a system variable for session scope.

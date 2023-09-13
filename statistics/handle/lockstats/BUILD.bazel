@@ -4,6 +4,7 @@ go_library(
     name = "lockstats",
     srcs = [
         "lock_stats.go",
+        "query_lock.go",
         "unlock_stats.go",
     ],
     importpath = "github.com/pingcap/tidb/statistics/handle/lockstats",
@@ -23,8 +24,25 @@ go_library(
 go_test(
     name = "lockstats_test",
     timeout = "short",
-    srcs = ["lock_stats_test.go"],
+    srcs = [
+        "lock_stats_test.go",
+        "query_lock_test.go",
+        "unlock_stats_test.go",
+    ],
     embed = [":lockstats"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 8,
+    deps = [
+        "//kv",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//types",
+        "//util/chunk",
+        "//util/sqlexec/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_mock//gomock",
+    ],
 )

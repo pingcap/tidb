@@ -29,7 +29,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
@@ -44,13 +44,20 @@ import (
 // TestSyncChan is used to test.
 var TestSyncChan = make(chan struct{})
 
-// ImportMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
-type ImportMinimalTaskExecutor struct {
+// importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
+type importMinimalTaskExecutor struct {
 	mTtask *importStepMinimalTask
 }
 
-// Run implements the SubtaskExecutor.Run interface.
-func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
+var newImportMinimalTaskExecutor = newImportMinimalTaskExecutor0
+
+func newImportMinimalTaskExecutor0(t *importStepMinimalTask) execute.MiniTaskExecutor {
+	return &importMinimalTaskExecutor{
+		mTtask: t,
+	}
+}
+
+func (e *importMinimalTaskExecutor) Run(ctx context.Context) error {
 	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("run minimal task")
 	failpoint.Inject("waitBeforeSortChunk", func() {
@@ -177,6 +184,8 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
 			}()
 
+			// TODO: add resource group name
+
 			rs, err := storage.ExecSQL(ctx, se, sql)
 			if err != nil {
 				return err
@@ -262,26 +271,4 @@ func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *
 	}
 	return errors.Trace(common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs,
 		kvStore, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo))
-}
-
-func init() {
-	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepImport,
-		// The order of the subtask executors is the same as the order of the subtasks.
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			task, ok := minimalTask.(*importStepMinimalTask)
-			if !ok {
-				return nil, errors.Errorf("invalid task type %T", minimalTask)
-			}
-			return &ImportMinimalTaskExecutor{mTtask: task}, nil
-		},
-	)
-	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepPostProcess,
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			mTask, ok := minimalTask.(*postProcessStepMinimalTask)
-			if !ok {
-				return nil, errors.Errorf("invalid task type %T", minimalTask)
-			}
-			return &postProcessMinimalTaskExecutor{mTask: mTask}, nil
-		},
-	)
 }
