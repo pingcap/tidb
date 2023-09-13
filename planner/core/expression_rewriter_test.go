@@ -401,3 +401,23 @@ func TestColResolutionSubqueryWithUnionAll(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustQuery("select * from t where  exists ( select a from ( select a from t1 union all select a from t2) u where t.a=u.a);").Check(testkit.Rows())
 }
+
+func TestDefaultCollationForUTF8MB4(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`set @a = 'xx'`)
+	// utf8mb4_bin
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("select collation(_utf8mb4'12345')").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(_utf8mb4'xxx' collate utf8mb4_general_ci);").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(_utf8mb4'@a')").Check(testkit.Rows("utf8mb4_bin"))
+	tk.MustQuery("select collation(_utf8mb4'@a' collate utf8mb4_general_ci);").Check(testkit.Rows("utf8mb4_general_ci"))
+	// utf8mb4_0900_ai_ci
+	tk.MustExec("set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci'")
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	tk.MustQuery("select collation(_utf8mb4'12345')").Check(testkit.Rows("utf8mb4_0900_ai_ci"))
+	tk.MustQuery("select collation(_utf8mb4'12345' collate utf8mb4_general_ci);").Check(testkit.Rows("utf8mb4_general_ci"))
+	tk.MustQuery("select collation(_utf8mb4'@a')").Check(testkit.Rows("utf8mb4_0900_ai_ci"))
+	tk.MustQuery("select collation(_utf8mb4'@a' collate utf8mb4_general_ci);").Check(testkit.Rows("utf8mb4_general_ci"))
+}

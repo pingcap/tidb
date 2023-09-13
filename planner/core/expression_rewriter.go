@@ -1203,6 +1203,12 @@ func initConstantRepertoire(c *expression.Constant) {
 	}
 }
 
+func (er *expressionRewriter) adjustUTF8MB4Collation(tp *types.FieldType) {
+	if tp.GetFlag()&mysql.UnderScoreCharsetFlag > 0 && charset.CharsetUTF8MB4 == tp.GetCharset() {
+		tp.SetCollate(er.sctx.GetSessionVars().DefaultCollationForUTF8MB4)
+	}
+}
+
 // Leave implements Visitor interface.
 func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok bool) {
 	if er.err != nil {
@@ -1227,6 +1233,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		v.Datum.SetValue(v.Datum.GetValue(), retType)
 		value := &expression.Constant{Value: v.Datum, RetType: retType}
 		initConstantRepertoire(value)
+		er.adjustUTF8MB4Collation(retType)
+		if er.err != nil {
+			return retNode, false
+		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
 		var value *expression.Constant
@@ -1235,6 +1245,10 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 		initConstantRepertoire(value)
+		er.adjustUTF8MB4Collation(value.RetType)
+		if er.err != nil {
+			return retNode, false
+		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *ast.VariableExpr:
 		er.rewriteVariable(v)
