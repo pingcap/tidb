@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -413,7 +414,7 @@ func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
 	if len(protoTopN) == 0 {
 		return nil
 	}
-	topN := NewTopN(len(protoTopN))
+	topN := GetTopNPoolMap(len(protoTopN))
 	for _, e := range protoTopN {
 		d := make([]byte, len(e.Data))
 		copy(d, e.Data)
@@ -534,6 +535,30 @@ func (c *CMSketch) GetWidthAndDepth() (width, depth int32) {
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
 func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 	c.defaultValue = c.count / max(1, ndv)
+}
+
+var topNPoolMap = make(map[int]sync.Pool)
+
+func GetTopNPoolMap(size int) *TopN {
+	pool, ok := topNPoolMap[size]
+	if !ok {
+		pool = sync.Pool{
+			New: func() interface{} {
+				return NewTopN(size)
+			},
+		}
+		topNPoolMap[size] = pool
+	}
+	return pool.Get().(*TopN)
+}
+
+func ReleaseTopNPoolMap(topN *TopN) {
+	size := cap(topN.TopN)
+	pool, ok := topNPoolMap[size]
+	if !ok {
+		return
+	}
+	pool.Put(topN)
 }
 
 // TopN stores most-common values, which is used to estimate point queries.
