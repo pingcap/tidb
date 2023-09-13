@@ -1011,7 +1011,7 @@ func runReorgJobAndHandleErr(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	reorgInfo, err := getReorgInfo(d.jobContext(job.ID), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
+	reorgInfo, err := getReorgInfo(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, tbl, elements, mergingTmpIdx)
 	if err != nil || reorgInfo == nil || reorgInfo.first {
 		// If we run reorg firstly, we should update the job snapshot version
 		// and then run the reorg next time.
@@ -1630,7 +1630,7 @@ func newAddIndexIngestWorker(ctx context.Context, t table.PhysicalTable, d *ddlC
 	checkpointMgr *ingest.CheckpointManager, distribute bool) (*addIndexIngestWorker, error) {
 	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
 	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
-	lw, err := ei.CreateWriter(writerID, indexInfo.Unique)
+	lw, err := ei.CreateWriter(writerID)
 	if err != nil {
 		return nil, err
 	}
@@ -1657,7 +1657,7 @@ func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, next
 	oprStartTime := time.Now()
 	copCtx := w.copReqSenderPool.copCtx
 	vars := w.sessCtx.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.writer, w.index, copCtx, vars, rs.Chunk)
+	cnt, lastHandle, err := writeChunkToLocal(w.ctx, w.writer, w.index, copCtx, vars, rs.Chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -1667,9 +1667,14 @@ func (w *addIndexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, next
 	return cnt, nextKey, nil
 }
 
-func writeChunkToLocal(writer ingest.Writer,
-	index table.Index, copCtx *CopContext, vars *variable.SessionVars,
-	copChunk *chunk.Chunk) (int, kv.Handle, error) {
+func writeChunkToLocal(
+	ctx context.Context,
+	writer ingest.Writer,
+	index table.Index,
+	copCtx *CopContext,
+	vars *variable.SessionVars,
+	copChunk *chunk.Chunk,
+) (int, kv.Handle, error) {
 	sCtx, writeBufs := vars.StmtCtx, vars.GetWriteStmtBufs()
 	iter := chunk.NewIterator4Chunk(copChunk)
 	idxDataBuf := make([]types.Datum, len(copCtx.idxColOutputOffsets))
@@ -1687,7 +1692,7 @@ func writeChunkToLocal(writer ingest.Writer,
 			return 0, nil, errors.Trace(err)
 		}
 		rsData := getRestoreData(copCtx.tblInfo, copCtx.idxInfo, copCtx.pkInfo, handleDataBuf)
-		err = writeOneKVToLocal(writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
+		err = writeOneKVToLocal(ctx, writer, index, sCtx, writeBufs, idxDataBuf, rsData, handle)
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -1697,9 +1702,15 @@ func writeChunkToLocal(writer ingest.Writer,
 	return count, lastHandle, nil
 }
 
-func writeOneKVToLocal(writer ingest.Writer,
-	index table.Index, sCtx *stmtctx.StatementContext, writeBufs *variable.WriteStmtBufs,
-	idxDt, rsData []types.Datum, handle kv.Handle) error {
+func writeOneKVToLocal(
+	ctx context.Context,
+	writer ingest.Writer,
+	index table.Index,
+	sCtx *stmtctx.StatementContext,
+	writeBufs *variable.WriteStmtBufs,
+	idxDt, rsData []types.Datum,
+	handle kv.Handle,
+) error {
 	iter := index.GenIndexKVIter(sCtx, idxDt, handle, rsData)
 	for iter.Valid() {
 		key, idxVal, _, err := iter.Next(writeBufs.IndexKeyBuf)
@@ -1709,7 +1720,10 @@ func writeOneKVToLocal(writer ingest.Writer,
 		failpoint.Inject("mockLocalWriterPanic", func() {
 			panic("mock panic")
 		})
-		err = writer.WriteRow(key, idxVal, handle)
+		if !index.Meta().Unique {
+			handle = nil
+		}
+		err = writer.WriteRow(ctx, key, idxVal, handle)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1743,6 +1757,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(jobID); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
+		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -1881,10 +1896,12 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 	taskType := BackfillTaskType
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+
 	taskMeta := &BackfillGlobalMeta{
-		Job:        *reorgInfo.Job.Clone(),
-		EleID:      reorgInfo.currElement.ID,
-		EleTypeKey: reorgInfo.currElement.TypeKey,
+		Job:             *reorgInfo.Job.Clone(),
+		EleID:           reorgInfo.currElement.ID,
+		EleTypeKey:      reorgInfo.currElement.TypeKey,
+		CloudStorageURI: variable.CloudStorageURI.Load(),
 	}
 
 	metaData, err := json.Marshal(taskMeta)
@@ -1996,7 +2013,7 @@ func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysic
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
-		startKey, endKey, err = getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
+		startKey, endKey, err = getTableRange(reorg.NewJobContext(), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
 		if err != nil {
 			return 0, nil, nil, errors.Trace(err)
 		}
@@ -2116,6 +2133,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
+		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
 		idxRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -2196,7 +2214,7 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	start, end, err := getTableRange(reorg.d.jobContext(reorg.Job.ID), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
+	start, end, err := getTableRange(reorg.NewJobContext(), reorg.d, t.GetPartition(pid), currentVer.Ver, reorg.Job.Priority)
 	if err != nil {
 		return false, errors.Trace(err)
 	}

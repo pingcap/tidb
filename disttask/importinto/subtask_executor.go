@@ -184,6 +184,8 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
 			}()
 
+			// TODO: add resource group name
+
 			rs, err := storage.ExecSQL(ctx, se, sql)
 			if err != nil {
 				return err

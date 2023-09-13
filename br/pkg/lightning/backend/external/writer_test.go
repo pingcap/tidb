@@ -26,7 +26,6 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/kv"
@@ -44,7 +43,7 @@ func TestWriter(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -58,11 +57,12 @@ func TestWriter(t *testing.T) {
 		_, err = rand.Read(kvs[i].Val)
 		require.NoError(t, err)
 	}
-	rows := kv.MakeRowsFromKvPairs(kvs)
-	err := writer.AppendRows(ctx, nil, rows)
-	require.NoError(t, err)
+	for _, pair := range kvs {
+		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
+		require.NoError(t, err)
+	}
 
-	_, err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
@@ -106,7 +106,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(60).
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 
 	// 200 bytes key values.
 	kvCnt := 10
@@ -119,11 +119,12 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 		_, err = rand.Read(kvs[i].Val)
 		require.NoError(t, err)
 	}
-	rows := kv.MakeRowsFromKvPairs(kvs)
-	err := writer.AppendRows(ctx, nil, rows)
-	require.NoError(t, err)
+	for _, pair := range kvs {
+		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
+		require.NoError(t, err)
+	}
 
-	_, err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	var dataFiles, statFiles []string
@@ -152,24 +153,18 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
 		EnableDuplicationDetection().
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 	kvCount := 20
-	kvs := make([]common.KvPair, 0, kvCount)
 	for i := 0; i < kvCount; i++ {
 		v := i
 		if v == kvCount/2 {
 			v-- // insert a duplicate key.
 		}
-		kvs = append(kvs, common.KvPair{
-			Key:   []byte{byte(v)},
-			Val:   []byte{byte(v)},
-			RowID: dbkv.IntHandle(i).Encoded(),
-		})
+		key, val := []byte{byte(v)}, []byte{byte(v)}
+		err := writer.WriteRow(ctx, key, val, dbkv.IntHandle(i))
+		require.NoError(t, err)
 	}
-	rows := kv.MakeRowsFromKvPairs(kvs)
-	err := writer.AppendRows(ctx, nil, rows)
-	require.NoError(t, err)
-	_, err = writer.Close(ctx)
+	err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	keys := make([][]byte, 0, kvCount)
@@ -180,7 +175,6 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	for i := 0; i < kvCount; i++ {
 		key, value, err := kvReader.nextKV()
 		require.NoError(t, err)
-		require.Equal(t, kvs[i].Val, value)
 		clonedKey := make([]byte, len(key))
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
@@ -241,7 +235,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 		SetOnCloseFunc(func(s *WriterSummary) {
 			summary = s
 		}).
-		Build(memStore, "/test", 0)
+		Build(memStore, "/test", "0")
 
 	kvs := make([]common.KvPair, 0, 18)
 	// [key01, key02], [key03, key04], [key05, key06]
@@ -288,10 +282,12 @@ func TestWriterMultiFileStat(t *testing.T) {
 		})
 	}
 
-	rows := kv.MakeRowsFromKvPairs(kvs)
-	err := writer.AppendRows(ctx, nil, rows)
-	require.NoError(t, err)
-	_, err = writer.Close(ctx)
+	for _, pair := range kvs {
+		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
+		require.NoError(t, err)
+	}
+
+	err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	require.Equal(t, 3, len(summary.MultipleFilesStats))

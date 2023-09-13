@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util/fixcontrol"
@@ -2258,10 +2259,16 @@ var defaultSysVars = []*SysVar{
 	}},
 	// can't assign validate function here. Because validation function will run after GetGlobal function
 	{Scope: ScopeGlobal, Name: TiDBCloudStorageURI, Value: "", Type: TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
-		return RedactCloudStorageURI(CloudStorageURI.Load())
+		cloudStorageURI := CloudStorageURI.Load()
+		if len(cloudStorageURI) > 0 {
+			cloudStorageURI = ast.RedactURL(cloudStorageURI)
+		}
+		return cloudStorageURI, nil
 	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
-		if err := ValidateCloudStorageURI(ctx, val); err != nil {
-			return err
+		if len(val) > 0 && val != CloudStorageURI.Load() {
+			if err := ValidateCloudStorageURI(ctx, val); err != nil {
+				return err
+			}
 		}
 		CloudStorageURI.Store(val)
 		return nil
@@ -2817,13 +2824,23 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			if len(normalizedValue) > 64 {
+			chars := []rune(normalizedValue)
+			warningAdded := false
+			if len(chars) > 64 {
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
-				normalizedValue = normalizedValue[:64]
+				warningAdded = true
+				chars = chars[:64]
+				normalizedValue = string(chars)
 			}
 
-			if len(normalizedValue) > 0 && util.IsInCorrectIdentifierName(normalizedValue) {
-				return "", ErrWrongValueForVar.GenWithStack("Incorrect value for variable @@%s '%s'", TiDBSessionAlias, normalizedValue)
+			// truncate to a valid identifier
+			for normalizedValue != "" && util.IsInCorrectIdentifierName(normalizedValue) {
+				if !warningAdded {
+					s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
+					warningAdded = true
+				}
+				chars = chars[:len(chars)-1]
+				normalizedValue = string(chars)
 			}
 
 			return normalizedValue, nil

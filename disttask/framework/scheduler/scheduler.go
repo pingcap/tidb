@@ -99,8 +99,18 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 }
 
 // Run runs the scheduler task.
-func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) error {
-	err := s.run(ctx, task)
+func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.Logger(ctx).Error("BaseScheduler panicked", zap.Any("recover", r), zap.Stack("stack"))
+			err4Panic := errors.Errorf("%v", r)
+			err1 := s.taskTable.UpdateErrorToSubtask(s.id, task.ID, err4Panic)
+			if err == nil {
+				err = err1
+			}
+		}
+	}()
+	err = s.run(ctx, task)
 	if s.mu.handled {
 		return err
 	}
@@ -278,9 +288,8 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 }
 
 func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
-	var subtaskMeta []byte
 	if err := s.getError(); err == nil {
-		if subtaskMeta, err = scheduler.OnFinished(ctx, subtask.Meta); err != nil {
+		if err = scheduler.OnFinished(ctx, subtask); err != nil {
 			s.onError(err)
 		}
 	}
@@ -293,7 +302,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 		s.markErrorHandled()
 		return
 	}
-	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
 		s.onError(err)
 	}
 	failpoint.Inject("syncAfterSubtaskFinish", func() {
