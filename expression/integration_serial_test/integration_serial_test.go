@@ -527,13 +527,13 @@ func TestCollateHashAgg(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, false)
-	tk.HasPlan("select distinct(v) from t_bin", "HashAgg")
+	tk.MustHasPlan("select distinct(v) from t_bin", "HashAgg")
 	tk.MustQuery("select distinct(v) from t_bin").Sort().Check(testkit.Rows(" ", "a", "b", "c", "À", "à", "á"))
-	tk.HasPlan("select distinct(v) from t", "HashAgg")
+	tk.MustHasPlan("select distinct(v) from t", "HashAgg")
 	tk.MustQuery("select distinct(v) from t").Sort().Check(testkit.Rows(" ", "a", "b", "c"))
-	tk.HasPlan("select v, count(*) from t_bin group by v", "HashAgg")
+	tk.MustHasPlan("select v, count(*) from t_bin group by v", "HashAgg")
 	tk.MustQuery("select v, count(*) from t_bin group by v").Sort().Check(testkit.Rows("  1", "a 1", "b 1", "c 1", "À 1", "à 1", "á 1"))
-	tk.HasPlan("select v, count(*) from t group by v", "HashAgg")
+	tk.MustHasPlan("select v, count(*) from t group by v", "HashAgg")
 	tk.MustQuery("select v, count(*) from t group by v").Sort().Check(testkit.Rows("  1", "a 4", "b 1", "c 1"))
 
 	tk.MustExec("drop table if exists t")
@@ -552,13 +552,13 @@ func TestCollateStreamAgg(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
-	tk.HasPlan("select distinct(v) from t_bin", "StreamAgg")
+	tk.MustHasPlan("select distinct(v) from t_bin", "StreamAgg")
 	tk.MustQuery("select distinct(v) from t_bin").Sort().Check(testkit.Rows(" ", "a", "b", "c", "À", "à", "á"))
-	tk.HasPlan("select distinct(v) from t", "StreamAgg")
+	tk.MustHasPlan("select distinct(v) from t", "StreamAgg")
 	tk.MustQuery("select distinct(v) from t").Sort().Check(testkit.Rows(" ", "a", "b", "c"))
-	tk.HasPlan("select v, count(*) from t_bin group by v", "StreamAgg")
+	tk.MustHasPlan("select v, count(*) from t_bin group by v", "StreamAgg")
 	tk.MustQuery("select v, count(*) from t_bin group by v").Sort().Check(testkit.Rows("  1", "a 1", "b 1", "c 1", "À 1", "à 1", "á 1"))
-	tk.HasPlan("select v, count(*) from t group by v", "StreamAgg")
+	tk.MustHasPlan("select v, count(*) from t group by v", "StreamAgg")
 	tk.MustQuery("select v, count(*) from t group by v").Sort().Check(testkit.Rows("  1", "a 4", "b 1", "c 1"))
 }
 
@@ -567,13 +567,13 @@ func TestCollateIndexReader(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
-	tk.HasPlan("select v from t where v < 'b'  order by v", "IndexReader")
+	tk.MustHasPlan("select v from t where v < 'b'  order by v", "IndexReader")
 	tk.MustQuery("select v from t where v < 'b' order by v").Check(testkit.Rows(" ", "a", "À", "á", "à"))
-	tk.HasPlan("select v from t where v < 'b' and v > ' ' order by v", "IndexReader")
+	tk.MustHasPlan("select v from t where v < 'b' and v > ' ' order by v", "IndexReader")
 	tk.MustQuery("select v from t where v < 'b' and v > ' ' order by v").Check(testkit.Rows("a", "À", "á", "à"))
-	tk.HasPlan("select v from t_bin where v < 'b' order by v", "IndexReader")
+	tk.MustHasPlan("select v from t_bin where v < 'b' order by v", "IndexReader")
 	tk.MustQuery("select v from t_bin where v < 'b' order by v").Sort().Check(testkit.Rows(" ", "a"))
-	tk.HasPlan("select v from t_bin where v < 'b' and v > ' ' order by v", "IndexReader")
+	tk.MustHasPlan("select v from t_bin where v < 'b' and v > ' ' order by v", "IndexReader")
 	tk.MustQuery("select v from t_bin where v < 'b' and v > ' ' order by v").Sort().Check(testkit.Rows("a"))
 }
 
@@ -583,13 +583,13 @@ func TestCollateIndexLookup(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	prepare4Collation(tk, true)
 
-	tk.HasPlan("select id from t where v < 'b'", "IndexLookUp")
+	tk.MustHasPlan("select id from t where v < 'b'", "IndexLookUp")
 	tk.MustQuery("select id from t where v < 'b'").Sort().Check(testkit.Rows("1", "2", "3", "4", "7"))
-	tk.HasPlan("select id from t where v < 'b' and v > ' '", "IndexLookUp")
+	tk.MustHasPlan("select id from t where v < 'b' and v > ' '", "IndexLookUp")
 	tk.MustQuery("select id from t where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1", "2", "3", "4"))
-	tk.HasPlan("select id from t_bin where v < 'b'", "IndexLookUp")
+	tk.MustHasPlan("select id from t_bin where v < 'b'", "IndexLookUp")
 	tk.MustQuery("select id from t_bin where v < 'b'").Sort().Check(testkit.Rows("1", "7"))
-	tk.HasPlan("select id from t_bin where v < 'b' and v > ' '", "IndexLookUp")
+	tk.MustHasPlan("select id from t_bin where v < 'b' and v > ' '", "IndexLookUp")
 	tk.MustQuery("select id from t_bin where v < 'b' and v > ' '").Sort().Check(testkit.Rows("1"))
 }
 

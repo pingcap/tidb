@@ -931,7 +931,7 @@ func TestIndexMergePartialScansClusteredIndex(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHasPlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -984,7 +984,7 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHasPlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -1033,7 +1033,7 @@ func TestIndexMergePartialScansPKIsHandle(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHasPlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -2188,7 +2188,7 @@ func TestQueryBlockTableAliasInHint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	require.True(t, tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"))
+	tk.MustHasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin")
 	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
 		"1 2",
 	))
@@ -2917,7 +2917,7 @@ func TestIssue25799(t *testing.T) {
 	tk.MustExec(`insert into t1 values (1, 1)`)
 	tk.MustExec(`create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b))`)
 	tk.MustExec(`insert into t2 values (null, 1)`)
-	tk.HasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
+	tk.MustHasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`).Check(testkit.Rows())
 }
 
@@ -5045,7 +5045,7 @@ func TestIssue41273(t *testing.T) {
 	tk.MustQuery("select * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
 	// For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
-	require.False(t, tk.HasPlanForLastExecution("IndexMerge"))
+	tk.MustNotHasPlanForLastExecution("IndexMerge")
 }
 
 func TestIsIPv4ToTiFlash(t *testing.T) {

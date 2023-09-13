@@ -531,7 +531,7 @@ func TestIssue32422(t *testing.T) {
 	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
 	tk.MustExec("insert into t values (6, 6)")
 	// Check for the new added data.
-	tk.HasPlan("select id+1, c from t where c = 6;", "UnionScan")
+	tk.MustHasPlan("select id+1, c from t where c = 6;", "UnionScan")
 	tk.MustQuery("select id+1, c from t where c = 6;").Check(testkit.Rows("7 6"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 	// Check for the old data.
@@ -539,21 +539,21 @@ func TestIssue32422(t *testing.T) {
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 
 	// Point get
-	tk.HasPlan("select id+1, c from t where id = 6", "PointGet")
+	tk.MustHasPlan("select id+1, c from t where id = 6", "PointGet")
 	tk.MustQuery("select id+1, c from t where id = 6").Check(testkit.Rows("7 6"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 	tk.MustQuery("select id+1, c from t where id = 4").Check(testkit.Rows("5 4"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 
 	// Index Lookup
-	tk.HasPlan("select id+1, c from t where id = 6", "IndexLookUp")
+	tk.MustHasPlan("select id+1, c from t where id = 6", "IndexLookUp")
 	tk.MustQuery("select id+1, c from t use index(id) where id = 6").Check(testkit.Rows("7 6"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 	tk.MustQuery("select id+1, c from t use index(id) where id = 4").Check(testkit.Rows("5 4"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 
 	// Index Reader
-	tk.HasPlan("select id from t where id = 6", "IndexReader")
+	tk.MustHasPlan("select id from t where id = 6", "IndexReader")
 	tk.MustQuery("select id from t use index(id) where id = 6").Check(testkit.Rows("6"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 	tk.MustQuery("select id from t use index(id) where id = 4").Check(testkit.Rows("4"))
@@ -624,7 +624,7 @@ func BenchmarkUnionScanIndexReadDescRead(b *testing.B) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 
-	tk.HasPlan("select b from t use index(k) where b > 50 order by b desc", "IndexReader")
+	tk.MustHasPlan("select b from t use index(k) where b > 50 order by b desc", "IndexReader")
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -646,7 +646,7 @@ func BenchmarkUnionScanTableReadDescRead(b *testing.B) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 
-	tk.HasPlan("select * from t where a > 50 order by a desc", "TableReader")
+	tk.MustHasPlan("select * from t where a > 50 order by a desc", "TableReader")
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -668,7 +668,7 @@ func BenchmarkUnionScanIndexLookUpDescRead(b *testing.B) {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
 	}
 
-	tk.HasPlan("select * from t use index(k) where b > 50 order by b desc", "IndexLookUp")
+	tk.MustHasPlan("select * from t use index(k) where b > 50 order by b desc", "IndexLookUp")
 
 	b.ReportAllocs()
 	b.ResetTimer()

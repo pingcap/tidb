@@ -1074,44 +1074,44 @@ func TestOrderByWithLimit(t *testing.T) {
 		limit := rand.Intn(10) + 1
 		queryHandle := fmt.Sprintf("select /*+ use_index_merge(thandle, idx_ac, idx_bc) */ * from thandle where a = %v or b = %v order by c limit %v", a, b, limit)
 		resHandle := tk.MustQuery(queryHandle).Rows()
-		require.True(t, tk.HasPlan(queryHandle, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryHandle, "TopN"))
+		tk.MustHasPlan(queryHandle, "IndexMerge")
+		tk.MustNotHasPlan(queryHandle, "TopN")
 
 		queryPK := fmt.Sprintf("select /*+ use_index_merge(tpk, idx_ac, idx_bc) */ * from tpk where a = %v or b = %v order by c limit %v", a, b, limit)
 		resPK := tk.MustQuery(queryPK).Rows()
-		require.True(t, tk.HasPlan(queryPK, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryPK, "TopN"))
+		tk.MustHasPlan(queryPK, "IndexMerge")
+		tk.MustNotHasPlan(queryPK, "TopN")
 
 		queryCommon := fmt.Sprintf("select /*+ use_index_merge(tcommon, idx_ac, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
 		resCommon := tk.MustQuery(queryCommon).Rows()
-		require.True(t, tk.HasPlan(queryCommon, "IndexMerge"))
-		require.False(t, tk.HasPlan(queryCommon, "TopN"))
+		tk.MustHasPlan(queryCommon, "IndexMerge")
+		tk.MustNotHasPlan(queryCommon, "TopN")
 
 		queryTableScan := fmt.Sprintf("select /*+ use_index_merge(tcommon, primary, idx_bc) */ * from tcommon where a = %v or b = %v order by c limit %v", a, b, limit)
 		resTableScan := tk.MustQuery(queryTableScan).Rows()
-		require.True(t, tk.HasPlan(queryTableScan, "IndexMerge"))
-		require.True(t, tk.HasPlan(queryTableScan, "TableRangeScan"))
-		require.False(t, tk.HasPlan(queryTableScan, "TopN"))
+		tk.MustHasPlan(queryTableScan, "IndexMerge")
+		tk.MustHasPlan(queryTableScan, "TableRangeScan")
+		tk.MustNotHasPlan(queryTableScan, "TopN")
 
 		queryHash := fmt.Sprintf("select /*+ use_index_merge(thash, idx_ac, idx_bc) */ * from thash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resHash := tk.MustQuery(queryHash).Rows()
-		require.True(t, tk.HasPlan(queryHash, "IndexMerge"))
+		tk.MustHasPlan(queryHash, "IndexMerge")
 		if i%2 == 1 {
-			require.False(t, tk.HasPlan(queryHash, "TopN"))
+			tk.MustNotHasPlan(queryHash, "TopN")
 		}
 
 		queryCommonHash := fmt.Sprintf("select /*+ use_index_merge(tcommonhash, primary, idx_bc) */ * from tcommonhash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resCommonHash := tk.MustQuery(queryCommonHash).Rows()
-		require.True(t, tk.HasPlan(queryCommonHash, "IndexMerge"))
+		tk.MustHasPlan(queryCommonHash, "IndexMerge")
 		if i%2 == 1 {
-			require.False(t, tk.HasPlan(queryCommonHash, "TopN"))
+			tk.MustNotHasPlan(queryCommonHash, "TopN")
 		}
 
 		queryPKHash := fmt.Sprintf("select /*+ use_index_merge(tpkhash, idx_ac, idx_bc) */ * from tpkhash where a = %v or b = %v order by c limit %v", a, b, limit)
 		resPKHash := tk.MustQuery(queryPKHash).Rows()
-		require.True(t, tk.HasPlan(queryPKHash, "IndexMerge"))
+		tk.MustHasPlan(queryPKHash, "IndexMerge")
 		if i%2 == 1 {
-			require.False(t, tk.HasPlan(queryPKHash, "TopN"))
+			tk.MustNotHasPlan(queryPKHash, "TopN")
 		}
 
 		sliceRes := getResult(valueSlice, a, b, limit, false)
@@ -1210,8 +1210,8 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, limit)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
-		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
-		require.True(t, tk.HasPlan(queryWithIndexMerge, "Limit"))
+		tk.MustHasPlan(queryWithIndexMerge, "IndexMerge")
+		tk.MustHasPlan(queryWithIndexMerge, "Limit")
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
@@ -1220,8 +1220,8 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d offset %d) t", valA, valB, valC, limit, offset)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ c from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		queryWithNormalIndex := fmt.Sprintf("select c from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
-		require.True(t, tk.HasPlan(queryWithIndexMerge, "IndexMerge"))
-		require.True(t, tk.HasPlan(queryWithIndexMerge, "Limit"))
+		tk.MustHasPlan(queryWithIndexMerge, "IndexMerge")
+		tk.MustHasPlan(queryWithIndexMerge, "Limit")
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
@@ -1234,8 +1234,8 @@ func TestIndexMergeNoOrderLimitPushed(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c))")
 	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
 	sql := "select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1"
-	require.True(t, tk.HasPlan(sql, "IndexMerge"))
-	require.True(t, tk.HasPlan(sql, "Limit"))
+	tk.MustHasPlan(sql, "IndexMerge")
+	tk.MustHasPlan(sql, "Limit")
 	// 6 means that IndexMerge(embedded limit){Limit->PartialIndexScan, Limit->PartialIndexScan, FinalTableScan}
 	require.Equal(t, 6, len(tk.MustQuery("explain "+sql).Rows()))
 	// The result is not stable. So we just check that it can run successfully.
@@ -1251,15 +1251,15 @@ func TestIndexMergeKeepOrderDirtyRead(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values(1, 1, -3)")
 	querySQL := "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2"
-	tk.HasPlan(querySQL, "Limit")
-	tk.HasPlan(querySQL, "IndexMerge")
+	tk.MustHasPlan(querySQL, "Limit")
+	tk.MustHasPlan(querySQL, "IndexMerge")
 	tk.MustQuery(querySQL).Check(testkit.Rows("1 1 -3", "2 1 -2"))
 	tk.MustExec("rollback")
 	tk.MustExec("begin")
 	tk.MustExec("insert into t values(1, 2, 4)")
 	querySQL = "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2"
-	tk.HasPlan(querySQL, "Limit")
-	tk.HasPlan(querySQL, "IndexMerge")
+	tk.MustHasPlan(querySQL, "Limit")
+	tk.MustHasPlan(querySQL, "IndexMerge")
 	tk.MustQuery(querySQL).Check(testkit.Rows("1 2 4", "1 1 1"))
 	tk.MustExec("rollback")
 }

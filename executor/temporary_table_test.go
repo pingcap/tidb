@@ -111,23 +111,23 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 
 	// Check the temporary table do not send request to TiKV.
 	// PointGet
-	require.True(t, tk.HasPlan("select * from tmp_t where id=1", "Point_Get"))
+	tk.MustHasPlan("select * from tmp_t where id=1", "Point_Get")
 	tk.MustQuery("select * from tmp_t where id=1").Check(testkit.Rows("1 1 1"))
 
 	// BatchPointGet
-	require.True(t, tk.HasPlan("select * from tmp_t where id in (1, 2)", "Batch_Point_Get"))
+	tk.MustHasPlan("select * from tmp_t where id in (1, 2)", "Batch_Point_Get")
 	tk.MustQuery("select * from tmp_t where id in (1, 2)").Check(testkit.Rows("1 1 1", "2 2 2"))
 
 	// Table reader
-	require.True(t, tk.HasPlan("select * from tmp_t", "TableReader"))
+	tk.MustHasPlan("select * from tmp_t", "TableReader")
 	tk.MustQuery("select * from tmp_t").Check(testkit.Rows("1 1 1", "2 2 2"))
 
 	// Index reader
-	require.True(t, tk.HasPlan("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t", "IndexReader"))
+	tk.MustHasPlan("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t", "IndexReader")
 	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ a from tmp_t").Check(testkit.Rows("1", "2"))
 
 	// Index lookup
-	require.True(t, tk.HasPlan("select /*+ USE_INDEX(tmp_t, a) */ b from tmp_t where a = 1", "IndexLookUp"))
+	tk.MustHasPlan("select /*+ USE_INDEX(tmp_t, a) */ b from tmp_t where a = 1", "IndexLookUp")
 	tk.MustQuery("select /*+ USE_INDEX(tmp_t, a) */ b from tmp_t where a = 1").Check(testkit.Rows("1"))
 	tk.MustExec("rollback")
 
