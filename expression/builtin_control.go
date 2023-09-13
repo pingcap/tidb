@@ -61,6 +61,36 @@ func maxlen(lhsFlen, rhsFlen int) int {
 	return mathutil.Max(lhsFlen, rhsFlen)
 }
 
+func fixFlenOfDecimal(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+	maxArgFlen := 0
+	for i := range argTps {
+		unsignedFlag := mysql.HasUnsignedFlag(argTps[i].GetFlag())
+		flagLen := 0
+		if !unsignedFlag {
+			flagLen = 1
+		}
+		flen := argTps[i].GetFlen() - flagLen
+		if argTps[i].GetDecimal() != types.UnspecifiedLength {
+			flen -= argTps[i].GetDecimal()
+		}
+		maxArgFlen = maxlen(maxArgFlen, flen)
+	}
+	resultFlen := maxArgFlen + resultFieldType.GetDecimal() + 1 // account for -1 len fields
+	resultFieldType.SetFlenUnderLimit(resultFlen)
+}
+
+func setDecimal(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+	maxDecimal := 0
+	for i := range argTps {
+		if argTps[i].GetDecimal() == types.UnspecifiedLength {
+			resultFieldType.SetDecimal(types.UnspecifiedLength)
+			return
+		}
+		maxDecimal = mathutil.Max(argTps[i].GetDecimal(), maxDecimal)
+	}
+	resultFieldType.SetDecimalUnderLimit(maxDecimal)
+}
+
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
 func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldType, error) {
 	lhs, rhs := lexp.GetType(), rexp.GetType()
@@ -91,11 +121,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		if evalType == types.ETInt {
 			resultFieldType.SetDecimal(0)
 		} else {
-			if lhs.GetDecimal() == types.UnspecifiedLength || rhs.GetDecimal() == types.UnspecifiedLength {
-				resultFieldType.SetDecimal(types.UnspecifiedLength)
-			} else {
-				resultFieldType.SetDecimalUnderLimit(mathutil.Max(lhs.GetDecimal(), rhs.GetDecimal()))
-			}
+			setDecimal(resultFieldType, lhs, rhs)
 		}
 
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
@@ -128,24 +154,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			resultFieldType.SetFlag(0)
 		}
 		if evalType == types.ETDecimal || evalType == types.ETInt {
-			lhsUnsignedFlag, rhsUnsignedFlag := mysql.HasUnsignedFlag(lhs.GetFlag()), mysql.HasUnsignedFlag(rhs.GetFlag())
-			lhsFlagLen, rhsFlagLen := 0, 0
-			if !lhsUnsignedFlag {
-				lhsFlagLen = 1
-			}
-			if !rhsUnsignedFlag {
-				rhsFlagLen = 1
-			}
-			lhsFlen := lhs.GetFlen() - lhsFlagLen
-			rhsFlen := rhs.GetFlen() - rhsFlagLen
-			if lhs.GetDecimal() != types.UnspecifiedLength {
-				lhsFlen -= lhs.GetDecimal()
-			}
-			if lhs.GetDecimal() != types.UnspecifiedLength {
-				rhsFlen -= rhs.GetDecimal()
-			}
-			flen := maxlen(lhsFlen, rhsFlen) + resultFieldType.GetDecimal() + 1 // account for -1 len fields
-			resultFieldType.SetFlenUnderLimit(flen)
+			fixFlenOfDecimal(resultFieldType, lhs, rhs)
 		} else if evalType == types.ETString {
 			lhsLen, rhsLen := lhs.GetFlen(), rhs.GetFlen()
 			if lhsLen != types.UnspecifiedLength && rhsLen != types.UnspecifiedLength {
@@ -186,10 +195,9 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
 	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
-	decimal, flen, isBinaryFlag := args[1].GetType().GetDecimal(), 0, false
+	flen, isBinaryFlag := 0, false
 	for i := 1; i < l; i += 2 {
 		fieldTps = append(fieldTps, args[i].GetType())
-		decimal = mathutil.Max(decimal, args[i].GetType().GetDecimal())
 		if args[i].GetType().GetFlen() == -1 {
 			flen = -1
 		} else if flen != -1 {
@@ -199,7 +207,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	if l%2 == 1 {
 		fieldTps = append(fieldTps, args[l-1].GetType())
-		decimal = mathutil.Max(decimal, args[l-1].GetType().GetDecimal())
 		if args[l-1].GetType().GetFlen() == -1 {
 			flen = -1
 		} else if flen != -1 {
@@ -217,10 +224,17 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	tp := fieldTp.EvalType()
 
 	if tp == types.ETInt {
-		decimal = 0
+		fieldTp.SetDecimal(0)
+	} else {
+		setDecimal(fieldTp, fieldTps...)
 	}
-	fieldTp.SetDecimal(decimal)
-	fieldTp.SetFlen(flen)
+
+	if tp == types.ETDecimal {
+		fixFlenOfDecimal(fieldTp, fieldTps...)
+	} else {
+		fieldTp.SetFlen(flen)
+	}
+
 	types.TryToFixFlenOfDatetime(fieldTp)
 	if isBinaryFlag {
 		fieldTp.AddFlag(mysql.BinaryFlag)
