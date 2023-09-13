@@ -42,6 +42,7 @@ import (
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -758,13 +759,9 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 					// if the KV pair is contained in mustKeepKvPairs, we cannot delete it
 					// if not, delete the KV pair
-					isContained := false
-					for _, mustKeepKvPair := range mustKeepKvPairs.Pairs {
-						if bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val) {
-							isContained = true
-							break
-						}
-					}
+					isContained := slices.ContainsFunc(mustKeepKvPairs.Pairs, func(mustKeepKvPair common.KvPair) bool {
+						return bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val)
+					})
 					if isContained {
 						continue
 					}
