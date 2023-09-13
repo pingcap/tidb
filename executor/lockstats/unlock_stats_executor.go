@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -32,9 +31,6 @@ type UnlockExec struct {
 	exec.BaseExecutor
 	// Tables is the list of tables to be unlocked.
 	Tables []*ast.TableName
-	// PartitionNames is the list of partitions to be unlocked.
-	// Only used when unlocking partitions.
-	PartitionNames []model.CIStr
 }
 
 // Next implements the Executor Next interface.
@@ -51,7 +47,7 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 
 	if e.onlyUnlockPartitions() {
 		tableName := e.Tables[0]
-		tid, pidNames, err := populatePartitionIDAndNames(tableName, e.PartitionNames, is)
+		tid, pidNames, err := populatePartitionIDAndNames(tableName, tableName.PartitionNames, is)
 		if err != nil {
 			return err
 		}
@@ -80,7 +76,7 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 }
 
 func (e *UnlockExec) onlyUnlockPartitions() bool {
-	return len(e.PartitionNames) > 0 && len(e.Tables) == 1
+	return len(e.Tables) == 1 && len(e.Tables[0].PartitionNames) > 0
 }
 
 // Close implements the Executor Close interface.

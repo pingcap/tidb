@@ -998,8 +998,8 @@ import (
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
-	LockTableStatsStmt         "Lock table statistic statement"
-	UnlockTableStatsStmt       "Unlock table statistic statement"
+	LockStatsStmt              "Lock table statistic statement"
+	UnlockStatsStmt            "Unlock table statistic statement"
 	LockTablesStmt             "Lock tables statement"
 	NonTransactionalDMLStmt    "Non-transactional DML statement"
 	PlanReplayerStmt           "Plan replayer statement"
@@ -11942,8 +11942,8 @@ Statement:
 |	KillStmt
 |	LoadDataStmt
 |	LoadStatsStmt
-|	LockTableStatsStmt
-|	UnlockTableStatsStmt
+|	LockStatsStmt
+|	UnlockStatsStmt
 |	PlanReplayerStmt
 |	PreparedStmt
 |	RollbackStmt
@@ -14662,33 +14662,51 @@ LoadStatsStmt:
 		}
 	}
 
-LockTableStatsStmt:
+LockStatsStmt:
 	"LOCK" "STATS" TableNameList
 	{
-		$$ = &ast.LockTableStatsStmt{
+		$$ = &ast.LockStatsStmt{
 			Tables: $3.([]*ast.TableName),
 		}
 	}
 |	"LOCK" "STATS" TableName "PARTITION" PartitionNameList
 	{
-		$$ = &ast.LockTableStatsStmt{
-			Tables:         []*ast.TableName{$3.(*ast.TableName)},
-			PartitionNames: $5.([]model.CIStr),
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $5.([]model.CIStr)
+		$$ = &ast.LockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
+|	"LOCK" "STATS" TableName "PARTITION" '(' PartitionNameList ')'
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $6.([]model.CIStr)
+		$$ = &ast.LockStatsStmt{
+			Tables: []*ast.TableName{x},
 		}
 	}
 
-UnlockTableStatsStmt:
+UnlockStatsStmt:
 	"UNLOCK" "STATS" TableNameList
 	{
-		$$ = &ast.UnlockTableStatsStmt{
+		$$ = &ast.UnlockStatsStmt{
 			Tables: $3.([]*ast.TableName),
 		}
 	}
 |	"UNLOCK" "STATS" TableName "PARTITION" PartitionNameList
 	{
-		$$ = &ast.UnlockTableStatsStmt{
-			Tables:         []*ast.TableName{$3.(*ast.TableName)},
-			PartitionNames: $5.([]model.CIStr),
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $5.([]model.CIStr)
+		$$ = &ast.UnlockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
+|	"UNLOCK" "STATS" TableName "PARTITION" '(' PartitionNameList ')'
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $6.([]model.CIStr)
+		$$ = &ast.UnlockStatsStmt{
+			Tables: []*ast.TableName{x},
 		}
 	}
 

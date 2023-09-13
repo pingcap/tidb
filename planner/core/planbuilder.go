@@ -836,9 +836,9 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 		return b.buildLoadData(ctx, x)
 	case *ast.LoadStatsStmt:
 		return b.buildLoadStats(x), nil
-	case *ast.LockTableStatsStmt:
+	case *ast.LockStatsStmt:
 		return b.buildLockTableStats(x), nil
-	case *ast.UnlockTableStatsStmt:
+	case *ast.UnlockStatsStmt:
 		return b.buildUnlockTableStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
@@ -4522,10 +4522,9 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 }
 
 // buildLockTableStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
-func (b *PlanBuilder) buildLockTableStats(ld *ast.LockTableStatsStmt) Plan {
+func (b *PlanBuilder) buildLockTableStats(ld *ast.LockStatsStmt) Plan {
 	p := &LockStats{
-		Tables:         ld.Tables,
-		PartitionNames: ld.PartitionNames,
+		Tables: ld.Tables,
 	}
 
 	b.requireInsertAndSelectPriv(ld.Tables)
@@ -4534,10 +4533,9 @@ func (b *PlanBuilder) buildLockTableStats(ld *ast.LockTableStatsStmt) Plan {
 }
 
 // buildUnlockTableStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
-func (b *PlanBuilder) buildUnlockTableStats(ld *ast.UnlockTableStatsStmt) Plan {
+func (b *PlanBuilder) buildUnlockTableStats(ld *ast.UnlockStatsStmt) Plan {
 	p := &UnlockStats{
-		Tables:         ld.Tables,
-		PartitionNames: ld.PartitionNames,
+		Tables: ld.Tables,
 	}
 	b.requireInsertAndSelectPriv(ld.Tables)
 

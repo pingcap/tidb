@@ -34,9 +34,6 @@ type LockExec struct {
 	exec.BaseExecutor
 	// Tables is the list of tables to be locked.
 	Tables []*ast.TableName
-	// PartitionNames is the list of partitions to be locked.
-	// Only used when locking partitions.
-	PartitionNames []model.CIStr
 }
 
 // Next implements the Executor Next interface.
@@ -53,7 +50,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 
 	if e.onlyLockPartitions() {
 		tableName := e.Tables[0]
-		tid, pidNames, err := populatePartitionIDAndNames(tableName, e.PartitionNames, is)
+		tid, pidNames, err := populatePartitionIDAndNames(tableName, tableName.PartitionNames, is)
 		if err != nil {
 			return err
 		}
@@ -84,7 +81,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 }
 
 func (e *LockExec) onlyLockPartitions() bool {
-	return len(e.PartitionNames) > 0 && len(e.Tables) == 1
+	return len(e.Tables) == 1 && len(e.Tables[0].PartitionNames) > 0
 }
 
 // Close implements the Executor Close interface.

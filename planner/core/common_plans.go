@@ -608,16 +608,14 @@ type LoadStats struct {
 type LockStats struct {
 	baseSchemaProducer
 
-	Tables         []*ast.TableName
-	PartitionNames []model.CIStr
+	Tables []*ast.TableName
 }
 
 // UnlockStats represents a unlock stats for table
 type UnlockStats struct {
 	baseSchemaProducer
 
-	Tables         []*ast.TableName
-	PartitionNames []model.CIStr
+	Tables []*ast.TableName
 }
 
 // PlanReplayer represents a plan replayer plan.

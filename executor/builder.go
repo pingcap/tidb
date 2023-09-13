@@ -1075,18 +1075,16 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) exec.Executor
 
 func (b *executorBuilder) buildLockTableStats(v *plannercore.LockStats) exec.Executor {
 	e := &lockstats.LockExec{
-		BaseExecutor:   exec.NewBaseExecutor(b.ctx, nil, v.ID()),
-		Tables:         v.Tables,
-		PartitionNames: v.PartitionNames,
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:       v.Tables,
 	}
 	return e
 }
 
 func (b *executorBuilder) buildUnlockTableStats(v *plannercore.UnlockStats) exec.Executor {
 	e := &lockstats.UnlockExec{
-		BaseExecutor:   exec.NewBaseExecutor(b.ctx, nil, v.ID()),
-		Tables:         v.Tables,
-		PartitionNames: v.PartitionNames,
+		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
+		Tables:       v.Tables,
 	}
 	return e
 }
