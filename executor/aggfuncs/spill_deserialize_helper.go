@@ -27,17 +27,12 @@ import (
 
 const intLen = int64(unsafe.Sizeof(int(0)))
 const boolLen = int64(unsafe.Sizeof(true))
-const uint32Len = int64(unsafe.Sizeof(uint32(0)))
 const uint64Len = int64(unsafe.Sizeof(uint64(0)))
-const int8Len = int64(unsafe.Sizeof(int8(0)))
-const int32Len = int64(unsafe.Sizeof(int32(0)))
 const int64Len = int64(unsafe.Sizeof(int64(0)))
 const float32Len = int64(unsafe.Sizeof(float32(0)))
 const float64Len = int64(unsafe.Sizeof(float64(0)))
 const timeLen = int64(unsafe.Sizeof(types.Time{}))
 const durationLen = int64(unsafe.Sizeof(time.Duration(0)))
-
-type strSizeType uint16
 
 type spillDeserializeHelper struct {
 	column       *chunk.Column
