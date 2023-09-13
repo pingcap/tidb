@@ -5045,7 +5045,7 @@ func TestIssue41273(t *testing.T) {
 	tk.MustQuery("select * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
 	tk.MustQuery("select /*+ use_index_merge(t) */ * from t where a between 'e6yd' and 'z' or b <> '8ue';").Sort().Check(testkit.Rows(expectedRes...))
 	// For now tidb doesn't support push set type to TiKV, and column a is a set type, so we shouldn't generate a IndexMerge path.
-	tk.MustNotHasPlanForLastExecution("IndexMerge")
+	require.False(t, tk.HasPlanForLastExecution("IndexMerge"))
 }
 
 func TestIsIPv4ToTiFlash(t *testing.T) {
