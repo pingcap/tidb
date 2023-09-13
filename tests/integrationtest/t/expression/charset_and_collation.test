@@ -803,3 +803,12 @@ explain format="brief" select id from t_bin use index(v) where v < 'b' and v > '
 -- sorted_result
 select id from t_bin use index(v) where v < 'b' and v > ' ';
 
+# TestUTF8MB40900AICIOrder
+drop table if exists t;
+create table t (id int primary key auto_increment, str VARCHAR(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci);
+insert into t(str) values ('ｶ'), ('カ'), ('abc'), ('abuFFFEc'), ('abⓒ'), ('𝒶bc'), ('𝕒bc'), ('ガ'), ('が'), ('abç'), ('äbc'), ('ヵ'), ('か'), ('Abc'), ('abC'), ('File-3'), ('file-12'), ('filé-110'), ('🍣'), ('🍺');
+select min(id) from t group by str order by str;
+
+# TestUTF8MB40900AICIStrFunc
+select LOCATE('bar' collate utf8mb4_0900_ai_ci, 'FOOBAR' collate utf8mb4_0900_ai_ci);
+select 'FOOBAR' collate utf8mb4_0900_ai_ci REGEXP 'foo.*' collate utf8mb4_0900_ai_ci;
