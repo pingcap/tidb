@@ -247,10 +247,10 @@ func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) bool {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // MustHasPlan checks if the result execution plan contains specific plan.
