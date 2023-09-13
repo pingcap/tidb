@@ -432,6 +432,7 @@ func (s *BaseScheduler) onError(err error) {
 	defer s.mu.Unlock()
 
 	if s.mu.err == nil {
+		err = errors.WithStack(err)
 		s.mu.err = err
 		logutil.Logger(s.logCtx).Error("scheduler error", zap.Error(err))
 	}
