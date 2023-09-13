@@ -73,7 +73,7 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 		return nil, errors.New("index info not found")
 	}
 
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli)
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli, jobMeta.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -103,9 +103,9 @@ type backfillDistScheduler struct {
 	d *ddl
 }
 
-func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool, d *ddl) scheduler.Scheduler {
+func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, d *ddl) scheduler.Scheduler {
 	s := &backfillDistScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable),
 		d:             d,
 	}
 	s.BaseScheduler.Extension = s
@@ -119,8 +119,4 @@ func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *pr
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
-}
-
-func (*backfillDistScheduler) GetMiniTaskExecutor(_ proto.MinimalTask, _ string, _ int64) (execute.MiniTaskExecutor, error) {
-	return &scheduler.EmptyMiniTaskExecutor{}, nil
 }

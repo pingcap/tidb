@@ -135,3 +135,10 @@ utf8mb4_0900_bin	utf8mb4	309		Yes	1
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 utf8mb4_general_ci	utf8mb4	45		Yes	1
 utf8mb4_unicode_ci	utf8mb4	224		Yes	1
+create database if not exists cd_test_utf8mb4_0900_bin;
+use cd_test_utf8mb4_0900_bin;
+create table t (id varchar(255) primary key clustered, a varchar(255) collate utf8mb4_0900_bin, b varchar(255) collate utf8mb4_bin, key idx(a, b));
+insert into t values ("1", "a    ", "a");
+select /*+USE_INDEX(t, idx)*/ * from t;
+id	a	b
+1	a    	a

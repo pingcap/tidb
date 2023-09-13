@@ -82,3 +82,10 @@ select * from information_schema.COLLATION_CHARACTER_SET_APPLICABILITY where COL
 # charset
 show charset;
 show collation;
+
+# Issue46690
+create database if not exists cd_test_utf8mb4_0900_bin;
+use cd_test_utf8mb4_0900_bin;
+create table t (id varchar(255) primary key clustered, a varchar(255) collate utf8mb4_0900_bin, b varchar(255) collate utf8mb4_bin, key idx(a, b));
+insert into t values ("1", "a    ", "a");
+select /*+USE_INDEX(t, idx)*/ * from t;
