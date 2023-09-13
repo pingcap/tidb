@@ -2931,15 +2931,17 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// Overloading the NewTableID here with the oldTblID instead,
 			// for keeping the old global statistics
 			statisticsPartInfo.NewTableID = oldTblID
-			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
+			// TODO: Handle bundles?
+			// TODO: Add concurrent test!
+			// TODO: Will this result in big gaps?
+			// TODO: How to carrie over AUTO_INCREMENT etc.?
+			// Check if they are carried over in ApplyDiff?!?
+			autoIDs, err := t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			// TODO: Handle bundles?
-			// TODO: How to carrie over AUTO_INCREMENT etc.?
-			// Check if they are carried over in ApplyDiff?!?
-			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Del()
+			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -2954,13 +2956,15 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				tblInfo.Partition = nil
 			} else {
 				// ALTER TABLE ... PARTITION BY
-				//tblInfo.Partition.Type = tblInfo.Partition.DDLType
-				//tblInfo.Partition.Expr = tblInfo.Partition.DDLExpr
-				//tblInfo.Partition.Columns = tblInfo.Partition.DDLColumns
 				tblInfo.Partition.DDLType = model.PartitionTypeNone
 				tblInfo.Partition.DDLExpr = ""
 				tblInfo.Partition.DDLColumns = nil
 				tblInfo.Partition.NewTableID = 0
+			}
+			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
 			}
 			// TODO: Add failpoint here?
 			err = t.CreateTableOrView(job.SchemaID, tblInfo)
