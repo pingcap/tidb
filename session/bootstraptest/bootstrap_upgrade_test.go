@@ -879,3 +879,57 @@ func TestDDLBackgroundSubtaskTableSummary(t *testing.T) {
 	r := tk.MustQuery("select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;")
 	r.Check(testkit.Rows("54"))
 }
+
+func TestUpgradeVersion175(t *testing.T) {
+	// for bootstrap
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+	seV174 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(174))
+	require.NoError(t, err)
+	session.MustExec(t, seV174, "update mysql.tidb set variable_value='174' where variable_name='tidb_server_version'")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.UnsetStoreBootstrapped(store.UUID())
+	ver, err := session.GetBootstrapVersion(seV174)
+	require.NoError(t, err)
+	require.Equal(t, int64(174), ver)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use mysql")
+	tk.MustQuery("show create table mysql.stats_meta").Check(testkit.Rows(
+		"stats_meta CREATE TABLE `stats_meta` (\n" +
+			"  `version` bigint(64) unsigned NOT NULL,\n" +
+			"  `table_id` bigint(64) NOT NULL,\n" +
+			"  `modify_count` bigint(64) NOT NULL DEFAULT '0',\n" +
+			"  `count` bigint(64) unsigned NOT NULL DEFAULT '0',\n" +
+			"  `snapshot` bigint(64) unsigned NOT NULL DEFAULT '0',\n" +
+			"  `scan_predicate_hash` bigint(16) DEFAULT NULL,\n" +
+			"  KEY `idx_ver` (`version`),\n" +
+			"  UNIQUE KEY `tbl` (`table_id`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	session.MustExec(t, seV174, "update mysql.tidb set variable_value='174' where variable_name='tidb_server_version'")
+	dom.Close()
+
+	// for upgrade
+	domV175, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domV175.Close()
+	seV175 := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seV175)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+	tk.MustQuery("show create table mysql.stats_meta").Check(testkit.Rows(
+		"stats_meta CREATE TABLE `stats_meta` (\n" +
+			"  `version` bigint(64) unsigned NOT NULL,\n" +
+			"  `table_id` bigint(64) NOT NULL,\n" +
+			"  `modify_count` bigint(64) NOT NULL DEFAULT '0',\n" +
+			"  `count` bigint(64) unsigned NOT NULL DEFAULT '0',\n" +
+			"  `snapshot` bigint(64) unsigned NOT NULL DEFAULT '0',\n" +
+			"  `scan_predicate_hash` bigint(16) DEFAULT NULL,\n" +
+			"  KEY `idx_ver` (`version`),\n" +
+			"  UNIQUE KEY `tbl` (`table_id`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+}
