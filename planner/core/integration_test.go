@@ -957,10 +957,10 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 		expected  []string
 	}{
 		/* TODO: fix it or delete it
-			{
-				// 3 index scans
-				"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
-			},
+		{
+			// 3 index scans
+			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
+		},
 		*/
 		{
 			// 2 index scans
