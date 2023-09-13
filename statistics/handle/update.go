@@ -423,11 +423,11 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableId int64, delta variable.TableDelta) (updated bool, err error) {
+func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(physicalTableId, statsVer, StatsMetaHistorySourceFlushStats)
+			h.recordHistoricalStatsMeta(physicalTableID, statsVer, StatsMetaHistorySourceFlushStats)
 		}
 	}()
 	if delta.Count == 0 {
@@ -451,13 +451,13 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 	}
 	statsVer = txn.StartTS()
 
-	tbl, _, _ := is.FindTableByPartitionID(physicalTableId)
+	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
 	// Check if the table and its partitions are locked.
 	tidAndPid := make([]int64, 0, 2)
 	if tbl != nil {
 		tidAndPid = append(tidAndPid, tbl.Meta().ID)
 	}
-	tidAndPid = append(tidAndPid, physicalTableId)
+	tidAndPid = append(tidAndPid, physicalTableID)
 	lockedTables, err := h.GetLockedTables(tidAndPid...)
 	if err != nil {
 		return
@@ -474,11 +474,11 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		if _, ok := lockedTables[tableID]; ok {
 			isTableLocked = true
 		}
-		if _, ok := lockedTables[physicalTableId]; ok {
+		if _, ok := lockedTables[physicalTableID]; ok {
 			isPartitionLocked = true
 		}
 		if err = updateStatsMeta(ctx, exec, statsVer, delta,
-			physicalTableId, isTableLocked || isPartitionLocked); err != nil {
+			physicalTableID, isTableLocked || isPartitionLocked); err != nil {
 			return
 		}
 		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -491,11 +491,11 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		// This is a non-partitioned table.
 		// Check if it's locked.
 		isTableLocked := false
-		if _, ok := lockedTables[physicalTableId]; ok {
+		if _, ok := lockedTables[physicalTableID]; ok {
 			isTableLocked = true
 		}
 		if err = updateStatsMeta(ctx, exec, statsVer, delta,
-			physicalTableId, isTableLocked); err != nil {
+			physicalTableID, isTableLocked); err != nil {
 			return
 		}
 		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
