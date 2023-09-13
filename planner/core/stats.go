@@ -254,7 +254,7 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	tableStats := &property.StatsInfo{
 		RowCount:     float64(ds.statisticTable.RealtimeCount),
 		ColNDVs:      make(map[int64]float64, ds.schema.Len()),
-		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.tableInfo, ds.schema.Columns),
+		HistColl:     ds.statisticTable.GenerateHistCollFromColumnInfo(ds.tableInfo, ds.TblCols),
 		StatsVersion: ds.statisticTable.Version,
 	}
 	if ds.statisticTable.Pseudo {

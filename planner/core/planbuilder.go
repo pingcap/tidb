@@ -2439,14 +2439,17 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // in tblInfo.Indices, index.Columns[i].Offset is set according to tblInfo.Columns. Since we decode row samples according to colsInfo rather than tbl.Columns
 // in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
-func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+// For multi-valued index, we need to collect it separately here and analyze it as independent index analyze task.
+// See comments for AnalyzeResults.ForMVIndex for more details.
+func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) ([]*model.IndexInfo, []*model.IndexInfo) {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	independentIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
 			continue
 		}
 		if originIdx.MVIndex {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
+			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
 		if allColumns {
@@ -2462,7 +2465,7 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 		}
 		idxsInfo = append(idxsInfo, idx)
 	}
-	return idxsInfo
+	return idxsInfo, independentIdxsInfo
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
@@ -2501,14 +2504,13 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast
 
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
-	tasks []AnalyzeColumnsTask,
+	analyzePlan *Analyze,
 	physicalIDs []int64,
 	partitionNames []string,
 	tbl *ast.TableName,
 	version int,
 	persistOpts bool,
-	rsOptionsMap map[int64]V2AnalyzeOptions,
-) ([]AnalyzeColumnsTask, error) {
+) error {
 	// Version 2 doesn't support incremental analyze.
 	// And incremental analyze will be deprecated in the future.
 	if as.Incremental {
@@ -2517,12 +2519,12 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	astOpts, err := handleAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Get all column info which need to be analyzed.
 	astColList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var predicateCols, mustAnalyzedCols calcOnceMap
@@ -2533,15 +2535,15 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	isAnalyzeTable := len(as.PartitionNames) == 0
 	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for physicalID, opts := range optionsMap {
-		rsOptionsMap[physicalID] = opts
+		analyzePlan.OptionsMap[physicalID] = opts
 	}
 
 	// Build tasks for each partition.
@@ -2567,7 +2569,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
@@ -2582,10 +2584,18 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
 			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
 		}
-		tasks = append(tasks, newTask)
+		analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
+		for _, indexInfo := range independentIndexes {
+			newIdxTask := AnalyzeIndexTask{
+				IndexInfo:   indexInfo,
+				TblInfo:     tbl.TableInfo,
+				AnalyzeInfo: info,
+			}
+			analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
+		}
 	}
 
-	return tasks, nil
+	return nil
 }
 
 func (b *PlanBuilder) genV2AnalyzeOptions(
@@ -2791,7 +2801,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		var commonHandleInfo *model.IndexInfo
 		if version == statistics.Version2 {
-			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, partitionNames, tbl, version, usePersistedOptions, p.OptionsMap)
+			err = b.buildAnalyzeFullSamplingTask(as, p, physicalIDs, partitionNames, tbl, version, usePersistedOptions)
 			if err != nil {
 				return nil, err
 			}

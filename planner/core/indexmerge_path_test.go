@@ -27,7 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestAnalyzeMVIndex(t *testing.T) {
+func TestAnalyzeMVIndexWarnings(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -40,14 +40,12 @@ index idx2(a, b, (cast(j->'$.str' as char(10) array)), c))`)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
-		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
-		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
+	))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty, use sample-rate=1\"",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
-		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
-		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
+	))
 
 	tk.MustExec("set tidb_analyze_version=1")
 	tk.MustExec("analyze table t")

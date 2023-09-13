@@ -1111,18 +1111,48 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 	if len(rows) > 0 {
 		snapshot := rows[0].GetUint64(0)
 		// A newer version analyze result has been written, so skip this writing.
-		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 {
+		// For multi-valued index analyze, this check is not needed because we expect there's another normal v2 analyze
+		// table task that may update the snapshot in stats_meta table (that task may finish before or after this task).
+		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 && !results.ForMVIndex {
 			return nil
 		}
 		curCnt = int64(rows[0].GetUint64(1))
 		curModifyCnt = rows[0].GetInt64(2)
 	}
+
 	if len(rows) == 0 || results.StatsVer != statistics.Version2 {
-		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
+		// 1-1.
+		// a. There's no existing records we can update, we must insert a new row. Or
+		// b. it's stats v1.
+		// In these cases, we use REPLACE INTO to directly insert/update the version, count and snapshot.
+		snapShot := results.Snapshot
+		count := results.Count
+		if results.ForMVIndex {
+			snapShot = 0
+			count = 0
+		}
+		if _, err = exec.ExecuteInternal(ctx,
+			"replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)",
+			version,
+			tableID,
+			count,
+			snapShot,
+		); err != nil {
 			return err
 		}
 		statsVer = version
+	} else if results.ForMVIndex {
+		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
+		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
+		if _, err = exec.ExecuteInternal(ctx,
+			"update mysql.stats_meta set version=%? where table_id=%?",
+			version,
+			tableID,
+		); err != nil {
+			return err
+		}
 	} else {
+		// 1-3. There's already an existing records for this table, and we are handling a normal v2 analyze.
 		modifyCnt := curModifyCnt - results.BaseModifyCnt
 		if modifyCnt < 0 {
 			modifyCnt = 0
@@ -1154,7 +1184,14 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
 		}
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
+		if _, err = exec.ExecuteInternal(ctx,
+			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?",
+			version,
+			modifyCnt,
+			cnt,
+			results.Snapshot,
+			tableID,
+		); err != nil {
 			return err
 		}
 		statsVer = version
