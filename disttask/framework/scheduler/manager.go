@@ -181,7 +181,13 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending)
+		// Need to poll pending/revertPending/Running subtasks.
+		// It's necessary to poll running tasks since manager has possibility of restart.
+		// Then the subtasks are in running state and need to be handled.
+		exist, err := m.taskTable.HasSubtasksInStates(
+			m.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRevertPending, proto.TaskStateRunning)
+
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
@@ -296,7 +302,11 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 				zap.Int64("task_id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
 			return
 		}
-		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
+
+		// Considering manager restart scene, scheduler needs to handle running subtasks.
+		if exist, err := m.taskTable.HasSubtasksInStates(
+			m.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRevertPending, proto.TaskStateRunning); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {

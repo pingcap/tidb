@@ -170,8 +170,10 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		if err := s.getError(); err != nil {
 			break
 		}
-
-		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
+		// Considering manager restart scene, scheduler needs to handle running subtasks.
+		subtask, err := s.taskTable.GetSubtaskInStates(
+			s.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("GetSubtaskInStates meets error", zap.Error(err))
 			continue
