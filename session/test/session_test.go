@@ -1053,7 +1053,7 @@ func TestInitSystemVariable(t *testing.T) {
 	defer dom.Close()
 	se := session.CreateSessionAndSetID(t, store)
 	ctx := context.Background()
-	r, err := exec(se, `SHOW VARIABLES LIKE 'query_cache_type'`)
+	r := session.MustExecToRecodeSet(t, se, `SHOW VARIABLES LIKE 'query_cache_type'`)
 	require.NoError(t, err)
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -1061,7 +1061,7 @@ func TestInitSystemVariable(t *testing.T) {
 	require.Equal(t, 0, req.NumRows()) // not shown in noopvariables mode
 	require.NoError(t, r.Close())
 
-	r, err = exec(se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
+	r = session.MustExecToRecodeSet(t, se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
 	require.NoError(t, err)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -1142,7 +1142,7 @@ DROP USER root;
 	se := session.CreateSessionAndSetID(t, store)
 	ctx := context.Background()
 	// 'cloud_admin' has been created successfully
-	r, err := exec(se, `select user from mysql.user where user = 'cloud_admin'`)
+	r := session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'cloud_admin'`)
 	require.NoError(t, err)
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -1152,7 +1152,7 @@ DROP USER root;
 	require.Equal(t, "cloud_admin", row.GetString(0))
 	require.NoError(t, r.Close())
 	// 'root' has been deleted successfully
-	r, err = exec(se, `select user from mysql.user where user = 'root'`)
+	r = session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'root'`)
 	require.NoError(t, err)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -1168,7 +1168,7 @@ DROP USER root;
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 	se = session.CreateSessionAndSetID(t, store)
-	r, err = exec(se, `select user from mysql.user where user = 'cloud_admin'`)
+	r = session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'cloud_admin'`)
 	require.NoError(t, err)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -1232,10 +1232,10 @@ insert into test.t values ("abc"); -- invalid statement
 	require.NoError(t, err)
 	se := session.CreateSessionAndSetID(t, store)
 	ctx := context.Background()
-	_, err = exec(se, `use test;`)
+	_ = session.MustExecToRecodeSet(t, se, `use test;`)
 	require.NoError(t, err)
 	// Table t has been created.
-	r, err := exec(se, `show tables;`)
+	r := session.MustExecToRecodeSet(t, se, `show tables;`)
 	require.NoError(t, err)
 	req := r.NewChunk(nil)
 	err = r.Next(ctx, req)
@@ -1245,7 +1245,7 @@ insert into test.t values ("abc"); -- invalid statement
 	require.Equal(t, "t", row.GetString(0))
 	require.NoError(t, r.Close())
 	// But data is failed to inserted since the error
-	r, err = exec(se, `select * from test.t`)
+	r = session.MustExecToRecodeSet(t, se, `select * from test.t`)
 	require.NoError(t, err)
 	req = r.NewChunk(nil)
 	err = r.Next(ctx, req)
