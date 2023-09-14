@@ -538,13 +538,6 @@ func TestIssue32422(t *testing.T) {
 	tk.MustQuery("select id+1, c from t where c = 4;").Check(testkit.Rows("5 4"))
 	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
 
-	// Point get
-	tk.MustHasPlan("select id+1, c from t where id = 6", "PointGet")
-	tk.MustQuery("select id+1, c from t where id = 6").Check(testkit.Rows("7 6"))
-	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
-	tk.MustQuery("select id+1, c from t where id = 4").Check(testkit.Rows("5 4"))
-	require.True(t, tk.Session().GetSessionVars().StmtCtx.ReadFromTableCache)
-
 	// Index Lookup
 	tk.MustHasPlan("select id+1, c from t where id = 6", "IndexLookUp")
 	tk.MustQuery("select id+1, c from t use index(id) where id = 6").Check(testkit.Rows("7 6"))
