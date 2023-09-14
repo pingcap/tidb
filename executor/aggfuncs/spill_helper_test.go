@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -642,9 +643,51 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 	}
 }
 
+func TestBasePartialResult4GroupConcat(t *testing.T) {
+	// Initialize test data
+	expectData := []basePartialResult4GroupConcat{
+		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString("dwaa啊啊a啊")},
+		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
+		{valsBuf: bytes.NewBufferString("x啊za啊xx"), buffer: bytes.NewBufferString("da啊a啊啊a啊")},
+	}
+	serializedPartialResults := make([]PartialResult, 3)
+	testDataNum := len(serializedPartialResults)
+	for i := range serializedPartialResults {
+		pr := new(basePartialResult4GroupConcat)
+		*pr = expectData[i]
+		serializedPartialResults[i] = PartialResult(pr)
+	}
+
+	// Serialize test data
+	chunk := getChunk()
+	for _, pr := range serializedPartialResults {
+		serializedData := serializeHelper.serializeBasePartialResult4GroupConcat(*(*basePartialResult4GroupConcat)(pr))
+		chunk.AppendBytes(0, serializedData)
+	}
+
+	// Deserialize test data
+	deserializeHelper := newDeserializeHelper(chunk.Column(0), testDataNum)
+	deserializedPartialResults := make([]basePartialResult4GroupConcat, testDataNum+1)
+	index := 0
+	for {
+		success := deserializeHelper.deserializeBasePartialResult4GroupConcat(&deserializedPartialResults[index])
+		if !success {
+			break
+		}
+		index++
+	}
+
+	// Check some results
+	require.Equal(t, testDataNum, index)
+	for i := 0; i < testDataNum; i++ {
+		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).valsBuf.String(), deserializedPartialResults[i].valsBuf.String())
+		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
+	}
+}
+
 // TODO tests:
-// basePartialResult4GroupConcat
-// partialResult4GroupConcat
+//
+//
 // partialResult4BitFunc
 // partialResult4JsonArrayagg
 // partialResult4JsonObjectAgg

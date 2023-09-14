@@ -231,8 +231,8 @@ func (s *spillDeserializeHelper) deserializePartialResult4SumFloat64(dst *partia
 func (s *spillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
 	if s.readRowIndex < s.totalRowCnt {
 		restoredBytes := s.column.GetBytes(s.readRowIndex)
-		valsBufLen := spill.DeserializeInt64(restoredBytes, int64Len)
-		dst.valsBuf = bytes.NewBuffer(restoredBytes[int64Len:])
+		valsBufLen := spill.DeserializeInt64(restoredBytes, 0)
+		dst.valsBuf = bytes.NewBuffer(restoredBytes[int64Len : int64Len+valsBufLen])
 		dst.buffer = bytes.NewBuffer(restoredBytes[int64Len+valsBufLen:])
 		s.readRowIndex++
 		return true
