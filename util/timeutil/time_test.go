@@ -19,10 +19,12 @@
 package timeutil
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -130,4 +132,15 @@ func TestParseTimeZone(t *testing.T) {
 		_, offset := Zone(loc)
 		require.Equal(t, c.offset, offset, c.name)
 	}
+}
+
+func TestSleep(t *testing.T) {
+	const contextTimeout, sleepTime = 10 * time.Millisecond, 10 * time.Second
+	now := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), contextTimeout)
+	defer cancel()
+	Sleep(ctx, sleepTime)
+	since := time.Since(now)
+	require.Greater(t, since, contextTimeout)
+	require.Less(t, since, sleepTime)
 }

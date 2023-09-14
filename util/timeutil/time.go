@@ -15,6 +15,7 @@
 package timeutil
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -258,4 +259,18 @@ func ParseTimeZone(s string) (*time.Location, error) {
 	}
 
 	return nil, ErrUnknownTimeZone.GenWithStackByArgs(s)
+}
+
+// Sleep is a function like time.Sleep(),
+// the difference is it will return early when ctx finished.
+func Sleep(ctx context.Context, d time.Duration) error {
+	t := time.NewTimer(d)
+	defer t.Stop()
+
+	select {
+	case <-t.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
