@@ -57,13 +57,14 @@ type GlobalStats struct {
 type (
 	getTableByPhysicalIDFunc    func(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
 	loadTablePartitionStatsFunc func(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
-	// GlobalStatusHandler
+	// GlobalStatusHandler is used to handle the global-level stats.
 	GlobalStatusHandler struct {
 		// this gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 		gpool *gp.Pool
 	}
 )
 
+// NewGlobalStatusHandler creates a new GlobalStatusHandler.
 func NewGlobalStatusHandler(gpool *gp.Pool) *GlobalStatusHandler {
 	return &GlobalStatusHandler{gpool: gpool}
 }
@@ -281,6 +282,6 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStatsByTableID(sc sessio
 }
 
 // Close closes the GlobalStatusHandler.
-func (h *GlobalStatusHandler) Close() {
-	h.gpool.Close()
+func (g *GlobalStatusHandler) Close() {
+	g.gpool.Close()
 }
