@@ -216,6 +216,21 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 	m.MaxOverlappingNum = GetMaxOverlapping(points)
 }
 
+func GetMaxOverlappingTotal(stats []MultipleFilesStat) int {
+	slices.SortFunc(stats, func(a, b MultipleFilesStat) int {
+		return a.MinKey.Cmp(b.MinKey)
+	})
+	points := make([]Endpoint, 0, 100)
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: int64(stat.MaxOverlappingNum)})
+	}
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: int64(stat.MaxOverlappingNum)})
+	}
+
+	return GetMaxOverlapping(points)
+}
+
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage

@@ -211,7 +211,7 @@ const (
 type Endpoint struct {
 	Key    []byte
 	Tp     EndpointTp
-	Weight uint64 // all EndpointTp use positive weight
+	Weight int64 // all EndpointTp use positive weight
 }
 
 // GetMaxOverlapping returns the maximum overlapping weight treating given
@@ -224,8 +224,8 @@ func GetMaxOverlapping(points []Endpoint) int {
 		}
 		return int(i.Tp) - int(j.Tp)
 	})
-	var maxWeight uint64
-	var curWeight uint64
+	var maxWeight int64
+	var curWeight int64
 	for _, p := range points {
 		switch p.Tp {
 		case InclusiveStart:
