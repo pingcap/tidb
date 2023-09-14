@@ -121,7 +121,7 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		resultFieldType.SetCharset(args[0].GetType().GetCharset())
 		resultFieldType.SetCollate(args[0].GetType().GetCollate())
 		resultFieldType.SetFlag(args[0].GetType().GetFlag())
-	} else if argsNum == 2 { // for if,ifnull,lead,lag,casewhen with 2 args.
+	} else if funcName != "case" && argsNum == 2 { // for if,ifnull,lead,lag,casewhen with 2 args.
 		lexp, rexp := args[0], args[1]
 		lhs, rhs := lexp.GetType(), rexp.GetType()
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
@@ -162,10 +162,14 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		resultFieldType.SetCharset(ec.Charset)
 		resultFieldType.SetFlag(0)
 		for i := range args {
-			if !types.IsNonBinaryStr(args[i].GetType()) {
+			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
+		}
+		// Set retType to BINARY(0) if all arguments are of type NULL.
+		if resultFieldType.GetType() == mysql.TypeNull {
+			types.SetBinChsClnFlag(resultFieldType)
 		}
 	}
 	return nil
