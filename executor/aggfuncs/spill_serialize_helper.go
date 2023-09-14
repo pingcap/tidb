@@ -178,8 +178,8 @@ func (s *SpillSerializeHelper) serializePartialResult4JsonArrayagg(value partial
 func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partialResult4JsonObjectAgg) []byte {
 	resBuf := make([]byte, 0)
 	for key, value := range value.entries {
-		resBuf := spill.SerializeInt64(int64(len(key)), s.tmpBuf[:])
-		resBuf = append(resBuf, resBuf...)
+		tmpBuf := spill.SerializeInt64(int64(len(key)), s.tmpBuf[:])
+		resBuf = append(resBuf, tmpBuf...)
 		resBuf = append(resBuf, key...)
 		spill.SerializeInterface(value, &resBuf, s.tmpBuf[:])
 	}
@@ -188,7 +188,7 @@ func (s *SpillSerializeHelper) serializePartialResult4JsonObjectAgg(value partia
 
 func (s *SpillSerializeHelper) serializeBasePartialResult4FirstRow(value basePartialResult4FirstRow) ([]byte, int64) {
 	spill.SerializeBool(value.isNull, s.tmpBuf[:])
-	spill.SerializeBool(value.isNull, s.tmpBuf[1:])
+	spill.SerializeBool(value.gotFirstRow, s.tmpBuf[1:])
 	return s.tmpBuf[:2], 2
 }
 
@@ -238,12 +238,13 @@ func (s *SpillSerializeHelper) serializePartialResult4FirstRowDuration(value par
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowJSON(value partialResult4FirstRowJSON) []byte {
 	_, baseBytesNum := s.serializeBasePartialResult4FirstRow(value.basePartialResult4FirstRow)
 	s.tmpBuf[baseBytesNum] = value.val.TypeCode
-	if len(s.varBuf) < 3+len(value.val.Value) {
-		s.varBuf = make([]byte, 3+len(value.val.Value))
+	totalLen := baseBytesNum + 1 + int64(len(value.val.Value))
+	if int64(len(s.varBuf)) < totalLen {
+		s.varBuf = make([]byte, totalLen)
 	}
-	copy(s.varBuf, s.tmpBuf[:baseBytesNum+1])
+	copy(s.varBuf, s.tmpBuf[:baseBytesNum+2])
 	copy(s.varBuf[baseBytesNum+1:], value.val.Value)
-	return s.varBuf
+	return s.varBuf[:totalLen]
 }
 
 func (s *SpillSerializeHelper) serializePartialResult4FirstRowEnum(value partialResult4FirstRowEnum) []byte {

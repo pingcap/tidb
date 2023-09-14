@@ -277,6 +277,7 @@ func (s *spillDeserializeHelper) deserializePartialResult4JsonArrayagg(dst *part
 func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
 	memDelta := int64(0)
 	dst.bInMap = 0
+	dst.entries = make(map[string]interface{})
 	if s.readRowIndex < s.totalRowCnt {
 		bytes := s.column.GetBytes(s.readRowIndex)
 		byteNum := int64(len(bytes))
