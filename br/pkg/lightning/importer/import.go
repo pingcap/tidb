@@ -343,7 +343,7 @@ func NewImportControllerWithPauser(
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
-		backendObj = tidb.NewTiDBBackend(ctx, db, cfg.Conflict, errorMgr)
+		backendObj = tidb.NewTiDBBackend(ctx, db, cfg.Conflict, errorMgr, int(cfg.TikvImporter.SQLStatementLength))
 	case config.BackendLocal:
 		var rLimit local.RlimT
 		rLimit, err = local.GetSystemRLimit()

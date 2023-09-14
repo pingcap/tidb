@@ -1,3 +1,4 @@
 [tikv-importer]
 backend = "tidb"
 on-duplicate = "ignore"
+sql-statement-length = 1

@@ -84,6 +84,7 @@ const (
 	defaultIndexConcurrency           = 2
 	DefaultRegionCheckBackoffLimit    = 1800
 	DefaultRegionSplitBatchSize       = 4096
+	DefaultSQLStatementLength         = 1 * units.MiB
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -1060,6 +1061,7 @@ type TikvImporter struct {
 	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
+	SQLStatementLength      ByteSize                     `toml:"sql-statement-length" json:"sql-statement-length"`
 	// deprecated, use ParallelImport instead.
 	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
 	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
@@ -1084,6 +1086,11 @@ func (t *TikvImporter) adjust() error {
 	}
 	switch t.Backend {
 	case BackendTiDB:
+		if t.SQLStatementLength <= 0 {
+			return common.ErrInvalidConfig.GenWithStack(
+				"`tikv-importer.sql-statement-length` got %d, should be larger than 0",
+				t.SQLStatementLength)
+		}
 		t.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
 		if t.RegionSplitBatchSize <= 0 {
@@ -1458,6 +1465,7 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
+			SQLStatementLength:      ByteSize(DefaultSQLStatementLength),
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

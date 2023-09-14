@@ -272,6 +272,9 @@ type tidbBackend struct {
 	// view should be the same.
 	onDuplicate string
 	errorMgr    *errormanager.ErrorManager
+	// maxChunkSize is the target size of each INSERT SQL statement to be sent to downstream.
+	// sometimes we want to reduce the txn size to avoid affecting the cluster too much.
+	maxChunkSize int
 }
 
 var _ backend.Backend = (*tidbBackend)(nil)
@@ -285,6 +288,7 @@ func NewTiDBBackend(
 	db *sql.DB,
 	conflict config.Conflict,
 	errorMgr *errormanager.ErrorManager,
+	maxChunkSize int,
 ) backend.Backend {
 	var onDuplicate string
 	switch conflict.Strategy {
@@ -305,10 +309,11 @@ func NewTiDBBackend(
 		onDuplicate = config.ErrorOnDup
 	}
 	return &tidbBackend{
-		db:          db,
-		conflictCfg: conflict,
-		onDuplicate: onDuplicate,
-		errorMgr:    errorMgr,
+		db:           db,
+		conflictCfg:  conflict,
+		onDuplicate:  onDuplicate,
+		errorMgr:     errorMgr,
+		maxChunkSize: maxChunkSize,
 	}
 }
 
@@ -581,11 +586,8 @@ func (*tidbBackend) RetryImportDelay() time.Duration {
 	return 0
 }
 
-func (*tidbBackend) MaxChunkSize() int {
-	failpoint.Inject("FailIfImportedSomeRows", func() {
-		failpoint.Return(1)
-	})
-	return 1048576
+func (be *tidbBackend) MaxChunkSize() int {
+	return be.maxChunkSize
 }
 
 func (*tidbBackend) ShouldPostProcess() bool {
