@@ -115,6 +115,7 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
+	require.True(t, len(list.Tasks) > 0)
 
 	// debug test
 	start := time.Now()
@@ -129,7 +130,6 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 			t.Log(task)
 		}
 		require.NoError(t, err)
-
 	}
 	require.NoError(t, err, list)
 }
