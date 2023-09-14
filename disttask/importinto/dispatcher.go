@@ -618,6 +618,9 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
 	taskMeta.Stmt = ""
 	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
+	if taskMeta.Plan.CloudStorageURI != "" {
+		taskMeta.Plan.CloudStorageURI = ast.RedactURL(taskMeta.Plan.CloudStorageURI)
+	}
 	if err := updateMeta(gTask, taskMeta); err != nil {
 		// marshal failed, should not happen
 		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
