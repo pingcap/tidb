@@ -502,7 +502,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 	case SourceTypeParquet:
 		parquestDataSize, err2 := SampleParquetDataSize(ctx, info.FileMeta, s.loader.GetStore())
 		if err2 != nil {
-			logger.Error("[loader] fail to sample parquet data size",
+			logger.Error("fail to sample parquet data size", zap.String("category", "loader"),
 				zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type), zap.Error(err2))
 		} else {
 			info.FileMeta.RealSize = parquestDataSize
