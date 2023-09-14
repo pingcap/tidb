@@ -77,9 +77,12 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	if err != nil {
 		return errors.Annotate(err, "failed to dial PD")
 	}
-	tconf, err := cfg.TLS.ToTLSConfig()
-	if err != nil {
-		return errors.Annotate(err, "invalid tls config")
+	var tconf *tls.Config
+	if cfg.TLS.IsEnabled() {
+		tconf, err = cfg.TLS.ToTLSConfig()
+		if err != nil {
+			return errors.Annotate(err, "invalid tls config")
+		}
 	}
 	kvMgr := utils.NewStoreManager(mgr.GetPDClient(), keepalive.ClientParameters{
 		Time:    time.Duration(cfg.Config.GRPCKeepaliveTime) * time.Second,
@@ -98,9 +101,11 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 
 	eg.Go(func() error { return pauseGCKeeper(cx) })
 	eg.Go(func() error { return pauseSchedulerKeeper(cx) })
-	goPauseImporting(cx)
-	cx.rdGrp.Wait()
-	hintAllReady()
+	eg.Go(func() error { return goPauseImporting(cx) })
+	go func() {
+		cx.rdGrp.Wait()
+		hintAllReady()
+	}()
 
 	return eg.Wait()
 }
@@ -166,7 +171,7 @@ func pauseSchedulerKeeper(ctx *AdaptEnvForSnapshotBackupContext) error {
 	if err != nil {
 		return err
 	}
-	log.Info("Schedulers are paused.")
+	ctx.ReadyL("pause_scheduler")
 	// Wait until the context canceled.
 	// So we can properly do the clean up work.
 	<-ctx.Done()
