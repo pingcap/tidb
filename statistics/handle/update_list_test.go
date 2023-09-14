@@ -22,7 +22,7 @@ import (
 
 func TestInsertAndDelete(t *testing.T) {
 	h := Handle{
-		listHead: &SessionStatsCollector{mapper: make(tableDeltaMap)},
+		listHead: &SessionStatsCollector{mapper: newTableDelta()},
 	}
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {
