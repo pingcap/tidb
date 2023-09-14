@@ -205,10 +205,11 @@ func (i *mergeIter[T, R]) next() bool {
 		i.checkHotPointMap[i.lastReaderIdx] = i.checkHotPointMap[i.lastReaderIdx] + 1
 		i.checkHotPointCnt++
 
-		if i.checkHotPointCnt == 1000 {
-			i.checkHotPointCnt = 0
+		checkPeriod := 1000
+		// check hot point every checkPeriod times
+		if i.checkHotPointCnt == checkPeriod {
 			for idx, cnt := range i.checkHotPointMap {
-				(*i.readers[idx]).setReadMode(cnt > 500)
+				(*i.readers[idx]).setReadMode(cnt > (checkPeriod / 2))
 			}
 			i.checkHotPointCnt = 0
 			i.checkHotPointMap = make(map[int]int)
