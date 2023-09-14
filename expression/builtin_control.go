@@ -211,7 +211,10 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 		evalType := types.AggregateEvalType(notNullFields, &tempFlag)
 		resultFieldType.SetFlag(tempFlag)
 		setDecimalFromArgs(evalType, resultFieldType, notNullFields...)
-		setCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
+		err := setCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
+		if err != nil {
+			return nil, err
+		}
 		setFlenFromArgs(evalType, resultFieldType, notNullFields...)
 	}
 
