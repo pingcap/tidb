@@ -629,14 +629,24 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			time.Sleep(1 * time.Second)
 		}
 		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task "+
-			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP(6)"+
+			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
 			"where id = %? and state = %?",
 			gTask.State, gTask.DispatcherID, gTask.Step, gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
 		if err != nil {
 			return err
 		}
+		// When AffectedRows == 0, means other admin command have changed the task state, it's illegal to dispatch subtasks.
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
 			if intest.InTest {
+				// TODO: remove it, when OnNextSubtasksBatch returns subtasks, just insert subtasks without updating tidb_global_task.
+				// Currently the bussiness running on distrubuted task framework will update proto.Task in OnNextSubtasksBatch.
+				// So when dispatching subtasks, framework needs to update global task and insert subtasks in one Txn.
+				//
+				// In future, it's needed to restrict changes of task in OnNextSubtasksBatch.
+				// If OnNextSubtasksBatch won't update any fields in proto.Task, we can insert subtasks only.
+				//
+				// For now, we update nothing in proto.Task in UT's OnNextSubtasksBatch, so the AffectedRows will be 0. So UT can't fully compatible
+				// with current UpdateGlobalTaskAndAddSubTasks implemation.
 				rs, err := ExecSQL(stm.ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
 				if err != nil {
 					return err
