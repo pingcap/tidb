@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "globalstats",
     srcs = [
-        "global_status.go",
+        "global_stats.go",
         "merge_worker.go",
         "topn.go",
     ],
