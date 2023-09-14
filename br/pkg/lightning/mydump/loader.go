@@ -793,9 +793,10 @@ func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store s
 	if err != nil {
 		return 0, err
 	}
-	defer reader.Close()
 	parser, err := NewParquetParser(ctx, store, reader, fileMeta.Path)
 	if err != nil {
+		//nolint: errcheck
+		reader.Close()
 		return 0, err
 	}
 	//nolint: errcheck
