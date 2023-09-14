@@ -28,7 +28,7 @@ type DatumMapCache struct {
 	datumMap map[hack.MutableString]types.Datum
 }
 
-// DatumMapCache is used to store the mapping from the string type to datum type.
+// NewDatumMapCache creates a new DatumMapCache.
 func NewDatumMapCache() *DatumMapCache {
 	return &DatumMapCache{
 		datumMap: make(map[hack.MutableString]types.Datum),
