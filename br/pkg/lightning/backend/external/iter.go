@@ -202,12 +202,7 @@ func (i *mergeIter[T, R]) next() bool {
 	var zeroT T
 	i.curr = zeroT
 	if i.lastReaderIdx >= 0 {
-		cnt, ok := i.checkHotPointMap[i.lastReaderIdx]
-		if !ok {
-			i.checkHotPointMap[i.lastReaderIdx] = 1
-		} else {
-			i.checkHotPointMap[i.lastReaderIdx] = cnt + 1
-		}
+		i.checkHotPointMap[i.lastReaderIdx] = i.checkHotPointMap[i.lastReaderIdx] + 1
 		i.checkHotPointCnt++
 
 		if i.checkHotPointCnt == 1000 {

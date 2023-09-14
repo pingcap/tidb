@@ -178,7 +178,7 @@ func (r *byteReader) reload() error {
 	to := r.useConcurrentReader.Load()
 	now := r.useConcurrentReaderCurrent.Load()
 	if to != now {
-		logutil.BgLogger().Info("switch reader mode", zap.Bool("use concurrent mode", to))
+		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", to))
 		if to {
 			err := r.switchToConcurrentReaderImpl()
 			if err != nil {
