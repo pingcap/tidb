@@ -215,7 +215,7 @@ func (h *GlobalStatusHandler) MergePartitionStats2GlobalStats(sc sessionctx.Cont
 		// Because after merging TopN, some numbers will be left.
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var popedTopN []statistics.TopNMeta
-		wrapper := statistics.NewStatsWrapper(allHg[i], allTopN[i])
+		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
 		globalStats.TopN[i], popedTopN, allHg[i], err = mergeGlobalStatsTopN(h.gpool, sc, wrapper, sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex == 1)
 		if err != nil {
 			return

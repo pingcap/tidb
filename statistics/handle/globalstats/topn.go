@@ -25,7 +25,7 @@ import (
 	"github.com/tiancaiamao/gp"
 )
 
-func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *statistics.StatsWrapper,
+func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
@@ -47,28 +47,28 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *statistic
 // To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
 // mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
 // the partition size for each worker to solve it
-func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatchSize int, wrapper *statistics.StatsWrapper,
+func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatchSize int, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
 		mergeConcurrency = len(wrapper.AllTopN)
 	}
-	tasks := make([]*statistics.TopnStatsMergeTask, 0)
+	tasks := make([]*TopnStatsMergeTask, 0)
 	for start := 0; start < len(wrapper.AllTopN); {
 		end := start + mergeBatchSize
 		if end > len(wrapper.AllTopN) {
 			end = len(wrapper.AllTopN)
 		}
-		task := statistics.NewTopnStatsMergeTask(start, end)
+		task := NewTopnStatsMergeTask(start, end)
 		tasks = append(tasks, task)
 		start = end
 	}
 	var wg sync.WaitGroup
 	taskNum := len(tasks)
-	taskCh := make(chan *statistics.TopnStatsMergeTask, taskNum)
-	respCh := make(chan *statistics.TopnStatsMergeResponse, taskNum)
+	taskCh := make(chan *TopnStatsMergeTask, taskNum)
+	respCh := make(chan *TopnStatsMergeResponse, taskNum)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := statistics.NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
+		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
@@ -81,7 +81,7 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	close(taskCh)
 	wg.Wait()
 	close(respCh)
-	resps := make([]*statistics.TopnStatsMergeResponse, 0)
+	resps := make([]*TopnStatsMergeResponse, 0)
 
 	// handle Error
 	hasErr := false

@@ -4,6 +4,7 @@ go_library(
     name = "globalstats",
     srcs = [
         "global_status.go",
+        "merge_worker.go",
         "topn.go",
     ],
     importpath = "github.com/pingcap/tidb/statistics/handle/globalstats",
@@ -17,6 +18,7 @@ go_library(
         "//statistics",
         "//table",
         "//types",
+        "//util/hack",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tiancaiamao_gp//:gp",
