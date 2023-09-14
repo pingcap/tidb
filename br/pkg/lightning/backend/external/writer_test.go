@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -152,7 +153,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(1000).
-		EnableDuplicationDetection().
+		SetKeyDuplicationEncoding(true).
 		Build(memStore, "/test", "0")
 	kvCount := 20
 	for i := 0; i < kvCount; i++ {
@@ -167,10 +168,26 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	err := writer.Close(ctx)
 	require.NoError(t, err)
 
+	// test MergeOverlappingFiles will not change duplicate detection functionality.
+	err = MergeOverlappingFiles(
+		ctx,
+		[]string{"/test/0/0"},
+		memStore,
+		100,
+		"/test2",
+		"mergeID",
+		1000,
+		8*1024,
+		1*size.MB,
+		2,
+		nil,
+	)
+	require.NoError(t, err)
+
 	keys := make([][]byte, 0, kvCount)
 	values := make([][]byte, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, 100)
+	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
 	require.NoError(t, err)
 	for i := 0; i < kvCount; i++ {
 		key, value, err := kvReader.nextKV()
