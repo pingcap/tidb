@@ -1000,6 +1000,11 @@ var internalSQLTimeout = owner.ManagerSessionTTL + 15
 // whether to run the sql file in bootstrap.
 var runBootstrapSQLFile = false
 
+func SetRunBootstrapSQLFileInTest(v bool) {
+	if intest.InTest {
+		runBootstrapSQLFile =
+	}
+}
 var (
 	bootstrapVersion = []func(Session, int64){
 		upgradeToVer2,
