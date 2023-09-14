@@ -388,8 +388,12 @@ func getSummaryFromLastStep(
 		maxKey = notNilMax(maxKey, subtask.MaxKey)
 		totalKVSize += subtask.TotalKVSize
 
-		allDataFiles = append(allDataFiles, subtask.DataFiles...)
-		allStatFiles = append(allStatFiles, subtask.StatFiles...)
+		for _, stat := range subtask.MultipleFilesStats {
+			for i := range stat.Filenames {
+				allDataFiles = append(allDataFiles, stat.Filenames[i][0])
+				allStatFiles = append(allStatFiles, stat.Filenames[i][1])
+			}
+		}
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
 }

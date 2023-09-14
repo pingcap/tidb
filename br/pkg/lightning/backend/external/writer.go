@@ -185,10 +185,10 @@ func (b *WriterBuilder) Build(
 // every 500 files). It is used to estimate the data overlapping, and per-file
 // statistic information maybe too big to loaded into memory.
 type MultipleFilesStat struct {
-	MinKey            tidbkv.Key
-	MaxKey            tidbkv.Key
-	Filenames         [][2]string // [dataFile, statFile]
-	MaxOverlappingNum int
+	MinKey            tidbkv.Key  `json:"min-key"`
+	MaxKey            tidbkv.Key  `json:"max-key"`
+	Filenames         [][2]string `json:"filenames"` // [dataFile, statFile]
+	MaxOverlappingNum int         `json:"max-overlapping-num"`
 }
 
 func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {

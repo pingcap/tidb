@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
@@ -50,6 +51,8 @@ type BackfillSubTaskMeta struct {
 	MinKey         []byte   `json:"min_key"`
 	MaxKey         []byte   `json:"max_key"`
 	TotalKVSize    uint64   `json:"total_kv_size"`
+	// MultipleFilesStats is the output of subtask, it will be used by the next subtask.
+	MultipleFilesStats []external.MultipleFilesStat `json:"multiple_files_stats"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.

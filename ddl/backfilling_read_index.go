@@ -58,6 +58,7 @@ type readIndexSummary struct {
 	totalSize uint64
 	dataFiles []string
 	statFiles []string
+	stats     []external.MultipleFilesStat
 	mu        sync.Mutex
 }
 
@@ -178,6 +179,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	subtaskMeta.TotalKVSize = s.totalSize
 	subtaskMeta.DataFiles = s.dataFiles
 	subtaskMeta.StatFiles = s.statFiles
+	subtaskMeta.MultipleFilesStats = s.stats
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("min", hex.EncodeToString(s.minKey)),
 		zap.String("max", hex.EncodeToString(s.maxKey)),
@@ -260,6 +262,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 			s.maxKey = summary.Max.Clone()
 		}
 		s.totalSize += summary.TotalSize
+		s.stats = append(s.stats, summary.MultipleFilesStats...)
 		for _, f := range summary.MultipleFilesStats {
 			for _, filename := range f.Filenames {
 				s.dataFiles = append(s.dataFiles, filename[0])
