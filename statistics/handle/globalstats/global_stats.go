@@ -69,7 +69,7 @@ func NewGlobalStatusHandler(gpool *gp.Pool) *GlobalStatusHandler {
 }
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *GlobalStatusHandler) MergePartitionStats2GlobalStats(sc sessionctx.Context,
+func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
 	isIndex int, histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table, getTableByPhysicalIDFn getTableByPhysicalIDFunc, loadTablePartitionStatsFn loadTablePartitionStatsFunc) (globalStats *GlobalStats, err error) {
@@ -244,6 +244,38 @@ func (h *GlobalStatusHandler) MergePartitionStats2GlobalStats(sc sessionctx.Cont
 			globalStatsNDV = globalStats.Count
 		}
 		globalStats.Hg[i].NDV = globalStatsNDV
+	}
+	return
+}
+
+// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
+func (g *GlobalStatusHandler) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+	physicalID int64, isIndex int, histIDs []int64,
+	tablePartitionStats map[int64]*statistics.Table, getTableByPhysicalIDFn getTableByPhysicalIDFunc, loadTablePartitionStatsFn loadTablePartitionStatsFunc) (globalStats *GlobalStats, err error) {
+	// get the partition table IDs
+	globalTable, ok := getTableByPhysicalIDFn(is, physicalID)
+	if !ok {
+		err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
+		return
+	}
+	globalTableInfo := globalTable.Meta()
+	globalStats, err = h.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
+	if err != nil {
+		return
+	}
+	if len(globalStats.MissingPartitionStats) > 0 {
+		var item string
+		if isIndex == 0 {
+			item = "columns"
+		} else {
+			item = "index"
+			if len(histIDs) > 0 {
+				item += " " + globalTableInfo.FindIndexNameByID(histIDs[0])
+			}
+		}
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
+			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
 	}
 	return
 }

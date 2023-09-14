@@ -340,31 +340,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
 	physicalID int64, isIndex int, histIDs []int64,
 	tablePartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
-	// get the partition table IDs
-	globalTable, ok := h.getTableByPhysicalID(is, physicalID)
-	if !ok {
-		err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
-		return
-	}
-	globalTableInfo := globalTable.Meta()
-	globalStats, err = h.mergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, tablePartitionStats)
-	if err != nil {
-		return
-	}
-	if len(globalStats.MissingPartitionStats) > 0 {
-		var item string
-		if isIndex == 0 {
-			item = "columns"
-		} else {
-			item = "index"
-			if len(histIDs) > 0 {
-				item += " " + globalTableInfo.FindIndexNameByID(histIDs[0])
-			}
-		}
-		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
-			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
-	}
-	return
+	return h.globalstatushandler.MergePartitionStats2GlobalStatsByTableID(sc, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
