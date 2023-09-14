@@ -227,6 +227,8 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 
 // newBaseBuiltinFuncWithFieldTypes creates a built-in function signature with specified field types of arguments and the return type of the function.
 // argTps indicates the field types of the args, retType indicates the return type of the built-in function.
+// newBaseBuiltinFuncWithTp and newBaseBuiltinFuncWithFieldTypes are essentially the same, but newBaseBuiltinFuncWithFieldTypes uses FieldType to cast args.
+// If there are specific requirements for decimal/datetime/timestamp, newBaseBuiltinFuncWithFieldTypes should be used, such as if,ifnull and casewhen.
 func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
 		panic("unexpected length of args and argTps")
