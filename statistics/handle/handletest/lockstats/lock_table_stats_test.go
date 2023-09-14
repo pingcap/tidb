@@ -48,7 +48,7 @@ func TestLockAndUnlockTableStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip analyze locked table: t",
+		"Warning 1105 skip analyze locked table: test.t",
 	))
 	tblStats1 := handle.GetTableStats(tbl)
 	require.Equal(t, tblStats, tblStats1)
@@ -86,7 +86,7 @@ func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip analyze locked tables: t partition (p0), t partition (p1)",
+		"Warning 1105 skip analyze locked tables: test.t partition (p0), test.t partition (p1)",
 	))
 
 	tk.MustExec("unlock stats t")

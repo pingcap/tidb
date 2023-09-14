@@ -189,7 +189,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 	}
 
 	for _, task := range tasks {
-		// Che if the table or partition is locked.
+		// Check if the table or partition is locked.
 		tableID := getTableIDFromTask(task)
 		_, isLocked := lockedTableAndPartitionIDs[tableID.TableID]
 		// If the whole table is not locked, we should check whether the partition is locked.
@@ -197,6 +197,7 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 			_, isLocked = lockedTableAndPartitionIDs[tableID.PartitionID]
 		}
 
+		// Only analyze the table that is not locked.
 		if !isLocked {
 			filteredTasks = append(filteredTasks, task)
 		}
@@ -213,14 +214,16 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 					if def == nil {
 						logutil.BgLogger().Warn("Unknown partition ID in analyze task", zap.Int64("pid", tableID.PartitionID))
 					} else {
-						skippedTables = append(skippedTables, fmt.Sprintf("%s partition (%s)", tbl.Meta().Name.O, def.Name.O))
+						schema, _ := infoSchema.SchemaByTable(tbl.Meta())
+						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s partition (%s)", schema.Name, tbl.Meta().Name.O, def.Name.O))
 					}
 				} else {
 					tbl, ok := infoSchema.TableByID(physicalTableID)
 					if !ok {
 						logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", physicalTableID))
 					} else {
-						skippedTables = append(skippedTables, tbl.Meta().Name.L)
+						schema, _ := infoSchema.SchemaByTable(tbl.Meta())
+						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s", schema.Name, tbl.Meta().Name.O))
 					}
 				}
 			} else {

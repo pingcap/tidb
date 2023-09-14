@@ -50,7 +50,7 @@ func TestLockAndUnlockPartitionStats(t *testing.T) {
 
 	tk.MustExec("analyze table test.t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip analyze locked table: t partition (p0)",
+		"Warning 1105 skip analyze locked table: test.t partition (p0)",
 	))
 	partitionStats1 := handle.GetPartitionStats(tbl, p0Id)
 	require.Equal(t, partitionStats, partitionStats1)
