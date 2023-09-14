@@ -39,7 +39,7 @@ func (*testDynamicDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {}
 
 func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	// step1
-	if gTask.Step == proto.StepInit && dsp.cnt < 3 {
+	if gTask.Step == proto.StepInit {
 		dsp.cnt++
 		return [][]byte{
 			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
@@ -48,7 +48,7 @@ func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ di
 	}
 
 	// step2
-	if gTask.Step == proto.StepOne && dsp.cnt < 4 {
+	if gTask.Step == proto.StepOne {
 		dsp.cnt++
 		return [][]byte{
 			[]byte(fmt.Sprintf("task%d", dsp.cnt)),
@@ -61,18 +61,15 @@ func (*testDynamicDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (dsp *testDynamicDispatcherExt) StageFinished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && dsp.cnt >= 3 {
-		return true
+func (dsp *testDynamicDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		return proto.StepTwo
+	default:
+		return proto.StepDone
 	}
-	if task.Step == proto.StepOne && dsp.cnt >= 4 {
-		return true
-	}
-	return false
-}
-
-func (dsp *testDynamicDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepOne && dsp.cnt >= 4
 }
 
 func (*testDynamicDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {

@@ -114,14 +114,16 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 	}
 }
 
-// StageFinished check if current stage finished.
-func (*backfillingDispatcherExt) StageFinished(_ *proto.Task) bool {
-	return true
-}
-
-// Finished check if current task finished.
-func (*backfillingDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepOne
+func (*backfillingDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		return proto.StepTwo
+	default:
+		// current step should be proto.StepOne
+		return proto.StepDone
+	}
 }
 
 // OnErrStage generate error handling stage's plan.
@@ -369,7 +371,7 @@ func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepInit)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}

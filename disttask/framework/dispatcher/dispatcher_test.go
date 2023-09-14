@@ -66,12 +66,8 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *testDispatcherExt) StageFinished(task *proto.Task) bool {
-	return true
-}
-
-func (dsp *testDispatcherExt) Finished(task *proto.Task) bool {
-	return false
+func (*testDispatcherExt) GetNextStep(*proto.Task) int64 {
+	return proto.StepDone
 }
 
 type numberExampleDispatcherExt struct{}
@@ -108,12 +104,13 @@ func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*numberExampleDispatcherExt) StageFinished(task *proto.Task) bool {
-	return true
-}
-
-func (*numberExampleDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepTwo
+func (*numberExampleDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	default:
+		return proto.StepDone
+	}
 }
 
 func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {

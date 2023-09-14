@@ -47,8 +47,11 @@ const (
 )
 
 // TaskStep is the step of task.
+// DO NOT change the value of the constants, will break backward compatibility.
+// successfully task MUST go from StepInit to business steps, then StepDone.
 const (
-	StepInit int64 = 0
+	StepInit int64 = -1
+	StepDone int64 = -2
 	StepOne  int64 = 1
 	StepTwo  int64 = 2
 )
@@ -101,8 +104,9 @@ type Subtask struct {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
+func NewSubtask(step int64, taskID int64, tp, schedulerID string, meta []byte) *Subtask {
 	return &Subtask{
+		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
 		SchedulerID: schedulerID,

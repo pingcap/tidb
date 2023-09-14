@@ -78,18 +78,15 @@ func (*haTestDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *haTestDispatcherExt) StageFinished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && dsp.cnt >= 10 {
-		return true
+func (dsp *haTestDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		return proto.StepTwo
+	default:
+		return proto.StepDone
 	}
-	if task.Step == proto.StepOne && dsp.cnt >= 15 {
-		return true
-	}
-	return false
-}
-
-func (dsp *haTestDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepOne && dsp.cnt >= 15
 }
 
 func TestHABasic(t *testing.T) {

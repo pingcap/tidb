@@ -66,18 +66,15 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 	return nil, nil
 }
 
-func (dsp *testDispatcherExt) StageFinished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && dsp.cnt >= 3 {
-		return true
+func (dsp *testDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		return proto.StepTwo
+	default:
+		return proto.StepDone
 	}
-	if task.Step == proto.StepOne && dsp.cnt >= 4 {
-		return true
-	}
-	return false
-}
-
-func (dsp *testDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepOne && dsp.cnt >= 4
 }
 
 func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
@@ -116,9 +113,9 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
 			switch subtask.Step {
-			case proto.StepInit:
-				m.Store("0", "0")
 			case proto.StepOne:
+				m.Store("0", "0")
+			case proto.StepTwo:
 				m.Store("1", "1")
 			default:
 				panic("invalid step")
@@ -155,9 +152,9 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
 			switch subtask.Step {
-			case proto.StepInit:
-				m.Store("2", "2")
 			case proto.StepOne:
+				m.Store("2", "2")
+			case proto.StepTwo:
 				m.Store("3", "3")
 			default:
 				panic("invalid step")
@@ -174,9 +171,9 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
 			switch subtask.Step {
-			case proto.StepInit:
-				m.Store("4", "4")
 			case proto.StepOne:
+				m.Store("4", "4")
+			case proto.StepTwo:
 				m.Store("5", "5")
 			default:
 				panic("invalid step")
