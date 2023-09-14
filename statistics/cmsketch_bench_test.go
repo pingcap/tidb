@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
@@ -129,15 +128,15 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
 		batchSize = 1
-	} else if batchSize > handle.MaxPartitionMergeBatchSize {
-		batchSize = handle.MaxPartitionMergeBatchSize
+	} else if batchSize > globalstats.MaxPartitionMergeBatchSize {
+		batchSize = globalstats.MaxPartitionMergeBatchSize
 	}
 	gpool := gp.New(mergeConcurrency, 5*time.Minute)
 	defer gpool.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Benchmark merge 10 topN.
-		_, _, _, _ = handle.MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, &isKilled)
+		_, _, _, _ = globalstats.MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, &isKilled)
 	}
 }
 

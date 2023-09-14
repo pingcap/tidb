@@ -1,0 +1,25 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "globalstats",
+    srcs = [
+        "global_status.go",
+        "topn.go",
+    ],
+    importpath = "github.com/pingcap/tidb/statistics/handle/globalstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//infoschema",
+        "//parser/ast",
+        "//parser/model",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//statistics",
+        "//table",
+        "//types",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@org_uber_go_zap//:zap",
+    ],
+)
