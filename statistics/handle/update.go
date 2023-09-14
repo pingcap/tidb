@@ -61,7 +61,7 @@ func (m *tableDelta) reset() {
 	m.delta = make(map[int64]variable.TableDelta)
 }
 
-func (m *tableDelta) getAndReset() map[int64]variable.TableDelta {
+func (m *tableDelta) getDeltaAndReset() map[int64]variable.TableDelta {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	ret := m.delta
@@ -139,7 +139,7 @@ func (m *statsUsage) merge(other map[model.TableItemID]time.Time) {
 }
 
 func merge(s *SessionStatsCollector, deltaMap *tableDelta, colMap *statsUsage) {
-	deltaMap.merge(s.mapper.getAndReset())
+	deltaMap.merge(s.mapper.getDeltaAndReset())
 	colMap.merge(s.statsUsage.getUsageAndReset())
 }
 
@@ -428,7 +428,7 @@ func (h *Handle) sweepList() {
 		}
 	}
 	prev.Unlock()
-	h.tableDelta.merge(deltaMap.getAndReset())
+	h.tableDelta.merge(deltaMap.getDeltaAndReset())
 	h.statsUsage.merge(colMap.getUsageAndReset())
 }
 
@@ -436,7 +436,7 @@ func (h *Handle) sweepList() {
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
-	deltaMap := h.tableDelta.getAndReset()
+	deltaMap := h.tableDelta.getDeltaAndReset()
 	defer func() {
 		h.tableDelta.merge(deltaMap)
 	}()
