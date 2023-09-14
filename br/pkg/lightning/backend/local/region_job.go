@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
@@ -325,6 +326,9 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			if err := flushKVs(); err != nil {
 				return errors.Trace(err)
 			}
+			counter := metrics.BackfillTotalCounter.WithLabelValues(
+				metrics.GenerateReorgLabel("add_idx_rate", "", ""))
+			counter.Add(float64(count))
 			count = 0
 			size = 0
 			bytesBuf.Reset()
