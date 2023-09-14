@@ -179,7 +179,7 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead.ClearForTest()
-	h.tableDelta = newTableDelta()
+	h.tableDelta.reset()
 	h.statsUsage.reset()
 	h.mu.Unlock()
 }

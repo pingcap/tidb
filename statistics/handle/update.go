@@ -55,6 +55,12 @@ func newTableDelta() *tableDelta {
 	}
 }
 
+func (m *tableDelta) reset() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.delta = make(map[int64]variable.TableDelta)
+}
+
 func (m *tableDelta) getAndReset() map[int64]variable.TableDelta {
 	m.lock.Lock()
 	defer m.lock.Unlock()
