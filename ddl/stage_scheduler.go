@@ -74,13 +74,13 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	}
 
 	switch stage {
-	case proto.StepInit:
+	case proto.StepOne:
 		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
-	case proto.StepOne:
+	case proto.StepTwo:
 		if len(bgm.CloudStorageURI) > 0 {
 			return newCloudImportExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
@@ -145,7 +145,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
-	case proto.StepInit, proto.StepOne:
+	case proto.StepOne, proto.StepTwo:
 		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

@@ -78,21 +78,15 @@ func (*planErrDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (p *planErrDispatcherExt) StageFinished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && p.cnt == 3 {
-		return true
+func (p *planErrDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		return proto.StepTwo
+	default:
+		return proto.StepDone
 	}
-	if task.Step == proto.StepOne && p.cnt == 4 {
-		return true
-	}
-	return false
-}
-
-func (p *planErrDispatcherExt) Finished(task *proto.Task) bool {
-	if task.Step == proto.StepOne && p.cnt == 4 {
-		return true
-	}
-	return false
 }
 
 type planNotRetryableErrDispatcherExt struct {
@@ -118,18 +112,8 @@ func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-func (p *planNotRetryableErrDispatcherExt) StageFinished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && p.cnt >= 3 {
-		return true
-	}
-	if task.Step == proto.StepOne && p.cnt >= 4 {
-		return true
-	}
-	return false
-}
-
-func (p *planNotRetryableErrDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepOne && p.cnt >= 4
+func (p *planNotRetryableErrDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	return proto.StepDone
 }
 
 func TestPlanErr(t *testing.T) {

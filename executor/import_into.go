@@ -295,7 +295,6 @@ func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, resul
 func cancelImportJob(ctx context.Context, manager *fstorage.TaskManager, jobID int64) error {
 	// todo: cancel is async operation, we don't wait here now, maybe add a wait syntax later.
 	// todo: after CANCEL, user can see the job status is Canceled immediately, but the job might still running.
-	// and the state of framework task might became finished since framework don't force state change DAG when update task.
 	// todo: add a CANCELLING status?
 	return manager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
