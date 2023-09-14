@@ -488,7 +488,7 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 // 1. signedRanges is less or equal than MaxInt64
 // 2. unsignedRanges is greater than MaxInt64
 //
-// We do this because every key of tikv is encoded as an int64. As a result, MaxUInt64 is small than zero when
+// We do this because every key of tikv is encoded as an int64. As a result, MaxUInt64 is smaller than zero when
 // interpreted as an int64 variable.
 //
 // This function does the following:
@@ -496,7 +496,7 @@ func encodeHandleKey(ran *ranger.Range) ([]byte, []byte) {
 //  2. if there's a range that straddles the int64 boundary, split it into two ranges, which results in one smaller and
 //     one greater than MaxInt64.
 //
-// if `KeepOrder` is false, we merge the two groups of ranges into one group, to save an rpc call later
+// if `KeepOrder` is false, we merge the two groups of ranges into one group, to save a rpc call later
 // if `desc` is false, return signed ranges first, vice versa.
 func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc bool, isCommonHandle bool) ([]*ranger.Range, []*ranger.Range) {
 	if isCommonHandle || len(ranges) == 0 || ranges[0].LowVal[0].Kind() == types.KindInt64 {
