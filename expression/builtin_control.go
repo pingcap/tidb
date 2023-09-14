@@ -152,7 +152,7 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			resultFieldType.SetFlag(0)
 		}
 	case ast.Case:
-		if len(args) > 0 {
+		if len(args) == 0 {
 			panic("unexpected length 0 of args for casewhen")
 		}
 		fallthrough
