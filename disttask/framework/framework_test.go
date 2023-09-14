@@ -245,6 +245,7 @@ func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state 
 		return true
 	})
 }
+
 func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.Task {
 	var tasks []*proto.Task
 	var taskID []int64
@@ -607,5 +608,35 @@ func TestGC(t *testing.T) {
 		return historySubTasksCnt == 0
 	}, 10*time.Second, 500*time.Millisecond)
 
+	distContext.Close()
+}
+
+func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
+	var m sync.Map
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockSubtaskFinishedCancel", "1*return(true)")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockSubtaskFinishedCancel"))
+	}()
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	distContext.Close()
+}
+
+func TestFrameworkRunSubtaskCancel(t *testing.T) {
+	var m sync.Map
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel", "1*return(true)")
+	require.NoError(t, err)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel"))
 	distContext.Close()
 }
