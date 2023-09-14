@@ -309,9 +309,10 @@ func WriteInsertInCsv(
 
 	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, metrics, cfg.Labels)
 	opt := &csvOption{
-		nullValue: cfg.CsvNullValue,
-		separator: []byte(cfg.CsvSeparator),
-		delimiter: []byte(cfg.CsvDelimiter),
+		nullValue:      cfg.CsvNullValue,
+		separator:      []byte(cfg.CsvSeparator),
+		delimiter:      []byte(cfg.CsvDelimiter),
+		lineTerminator: []byte(cfg.CsvLineTerminator),
 	}
 
 	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
@@ -365,8 +366,7 @@ func WriteInsertInCsv(
 				bf.Write(opt.separator)
 			}
 		}
-		bf.WriteByte('\r')
-		bf.WriteByte('\n')
+		bf.Write(opt.lineTerminator)
 	}
 	wp.currentFileSize += uint64(bf.Len())
 
@@ -381,8 +381,7 @@ func WriteInsertInCsv(
 		counter++
 		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
 
-		bf.WriteByte('\r')
-		bf.WriteByte('\n')
+		bf.Write(opt.lineTerminator)
 		if bf.Len() >= lengthLimit {
 			select {
 			case <-pCtx.Done():
