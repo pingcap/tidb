@@ -32,6 +32,8 @@ import (
 	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xitongsys/parquet-go/parquet"
+	"github.com/xitongsys/parquet-go/writer"
 )
 
 type testMydumpLoaderSuite struct {
@@ -1102,4 +1104,50 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
+}
+
+func TestSampleParquetDataSize(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	store, err := storage.NewLocalStorage(s.sourceDir)
+	require.NoError(t, err)
+
+	type row struct {
+		ID   int64  `parquet:"name=id, type=INT64"`
+		Name string `parquet:"name=name, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	byteArray := make([]byte, 0, 40*1024)
+	bf := bytes.NewBuffer(byteArray)
+	pwriter, err := writer.NewParquetWriterFromWriter(bf, new(row), 4)
+	require.NoError(t, err)
+	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
+	pwriter.PageSize = 8 * 1024              //8K
+	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
+	for i := 0; i < 2000; i++ {
+		row := row{
+			ID:   int64(i),
+			Name: fmt.Sprintf("row_name_%04d", i),
+		}
+		err = pwriter.Write(row)
+		require.NoError(t, err)
+	}
+	err = pwriter.WriteStop()
+	require.NoError(t, err)
+
+	fileName := "test_1.t1.parquet"
+	err = store.WriteFile(ctx, fileName, bf.Bytes())
+	require.NoError(t, err)
+
+	size, err := md.SampleParquetDataSize(ctx, md.SourceFileMeta{
+		Path: fileName,
+	}, store)
+	require.NoError(t, err)
+	//
+	// 42000 = 2000 rows * 21 bytes per row
+	// expected error within 10%, so delta = 42000 * 0.1 = 4200
+	//
+	require.InDelta(t, 42000, size, 4200)
 }
