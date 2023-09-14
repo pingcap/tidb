@@ -97,7 +97,7 @@ func (m *tableDelta) merge(deltaMap map[int64]variable.TableDelta) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	for id, item := range deltaMap {
-		m.update(id, item.Delta, item.Count, &item.ColSize)
+		updateTableDeltaMap(m.delta, id, item.Delta, item.Count, &item.ColSize)
 	}
 }
 
