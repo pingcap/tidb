@@ -6,6 +6,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
+// MergeOverlappingFiles reads from given files whose key range may overlap
+// and writes to new sorted, nonoverlapping files.
 func MergeOverlappingFiles(
 	ctx context.Context,
 	paths []string,
@@ -33,6 +35,9 @@ func MergeOverlappingFiles(
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
 		Build(store, newFilePrefix, writerID)
+
+	// currently use same goroutine to do read and write. The main advantage is
+	// there's no KV copy and iter can reuse the buffer.
 
 	for iter.Next() {
 		err = writer.WriteRow(ctx, iter.Key(), iter.Value(), nil)
