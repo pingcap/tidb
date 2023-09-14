@@ -92,7 +92,7 @@ type Handle struct {
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
 
-	// globalMap contains all the delta map from collectors when we dump them to KV.
+	// tableDelta contains all the delta map from collectors when we dump them to KV.
 	tableDelta *tableDelta
 
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
