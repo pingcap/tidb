@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
@@ -502,16 +503,6 @@ func (stm *TaskManager) FinishSubtask(id int64, meta []byte) error {
 	return err
 }
 
-// UpdateSubtaskHeartbeat updates the heartbeat of the subtask.
-// not used now.
-// TODO: not sure whether we really need this method, don't update state_update_time now,
-func (stm *TaskManager) UpdateSubtaskHeartbeat(instanceID string, taskID int64, heartbeat time.Time) error {
-	_, err := stm.executeSQLWithNewSession(stm.ctx, `update mysql.tidb_background_subtask
-		set exec_expired = %? where exec_id = %? and task_key = %?`,
-		heartbeat.String(), instanceID, taskID)
-	return err
-}
-
 // DeleteSubtasksByTaskID deletes the subtask of the given global task ID.
 func (stm *TaskManager) DeleteSubtasksByTaskID(taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx, `delete from mysql.tidb_background_subtask
@@ -636,14 +627,38 @@ func (stm *TaskManager) AddSubTasks(task *proto.Task, subtasks []*proto.Subtask)
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
 	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state = %?, dispatcher_id = %?, step = %?, state_update_time = %?, concurrency = %?, meta = %?, error = %? where id = %? and state = %?",
-			gTask.State, gTask.DispatcherID, gTask.Step, gTask.StateUpdateTime.UTC().String(), gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
+		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task "+
+			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
+			"where id = %? and state = %?",
+			gTask.State, gTask.DispatcherID, gTask.Step, gTask.Concurrency, gTask.Meta, serializeErr(gTask.Error), gTask.ID, prevState)
 		if err != nil {
 			return err
 		}
+		// When AffectedRows == 0, means other admin command have changed the task state, it's illegal to dispatch subtasks.
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			retryable = false
-			return errors.New("invalid task state transform, state already changed")
+			if !intest.InTest {
+				// task state have changed by other admin command
+				retryable = false
+				return errors.New("invalid task state transform, state already changed")
+			}
+			// TODO: remove it, when OnNextSubtasksBatch returns subtasks, just insert subtasks without updating tidb_global_task.
+			// Currently the business running on distributed task framework will update proto.Task in OnNextSubtasksBatch.
+			// So when dispatching subtasks, framework needs to update global task and insert subtasks in one Txn.
+			//
+			// In future, it's needed to restrict changes of task in OnNextSubtasksBatch.
+			// If OnNextSubtasksBatch won't update any fields in proto.Task, we can insert subtasks only.
+			//
+			// For now, we update nothing in proto.Task in UT's OnNextSubtasksBatch, so the AffectedRows will be 0. So UT can't fully compatible
+			// with current UpdateGlobalTaskAndAddSubTasks implementation.
+			rs, err := ExecSQL(stm.ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
+			if err != nil {
+				return err
+			}
+			// state have changed.
+			if len(rs) == 0 {
+				retryable = false
+				return errors.New("invalid task state transform, state already changed")
+			}
 		}
 
 		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
@@ -651,23 +666,23 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 				failpoint.Return(errors.New("updateTaskErr"))
 			}
 		})
+		if len(subtasks) > 0 {
+			subtaskState := proto.TaskStatePending
+			if gTask.State == proto.TaskStateReverting {
+				subtaskState = proto.TaskStateRevertPending
+			}
 
-		subtaskState := proto.TaskStatePending
-		if gTask.State == proto.TaskStateReverting {
-			subtaskState = proto.TaskStateRevertPending
-		}
-
-		for _, subtask := range subtasks {
-			// TODO: insert subtasks in batch
-			_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
+			for _, subtask := range subtasks {
+				// TODO: insert subtasks in batch
+				_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
 					(step, task_key, exec_id, meta, state, type, checkpoint, summary)
 					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
-				gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
-			if err != nil {
-				return err
+					gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
+				if err != nil {
+					return err
+				}
 			}
 		}
-
 		return nil
 	})
 
@@ -692,7 +707,9 @@ func serializeErr(err error) []byte {
 
 // CancelGlobalTask cancels global task.
 func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
-	_, err := stm.executeSQLWithNewSession(stm.ctx, "update mysql.tidb_global_task set state=%? where id=%? and state in (%?, %?)",
+	_, err := stm.executeSQLWithNewSession(stm.ctx,
+		"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
+			"where id=%? and state in (%?, %?)",
 		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
 	)
 	return err
@@ -700,7 +717,9 @@ func (stm *TaskManager) CancelGlobalTask(taskID int64) error {
 
 // CancelGlobalTaskByKeySession cancels global task by key using input session.
 func (stm *TaskManager) CancelGlobalTaskByKeySession(se sessionctx.Context, taskKey string) error {
-	_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task set state=%? where task_key=%? and state in (%?, %?)",
+	_, err := ExecSQL(stm.ctx, se,
+		"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
+			"where task_key=%? and state in (%?, %?)",
 		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
 	return err
 }
