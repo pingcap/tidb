@@ -194,6 +194,9 @@ func TestLockAndUnlockTablesStats(t *testing.T) {
 	tk.MustExec("insert into t2(a, b) values(2,'b')")
 
 	tk.MustExec("analyze table test.t1, test.t2")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip analyze locked tables: test.t1, test.t2",
+	))
 	tbl1Stats1 := handle.GetTableStats(tbl1.Meta())
 	require.Equal(t, tbl1Stats, tbl1Stats1)
 	tbl2Stats1 := handle.GetTableStats(tbl2.Meta())
