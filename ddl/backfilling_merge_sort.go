@@ -16,6 +16,16 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
+	"path"
+	"strconv"
+	"sync"
+
+	"github.com/google/uuid"
+	"github.com/pingcap/tidb/br/pkg/storage"
+
+	"github.com/pingcap/tidb/util/size"
+	"go.uber.org/zap"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -26,10 +36,14 @@ import (
 )
 
 type mergeSortExecutor struct {
-	jobID int64
-	index *model.IndexInfo
-	ptbl  table.PhysicalTable
-	bc    ingest.BackendCtx
+	jobID         int64
+	index         *model.IndexInfo
+	ptbl          table.PhysicalTable
+	bc            ingest.BackendCtx
+	cloudStoreURI string
+	dataFiles     []string
+	statFiles     []string
+	mu            sync.Mutex
 }
 
 func newMergeSortExecutor(
@@ -51,30 +65,53 @@ func (m *mergeSortExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) RunSubtask(ctx context.Context, _ *proto.Subtask) error {
+func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge stage split subtask")
 
-	// ywq todo how to？
-	onClose := func(summary *external.WriterSummary) {
-		sum, _ := r.subtaskSummary.Load(subtaskID)
-		s := sum.(*readIndexSummary)
-		s.mu.Lock()
-		if len(s.minKey) == 0 || summary.Min.Cmp(s.minKey) < 0 {
-			s.minKey = summary.Min.Clone()
-		}
-		if len(s.maxKey) == 0 || summary.Max.Cmp(s.maxKey) > 0 {
-			s.maxKey = summary.Max.Clone()
-		}
-		s.totalSize += summary.TotalSize
-		for _, f := range summary.MultipleFilesStats {
-			for _, filename := range f.Filenames {
-				s.dataFiles = append(s.dataFiles, filename[0])
-				s.statFiles = append(s.statFiles, filename[1])
-			}
-		}
-		s.mu.Unlock()
+	sm := &BackfillSubTaskMeta{}
+	err := json.Unmarshal(subtask.Meta, sm)
+	if err != nil {
+		logutil.BgLogger().Error("unmarshal error",
+			zap.String("category", "ddl"),
+			zap.Error(err))
+		return err
 	}
 
+	m.mu.Lock()
+	onClose := func(summary *external.WriterSummary) {
+		for _, f := range summary.MultipleFilesStats {
+			for _, filename := range f.Filenames {
+				m.dataFiles = append(m.dataFiles, filename[0])
+				m.statFiles = append(m.statFiles, filename[1])
+			}
+		}
+		m.mu.Unlock()
+	}
+
+	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)
+	if err != nil {
+		return err
+	}
+	store, err := storage.New(ctx, storeBackend, nil)
+	if err != nil {
+		return err
+	}
+
+	writerID := uuid.New().String()
+	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
+
+	return external.MergeOverlappingFiles(
+		ctx,
+		sm.DataFiles,
+		store,
+		64*1024,
+		prefix,
+		writerID,
+		256*size.MB,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
