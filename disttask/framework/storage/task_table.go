@@ -634,27 +634,26 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		}
 		// When AffectedRows == 0, means other admin command have changed the task state, it's illegal to dispatch subtasks.
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			if intest.InTest {
-				// TODO: remove it, when OnNextSubtasksBatch returns subtasks, just insert subtasks without updating tidb_global_task.
-				// Currently the business running on distributed task framework will update proto.Task in OnNextSubtasksBatch.
-				// So when dispatching subtasks, framework needs to update global task and insert subtasks in one Txn.
-				//
-				// In future, it's needed to restrict changes of task in OnNextSubtasksBatch.
-				// If OnNextSubtasksBatch won't update any fields in proto.Task, we can insert subtasks only.
-				//
-				// For now, we update nothing in proto.Task in UT's OnNextSubtasksBatch, so the AffectedRows will be 0. So UT can't fully compatible
-				// with current UpdateGlobalTaskAndAddSubTasks implementation.
-				rs, err := ExecSQL(stm.ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
-				if err != nil {
-					return err
-				}
-				// state have changed.
-				if len(rs) == 0 {
-					retryable = false
-					return errors.New("invalid task state transform, state already changed")
-				}
-			} else {
+			if !intest.InTest {
 				// task state have changed by other admin command
+				retryable = false
+				return errors.New("invalid task state transform, state already changed")
+			}
+			// TODO: remove it, when OnNextSubtasksBatch returns subtasks, just insert subtasks without updating tidb_global_task.
+			// Currently the business running on distributed task framework will update proto.Task in OnNextSubtasksBatch.
+			// So when dispatching subtasks, framework needs to update global task and insert subtasks in one Txn.
+			//
+			// In future, it's needed to restrict changes of task in OnNextSubtasksBatch.
+			// If OnNextSubtasksBatch won't update any fields in proto.Task, we can insert subtasks only.
+			//
+			// For now, we update nothing in proto.Task in UT's OnNextSubtasksBatch, so the AffectedRows will be 0. So UT can't fully compatible
+			// with current UpdateGlobalTaskAndAddSubTasks implementation.
+			rs, err := ExecSQL(stm.ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
+			if err != nil {
+				return err
+			}
+			// state have changed.
+			if len(rs) == 0 {
 				retryable = false
 				return errors.New("invalid task state transform, state already changed")
 			}
