@@ -117,10 +117,10 @@ type HashAggExec struct {
 	IsChildReturnEmpty bool
 	// After we support parallel execution for aggregation functions with distinct,
 	// we can remove this attribute.
-	IsUnparallelExec        bool
-	parallelExecInitialized bool
-	prepared                bool
-	executed                bool
+	IsUnparallelExec  bool
+	parallelExecValid bool
+	prepared          bool
+	executed          bool
 
 	memTracker  *memory.Tracker // track memory usage.
 	diskTracker *disk.Tracker
@@ -169,7 +169,7 @@ func (e *HashAggExec) Close() error {
 		}
 		return firstErr
 	}
-	if e.parallelExecInitialized {
+	if e.parallelExecValid {
 		// `Close` may be called after `Open` without calling `Next` in test.
 		if !e.prepared {
 			close(e.inputCh)
@@ -193,6 +193,7 @@ func (e *HashAggExec) Close() error {
 		if e.memTracker != nil {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
+		e.parallelExecValid = false
 	}
 	return e.BaseExecutor.Close()
 }
@@ -225,14 +226,6 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	}
 	e.initForParallelExec(e.Ctx())
 	return nil
-}
-
-func (e *HashAggExec) getSpillSerializeHelper() []aggfuncs.SpillSerializeHelper {
-	helpers := make([]aggfuncs.SpillSerializeHelper, 0, len(e.PartialAggFuncs))
-	for _, aggFunc := range e.PartialAggFuncs {
-		helpers = append(helpers, *aggFunc.NewSpillSerializeHelper())
-	}
-	return helpers
 }
 
 func (e *HashAggExec) initForUnparallelExec() {
@@ -305,7 +298,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			getSpillChunkFieldTypesFunc: func() []*types.FieldType {
 				return append(e.Base().RetFieldTypes(), types.NewFieldType(mysql.TypeString))
 			},
-			spillSerializeHelpers: e.getSpillSerializeHelper(),
+			spillSerializeHelpers: make([]aggfuncs.SpillSerializeHelper, 0, len(e.PartialAggFuncs)),
 		}
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -351,10 +344,9 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
 	}
 
-	e.parallelExecInitialized = true
-
 	// TODO set action when out of quota happens.
 	// TODO some agg functions' spill is not supported, set it.
+	e.parallelExecValid = true
 }
 
 // Next implements the Executor Next interface.

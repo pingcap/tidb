@@ -22,24 +22,27 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/mock"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
-type rollbackDispatcher struct{}
-
-var _ dispatcher.Dispatcher = (*rollbackDispatcher)(nil)
-var rollbackCnt atomic.Int32
-
-func (*rollbackDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+type rollbackDispatcherExt struct {
+	cnt int
 }
 
-func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
-		gTask.Step = proto.StepOne
+var _ dispatcher.Extension = (*rollbackDispatcherExt)(nil)
+var rollbackCnt atomic.Int32
+
+func (*rollbackDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
+}
+
+func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+	if gTask.Step == proto.StepInit {
+		dsp.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -49,16 +52,24 @@ func (*rollbackDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandl
 	return nil, nil
 }
 
-func (*rollbackDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*rollbackDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return []byte("rollbacktask1"), nil
 }
 
-func (*rollbackDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*rollbackDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*rollbackDispatcher) IsRetryableErr(error) bool {
+func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 	return true
+}
+
+func (dsp *rollbackDispatcherExt) StageFinished(task *proto.Task) bool {
+	return task.Step == proto.StepInit && dsp.cnt >= 3
+}
+
+func (dsp *rollbackDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == proto.StepInit && dsp.cnt >= 3
 }
 
 type testRollbackMiniTask struct{}
@@ -73,9 +84,9 @@ type rollbackScheduler struct {
 	m *sync.Map
 }
 
-func (*rollbackScheduler) InitSubtaskExecEnv(_ context.Context) error { return nil }
+func (*rollbackScheduler) Init(_ context.Context) error { return nil }
 
-func (t *rollbackScheduler) CleanupSubtaskExecEnv(_ context.Context) error { return nil }
+func (t *rollbackScheduler) Cleanup(_ context.Context) error { return nil }
 
 func (t *rollbackScheduler) Rollback(_ context.Context) error {
 	t.m = &sync.Map{}
@@ -83,7 +94,7 @@ func (t *rollbackScheduler) Rollback(_ context.Context) error {
 	return nil
 }
 
-func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.MinimalTask, error) {
+func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
 	return []proto.MinimalTask{
 		testRollbackMiniTask{},
 		testRollbackMiniTask{},
@@ -91,8 +102,8 @@ func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ []byte) ([]proto.M
 	}, nil
 }
 
-func (t *rollbackScheduler) OnSubtaskFinished(_ context.Context, meta []byte) ([]byte, error) {
-	return meta, nil
+func (t *rollbackScheduler) OnFinished(_ context.Context, _ *proto.Subtask) error {
+	return nil
 }
 
 type rollbackSubtaskExecutor struct {
@@ -104,33 +115,27 @@ func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
 	return nil
 }
 
-func RegisterRollbackTaskMeta(m *sync.Map) {
-	dispatcher.ClearTaskDispatcher()
-	dispatcher.RegisterTaskDispatcher(proto.TaskTypeExample, &rollbackDispatcher{})
-	scheduler.ClearSchedulers()
-	scheduler.RegisterTaskType(proto.TaskTypeExample)
-	scheduler.RegisterSchedulerConstructor(proto.TaskTypeExample, proto.StepOne, func(_ context.Context, _ int64, _ []byte, _ int64) (scheduler.Scheduler, error) {
-		return &rollbackScheduler{m: m}, nil
-	})
-	scheduler.RegisterSubtaskExectorConstructor(proto.TaskTypeExample, proto.StepOne, func(_ proto.MinimalTask, _ int64) (scheduler.SubtaskExecutor, error) {
-		return &rollbackSubtaskExecutor{m: m}, nil
-	})
+func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map) {
+	mockExtension := mock.NewMockExtension(ctrl)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&rollbackScheduler{m: m}, nil).AnyTimes()
+	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&rollbackSubtaskExecutor{m: m}, nil).AnyTimes()
+	registerTaskMetaInner(t, mockExtension, &rollbackDispatcherExt{})
 	rollbackCnt.Store(0)
 }
 
 func TestFrameworkRollback(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterRollbackTaskMeta(&m)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	registerRollbackTaskMeta(t, ctrl, &m)
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask", "2*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
 	}()
 
-	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStateReverted)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
 	require.Equal(t, int32(2), rollbackCnt.Load())
 	rollbackCnt.Store(0)
 	distContext.Close()

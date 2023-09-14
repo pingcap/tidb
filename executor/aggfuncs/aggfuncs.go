@@ -142,8 +142,18 @@ type PartialResult unsafe.Pointer
 // AggPartialResultMapper contains aggregate function results
 type AggPartialResultMapper map[string][]PartialResult
 
+type serializer interface {
+	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
+	SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
+
+	// DeserializePartialResult deserializes from bytes to PartialResult.
+	DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64)
+}
+
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
+	serializer
+
 	// AllocPartialResult allocates a specific data structure to store the
 	// partial result, initializes it, and converts it to PartialResult to
 	// return back. The second returned value is the memDelta used to trace
@@ -180,18 +190,6 @@ type AggFunc interface {
 	// partial result and then calculates the final result and append that
 	// final result to the chunk provided.
 	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
-
-	// NewSpillSerializeHelper creates a spillSerializeHelper.
-	NewSpillSerializeHelper() *SpillSerializeHelper
-
-	// SerializeToChunk will serialize meta data of aggregate function into bytes and put them into chunk.
-	SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper)
-
-	// DeserializeToPartialResultForSpill deserializes from bytes to PartialResult.
-	DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error)
-
-	// deserializeForSpill deserialize from bytes to aggregate function.
-	deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error)
 }
 
 type baseAggFunc struct {
@@ -209,6 +207,13 @@ type baseAggFunc struct {
 
 func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	return 0, nil
+}
+
+func (*baseAggFunc) SerializePartialResult(ctx sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
+
+func (*baseAggFunc) DeserializePartialResult(ctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.

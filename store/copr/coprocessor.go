@@ -1114,7 +1114,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 		r := recover()
 		if r != nil {
 			logutil.BgLogger().Error("copIteratorWork meet panic",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack trace"))
 			resp := &copResponse{err: errors.Errorf("%v", r)}
 			// if panic has happened, set checkOOM to false to avoid another panic.

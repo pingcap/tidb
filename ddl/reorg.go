@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"context"
 	"encoding/hex"
 	"fmt"
 	"strconv"
@@ -50,12 +49,9 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
-
-const rowCountEtcdPath = "distAddIndex"
 
 // reorgCtx is for reorganization.
 type reorgCtx struct {
@@ -136,48 +132,6 @@ func (rc *reorgCtx) increaseRowCount(count int64) {
 func (rc *reorgCtx) getRowCount() int64 {
 	row := atomic.LoadInt64(&rc.rowCount)
 	return row
-}
-
-func getAndSetJobRowCnt(ctx context.Context, reorgInfo *reorgInfo, rc *reorgCtx, job *model.Job, client *clientv3.Client) int64 {
-	rowCount := int64(0)
-	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
-		resp, err := client.Get(ctx, path, clientv3.WithPrefix())
-		if err != nil {
-			logutil.BgLogger().Warn("get row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
-			return 0
-		}
-		if len(resp.Kvs) == 0 {
-			return 0
-		}
-		for _, kv := range resp.Kvs {
-			cnt, err := strconv.Atoi(string(kv.Value))
-			if err != nil {
-				logutil.BgLogger().Error("parse row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
-				continue
-			}
-			rowCount += int64(cnt)
-		}
-		job.SetRowCount(rowCount)
-	} else {
-		rowCount = rc.getRowCount()
-		job.SetRowCount(rowCount)
-	}
-	return rowCount
-}
-
-func deleteETCDRowCntStatIfNecessary(ctx context.Context, reorgInfo *reorgInfo, job *model.Job, client *clientv3.Client) {
-	if reorgInfo.Job.ReorgMeta.IsDistReorg && !reorgInfo.mergingTmpIdx {
-		path := fmt.Sprintf("%s/%d", rowCountEtcdPath, job.ID)
-		const retryCnt = 3
-		for i := 0; i < retryCnt; i++ {
-			_, err := client.Delete(ctx, path, clientv3.WithPrefix())
-			if err == nil {
-				return
-			}
-			logutil.BgLogger().Warn("delete row count from ETCD failed", zap.String("category", "ddl"), zap.Error(err))
-		}
-	}
 }
 
 // runReorgJob is used as a portal to do the reorganization work.
@@ -271,14 +225,13 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 			d.removeReorgCtx(job.ID)
 			return dbterror.ErrCancelledDDLJob
 		}
-		rowCount := getAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
+		rowCount := rc.getRowCount()
+		job.SetRowCount(rowCount)
 		if err != nil {
 			logutil.BgLogger().Warn("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount), zap.Error(err))
 		} else {
 			logutil.BgLogger().Info("run reorg job done", zap.String("category", "ddl"), zap.Int64("handled rows", rowCount))
 		}
-
-		deleteETCDRowCntStatIfNecessary(w.ctx, reorgInfo, job, d.etcdCli)
 
 		// Update a job's warnings.
 		w.mergeWarningsIntoJob(job)
@@ -298,7 +251,8 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 		// We return dbterror.ErrWaitReorgTimeout here too, so that outer loop will break.
 		return dbterror.ErrWaitReorgTimeout
 	case <-time.After(waitTimeout):
-		rowCount := getAndSetJobRowCnt(w.ctx, reorgInfo, rc, job, d.etcdCli)
+		rowCount := rc.getRowCount()
+		job.SetRowCount(rowCount)
 		updateBackfillProgress(w, reorgInfo, tblInfo, rowCount)
 
 		// Update a job's warnings.
@@ -493,6 +447,10 @@ type reorgInfo struct {
 	currElement     *meta.Element
 }
 
+func (r *reorgInfo) NewJobContext() *JobContext {
+	return r.d.jobContext(r.Job.ID, r.Job.ReorgMeta)
+}
+
 func (r *reorgInfo) String() string {
 	var isEnabled bool
 	if ingest.LitInitialized {
@@ -565,9 +523,11 @@ func (dc *ddlCtx) buildDescTableScan(ctx *JobContext, startTS uint64, tbl table.
 	builder.SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeepOrder(true).
-		SetConcurrency(1).SetDesc(true)
+		SetConcurrency(1).
+		SetDesc(true).
+		SetResourceGroupTagger(ctx.getResourceGroupTaggerForTopSQL()).
+		SetResourceGroupName(ctx.resourceGroupName)
 
-	builder.Request.ResourceGroupTagger = ctx.getResourceGroupTaggerForTopSQL()
 	builder.Request.NotFillCache = true
 	builder.Request.Priority = kv.PriorityLow
 	builder.RequestSource.RequestSourceInternal = true

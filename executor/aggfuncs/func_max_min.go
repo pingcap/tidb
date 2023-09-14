@@ -15,6 +15,7 @@
 package aggfuncs
 
 import (
+	"cmp"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -300,6 +301,40 @@ func (e *maxMin4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
+func (c *maxMin4Int) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinInt)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinInt(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Int) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Int) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinInt)(pr)
+	success := helper.deserializePartialResult4MaxMinInt(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4IntSliding struct {
 	maxMin4Int
 	windowInfo
@@ -313,7 +348,7 @@ func (e *maxMin4IntSliding) ResetPartialResult(pr PartialResult) {
 func (e *maxMin4IntSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Int.AllocPartialResult()
 	(*partialResult4MaxMinInt)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareInt64(i.(int64), j.(int64))
+		return cmp.Compare(i.(int64), j.(int64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -442,6 +477,40 @@ func (e *maxMin4Uint) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
+func (c *maxMin4Uint) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinUint)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinUint(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Uint) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Uint) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinUint)(pr)
+	success := helper.deserializePartialResult4MaxMinUint(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4UintSliding struct {
 	maxMin4Uint
 	windowInfo
@@ -450,7 +519,7 @@ type maxMin4UintSliding struct {
 func (e *maxMin4UintSliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Uint.AllocPartialResult()
 	(*partialResult4MaxMinUint)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareUint64(i.(uint64), j.(uint64))
+		return cmp.Compare(i.(uint64), j.(uint64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -581,6 +650,40 @@ func (e *maxMin4Float32) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
+func (c *maxMin4Float32) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinFloat32)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinFloat32(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Float32) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Float32) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinFloat32)(pr)
+	success := helper.deserializePartialResult4MaxMinFloat32(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Float32Sliding struct {
 	maxMin4Float32
 	windowInfo
@@ -589,7 +692,7 @@ type maxMin4Float32Sliding struct {
 func (e *maxMin4Float32Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float32.AllocPartialResult()
 	(*partialResult4MaxMinFloat32)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareFloat64(float64(i.(float32)), float64(j.(float32)))
+		return cmp.Compare(float64(i.(float32)), float64(j.(float32)))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -718,6 +821,40 @@ func (e *maxMin4Float64) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
+func (c *maxMin4Float64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinFloat64(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Float64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Float64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinFloat64)(pr)
+	success := helper.deserializePartialResult4MaxMinFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Float64Sliding struct {
 	maxMin4Float64
 	windowInfo
@@ -726,7 +863,7 @@ type maxMin4Float64Sliding struct {
 func (e *maxMin4Float64Sliding) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p, memDelta := e.maxMin4Float64.AllocPartialResult()
 	(*partialResult4MaxMinFloat64)(p).deque = NewDeque(e.isMax, func(i, j interface{}) int {
-		return types.CompareFloat64(i.(float64), j.(float64))
+		return cmp.Compare(i.(float64), j.(float64))
 	})
 	return p, memDelta + DefMaxMinDequeSize
 }
@@ -865,6 +1002,40 @@ func (e *maxMin4Decimal) MergePartialResult(_ sessionctx.Context, src, dst Parti
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (c *maxMin4Decimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinDecimal(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Decimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Decimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinDecimal)(pr)
+	success := helper.deserializePartialResult4MaxMinDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type maxMin4DecimalSliding struct {
@@ -1026,6 +1197,40 @@ func (e *maxMin4String) MergePartialResult(_ sessionctx.Context, src, dst Partia
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (c *maxMin4String) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinString)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinString(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4String) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4String) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinString)(pr)
+	success := helper.deserializePartialResult4MaxMinString(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type maxMin4StringSliding struct {
@@ -1211,6 +1416,40 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return 0, nil
 }
 
+func (c *maxMin4TimeSliding) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinTime)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinTime(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4TimeSliding) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4TimeSliding) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinTime)(pr)
+	success := helper.deserializePartialResult4MaxMinTime(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 var _ SlidingWindowAggFunc = &maxMin4DurationSliding{}
 
 func (e *maxMin4TimeSliding) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -1305,6 +1544,40 @@ func (e *maxMin4Duration) MergePartialResult(_ sessionctx.Context, src, dst Part
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (c *maxMin4Duration) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinDuration)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinDuration(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Duration) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Duration) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinDuration)(pr)
+	success := helper.deserializePartialResult4MaxMinDuration(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type maxMin4DurationSliding struct {
@@ -1452,6 +1725,40 @@ func (e *maxMin4JSON) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
+func (c *maxMin4JSON) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinJSON)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinJSON(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4JSON) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4JSON) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinJSON)(pr)
+	success := helper.deserializePartialResult4MaxMinJSON(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Enum struct {
 	baseMaxMinAggFunc
 }
@@ -1519,6 +1826,40 @@ func (e *maxMin4Enum) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
+func (c *maxMin4Enum) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinEnum)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinEnum(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Enum) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Enum) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinEnum)(pr)
+	success := helper.deserializePartialResult4MaxMinEnum(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Set struct {
 	baseMaxMinAggFunc
 }
@@ -1584,4 +1925,38 @@ func (e *maxMin4Set) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (c *maxMin4Set) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4MaxMinSet)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinSet(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *maxMin4Set) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *maxMin4Set) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4MaxMinSet)(pr)
+	success := helper.deserializePartialResult4MaxMinSet(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }

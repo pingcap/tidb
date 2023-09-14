@@ -47,6 +47,40 @@ type baseAvgDecimal struct {
 	baseAggFunc
 }
 
+func (c *baseAvgDecimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4AvgDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4AvgDecimal(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *baseAvgDecimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *baseAvgDecimal) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4AvgDecimal)(pr)
+	success := helper.deserializePartialResult4AvgDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type partialResult4AvgDecimal struct {
 	sum   types.MyDecimal
 	count int64
@@ -285,6 +319,15 @@ func (e *avgOriginal4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Conte
 	return nil
 }
 
+// TODO implement it
+func (c *avgOriginal4DistinctDecimal) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
+
+// TODO implement it
+func (c *avgOriginal4DistinctDecimal) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
+}
+
 // All the following avg function implementations return the float64 result,
 // which store the partial results in "partialResult4AvgFloat64".
 //
@@ -318,6 +361,40 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 		chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	}
 	return nil
+}
+
+func (c *baseAvgFloat64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4AvgFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4AvgFloat64(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *baseAvgFloat64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *baseAvgFloat64) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4AvgFloat64)(pr)
+	success := helper.deserializePartialResult4AvgFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type avgOriginal4Float64HighPrecision struct {
@@ -459,4 +536,13 @@ func (e *avgOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Conte
 	}
 	chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	return nil
+}
+
+// TODO implement it
+func (c *avgOriginal4DistinctFloat64) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
+
+// TODO implement it
+func (c *avgOriginal4DistinctFloat64) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }

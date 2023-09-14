@@ -41,26 +41,36 @@ type LFU struct {
 
 var testMode = false
 
+// adjustMemCost adjusts the memory cost according to the total memory cost.
+// When the total memory cost is 0, the memory cost is set to half of the total memory.
+func adjustMemCost(totalMemCost int64) (result int64, err error) {
+	if totalMemCost == 0 {
+		memTotal, err := memory.MemTotal()
+		if err != nil {
+			return 0, err
+		}
+		return int64(memTotal / 2), nil
+	}
+	return totalMemCost, nil
+}
+
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
-	if totalMemCost == 0 {
-		if intest.InTest {
-			totalMemCost = 5000000
-		} else {
-			memTotal, err := memory.MemTotal()
-			if err != nil {
-				return nil, err
-			}
-			totalMemCost = int64(memTotal / 2)
-		}
+	cost, err := adjustMemCost(totalMemCost)
+	if err != nil {
+		return nil, err
 	}
-	metrics.CapacityGauge.Set(float64(totalMemCost))
+	if intest.InTest && totalMemCost == 0 {
+		// In test, we set the cost to 5MB to avoid using too many memory in the LFU's CM sketch.
+		cost = 5000000
+	}
+	metrics.CapacityGauge.Set(float64(cost))
 	result := &LFU{}
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(mathutil.Min(totalMemCost/128, 1_000_000), 10), // assume the cost per table stats is 128
-		MaxCost:            totalMemCost,
+		NumCounters:        mathutil.Max(mathutil.Min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
+		MaxCost:            cost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
@@ -169,6 +179,7 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	// why add before again? because the cost will be subtracted in onExit.
 	// in fact, it is after - before
 	s.addCost(after)
+	s.triggerEvict()
 }
 
 func (s *LFU) triggerEvict() {
@@ -211,9 +222,15 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
-	s.cache.UpdateMaxCost(maxCost)
+	cost, err := adjustMemCost(maxCost)
+	if err != nil {
+		logutil.BgLogger().Warn("adjustMemCost failed", zap.Error(err))
+		return
+	}
+	s.cache.UpdateMaxCost(cost)
 	s.triggerEvict()
-	metrics.CapacityGauge.Set(float64(maxCost))
+	metrics.CapacityGauge.Set(float64(cost))
+	metrics.CostGauge.Set(float64(s.Cost()))
 }
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()

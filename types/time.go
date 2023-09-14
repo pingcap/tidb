@@ -25,7 +25,6 @@ import (
 	"strings"
 	gotime "time"
 	"unicode"
-	"unsafe"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/errno"
@@ -36,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/spill"
 	"go.uber.org/zap"
 )
 
@@ -1323,28 +1321,6 @@ type Duration struct {
 	// Fsp is short for Fractional Seconds Precision.
 	// See http://dev.mysql.com/doc/refman/5.7/en/fractional-seconds.html
 	Fsp int
-}
-
-const gotimeDurationLen = int(unsafe.Sizeof(gotime.Duration(0)))
-const fspLen = int(unsafe.Sizeof(Duration{}.Fsp))
-const durationLen = int(unsafe.Sizeof(Duration{}))
-
-// SerializeForSpill serializes Duration to bytes
-func (d *Duration) SerializeForSpill(buf []byte) (int, error) {
-	// TODO
-	return -1, nil
-}
-
-// DeserializeForSpill deserializes Duration to bytes
-func (d *Duration) DeserializeForSpill(buf []byte) (int, error) {
-	if len(buf) < durationLen {
-		return -1, spill.ErrInternal.GenWithStack("Buffer is not large enough")
-	}
-	pos := 0
-	d.Duration = *(*gotime.Duration)(unsafe.Pointer(&buf[pos]))
-	pos += gotimeDurationLen
-	d.Fsp = *(*int)(unsafe.Pointer(&buf[pos]))
-	return durationLen, nil
 }
 
 // MaxMySQLDuration returns Duration with maximum mysql time.

@@ -105,7 +105,7 @@ type regionJob struct {
 	ingestData      common.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
-	metrics         *metric.Metrics
+	metrics         *metric.Common
 
 	retryCount       int
 	waitUntil        time.Time

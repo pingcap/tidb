@@ -36,7 +36,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	}
 	rc.reset()
 	initRC := *rc
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 	require.NoError(t, err)
 
 	require.Equal(t, &initRC, rc)
@@ -91,7 +91,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		propKeysDist: 100,
 	}
 	rc.reset()
-	kvStore, err = NewKeyValueStore(ctx, writer, rc, 2, 2)
+	kvStore, err = NewKeyValueStore(ctx, writer, rc, 2)
 	require.NoError(t, err)
 	err = kvStore.AddKeyValue(k1, v1)
 	require.NoError(t, err)
@@ -136,7 +136,7 @@ func TestKVReadWrite(t *testing.T) {
 		propKeysDist: 2,
 	}
 	rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 	require.NoError(t, err)
 
 	kvCnt := rand.Intn(10) + 10

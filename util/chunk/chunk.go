@@ -43,8 +43,6 @@ type Chunk struct {
 	numVirtualRows int
 	// capacity indicates the max number of rows this chunk can hold.
 	// TODO: replace all usages of capacity to requiredRows and remove this field
-	// todo
-
 	capacity int
 
 	// requiredRows indicates how many rows the parent executor want.

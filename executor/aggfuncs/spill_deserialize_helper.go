@@ -15,117 +15,428 @@
 package aggfuncs
 
 import (
+	"bytes"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/spill"
 )
 
-// This flag means that the length of deserialized data is not fixed
-const varLenFlag = -1
-
-type strSizeType uint16
+const intLen = int64(unsafe.Sizeof(int(0)))
+const boolLen = int64(unsafe.Sizeof(true))
+const uint64Len = int64(unsafe.Sizeof(uint64(0)))
+const int64Len = int64(unsafe.Sizeof(int64(0)))
+const float32Len = int64(unsafe.Sizeof(float32(0)))
+const float64Len = int64(unsafe.Sizeof(float64(0)))
+const timeLen = int64(unsafe.Sizeof(types.Time{}))
+const durationLen = int64(unsafe.Sizeof(time.Duration(0)))
 
 type spillDeserializeHelper struct {
-	buf        []byte
-	bufLen     int
-	typeLen    int
-	readPos    int
-	readPosEnd int
+	column       *chunk.Column
+	readRowIndex int
+	totalRowCnt  int
 }
 
-func newDeserializeHelper(buf []byte, typeLen int) spillDeserializeHelper {
-	readPosEnd := len(buf)
-	if typeLen != varLenFlag {
-		readPosEnd -= typeLen + 1
-	}
-
+func newDeserializeHelper(column *chunk.Column, rowNum int) spillDeserializeHelper {
 	return spillDeserializeHelper{
-		buf:        buf,
-		bufLen:     len(buf),
-		typeLen:    typeLen,
-		readPos:    0,
-		readPosEnd: readPosEnd,
+		column:       column,
+		readRowIndex: 0,
+		totalRowCnt:  rowNum,
 	}
 }
 
-func (d *spillDeserializeHelper) readBool(dst *bool) bool {
-	if d.readPos < d.readPosEnd {
-		*dst = spill.DeserializeBool(d.buf, d.readPos)
-		d.readPos += d.typeLen
+func (s *spillDeserializeHelper) deserializePartialResult4Count(dst *partialResult4Count) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		*dst = spill.DeserializeInt64(bytes, 0)
+		s.readRowIndex++
 		return true
 	}
 	return false
 }
 
-func (d *spillDeserializeHelper) readUint32(dst *uint32) bool {
-	if d.readPos < d.readPosEnd {
-		*dst = spill.DeserializeUint32(d.buf, d.readPos)
-		d.readPos += d.typeLen
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinInt(dst *partialResult4MaxMinInt) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = spill.DeserializeInt64(bytes, 0)
+		dst.isNull = spill.DeserializeBool(bytes, int64Len)
+		s.readRowIndex++
 		return true
 	}
 	return false
 }
 
-func (d *spillDeserializeHelper) readUint64(dst *uint64) bool {
-	if d.readPos < d.readPosEnd {
-		*dst = spill.DeserializeUint64(d.buf, d.readPos)
-		d.readPos += d.typeLen
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinUint(dst *partialResult4MaxMinUint) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = spill.DeserializeUint64(bytes, 0)
+		dst.isNull = spill.DeserializeBool(bytes, uint64Len)
+		s.readRowIndex++
 		return true
 	}
 	return false
 }
 
-func (d *spillDeserializeHelper) readInt64(dst *int64) bool {
-	if d.readPos < d.readPosEnd {
-		*dst = spill.DeserializeInt64(d.buf, d.readPos)
-		d.readPos += d.typeLen
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinDecimal(dst *partialResult4MaxMinDecimal) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.isNull = spill.DeserializeBool(bytes, types.MyDecimalStructSize)
+		s.readRowIndex++
 		return true
 	}
 	return false
 }
 
-func (d *spillDeserializeHelper) readFloat64(dst *float64) bool {
-	if d.readPos < d.readPosEnd {
-		*dst = spill.DeserializeFloat64(d.buf, d.readPos)
-		d.readPos += d.typeLen
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinFloat32(dst *partialResult4MaxMinFloat32) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = spill.DeserializeFloat32(bytes, 0)
+		dst.isNull = spill.DeserializeBool(bytes, float32Len)
+		s.readRowIndex++
 		return true
 	}
 	return false
 }
 
-func (d *spillDeserializeHelper) readTime(dst *types.Time) bool {
-	if d.readPos < d.readPosEnd {
-		coreTime := *(*types.CoreTime)(unsafe.Pointer(&d.buf[d.readPos]))
-		dst.SetCoreTime(coreTime)
-		d.readPos += d.typeLen
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinFloat64(dst *partialResult4MaxMinFloat64) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = spill.DeserializeFloat64(bytes, 0)
+		dst.isNull = spill.DeserializeBool(bytes, float64Len)
+		s.readRowIndex++
 		return true
 	}
 	return false
 }
 
-func (d *spillDeserializeHelper) readMyDecimal(dst *types.MyDecimal) (bool, error) {
-	if d.readPos < d.readPosEnd {
-		readByteNum, err := dst.DeserializeForSpill(d.buf[d.readPos:])
-		if err != nil {
-			return false, err
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinTime(dst *partialResult4MaxMinTime) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = *(*types.Time)(unsafe.Pointer(&bytes[0]))
+		dst.isNull = spill.DeserializeBool(bytes, timeLen)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinDuration(dst *partialResult4MaxMinDuration) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val.Duration = *(*time.Duration)(unsafe.Pointer(&bytes[0]))
+		dst.val.Fsp = spill.DeserializeInt(bytes, durationLen)
+		dst.isNull = spill.DeserializeBool(bytes, durationLen+intLen)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinString(dst *partialResult4MaxMinString) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.isNull = spill.DeserializeBool(bytes, 0)
+		dst.val = string(hack.String(bytes[boolLen:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinJSON(dst *partialResult4MaxMinJSON) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val.TypeCode = bytes[0]
+		dst.isNull = spill.DeserializeBool(bytes, 1)
+		dst.val.Value = make([]byte, len(bytes[1+boolLen:]))
+		copy(dst.val.Value, bytes[1+boolLen:])
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinEnum(dst *partialResult4MaxMinEnum) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val.Value = spill.DeserializeUint64(bytes, 0)
+		dst.isNull = spill.DeserializeBool(bytes, uint64Len)
+		dst.val.Name = string(hack.String(bytes[boolLen+uint64Len:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4MaxMinSet(dst *partialResult4MaxMinSet) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val.Value = spill.DeserializeUint64(bytes, 0)
+		dst.isNull = spill.DeserializeBool(bytes, uint64Len)
+		dst.val.Name = string(hack.String(bytes[boolLen+uint64Len:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4AvgDecimal(dst *partialResult4AvgDecimal) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.sum = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.count = spill.DeserializeInt64(bytes, types.MyDecimalStructSize)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4AvgFloat64(dst *partialResult4AvgFloat64) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.sum = spill.DeserializeFloat64(bytes, 0)
+		dst.count = spill.DeserializeInt64(bytes, float64Len)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4SumDecimal(dst *partialResult4SumDecimal) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[0]))
+		dst.notNullRowCount = spill.DeserializeInt64(bytes, types.MyDecimalStructSize)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4SumFloat64(dst *partialResult4SumFloat64) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		dst.val = spill.DeserializeFloat64(bytes, 0)
+		dst.notNullRowCount = spill.DeserializeInt64(bytes, float64Len)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializeBasePartialResult4GroupConcat(dst *basePartialResult4GroupConcat) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		restoredBytes := s.column.GetBytes(s.readRowIndex)
+		valsBufLen := spill.DeserializeInt64(restoredBytes, 0)
+		dst.valsBuf = bytes.NewBuffer(restoredBytes[int64Len : int64Len+valsBufLen])
+		dst.buffer = bytes.NewBuffer(restoredBytes[int64Len+valsBufLen:])
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4GroupConcat(dst *partialResult4GroupConcat) bool {
+	base := basePartialResult4GroupConcat{}
+	success := s.deserializeBasePartialResult4GroupConcat(&base)
+	dst.valsBuf = base.valsBuf
+	dst.buffer = base.buffer
+	return success
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4BitFunc(dst *partialResult4BitFunc) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		*dst = uint64(spill.DeserializeUint64(bytes, 0))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4JsonArrayagg(dst *partialResult4JsonArrayagg) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		byteNum := int64(len(bytes))
+		readPos := int64(0)
+		for readPos < byteNum {
+			value, readPosTmp := spill.DeserializeInterface(bytes, readPos)
+			readPos = readPosTmp
+			dst.entries = append(dst.entries, value)
 		}
-		d.readPos += readByteNum
-		return true, err
+		s.readRowIndex++
+		return true
 	}
-	return false, nil
+	return false
 }
 
-func (d *spillDeserializeHelper) readDuration(dst *types.Duration) (bool, error) {
-	if d.readPos < d.readPosEnd {
-		readByteNum, err := dst.DeserializeForSpill(d.buf[d.readPos:])
-		if err != nil {
-			return false, err
+func (s *spillDeserializeHelper) deserializePartialResult4JsonObjectAgg(dst *partialResult4JsonObjectAgg) (bool, int64) {
+	memDelta := int64(0)
+	dst.bInMap = 0
+	dst.entries = make(map[string]interface{})
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		byteNum := int64(len(bytes))
+		readPos := int64(0)
+		for readPos < byteNum {
+			keyLen := spill.DeserializeInt64(bytes, readPos)
+			readPos += 8
+			key := string(hack.String(bytes[readPos : readPos+keyLen]))
+			readPos += keyLen
+			realVal, readPosTmp := spill.DeserializeInterface(bytes, readPos)
+			readPos = readPosTmp
+			if _, ok := dst.entries[key]; !ok {
+				memDelta += int64(len(key)) + getValMemDelta(realVal)
+				if len(dst.entries)+1 > (1<<dst.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+					memDelta += (1 << dst.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
+					dst.bInMap++
+				}
+			}
+			dst.entries[key] = realVal
 		}
-		d.readPos += readByteNum
-		return true, nil
+		s.readRowIndex++
+		return true, memDelta
 	}
-	return false, nil
+	return false, memDelta
 }
 
-// TODO if DefRowSize and DefInterfaceSize need to be deserialized?
+func (s *spillDeserializeHelper) deserializeBasePartialResult4FirstRow(dst *basePartialResult4FirstRow, bytes []byte, readPos int64) int64 {
+	dst.isNull = spill.DeserializeBool(bytes, readPos)
+	readPos++
+	dst.gotFirstRow = spill.DeserializeBool(bytes, readPos)
+	readPos++
+	return readPos
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowInt(dst *partialResult4FirstRowInt) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = spill.DeserializeInt64(bytes, readPos)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowFloat32(dst *partialResult4FirstRowFloat32) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = spill.DeserializeFloat32(bytes, readPos)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowFloat64(dst *partialResult4FirstRowFloat64) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = spill.DeserializeFloat64(bytes, readPos)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDecimal(dst *partialResult4FirstRowDecimal) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = *(*types.MyDecimal)(unsafe.Pointer(&bytes[readPos]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowString(dst *partialResult4FirstRowString) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = string(hack.String(bytes[readPos:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowTime(dst *partialResult4FirstRowTime) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val = *(*types.Time)(unsafe.Pointer(&bytes[readPos]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowDuration(dst *partialResult4FirstRowDuration) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.Duration = *(*time.Duration)(unsafe.Pointer(&bytes[readPos]))
+		readPos += durationLen
+		dst.val.Fsp = spill.DeserializeInt(bytes, readPos)
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowJSON(dst *partialResult4FirstRowJSON) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.TypeCode = bytes[readPos]
+		readPos++
+		dst.val.Value = make([]byte, len(bytes[readPos:]))
+		copy(dst.val.Value, bytes[readPos:])
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowEnum(dst *partialResult4FirstRowEnum) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.Value = spill.DeserializeUint64(bytes, readPos)
+		readPos += 8
+		dst.val.Name = string(hack.String(bytes[readPos:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}
+
+func (s *spillDeserializeHelper) deserializePartialResult4FirstRowSet(dst *partialResult4FirstRowSet) bool {
+	if s.readRowIndex < s.totalRowCnt {
+		bytes := s.column.GetBytes(s.readRowIndex)
+		readPos := int64(0)
+		readPos = s.deserializeBasePartialResult4FirstRow(&dst.basePartialResult4FirstRow, bytes, readPos)
+		dst.val.Value = spill.DeserializeUint64(bytes, readPos)
+		readPos += 8
+		dst.val.Name = string(hack.String(bytes[readPos:]))
+		s.readRowIndex++
+		return true
+	}
+	return false
+}

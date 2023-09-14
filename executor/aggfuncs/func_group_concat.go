@@ -173,6 +173,40 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	return memDelta, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
+func (c *groupConcat) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+	pr := (*partialResult4GroupConcat)(partialResult)
+	resBuf := spillHelper.serializePartialResult4GroupConcat(*pr)
+	chk.AppendBytes(c.ordinal, resBuf)
+}
+
+func (c *groupConcat) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	dataCol := src.Column(c.ordinal)
+	totalMemDelta := int64(0)
+	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
+	partialResults := make([]PartialResult, 0, src.NumRows())
+
+	for {
+		pr, memDelta := c.deserializeForSpill(&spillHelper)
+		if pr == nil {
+			break
+		}
+		partialResults = append(partialResults, pr)
+		totalMemDelta += memDelta
+	}
+
+	return partialResults, totalMemDelta
+}
+
+func (c *groupConcat) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64) {
+	pr, memDelta := c.AllocPartialResult()
+	result := (*partialResult4GroupConcat)(pr)
+	success := helper.deserializePartialResult4GroupConcat(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
 func (e *groupConcat) SetTruncated(t *int32) {
 	e.truncated = t
@@ -266,22 +300,12 @@ func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsI
 }
 
 // TODO implement it
-func (e *groupConcatDistinct) NewSpillSerializeHelper() *SpillSerializeHelper {
-	return nil
+func (c *groupConcatDistinct) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
 }
 
 // TODO implement it
-func (e *groupConcatDistinct) SerializeForSpill(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
-}
-
-// TODO implement it
-func (e *groupConcatDistinct) DeserializeToPartialResultForSpill(sctx sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64, error) {
-	return nil, 0, nil
-}
-
-// TODO implement it
-func (e *groupConcatDistinct) deserializeForSpill(helper *spillDeserializeHelper) (PartialResult, int64, error) {
-	return nil, 0, nil
+func (c *groupConcatDistinct) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -628,6 +652,15 @@ func (*groupConcatDistinctOrder) MergePartialResult(sessionctx.Context, PartialR
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
 	return 0, plannercore.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+}
+
+// TODO implement it
+func (c *groupConcatDistinctOrder) SerializePartialResult(_ sessionctx.Context, partialResult PartialResult, chk *chunk.Chunk, spillHelper *SpillSerializeHelper) {
+}
+
+// TODO implement it
+func (c *groupConcatDistinctOrder) DeserializePartialResult(_ sessionctx.Context, src *chunk.Chunk) ([]PartialResult, int64) {
+	return nil, 0
 }
 
 // GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.
