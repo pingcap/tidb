@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -164,12 +163,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-
-	if sessionVars.InRestrictedSQL {
-		return statsHandle.Update(infoSchema)
-	}
-
-	return statsHandle.Update(infoSchema, cache.WithTableStatsByQuery())
+	return statsHandle.Update(infoSchema)
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.

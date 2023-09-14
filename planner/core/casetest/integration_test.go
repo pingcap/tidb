@@ -1230,28 +1230,16 @@ func TestFixControl45132(t *testing.T) {
 	}
 	tk.MustExec(`analyze table t`)
 	// the cost model prefers to use TableScan instead of IndexLookup to avoid double requests.
-	tk.MustQuery(`explain select * from t where a=2`).Check(testkit.Rows(
-		`TableReader_7 128.00 root  data:Selection_6`,
-		`└─Selection_6 128.00 cop[tikv]  eq(test.t.a, 2)`,
-		`  └─TableFullScan_5 12928.00 cop[tikv] table:t keep order:false`))
+	require.True(t, tk.HasPlan(`select * from t where a=2`, `TableFullScan`))
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:99"`)
-	tk.MustQuery(`explain select * from t where a=2`).Check(testkit.Rows(
-		`IndexLookUp_7 128.00 root  `,
-		`├─IndexRangeScan_5(Build) 128.00 cop[tikv] table:t, index:a(a) range:[2,2], keep order:false`,
-		`└─TableRowIDScan_6(Probe) 128.00 cop[tikv] table:t keep order:false`))
+	tk.MustIndexLookup(`select * from t where a=2`) // index lookup
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:500"`)
-	tk.MustQuery(`explain select * from t where a=2`).Check(testkit.Rows(
-		`TableReader_7 128.00 root  data:Selection_6`,
-		`└─Selection_6 128.00 cop[tikv]  eq(test.t.a, 2)`,
-		`  └─TableFullScan_5 12928.00 cop[tikv] table:t keep order:false`))
+	require.True(t, tk.HasPlan(`select * from t where a=2`, `TableFullScan`))
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
-	tk.MustQuery(`explain select * from t where a=2`).Check(testkit.Rows(
-		`TableReader_7 128.00 root  data:Selection_6`,
-		`└─Selection_6 128.00 cop[tikv]  eq(test.t.a, 2)`,
-		`  └─TableFullScan_5 12928.00 cop[tikv] table:t keep order:false`))
+	require.True(t, tk.HasPlan(`select * from t where a=2`, `TableFullScan`))
 }
 
 func TestFixControl44262(t *testing.T) {
