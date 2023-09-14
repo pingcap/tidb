@@ -91,7 +91,6 @@ func TestFrameworkDynamicBasic(t *testing.T) {
 }
 
 func TestFrameworkDynamicHA(t *testing.T) {
-	t.Skip("skip this test because the function is not implemented yet")
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
