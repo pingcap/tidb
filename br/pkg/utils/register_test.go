@@ -116,7 +116,19 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
 
-	require.NoError(t, register.Close(ctx))
+	// debug test
+	err = register.Close(ctx)
+	if err != nil {
+		t.Log(err)
+		list, err = GetImportTasksFrom(ctx, client)
+		t.Log("list task", err)
+		for _, task := range list.Tasks {
+			t.Log(task)
+		}
+		require.NoError(t, err)
+
+	}
+	require.NoError(t, err, list)
 }
 
 func TestTaskRegisterFailedReput(t *testing.T) {
