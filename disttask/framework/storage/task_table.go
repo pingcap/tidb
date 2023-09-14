@@ -625,9 +625,6 @@ func (stm *TaskManager) AddSubTasks(task *proto.Task, subtasks []*proto.Subtask)
 func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error) {
 	retryable := true
 	err := stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		if intest.InTest {
-			time.Sleep(1 * time.Second)
-		}
 		_, err := ExecSQL(stm.ctx, se, "update mysql.tidb_global_task "+
 			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
 			"where id = %? and state = %?",
@@ -656,10 +653,11 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 					retryable = false
 					return errors.New("invalid task state transform, state already changed")
 				}
+			} else {
+				// task state have changed by other admin command
+				retryable = false
+				return errors.New("invalid task state transform, state already changed")
 			}
-			// task state have changed by other admin command
-			retryable = false
-			return errors.New("invalid task state transform, state already changed")
 		}
 
 		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
