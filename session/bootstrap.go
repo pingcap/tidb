@@ -1002,9 +1002,10 @@ var runBootstrapSQLFile = false
 
 func SetRunBootstrapSQLFileInTest(v bool) {
 	if intest.InTest {
-		runBootstrapSQLFile =
+		runBootstrapSQLFile = v
 	}
 }
+
 var (
 	bootstrapVersion = []func(Session, int64){
 		upgradeToVer2,
