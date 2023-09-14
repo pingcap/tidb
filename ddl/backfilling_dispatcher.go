@@ -78,9 +78,6 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 		// Only redact when the task is complete.
 		if len(taskMeta) == 0 && useExtStore {
 			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
-			if err := taskHandle.UpdateTask(gTask.State, nil, dispatcher.RetrySQLTimes); err != nil {
-				logutil.Logger(ctx).Error("failed to UpdateTask", zap.Error(err))
-			}
 		}
 	}()
 
