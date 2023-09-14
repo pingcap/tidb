@@ -206,7 +206,7 @@ func (b *executorBuilder) build(p plannercore.Plan) exec.Executor {
 	case *plannercore.LoadStats:
 		return b.buildLoadStats(v)
 	case *plannercore.LockStats:
-		return b.buildLockTableStats(v)
+		return b.buildLockStats(v)
 	case *plannercore.UnlockStats:
 		return b.buildUnlockStats(v)
 	case *plannercore.IndexAdvise:
@@ -1073,7 +1073,7 @@ func (b *executorBuilder) buildLoadStats(v *plannercore.LoadStats) exec.Executor
 	return e
 }
 
-func (b *executorBuilder) buildLockTableStats(v *plannercore.LockStats) exec.Executor {
+func (b *executorBuilder) buildLockStats(v *plannercore.LockStats) exec.Executor {
 	e := &lockstats.LockExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, v.ID()),
 		Tables:       v.Tables,
