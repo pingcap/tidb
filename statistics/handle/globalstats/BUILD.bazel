@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "globalstats",
+    srcs = [
+        "global_stats.go",
+        "merge_worker.go",
+        "topn.go",
+    ],
+    importpath = "github.com/pingcap/tidb/statistics/handle/globalstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//infoschema",
+        "//parser/ast",
+        "//parser/model",
+        "//sessionctx",
+        "//sessionctx/variable",
+        "//statistics",
+        "//table",
+        "//types",
+        "//util/hack",
+        "//util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "globalstats_test",
+    timeout = "short",
+    srcs = ["topn_bench_test.go"],
+    embed = [":globalstats"],
+    flaky = True,
+    deps = [
+        "//parser/mysql",
+        "//sessionctx/stmtctx",
+        "//statistics",
+        "//types",
+        "//util/chunk",
+        "//util/codec",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tiancaiamao_gp//:gp",
+    ],
+)

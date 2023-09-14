@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -136,7 +137,7 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats := getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.Nil(t, stats.Partitions[handle.TiDBGlobalStats])
+	require.Nil(t, stats.Partitions[globalstats.TiDBGlobalStats])
 
 	// global-stats is existed
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -144,7 +145,7 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats = getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.NotNil(t, stats.Partitions[handle.TiDBGlobalStats])
+	require.NotNil(t, stats.Partitions[globalstats.TiDBGlobalStats])
 }
 
 func TestLoadGlobalStats(t *testing.T) {

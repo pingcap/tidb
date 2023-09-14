@@ -624,7 +624,7 @@ func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, foun
 	if c == nil {
 		return 0, false
 	}
-	idx := c.findTopN(d)
+	idx := c.FindTopN(d)
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
 	}
@@ -634,7 +634,8 @@ func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, foun
 	return c.TopN[idx].Count, true
 }
 
-func (c *TopN) findTopN(d []byte) int {
+// FindTopN finds the index of the given value in the TopN.
+func (c *TopN) FindTopN(d []byte) int {
 	if c == nil {
 		return -1
 	}
@@ -741,7 +742,7 @@ func (c *TopN) RemoveVal(val []byte) {
 	if c == nil {
 		return
 	}
-	pos := c.findTopN(val)
+	pos := c.FindTopN(val)
 	if pos == -1 {
 		return
 	}
@@ -766,7 +767,7 @@ func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
 	if c == nil || c.TopN == nil {
 		return false
 	}
-	idx := c.findTopN(d)
+	idx := c.FindTopN(d)
 	if idx >= 0 {
 		if increase {
 			c.TopN[idx].Count += delta
@@ -795,7 +796,7 @@ func NewTopN(n int) *TopN {
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
 func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram,
 	isIndex bool, killed *uint32) (*TopN, []TopNMeta, []*Histogram, error) {
-	if checkEmptyTopNs(topNs) {
+	if CheckEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
 	partNum := len(topNs)
@@ -803,7 +804,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
 	// The datum is used to find the value in the histogram.
-	datumMap := newDatumMapCache()
+	datumMap := NewDatumMapCache()
 	for i, topN := range topNs {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -826,7 +827,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				if atomic.LoadUint32(killed) == 1 {
 					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
 				}
-				if (j == i && version >= 2) || topNs[j].findTopN(val.Encoded) != -1 {
+				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
 					continue
 				}
 				// Get the encodedVal from the hists[j]
@@ -866,7 +867,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 // The output parameters are the newly generated TopN structure and the remaining numbers.
 // Notice: The n can be 0. So n has no default value, we must explicitly specify this value.
 func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
-	if checkEmptyTopNs(topNs) {
+	if CheckEmptyTopNs(topNs) {
 		return nil, nil
 	}
 	// Different TopN structures may hold the same value, we have to merge them.
@@ -891,7 +892,8 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 	return GetMergedTopNFromSortedSlice(sorted, n)
 }
 
-func checkEmptyTopNs(topNs []*TopN) bool {
+// CheckEmptyTopNs checks whether all TopNs are empty.
+func CheckEmptyTopNs(topNs []*TopN) bool {
 	count := uint64(0)
 	for _, topN := range topNs {
 		count += topN.TotalCount()

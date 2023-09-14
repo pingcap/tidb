@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -180,7 +181,7 @@ func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServ
 		jsonTable := &handle.JSONTable{}
 		err = json.Unmarshal(b, jsonTable)
 		require.NoError(t, err)
-		require.NotNil(t, jsonTable.Partitions[handle.TiDBGlobalStats])
+		require.NotNil(t, jsonTable.Partitions[globalstats.TiDBGlobalStats])
 		require.Len(t, jsonTable.Partitions, expectedLen)
 	}
 	check(false)

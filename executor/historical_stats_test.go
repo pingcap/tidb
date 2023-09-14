@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -343,7 +344,7 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NotNil(t, jsTable)
 	// only has p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
-	require.Nil(t, jsTable.Partitions[handle.TiDBGlobalStats])
+	require.Nil(t, jsTable.Partitions[globalstats.TiDBGlobalStats])
 
 	// change static to dynamic then assert
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -365,7 +366,7 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NotNil(t, jsTable)
 	// has both global and p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
-	require.NotNil(t, jsTable.Partitions[handle.TiDBGlobalStats])
+	require.NotNil(t, jsTable.Partitions[globalstats.TiDBGlobalStats])
 }
 
 func TestDumpHistoricalStatsFallback(t *testing.T) {

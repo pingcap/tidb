@@ -410,6 +410,7 @@ go_test(
         "//sessiontxn/staleread",
         "//statistics",
         "//statistics/handle",
+        "//statistics/handle/globalstats",
         "//store/copr",
         "//store/driver/error",
         "//store/helper",
