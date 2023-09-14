@@ -584,8 +584,8 @@ type Request struct {
 	LimitSize uint64
 	// StoreBusyThreshold is the threshold for the store to return ServerIsBusy
 	StoreBusyThreshold time.Duration
-	// TidbKvReadTimeout is the timeout of kv read request
-	TidbKvReadTimeout uint64
+	// TiKVClientReadTimeout is the timeout of kv read request
+	TiKVClientReadTimeout uint64
 
 	RunawayChecker *resourcegroup.RunawayChecker
 

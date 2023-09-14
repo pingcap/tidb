@@ -310,7 +310,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.Request.ResourceGroupName = sv.ResourceGroupName
 	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
 	builder.Request.RunawayChecker = sv.StmtCtx.RunawayChecker
-	builder.Request.TidbKvReadTimeout = sv.GetTidbKvReadTimeout()
+	builder.Request.TiKVClientReadTimeout = sv.GetTiKVClientReadTimeout()
 	return builder
 }
 
