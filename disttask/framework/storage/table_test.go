@@ -170,9 +170,6 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
-	require.NoError(t, err)
-
 	ts := time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.StartSubtask(1))
