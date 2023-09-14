@@ -12,6 +12,11 @@ aliases:
   sig-approvers-autoid-service: # approvers for auto-id service
     - bb7133
     - tiancaiamao
+  sig-approvers-bindinfo: # approvers for bindinfo module
+    - chrysan
+    - fixdb
+    - winoros
+    - qw4990
   sig-approvers-br: # approvers for br module
     - BornChanger
     - 3pointer
