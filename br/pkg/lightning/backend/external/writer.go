@@ -69,17 +69,17 @@ type WriterSummary struct {
 // OnCloseFunc is the callback function when a writer is closed.
 type OnCloseFunc func(summary *WriterSummary)
 
-// DummyOnCloseFunc is a dummy OnCloseFunc.
-func DummyOnCloseFunc(*WriterSummary) {}
+// dummyOnCloseFunc is a dummy OnCloseFunc.
+func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	memSizeLimit      uint64
-	writeBatchCount   uint64
-	propSizeDist      uint64
-	propKeysDist      uint64
-	onClose           OnCloseFunc
-	dupeDetectEnabled bool
+	memSizeLimit    uint64
+	writeBatchCount uint64
+	propSizeDist    uint64
+	propKeysDist    uint64
+	onClose         OnCloseFunc
+	keyDupeEncoding bool
 
 	bufferPool *membuf.Pool
 }
@@ -91,7 +91,7 @@ func NewWriterBuilder() *WriterBuilder {
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
-		onClose:         DummyOnCloseFunc,
+		onClose:         dummyOnCloseFunc,
 	}
 }
 
@@ -123,6 +123,9 @@ func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 
 // SetOnCloseFunc sets the callback function when a writer is closed.
 func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
+	if onClose == nil {
+		onClose = dummyOnCloseFunc
+	}
 	b.onClose = onClose
 	return b
 }
@@ -133,9 +136,9 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	return b
 }
 
-// EnableDuplicationDetection enables the duplication detection of the writer.
-func (b *WriterBuilder) EnableDuplicationDetection() *WriterBuilder {
-	b.dupeDetectEnabled = true
+// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
+func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
+	b.keyDupeEncoding = val
 	return b
 }
 
@@ -152,7 +155,7 @@ func (b *WriterBuilder) Build(
 	}
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.dupeDetectEnabled {
+	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	ret := &Writer{
