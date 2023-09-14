@@ -96,6 +96,8 @@ const BackfillTaskType = "backfill"
 type backfillDistScheduler struct {
 	*scheduler.BaseScheduler
 	d          *ddl
+	task       *proto.Task
+	taskTable  scheduler.TaskTable
 	backendCtx ingest.BackendCtx
 	jobID      int64
 }
@@ -104,35 +106,38 @@ func newBackfillDistScheduler(ctx context.Context, id string, task *proto.Task, 
 	s := &backfillDistScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable),
 		d:             d,
+		task:          task,
+		taskTable:     taskTable,
 	}
 	s.BaseScheduler.Extension = s
+	return s
+}
 
-	wrapErr := func(err error) scheduler.Scheduler {
-		s.BaseScheduler.Extension = &failedExtension{err: err}
-		return s
-	}
+func (s *backfillDistScheduler) Init(ctx context.Context) error {
+	s.BaseScheduler.Init(ctx)
+	d := s.d
 
 	bgm := &BackfillGlobalMeta{}
-	err := json.Unmarshal(task.Meta, bgm)
+	err := json.Unmarshal(s.task.Meta, bgm)
 	if err != nil {
-		return wrapErr(err)
+		return errors.Trace(err)
 	}
 	job := &bgm.Job
 	_, tbl, err := d.getTableByTxn(d.store, job.SchemaID, job.TableID)
 	if err != nil {
-		return wrapErr(err)
+		return errors.Trace(err)
 	}
 	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
 	if idx == nil {
-		return wrapErr(errors.Trace(errors.New("index info not found")))
+		return errors.Trace(errors.New("index info not found"))
 	}
 	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
-		return wrapErr(errors.Trace(err))
+		return errors.Trace(err)
 	}
 	s.backendCtx = bc
 	s.jobID = job.ID
-	return s
+	return nil
 }
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
@@ -148,13 +153,5 @@ func (s *backfillDistScheduler) Close() {
 	if s.backendCtx != nil {
 		ingest.LitBackCtxMgr.Unregister(s.jobID)
 	}
-}
-
-type failedExtension struct {
-	err error
-}
-
-func (e *failedExtension) GetSubtaskExecutor(_ context.Context, _ *proto.Task, _ *execute.Summary) (
-	execute.SubtaskExecutor, error) {
-	return nil, e.err
+	s.BaseScheduler.Close()
 }

@@ -263,6 +263,11 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		return
 	}
 	scheduler := factory(ctx, m.id, task, m.taskTable)
+	err := scheduler.Init(ctx)
+	if err != nil {
+		m.onError(err)
+		return
+	}
 	defer scheduler.Close()
 	for {
 		select {

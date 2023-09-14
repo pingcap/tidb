@@ -96,6 +96,10 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 	}()
 }
 
+func (s *BaseScheduler) Init(_ context.Context) error {
+	return nil
+}
+
 // Run runs the scheduler task.
 func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	defer func() {
