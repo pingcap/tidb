@@ -3445,7 +3445,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3517,9 +3517,9 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if failToLoadOrParseSQLFile {
+	if intest.InTest && failToLoadOrParseSQLFile {
 		dom.Close()
-		return nil, err
+		return nil, errors.New("Fail to load or parse sql file")
 	}
 	err = dom.InitDistTaskLoop(ctx)
 	if err != nil {
