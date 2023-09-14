@@ -751,6 +751,8 @@ func TestExchangePartitionStates(t *testing.T) {
 			}
 			gotime.Sleep(50 * gotime.Millisecond)
 		}
+		// Sleep 50ms to wait load InforSchema finish, issue #46815.
+		gotime.Sleep(50 * gotime.Millisecond)
 	}
 	waitFor("t", "write only", 4)
 	tk3.MustExec(`BEGIN`)
@@ -848,6 +850,8 @@ func TestAddKeyPartitionStates(t *testing.T) {
 			}
 			gotime.Sleep(10 * gotime.Millisecond)
 		}
+		// Sleep 50ms to wait load InforSchema finish.
+		gotime.Sleep(50 * gotime.Millisecond)
 	}
 	waitFor(4, "delete only")
 	tk3.MustExec(`BEGIN`)
