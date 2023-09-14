@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "errors.go",
         "time.go",
+        "time_zone.go",
     ],
     importpath = "github.com/pingcap/tidb/util/timeutil",
     visibility = ["//visibility:public"],
@@ -24,6 +25,7 @@ go_test(
     srcs = [
         "main_test.go",
         "time_test.go",
+        "time_zone_test.go",
     ],
     embed = [":timeutil"],
     flaky = True,
