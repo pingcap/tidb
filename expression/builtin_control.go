@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -114,14 +115,11 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 }
 
 func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
-	argsNum := len(args)
-	if argsNum == 0 {
-		panic("unexpected length 0 of args")
-	} else if argsNum == 1 { // usually not possible
-		resultFieldType.SetCharset(args[0].GetType().GetCharset())
-		resultFieldType.SetCollate(args[0].GetType().GetCollate())
-		resultFieldType.SetFlag(args[0].GetType().GetFlag())
-	} else if funcName != "case" && argsNum == 2 { // for if,ifnull,lead,lag,casewhen with 2 args.
+	switch funcName {
+	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
+		if len(args) != 2 {
+			panic("unexpected length of args for if/ifnull/lead/lag")
+		}
 		lexp, rexp := args[0], args[1]
 		lhs, rhs := lexp.GetType(), rexp.GetType()
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
@@ -153,7 +151,12 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			resultFieldType.SetCollate(mysql.DefaultCollationName)
 			resultFieldType.SetFlag(0)
 		}
-	} else { // for casewhen with more than 2 args.
+	case ast.Case:
+		if len(args) > 0 {
+			panic("unexpected length 0 of args for casewhen")
+		}
+		fallthrough
+	default:
 		ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
 		if err != nil {
 			return err
@@ -162,7 +165,7 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		resultFieldType.SetCharset(ec.Charset)
 		resultFieldType.SetFlag(0)
 		for i := range args {
-			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
+			if !types.IsNonBinaryStr(args[i].GetType()) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
