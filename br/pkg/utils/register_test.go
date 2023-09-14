@@ -117,8 +117,11 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 	}
 
 	// debug test
+	start := time.Now()
+	t.Log(start)
 	err = register.Close(ctx)
 	if err != nil {
+		t.Log(time.Since(start))
 		t.Log(err)
 		list, err = GetImportTasksFrom(ctx, client)
 		t.Log("list task", err)
