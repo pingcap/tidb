@@ -639,14 +639,14 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
 			if intest.InTest {
 				// TODO: remove it, when OnNextSubtasksBatch returns subtasks, just insert subtasks without updating tidb_global_task.
-				// Currently the bussiness running on distrubuted task framework will update proto.Task in OnNextSubtasksBatch.
+				// Currently the business running on distributed task framework will update proto.Task in OnNextSubtasksBatch.
 				// So when dispatching subtasks, framework needs to update global task and insert subtasks in one Txn.
 				//
 				// In future, it's needed to restrict changes of task in OnNextSubtasksBatch.
 				// If OnNextSubtasksBatch won't update any fields in proto.Task, we can insert subtasks only.
 				//
 				// For now, we update nothing in proto.Task in UT's OnNextSubtasksBatch, so the AffectedRows will be 0. So UT can't fully compatible
-				// with current UpdateGlobalTaskAndAddSubTasks implemation.
+				// with current UpdateGlobalTaskAndAddSubTasks implementation.
 				rs, err := ExecSQL(stm.ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", gTask.ID, prevState)
 				if err != nil {
 					return err
