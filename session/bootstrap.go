@@ -1000,6 +1000,13 @@ var internalSQLTimeout = owner.ManagerSessionTTL + 15
 // whether to run the sql file in bootstrap.
 var runBootstrapSQLFile = false
 
+// DisableRunBootstrapSQLFileInTest only used for test
+func DisableRunBootstrapSQLFileInTest() {
+	if intest.InTest {
+		runBootstrapSQLFile = false
+	}
+}
+
 var (
 	bootstrapVersion = []func(Session, int64){
 		upgradeToVer2,
