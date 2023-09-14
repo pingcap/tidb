@@ -178,7 +178,7 @@ func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ..
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
-	tk.MustHasPlan(sql, "IndexLookUp", args...)
+	tk.MustHavePlan(sql, "IndexLookUp", args...)
 	return tk.MustQuery(sql, args...)
 }
 
@@ -253,13 +253,13 @@ func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) bool {
 	return false
 }
 
-// MustHasPlan checks if the result execution plan contains specific plan.
-func (tk *TestKit) MustHasPlan(sql string, plan string, args ...interface{}) {
+// MustHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustHavePlan(sql string, plan string, args ...interface{}) {
 	tk.require.True(tk.hasPlan(sql, plan, args...), fmt.Sprintf("%s doesn't have plan %s", sql, plan))
 }
 
-// MustNotHasPlan checks if the result execution plan contains specific plan.
-func (tk *TestKit) MustNotHasPlan(sql string, plan string, args ...interface{}) {
+// MustNotHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...interface{}) {
 	tk.require.False(tk.hasPlan(sql, plan, args...), fmt.Sprintf("%s shouldn't have plan %s", sql, plan))
 }
 
