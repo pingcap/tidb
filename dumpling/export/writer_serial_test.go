@@ -230,7 +230,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
