@@ -242,8 +242,8 @@ func GetMaxOverlapping(points []Endpoint) int {
 	return int(maxWeight)
 }
 
-// SortedDataMeta is the meta of sorted data.
-type SortedDataMeta struct {
+// SortedKVMeta is the meta of sorted kv.
+type SortedKVMeta struct {
 	MinKey      []byte   `json:"min_key"`
 	MaxKey      []byte   `json:"max_key"`
 	TotalKVSize uint64   `json:"total_kv_size"`
@@ -251,9 +251,9 @@ type SortedDataMeta struct {
 	StatFiles   []string `json:"stat_files"`
 }
 
-// NewSortedDataMeta creates a SortedDataMeta from a WriterSummary.
-func NewSortedDataMeta(summary *WriterSummary) *SortedDataMeta {
-	meta := &SortedDataMeta{
+// NewSortedKVMeta creates a SortedKVMeta from a WriterSummary.
+func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
+	meta := &SortedKVMeta{
 		MinKey:      summary.Min.Clone(),
 		MaxKey:      summary.Max.Clone(),
 		TotalKVSize: summary.TotalSize,
@@ -267,8 +267,8 @@ func NewSortedDataMeta(summary *WriterSummary) *SortedDataMeta {
 	return meta
 }
 
-// Merge merges the other SortedDataMeta into this one.
-func (m *SortedDataMeta) Merge(other *SortedDataMeta) {
+// Merge merges the other SortedKVMeta into this one.
+func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 	m.MinKey = NotNilMin(m.MinKey, other.MinKey)
 	m.MaxKey = NotNilMax(m.MaxKey, other.MaxKey)
 	m.TotalKVSize += other.TotalKVSize
@@ -277,8 +277,8 @@ func (m *SortedDataMeta) Merge(other *SortedDataMeta) {
 	m.StatFiles = append(m.StatFiles, other.StatFiles...)
 }
 
-// MergeSummary merges the WriterSummary into this SortedDataMeta.
-func (m *SortedDataMeta) MergeSummary(summary *WriterSummary) {
+// MergeSummary merges the WriterSummary into this SortedKVMeta.
+func (m *SortedKVMeta) MergeSummary(summary *WriterSummary) {
 	m.MinKey = NotNilMin(m.MinKey, summary.Min)
 	m.MaxKey = NotNilMax(m.MaxKey, summary.Max)
 	m.TotalKVSize += summary.TotalSize

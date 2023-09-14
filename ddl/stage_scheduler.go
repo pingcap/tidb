@@ -45,8 +45,8 @@ type BackfillSubTaskMeta struct {
 	StartKey        []byte `json:"start_key"`
 	EndKey          []byte `json:"end_key"`
 
-	RangeSplitKeys          [][]byte `json:"range_split_keys"`
-	external.SortedDataMeta `json:",inline"`
+	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+	external.SortedKVMeta `json:",inline"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.

@@ -131,7 +131,8 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		IndexEngine:      indexEngine,
 		Progress:         asyncloaddata.NewProgress(false),
 		Checksum:         &verification.KVChecksum{},
-		SortedIndexMetas: make(map[int64]*external.SortedDataMeta),
+		SortedDataMeta:   &external.SortedKVMeta{},
+		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 

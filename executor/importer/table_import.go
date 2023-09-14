@@ -147,6 +147,29 @@ func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error
 	return kvStore, nil
 }
 
+// GetRegionSplitSizeKeys gets the region split size and keys from PD.
+func GetRegionSplitSizeKeys(ctx context.Context) (int64, int64, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	tlsOpt := tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer pdCli.Close()
+	return local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+}
+
 // NewTableImporter creates a new table importer.
 func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)

@@ -30,12 +30,18 @@ import (
 
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
 // the initial step is StepInit(-1)
-// steps are processed in the following order: StepInit -> StepImport -> StepPostProcess
+// steps are processed in the following order:
+// - local sort: StepInit -> StepImport -> StepPostProcess -> StepDone
+// - global sort: StepInit -> StepEncodeAndSort -> StepWriteAndIngest -> StepDone
 const (
 	// StepImport we sort source data and ingest it into TiKV in this step.
 	StepImport int64 = 1
 	// StepPostProcess we verify checksum and add index in this step.
 	StepPostProcess int64 = 2
+	// StepEncodeAndSort encode source data and write sorted kv into global storage.
+	StepEncodeAndSort int64 = 3
+	// StepWriteAndIngest write sorted kv into TiKV and ingest it.
+	StepWriteAndIngest int64 = 4
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -71,9 +77,16 @@ type ImportStepMeta struct {
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
 
-	SortedDataMeta *external.SortedDataMeta
+	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedDataMeta
+	SortedIndexMetas map[int64]*external.SortedKVMeta
+}
+
+// WriteIngestStepMeta is the meta of write and ingest step.
+// only used when global sort is enabled.
+type WriteIngestStepMeta struct {
+	external.SortedKVMeta `json:",inline"`
+	RangeSplitKeys        [][]byte `json:"range_split_keys"`
 }
 
 // PostProcessStepMeta is the meta of post process step.
@@ -96,18 +109,14 @@ type SharedVars struct {
 	mu       sync.Mutex
 	Checksum *verification.KVChecksum
 
-	SortedDataMeta *external.SortedDataMeta
+	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
-	SortedIndexMetas map[int64]*external.SortedDataMeta
+	SortedIndexMetas map[int64]*external.SortedKVMeta
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
-	if sv.SortedDataMeta == nil {
-		sv.SortedDataMeta = external.NewSortedDataMeta(summary)
-		return
-	}
 	sv.SortedDataMeta.MergeSummary(summary)
 }
 
@@ -116,7 +125,7 @@ func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterS
 	defer sv.mu.Unlock()
 	meta, ok := sv.SortedIndexMetas[indexID]
 	if !ok {
-		meta = external.NewSortedDataMeta(summary)
+		meta = external.NewSortedKVMeta(summary)
 		sv.SortedIndexMetas[indexID] = meta
 		return
 	}

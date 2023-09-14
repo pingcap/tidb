@@ -309,7 +309,7 @@ func generateMergeSortPlan(
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
 		m := &BackfillSubTaskMeta{
-			SortedDataMeta: external.SortedDataMeta{
+			SortedKVMeta: external.SortedKVMeta{
 				MinKey:      startKey,
 				MaxKey:      endKey,
 				DataFiles:   dataFiles,
