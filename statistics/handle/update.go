@@ -424,10 +424,10 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
 func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
-	statsVer := uint64(0)
+	statsVersion := uint64(0)
 	defer func() {
-		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(physicalTableID, statsVer, StatsMetaHistorySourceFlushStats)
+		if err == nil && statsVersion != 0 {
+			h.recordHistoricalStatsMeta(physicalTableID, statsVersion, StatsMetaHistorySourceFlushStats)
 		}
 	}()
 	if delta.Count == 0 {
@@ -449,7 +449,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	statsVer = txn.StartTS()
+	statsVersion = txn.StartTS()
 
 	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
 	// Check if the table and its partitions are locked.
@@ -477,13 +477,14 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		if _, ok := lockedTables[physicalTableID]; ok {
 			isPartitionLocked = true
 		}
-		if err = updateStatsMeta(ctx, exec, statsVer, delta,
-			physicalTableID, isTableLocked || isPartitionLocked); err != nil {
+		tableOrPartitionLocked := isTableLocked || isPartitionLocked
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
+			physicalTableID, tableOrPartitionLocked); err != nil {
 			return
 		}
 		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 		// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-		if err = updateStatsMeta(ctx, exec, statsVer, delta, tableID, isTableLocked); err != nil {
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
 			return
 		}
 		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -494,7 +495,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		if _, ok := lockedTables[physicalTableID]; ok {
 			isTableLocked = true
 		}
-		if err = updateStatsMeta(ctx, exec, statsVer, delta,
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
 			physicalTableID, isTableLocked); err != nil {
 			return
 		}
