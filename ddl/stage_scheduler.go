@@ -52,9 +52,9 @@ type BackfillSubTaskMeta struct {
 	TotalKVSize    uint64   `json:"total_kv_size"`
 }
 
-// NewBackfillSchedulerHandle creates a new backfill scheduler.
-func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
-	stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+// NewBackfillSubtaskExecutor creates a new backfill subtask executor.
+func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
+	bc ingest.BackendCtx, stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -73,23 +73,18 @@ func NewBackfillSchedulerHandle(ctx context.Context, taskMeta []byte, d *ddl,
 		return nil, errors.New("index info not found")
 	}
 
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, jobMeta.ID, d.etcdCli, jobMeta.ReorgMeta.ResourceGroupName)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	switch stage {
 	case proto.StepInit:
 		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexStage(
+		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case proto.StepOne:
 		if len(bgm.CloudStorageURI) > 0 {
-			return newMergeSortStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+			return newCloudImportExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
-		return newIngestIndexStage(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
+		return newImportFromLocalStepExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
@@ -100,23 +95,66 @@ const BackfillTaskType = "backfill"
 
 type backfillDistScheduler struct {
 	*scheduler.BaseScheduler
-	d *ddl
+	d          *ddl
+	task       *proto.Task
+	taskTable  scheduler.TaskTable
+	backendCtx ingest.BackendCtx
+	jobID      int64
 }
 
-func newBackfillDistScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, d *ddl) scheduler.Scheduler {
+func newBackfillDistScheduler(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable, d *ddl) scheduler.Scheduler {
 	s := &backfillDistScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable),
 		d:             d,
+		task:          task,
+		taskTable:     taskTable,
 	}
 	s.BaseScheduler.Extension = s
 	return s
 }
 
+func (s *backfillDistScheduler) Init(ctx context.Context) error {
+	err := s.BaseScheduler.Init(ctx)
+	if err != nil {
+		return err
+	}
+	d := s.d
+
+	bgm := &BackfillGlobalMeta{}
+	err = json.Unmarshal(s.task.Meta, bgm)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	job := &bgm.Job
+	_, tbl, err := d.getTableByTxn(d.store, job.SchemaID, job.TableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
+	if idx == nil {
+		return errors.Trace(errors.New("index info not found"))
+	}
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	s.backendCtx = bc
+	s.jobID = job.ID
+	return nil
+}
+
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
 	case proto.StepInit, proto.StepOne:
-		return NewBackfillSchedulerHandle(ctx, task.Meta, s.d, task.Step, summary)
+		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}
+}
+
+func (s *backfillDistScheduler) Close() {
+	if s.backendCtx != nil {
+		ingest.LitBackCtxMgr.Unregister(s.jobID)
+	}
+	s.BaseScheduler.Close()
 }
