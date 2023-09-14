@@ -1360,6 +1360,28 @@ func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	require.Equal(t, DefTiFlashReplicaRead, val)
 }
 
+func TestSetEnableTiFlashPipeline(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	enablePipeline := GetSysVar(TiDBEnableTiFlashPipelineMode)
+	// Check default value
+	require.Equal(t, "ON", enablePipeline.Value)
+
+	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableTiFlashPipelineMode, "OFF")
+	require.NoError(t, err)
+	val, err := mock.GetGlobalSysVar(TiDBEnableTiFlashPipelineMode)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", val)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableTiFlashPipelineMode, "ON")
+	require.NoError(t, err)
+	val, err = mock.GetGlobalSysVar(TiDBEnableTiFlashPipelineMode)
+	require.NoError(t, err)
+	require.Equal(t, "ON", val)
+}
+
 func TestSetTiDBCloudStorageURI(t *testing.T) {
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
@@ -1401,9 +1423,16 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
 	require.NoError(t, err1)
 	require.True(t, strings.HasPrefix(val, "s3://tiflow-test/"))
-	require.Contains(t, val, "access-key=redacted")
-	require.Contains(t, val, "secret-access-key=redacted")
-	require.Contains(t, val, "session-token=redacted")
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
 	require.Equal(t, s3URI, CloudStorageURI.Load())
+
+	// Set to empty, should return no error
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "")
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Len(t, val, 0)
 	cancel()
 }

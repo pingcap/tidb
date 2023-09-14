@@ -80,6 +80,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, task4, 1)
 	require.Equal(t, task, task4[0])
+	require.GreaterOrEqual(t, task4[0].StateUpdateTime, task.StateUpdateTime)
 
 	prevState := task.State
 	task.State = proto.TaskStateRunning
@@ -90,11 +91,12 @@ func TestGlobalTaskTable(t *testing.T) {
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
-	require.Equal(t, task, task5[0])
+	require.Equal(t, task.State, task5[0].State)
 
 	task6, err := gm.GetGlobalTaskByKey("key1")
 	require.NoError(t, err)
-	require.Equal(t, task, task6)
+	require.Len(t, task5, 1)
+	require.Equal(t, task.State, task6.State)
 
 	// test cannot insert task with dup key
 	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
@@ -169,9 +171,6 @@ func TestSubTaskTable(t *testing.T) {
 	ok, err := sm.HasSubtasksInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.True(t, ok)
-
-	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
-	require.NoError(t, err)
 
 	ts := time.Now()
 	time.Sleep(time.Second)
@@ -445,4 +444,80 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.Equal(t, map[string]bool{
 		":4001": true,
 	}, nodes)
+}
+
+func TestSubtaskHistoryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	sm := storage.NewTaskManager(context.Background(), pool)
+
+	storage.SetTaskManager(sm)
+	sm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+
+	const (
+		taskID       = 1
+		taskID2      = 2
+		subTask1     = 1
+		subTask2     = 2
+		subTask3     = 3
+		subTask4     = 4 // taskID2
+		tidb1        = "tidb1"
+		tidb2        = "tidb2"
+		tidb3        = "tidb3"
+		meta         = "test"
+		finishedMeta = "finished"
+	)
+
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.FinishSubtask(subTask1, []byte(finishedMeta)))
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb2, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask2, proto.TaskStateCanceled, nil))
+	require.NoError(t, sm.AddNewSubTask(taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask3, proto.TaskStateFailed, nil))
+
+	subTasks, err := storage.GetSubtasksByTaskIDForTest(sm, taskID)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
+	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 0, historySubTasksCnt)
+	subTasks, err = sm.GetSubtasksForImportInto(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
+
+	// test TransferSubTasks2History
+	require.NoError(t, sm.TransferSubTasks2History(taskID))
+
+	subTasks, err = storage.GetSubtasksByTaskIDForTest(sm, taskID)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 0)
+	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 3, historySubTasksCnt)
+	subTasks, err = sm.GetSubtasksForImportInto(taskID, proto.StepInit)
+	require.NoError(t, err)
+	require.Len(t, subTasks, 3)
+
+	// test GC
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
+	}()
+	time.Sleep(2 * time.Second)
+
+	require.NoError(t, sm.AddNewSubTask(taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, false))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask4, proto.TaskStateFailed, nil))
+	require.NoError(t, sm.TransferSubTasks2History(taskID2))
+
+	require.NoError(t, sm.GC())
+
+	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
+	require.NoError(t, err)
+	require.Equal(t, 1, historySubTasksCnt)
 }

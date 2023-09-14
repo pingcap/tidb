@@ -416,11 +416,6 @@ const (
 	// TiFlashQuerySpillRatio is the threshold that TiFlash will trigger auto spill when the memory usage is above this percentage
 	TiFlashQuerySpillRatio = "tiflash_query_spill_ratio"
 
-	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `true`, means never use pipeline model in tiflash.
-	// Value set to `true` means try to execute query with pipeline model in tiflash.
-	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
-
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -1101,6 +1096,10 @@ const (
 	TiDBServiceScope = "tidb_service_scope"
 	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
 	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
+	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// Default value is `true`, means never use pipeline model in tiflash.
+	// Value set to `true` means try to execute query with pipeline model in tiflash.
+	TiDBEnableTiFlashPipelineMode = "tiflash_enable_pipeline_model"
 )
 
 // TiDB intentional limits
@@ -1504,6 +1503,7 @@ var (
 	EnableResourceControl     = atomic.NewBool(false)
 	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	TiFlashEnablePipelineMode = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
 	ServiceScope              = atomic.NewString("")
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
@@ -1530,8 +1530,6 @@ var (
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
-	// RedactCloudStorageURI redacts the cloud storage URI.
-	RedactCloudStorageURI func(uri string) (string, error)
 	// ValidateCloudStorageURI validates the cloud storage URI.
 	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 )

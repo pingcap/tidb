@@ -35,6 +35,82 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBindingInListEffect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+
+	// binding created with `in (?)` can work for `in (?,?,?)`
+	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`create binding for select a from t where a in (1) using select a from t where a in (1)`)
+	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1, 2)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	// binding created with `in (?,?,?)` can work for `in (?)`
+	tk.MustQuery(`select b from t where b in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`create binding for select b from t where b in (1,2,3) using select b from t where b in (1,2,3)`)
+	tk.MustQuery(`select b from t where b in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	// bindings with multiple in-lists can take effect
+	tk.MustQuery(`select * from t where a in (1) and b in (1) and c in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`create binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3) using
+select * from t where a in (1,2,3) and b in (1,2) and c in (1)`)
+	tk.MustQuery(`select * from t where a in (1) and b in (1) and c in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a in (1) and b in (1,2) and c in (1,2,3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a in (1,2,3) and b in (1,2) and c in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
+func TestBindingInListOperation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+
+	// only 1 binding will be left
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
+	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1)`)
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1,2)`)
+	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1,2)`)
+	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+
+	// create and drop
+	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1,2,3)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1,2,3,4,5,6,7,8,9,0,11,12)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+
+	// create and set status
+	tk.MustExec(`create global binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
+	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
+	tk.MustExec(`set binding disabled for select * from t where a in(1)`)
+	require.Equal(t, "disabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
+	tk.MustExec(`set binding enabled for select * from t where a in(1,2,3,4,5)`)
+	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
+}
+
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

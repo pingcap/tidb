@@ -41,7 +41,7 @@ func TestLFUPutGetDel(t *testing.T) {
 	lfu.Put(mockTableID, mockTable)
 	lfu.wait()
 	lfu.Del(mockTableID)
-	v, ok := lfu.Get(mockTableID, false)
+	v, ok := lfu.Get(mockTableID)
 	require.False(t, ok)
 	require.Nil(t, v)
 	lfu.wait()
@@ -91,7 +91,7 @@ func TestLFUPutTooBig(t *testing.T) {
 	mockTable := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 	// put mockTable, the index should be evicted but the table still exists in the list.
 	lfu.Put(int64(1), mockTable)
-	_, ok := lfu.Get(int64(1), false)
+	_, ok := lfu.Get(int64(1))
 	require.True(t, ok)
 	lfu.wait()
 	require.Equal(t, uint64(lfu.Cost()), lfu.metrics().CostAdded()-lfu.metrics().CostEvicted())
@@ -136,7 +136,7 @@ func TestLFUCachePutGetWithManyConcurrency(t *testing.T) {
 		}(i)
 		go func(i int) {
 			defer wg.Done()
-			lfu.Get(int64(i), true)
+			lfu.Get(int64(i))
 		}(i)
 	}
 	wg.Wait()
@@ -167,7 +167,7 @@ func TestLFUCachePutGetWithManyConcurrency2(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for n := 0; n < 1000; n++ {
-				lfu.Get(int64(n), true)
+				lfu.Get(int64(n))
 			}
 		}()
 	}
@@ -203,7 +203,7 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 			defer wg.Done()
 			for c := 0; c < 1000; c++ {
 				for n := 0; n < 50; n++ {
-					tbl, ok := lfu.Get(int64(n), true)
+					tbl, ok := lfu.Get(int64(n))
 					require.True(t, ok)
 					checkTable(t, tbl)
 				}
@@ -212,7 +212,7 @@ func TestLFUCachePutGetWithManyConcurrencyAndSmallConcurrency(t *testing.T) {
 	}
 	wg.Wait()
 	lfu.wait()
-	v, ok := lfu.Get(rand.Int63n(50), false)
+	v, ok := lfu.Get(rand.Int63n(50))
 	require.True(t, ok)
 	for _, c := range v.Columns {
 		require.Equal(t, c.GetEvictedStatus(), statistics.AllEvicted)
@@ -262,7 +262,7 @@ func TestLFUReject(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	require.Equal(t, int64(0), lfu.Cost())
 	require.Len(t, lfu.Values(), 2)
-	v, ok := lfu.Get(2, false)
+	v, ok := lfu.Get(2)
 	require.True(t, ok)
 	for _, c := range v.Columns {
 		require.Equal(t, statistics.AllEvicted, c.GetEvictedStatus())
