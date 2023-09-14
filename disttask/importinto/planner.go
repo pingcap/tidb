@@ -90,10 +90,6 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 	// we only generate needed plans for the next step.
 	switch planCtx.CurrTaskStep {
 	case proto.StepInit:
-		step := StepImport
-		if p.Plan.CloudStorageURI != "" {
-			step = StepEncodeAndSort
-		}
 		importSpecs, err := generateImportSpecs(planCtx.Ctx, p)
 		if err != nil {
 			return nil, err
@@ -110,7 +106,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 						},
 					},
 				},
-				Step: step,
+				Step: planCtx.NextTaskStep,
 			})
 			inputLinks = append(inputLinks, planner.LinkSpec{
 				ProcessorID: i,
@@ -133,7 +129,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 						},
 					},
 				},
-				Step: StepWriteAndIngest,
+				Step: planCtx.NextTaskStep,
 			})
 			inputLinks = append(inputLinks, planner.LinkSpec{
 				ProcessorID: i,
@@ -153,7 +149,7 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 				Schema: p.Plan.DBName,
 				Table:  p.Plan.TableInfo.Name.L,
 			},
-			Step: StepPostProcess,
+			Step: planCtx.NextTaskStep,
 		})
 	}
 

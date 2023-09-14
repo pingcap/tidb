@@ -281,6 +281,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHan
 		Ctx:                  ctx,
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		CurrTaskStep:         gTask.Step,
+		NextTaskStep:         nextStep,
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
@@ -361,9 +362,9 @@ func (dsp *ImportDispatcherExt) GetNextStep(task *proto.Task) int64 {
 	switch task.Step {
 	case proto.StepInit:
 		if dsp.globalSort {
-			return StepImport
+			return StepEncodeAndSort
 		}
-		return StepEncodeAndSort
+		return StepImport
 	case StepEncodeAndSort:
 		return StepWriteAndIngest
 	case StepImport, StepWriteAndIngest:
