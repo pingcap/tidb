@@ -618,6 +618,11 @@ func TestSessionAlias(t *testing.T) {
 	tk.MustExec("set @@tidb_session_alias='alias123'")
 	tk.MustQuery("show warnings").Check(testkit.Rows())
 	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows("alias123"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	// chinese value
+	tk.MustExec("set @@tidb_session_alias='中文'")
+	tk.MustQuery("select @@tidb_session_alias").Check(testkit.Rows("中文"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 	// set a long value
 	val := "0123456789012345678901234567890123456789012345678901234567890123456789"
 	tk.MustExec("set @@tidb_session_alias=?", val)

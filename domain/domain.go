@@ -995,6 +995,7 @@ func (do *Domain) Close() {
 	}
 	ttlJobManager := do.ttlJobManager.Load()
 	if ttlJobManager != nil {
+		logutil.BgLogger().Info("stopping ttlJobManager")
 		ttlJobManager.Stop()
 		err := ttlJobManager.WaitStopped(context.Background(), func() time.Duration {
 			if intest.InTest {
@@ -1004,6 +1005,8 @@ func (do *Domain) Close() {
 		}())
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("ttlJobManager exited.")
 		}
 	}
 	do.releaseServerID(context.Background())
@@ -2915,17 +2918,9 @@ func (do *Domain) serverIDKeeper() {
 
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
-	do.wg.Run(func() {
-		defer func() {
-			logutil.BgLogger().Info("ttlJobManager exited.")
-		}()
-
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
-		do.ttlJobManager.Store(ttlJobManager)
-		ttlJobManager.Start()
-
-		<-do.exit
-	}, "ttlJobManager")
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	do.ttlJobManager.Store(ttlJobManager)
+	ttlJobManager.Start()
 }
 
 // TTLJobManager returns the ttl job manager on this domain

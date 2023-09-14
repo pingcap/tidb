@@ -15,13 +15,17 @@
 package test
 
 import (
+	"context"
 	"flag"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -58,4 +62,25 @@ func TestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
+}
+
+func exec(se session.Session, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	ctx := context.Background()
+	if len(args) == 0 {
+		rs, err := se.Execute(ctx, sql)
+		if err == nil && len(rs) > 0 {
+			return rs[0], nil
+		}
+		return nil, err
+	}
+	stmtID, _, _, err := se.PrepareStmt(sql)
+	if err != nil {
+		return nil, err
+	}
+	params := expression.Args2Expressions4Test(args...)
+	rs, err := se.ExecutePreparedStmt(ctx, stmtID, params)
+	if err != nil {
+		return nil, err
+	}
+	return rs, nil
 }
