@@ -471,12 +471,9 @@ func NewWriteExternalStoreOperator(
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			builder := external.NewWriterBuilder().
-				SetOnCloseFunc(onClose)
-			if index.Meta().Unique {
-				builder = builder.EnableDuplicationDetection()
-			}
+				SetOnCloseFunc(onClose).
+				SetKeyDuplicationEncoding(index.Meta().Unique)
 			writerID := uuid.New().String()
-
 			prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 			writer := builder.Build(store, prefix, writerID)
 

@@ -211,10 +211,15 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 
 func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
 	err := scheduler.RunSubtask(ctx, subtask)
+	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
+		if val.(bool) {
+			err = context.Canceled
+		}
+	})
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
 		} else {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
@@ -256,6 +261,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 			time.Sleep(20 * time.Second)
 		}
 	})
+
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(errors.New("MockExecutorRunErr"))
@@ -283,6 +289,11 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 			s.onError(err)
 		}
 	}
+	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
+		if val.(bool) {
+			s.onError(context.Canceled)
+		}
+	})
 	if err := s.getError(); err != nil {
 		if errors.Cause(err) == context.Canceled {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
@@ -393,7 +404,8 @@ func (s *BaseScheduler) onError(err error) {
 	if err == nil {
 		return
 	}
-
+	err = errors.WithStack(err)
+	logutil.Logger(s.logCtx).Error("onError", zap.Error(err))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
