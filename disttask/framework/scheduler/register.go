@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 )
 
@@ -35,7 +36,7 @@ var (
 	taskSchedulerFactories = make(map[string]schedulerFactoryFn)
 )
 
-type schedulerFactoryFn func(ctx context.Context, id string, taskID int64, taskTable TaskTable) Scheduler
+type schedulerFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler
 
 // RegisterTaskType registers the task type.
 func RegisterTaskType(taskType string, factory schedulerFactoryFn, opts ...TaskTypeOption) {
