@@ -61,73 +61,73 @@ func maxlen(lhsFlen, rhsFlen int) int {
 	return mathutil.Max(lhsFlen, rhsFlen)
 }
 
-func fixFlenFromArgs(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
-	maxArgFlen := 0
-	for i := range argTps {
-		unsignedFlag := mysql.HasUnsignedFlag(argTps[i].GetFlag())
-		flagLen := 0
-		if !unsignedFlag {
-			flagLen = 1
+func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+	if evalType == types.ETDecimal || evalType == types.ETInt {
+		maxArgFlen := 0
+		for i := range argTps {
+			unsignedFlag := mysql.HasUnsignedFlag(argTps[i].GetFlag())
+			flagLen := 0
+			if !unsignedFlag {
+				flagLen = 1
+			}
+			flen := argTps[i].GetFlen() - flagLen
+			if argTps[i].GetDecimal() != types.UnspecifiedLength {
+				flen -= argTps[i].GetDecimal()
+			}
+			maxArgFlen = maxlen(maxArgFlen, flen)
 		}
-		flen := argTps[i].GetFlen() - flagLen
-		if argTps[i].GetDecimal() != types.UnspecifiedLength {
-			flen -= argTps[i].GetDecimal()
+		resultFlen := maxArgFlen + resultFieldType.GetDecimal() + 1 // account for -1 len fields
+		resultFieldType.SetFlenUnderLimit(resultFlen)
+	} else if evalType == types.ETString {
+		maxLen := 0
+		for i := range argTps {
+			argFlen := argTps[i].GetFlen()
+			if argFlen == types.UnspecifiedLength {
+				return
+			}
+			maxLen = maxlen(argFlen, maxLen)
 		}
-		maxArgFlen = maxlen(maxArgFlen, flen)
-	}
-	resultFlen := maxArgFlen + resultFieldType.GetDecimal() + 1 // account for -1 len fields
-	resultFieldType.SetFlenUnderLimit(resultFlen)
-}
-
-func setDecimalFromArgs(resultFieldType *types.FieldType, argTps ...*types.FieldType) {
-	maxDecimal := 0
-	for i := range argTps {
-		if argTps[i].GetDecimal() == types.UnspecifiedLength {
-			resultFieldType.SetDecimal(types.UnspecifiedLength)
-			return
-		}
-		maxDecimal = mathutil.Max(argTps[i].GetDecimal(), maxDecimal)
-	}
-	resultFieldType.SetDecimalUnderLimit(maxDecimal)
-}
-
-// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
-func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldType, error) {
-	lhs, rhs := lexp.GetType(), rexp.GetType()
-	resultFieldType := &types.FieldType{}
-	if lhs.GetType() == mysql.TypeNull {
-		*resultFieldType = *rhs
-		// If any of arg is NULL, result type need unset NotNullFlag.
-		tempFlag := resultFieldType.GetFlag()
-		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
-		resultFieldType.SetFlag(tempFlag)
-		// If both arguments are NULL, make resulting type BINARY(0).
-		if rhs.GetType() == mysql.TypeNull {
-			resultFieldType.SetType(mysql.TypeString)
-			resultFieldType.SetFlen(0)
-			resultFieldType.SetDecimal(0)
-			types.SetBinChsClnFlag(resultFieldType)
-		}
-	} else if rhs.GetType() == mysql.TypeNull {
-		*resultFieldType = *lhs
-		tempFlag := resultFieldType.GetFlag()
-		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
-		resultFieldType.SetFlag(tempFlag)
+		resultFieldType.SetFlen(maxLen)
 	} else {
-		resultFieldType = types.AggFieldType([]*types.FieldType{lhs, rhs})
-		var tempFlag uint
-		evalType := types.AggregateEvalType([]*types.FieldType{lhs, rhs}, &tempFlag)
-		resultFieldType.SetFlag(tempFlag)
-		if evalType == types.ETInt {
-			resultFieldType.SetDecimal(0)
-		} else {
-			setDecimalFromArgs(resultFieldType, lhs, rhs)
+		maxLen := 0
+		for i := range argTps {
+			maxLen = maxlen(argTps[i].GetFlen(), maxLen)
 		}
+		resultFieldType.SetFlen(maxLen)
+	}
+}
 
+func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+	if evalType == types.ETInt {
+		resultFieldType.SetDecimal(0)
+	} else {
+		maxDecimal := 0
+		for i := range argTps {
+			if argTps[i].GetDecimal() == types.UnspecifiedLength {
+				resultFieldType.SetDecimal(types.UnspecifiedLength)
+				return
+			}
+			maxDecimal = mathutil.Max(argTps[i].GetDecimal(), maxDecimal)
+		}
+		resultFieldType.SetDecimalUnderLimit(maxDecimal)
+	}
+}
+
+func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
+	argsNum := len(args)
+	if argsNum == 0 {
+		panic("unexpected length 0 of args")
+	} else if argsNum == 1 { // usually not possible
+		resultFieldType.SetCharset(args[0].GetType().GetCharset())
+		resultFieldType.SetCollate(args[0].GetType().GetCollate())
+		resultFieldType.SetFlag(args[0].GetType().GetFlag())
+	} else if argsNum == 2 { // for if,ifnull,lead,lag,casewhen with 2 args.
+		lexp, rexp := args[0], args[1]
+		lhs, rhs := lexp.GetType(), rexp.GetType()
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			resultFieldType.SetCollate(ec.Collation)
 			resultFieldType.SetCharset(ec.Charset)
@@ -138,7 +138,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			resultFieldType.SetCollate(ec.Collation)
 			resultFieldType.SetCharset(ec.Charset)
@@ -153,17 +153,68 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			resultFieldType.SetCollate(mysql.DefaultCollationName)
 			resultFieldType.SetFlag(0)
 		}
-		if evalType == types.ETDecimal || evalType == types.ETInt {
-			fixFlenFromArgs(resultFieldType, lhs, rhs)
-		} else if evalType == types.ETString {
-			lhsLen, rhsLen := lhs.GetFlen(), rhs.GetFlen()
-			if lhsLen != types.UnspecifiedLength && rhsLen != types.UnspecifiedLength {
-				resultFieldType.SetFlen(mathutil.Max(lhsLen, rhsLen))
+	} else { // for casewhen with more than 2 args.
+		ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
+		if err != nil {
+			return err
+		}
+		resultFieldType.SetCollate(ec.Collation)
+		resultFieldType.SetCharset(ec.Charset)
+		resultFieldType.SetFlag(0)
+		for i := range args {
+			if !types.IsNonBinaryStr(args[i].GetType()) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
+				break
 			}
-		} else {
-			resultFieldType.SetFlen(maxlen(lhs.GetFlen(), rhs.GetFlen()))
 		}
 	}
+	return nil
+}
+
+// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, LEAD and LAG.
+func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Expression) (*types.FieldType, error) {
+	if len(args) == 0 {
+		panic("unexpected length 0 of args")
+	}
+
+	argsNum := len(args)
+	nullFields := make([]*types.FieldType, 0, argsNum)
+	notNullFields := make([]*types.FieldType, 0, argsNum)
+	for i := range args {
+		if args[i].GetType().GetType() == mysql.TypeNull {
+			nullFields = append(nullFields, args[i].GetType())
+		} else {
+			notNullFields = append(notNullFields, args[i].GetType())
+		}
+	}
+	resultFieldType := &types.FieldType{}
+	if len(nullFields) == argsNum { // all field is TypeNull
+		*resultFieldType = *nullFields[0]
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		tempFlag := resultFieldType.GetFlag()
+		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+		resultFieldType.SetFlag(tempFlag)
+		// If both arguments are NULL, make resulting type BINARY(0).
+		resultFieldType.SetType(mysql.TypeString)
+		resultFieldType.SetFlen(0)
+		resultFieldType.SetDecimal(0)
+		types.SetBinChsClnFlag(resultFieldType)
+	} else if len(nullFields) > 0 { // one of field is TypeNull
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		*resultFieldType = *notNullFields[0]
+		tempFlag := resultFieldType.GetFlag()
+		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+		resultFieldType.SetFlag(tempFlag)
+	} else { // all field isn't TypeNull
+		resultFieldType = types.AggFieldType(notNullFields)
+		var tempFlag uint
+		evalType := types.AggregateEvalType(notNullFields, &tempFlag)
+		resultFieldType.SetFlag(tempFlag)
+		setDecimalFromArgs(evalType, resultFieldType, notNullFields...)
+		setCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
+		setFlenFromArgs(evalType, resultFieldType, notNullFields...)
+	}
+
 	// Fix decimal for int and string.
 	resultEvalType := resultFieldType.EvalType()
 	if resultEvalType == types.ETInt {
@@ -172,7 +223,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			resultFieldType.SetType(mysql.TypeLonglong)
 		}
 	} else if resultEvalType == types.ETString {
-		if lhs.GetType() != mysql.TypeNull || rhs.GetType() != mysql.TypeNull {
+		if len(notNullFields) > 0 {
 			resultFieldType.SetDecimal(types.UnspecifiedLength)
 		}
 		if resultFieldType.GetType() == mysql.TypeEnum || resultFieldType.GetType() == mysql.TypeSet {
@@ -194,28 +245,17 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
-	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
-	flen, isBinaryFlag := 0, false
+	thenArgs := make([]Expression, 0, (l+1)/2)
 	for i := 1; i < l; i += 2 {
-		fieldTps = append(fieldTps, args[i].GetType())
-		if args[i].GetType().GetFlen() == -1 {
-			flen = -1
-		} else if flen != -1 {
-			flen = mathutil.Max(flen, args[i].GetType().GetFlen())
-		}
-		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[i].GetType())
+		thenArgs = append(thenArgs, args[i])
 	}
 	if l%2 == 1 {
-		fieldTps = append(fieldTps, args[l-1].GetType())
-		if args[l-1].GetType().GetFlen() == -1 {
-			flen = -1
-		} else if flen != -1 {
-			flen = mathutil.Max(flen, args[l-1].GetType().GetFlen())
-		}
-		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
+		thenArgs = append(thenArgs, args[l-1])
 	}
-
-	fieldTp := types.AggFieldType(fieldTps)
+	fieldTp, err := InferType4ControlFuncs(ctx, c.funcName, thenArgs...)
+	if err != nil {
+		return nil, err
+	}
 	// Here we turn off NotNullFlag. Because if all when-clauses are false,
 	// the result of case-when expr is NULL.
 	tempFlag := fieldTp.GetFlag()
@@ -223,28 +263,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	fieldTp.SetFlag(tempFlag)
 	tp := fieldTp.EvalType()
 
-	if tp == types.ETInt {
-		fieldTp.SetDecimal(0)
-	} else {
-		setDecimalFromArgs(fieldTp, fieldTps...)
-	}
-
-	if tp == types.ETDecimal {
-		fixFlenFromArgs(fieldTp, fieldTps...)
-	} else {
-		fieldTp.SetFlen(flen)
-	}
-
-	types.TryToFixFlenOfDatetime(fieldTp)
-	if isBinaryFlag {
-		fieldTp.AddFlag(mysql.BinaryFlag)
-	}
-	// Set retType to BINARY(0) if all arguments are of type NULL.
-	if fieldTp.GetType() == mysql.TypeNull {
-		fieldTp.SetFlen(0)
-		fieldTp.SetDecimal(0)
-		types.SetBinChsClnFlag(fieldTp)
-	}
 	argTps := make([]*types.FieldType, 0, l)
 	for i := 0; i < l-1; i += 2 {
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
