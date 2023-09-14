@@ -11,6 +11,7 @@ go_library(
         "//parser/terror",
         "//sessionctx",
         "//util/chunk",
+        "//util/intest",
         "//util/logutil",
         "//util/sqlexec",
         "@com_github_ngaut_pools//:pools",
