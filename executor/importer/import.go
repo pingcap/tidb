@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -899,14 +900,31 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	s, err := e.initExternalStore(ctx, e.Path, plannercore.ImportIntoDataSource)
+	u, err2 := storage.ParseRawURL(e.Path)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
+	}
+
+	if storage.IsLocal(u) {
+		u.Path = filepath.Dir(e.Path)
+	} else {
+		u.Path = ""
+	}
+	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
 	if err != nil {
 		return err
 	}
 	e.dataStore = s
 
 	if e.IsGlobalSort() {
-		s, err = e.initExternalStore(ctx, e.Plan.CloudStorageURI, "cloud storage")
+		target := "cloud storage"
+		cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+		if err3 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
+				err3.Error())
+		}
+		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
 		if err != nil {
 			return err
 		}
@@ -914,11 +932,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	}
 	return nil
 }
-func (*LoadDataController) initExternalStore(ctx context.Context, url string, target string) (storage.ExternalStorage, error) {
-	u, err2 := storage.ParseRawURL(url)
-	if err2 != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err2.Error())
-	}
+func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
@@ -970,10 +984,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		fileNameKey = filepath.Base(e.Path)
-		u.Path = dir
 	} else {
 		fileNameKey = strings.Trim(u.Path, "/")
-		u.Path = ""
 	}
 	// try to find pattern error in advance
 	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
