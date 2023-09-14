@@ -65,29 +65,56 @@ func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
 	}
 }
 
-// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
-type colStatsUsageMap map[model.TableItemID]time.Time
+// statsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).
+type statsUsage struct {
+	usage map[model.TableItemID]time.Time
+	lock  sync.RWMutex
+}
 
-func (m colStatsUsageMap) merge(other colStatsUsageMap) {
+func newStatsUsage() *statsUsage {
+	return &statsUsage{
+		usage: make(map[model.TableItemID]time.Time),
+	}
+}
+
+func (m *statsUsage) reset() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.usage = make(map[model.TableItemID]time.Time)
+}
+
+func (m *statsUsage) getUsageAndReset() map[model.TableItemID]time.Time {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	ret := m.usage
+	m.usage = make(map[model.TableItemID]time.Time)
+	return ret
+}
+
+func (m *statsUsage) merge(other map[model.TableItemID]time.Time) {
+	if len(other) == 0 {
+		return
+	}
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	for id, t := range other {
-		if mt, ok := m[id]; !ok || mt.Before(t) {
-			m[id] = t
+		if mt, ok := m.usage[id]; !ok || mt.Before(t) {
+			m.usage[id] = t
 		}
 	}
 }
 
-func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap colStatsUsageMap) {
+func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap *statsUsage) {
 	deltaMap.merge(s.mapper)
 	s.mapper = make(tableDeltaMap)
-	colMap.merge(s.colMap)
-	s.colMap = make(colStatsUsageMap)
+	colMap.merge(s.statsUsage.getUsageAndReset())
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	mapper tableDeltaMap
-	colMap colStatsUsageMap
-	next   *SessionStatsCollector
+	mapper     tableDeltaMap
+	statsUsage *statsUsage
+	next       *SessionStatsCollector
 	sync.Mutex
 
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
@@ -97,8 +124,8 @@ type SessionStatsCollector struct {
 // NewSessionStatsCollector initializes a new SessionStatsCollector.
 func NewSessionStatsCollector() *SessionStatsCollector {
 	return &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		colMap: make(colStatsUsageMap),
+		mapper:     make(tableDeltaMap),
+		statsUsage: newStatsUsage(),
 	}
 }
 
@@ -121,16 +148,16 @@ func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
 	s.mapper = make(tableDeltaMap)
-	s.colMap = make(colStatsUsageMap)
+	s.statsUsage = newStatsUsage()
 	s.next = nil
 	s.deleted = false
 }
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
-func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
+func (s *SessionStatsCollector) UpdateColStatsUsage(colMap map[model.TableItemID]time.Time) {
 	s.Lock()
 	defer s.Unlock()
-	s.colMap.merge(colMap)
+	s.statsUsage.merge(colMap)
 }
 
 // NewSessionStatsCollector allocates a stats collector for a session.
@@ -138,9 +165,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		next:   h.listHead.next,
-		colMap: make(colStatsUsageMap),
+		mapper:     make(tableDeltaMap),
+		next:       h.listHead.next,
+		statsUsage: newStatsUsage(),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -350,7 +377,7 @@ const (
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
 	deltaMap := make(tableDeltaMap)
-	colMap := make(colStatsUsageMap)
+	colMap := newStatsUsage()
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
@@ -371,9 +398,7 @@ func (h *Handle) sweepList() {
 	h.globalMap.Lock()
 	h.globalMap.data.merge(deltaMap)
 	h.globalMap.Unlock()
-	h.colMap.Lock()
-	h.colMap.data.merge(colMap)
-	h.colMap.Unlock()
+	h.colMap.merge(colMap.getUsageAndReset())
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
@@ -526,14 +551,9 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		return nil
 	}
 	h.sweepList()
-	h.colMap.Lock()
-	colMap := h.colMap.data
-	h.colMap.data = make(colStatsUsageMap)
-	h.colMap.Unlock()
+	colMap := h.colMap.getUsageAndReset()
 	defer func() {
-		h.colMap.Lock()
-		h.colMap.data.merge(colMap)
-		h.colMap.Unlock()
+		h.colMap.merge(colMap)
 	}()
 	type pair struct {
 		lastUsedAt string
