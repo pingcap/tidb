@@ -819,7 +819,6 @@ func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store s
 		parser.RecycleRow(lastRow)
 		if rowSize > maxSampleParquetDataSize || rowCount > maxSampleParquetRowCount {
 			break
-
 		}
 	}
 	size := int64(float64(totalRowCount) / float64(rowCount) * float64(rowSize))
