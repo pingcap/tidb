@@ -114,11 +114,14 @@ func newBackfillDistScheduler(ctx context.Context, id string, task *proto.Task, 
 }
 
 func (s *backfillDistScheduler) Init(ctx context.Context) error {
-	s.BaseScheduler.Init(ctx)
+	err := s.BaseScheduler.Init(ctx)
+	if err != nil {
+		return err
+	}
 	d := s.d
 
 	bgm := &BackfillGlobalMeta{}
-	err := json.Unmarshal(s.task.Meta, bgm)
+	err = json.Unmarshal(s.task.Meta, bgm)
 	if err != nil {
 		return errors.Trace(err)
 	}

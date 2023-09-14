@@ -96,7 +96,8 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 	}()
 }
 
-func (s *BaseScheduler) Init(_ context.Context) error {
+// Init implements the Scheduler interface.
+func (*BaseScheduler) Init(_ context.Context) error {
 	return nil
 }
 
