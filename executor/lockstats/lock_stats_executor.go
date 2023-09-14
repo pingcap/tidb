@@ -33,6 +33,8 @@ var _ exec.Executor = &LockExec{}
 type LockExec struct {
 	exec.BaseExecutor
 	// Tables is the list of tables to be locked.
+	// It might contain partition names if we are locking partitions.
+	// When locking partitions, Tables will only contain one table name.
 	Tables []*ast.TableName
 }
 

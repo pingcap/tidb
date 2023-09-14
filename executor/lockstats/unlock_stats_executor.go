@@ -30,6 +30,8 @@ var _ exec.Executor = &UnlockExec{}
 type UnlockExec struct {
 	exec.BaseExecutor
 	// Tables is the list of tables to be unlocked.
+	// It might contain partition names if we are unlocking partitions.
+	// When unlocking partitions, Tables will only contain one table name.
 	Tables []*ast.TableName
 }
 
