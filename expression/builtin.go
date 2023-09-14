@@ -225,7 +225,7 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	return bf, nil
 }
 
-// newBaseBuiltinFuncWithTp creates a built-in function signature with specified field types of arguments and the return type of the function.
+// newBaseBuiltinFuncWithFieldTypes creates a built-in function signature with specified field types of arguments and the return type of the function.
 // argTps indicates the field types of the args, retType indicates the return type of the built-in function.
 func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...*types.FieldType) (bf baseBuiltinFunc, err error) {
 	if len(args) != len(argTps) {
