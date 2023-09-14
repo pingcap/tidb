@@ -176,14 +176,14 @@ func TestAllEmpty(t *testing.T) {
 	trackStore := &trackOpenMemStorage{MemStorage: memStore}
 	iter, err := NewMergeKVIter(ctx, []string{filenames[0]}, []uint64{0}, trackStore, 5)
 	require.NoError(t, err)
-	require.EqualValues(t, int32(1), trackStore.opened.Load())
+	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 	require.NoError(t, iter.Close())
 
 	iter, err = NewMergeKVIter(ctx, filenames, []uint64{0, 0}, trackStore, 5)
 	require.NoError(t, err)
-	require.EqualValues(t, int32(1), trackStore.opened.Load())
+	require.EqualValues(t, 0, trackStore.opened.Load())
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Close())
 }
