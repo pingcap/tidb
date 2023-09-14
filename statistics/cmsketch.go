@@ -437,7 +437,7 @@ func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
 	if len(protoTopN) == 0 {
 		return nil
 	}
-	topN := NewTopN(32)
+	topN := NewTopN(len(protoTopN))
 	for _, e := range protoTopN {
 		d := make([]byte, len(e.Data))
 		copy(d, e.Data)
