@@ -89,6 +89,8 @@ type Handle struct {
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
 	statsUsage *statsUsage
 
+	globalstatushandler *globalstats.GlobalStatusHandler
+
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
 
@@ -106,8 +108,6 @@ type Handle struct {
 	}
 
 	lease atomic2.Duration
-
-	globalstatushandler *globalstats.GlobalStatusHandler
 }
 
 func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
