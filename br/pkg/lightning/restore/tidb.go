@@ -85,6 +85,7 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 		"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
 		"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
 		"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+		"tidb_enable_async_commit":           dsn.EnableAsyncCommit,
 
 		// after https://github.com/pingcap/tidb/pull/17102 merge,
 		// we need set session to true for insert auto_random value in TiDB Backend
