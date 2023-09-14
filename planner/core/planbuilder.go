@@ -839,7 +839,7 @@ func (b *PlanBuilder) Build(ctx context.Context, node ast.Node) (Plan, error) {
 	case *ast.LockStatsStmt:
 		return b.buildLockStats(x), nil
 	case *ast.UnlockStatsStmt:
-		return b.buildUnlockTableStats(x), nil
+		return b.buildUnlockStats(x), nil
 	case *ast.IndexAdviseStmt:
 		return b.buildIndexAdvise(x), nil
 	case *ast.PlanReplayerStmt:
@@ -4532,8 +4532,8 @@ func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
 	return p
 }
 
-// buildUnlockTableStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
-func (b *PlanBuilder) buildUnlockTableStats(ld *ast.UnlockStatsStmt) Plan {
+// buildUnlockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
+func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
 	p := &UnlockStats{
 		Tables: ld.Tables,
 	}
