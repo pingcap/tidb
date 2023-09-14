@@ -63,7 +63,6 @@ go_test(
     name = "statistics_test",
     timeout = "short",
     srcs = [
-        "cmsketch_bench_test.go",
         "cmsketch_test.go",
         "fmsketch_test.go",
         "histogram_bench_test.go",
@@ -100,7 +99,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_tiancaiamao_gp//:gp",
         "@org_uber_go_goleak//:goleak",
     ],
 )
