@@ -56,7 +56,6 @@ import (
 const (
 	// TiDBGlobalStats represents the global-stats for a partitioned table.
 	TiDBGlobalStats = "global"
-
 	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
 	MaxPartitionMergeBatchSize = 256
 )
@@ -100,13 +99,7 @@ type Handle struct {
 	}
 
 	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap struct {
-		data colStatsUsageMap
-		sync.Mutex
-	}
-
-	// tableLocked used to store locked tables
-	tableLocked []int64
+	colMap *statsUsage
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -125,274 +118,6 @@ type Handle struct {
 	}
 
 	lease atomic2.Duration
-}
-
-// GetTableLockedAndClearForTest for unit test only
-func (h *Handle) GetTableLockedAndClearForTest() []int64 {
-	tableLocked := h.tableLocked
-	h.tableLocked = make([]int64, 0)
-	return tableLocked
-}
-
-// LoadLockedTables load locked tables from store
-func (h *Handle) LoadLockedTables() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	h.tableLocked = make([]int64, len(rows))
-	for i, row := range rows {
-		h.tableLocked[i] = row.GetInt64(0)
-	}
-
-	return nil
-}
-
-// AddLockedTables add locked tables id  to store
-func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-
-	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return "", err
-	}
-
-	//load tables to check duplicate when insert
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
-	if err != nil {
-		return "", err
-	}
-
-	dupTables := make([]string, 0)
-	tableLocked := make([]int64, 0)
-	for _, row := range rows {
-		tableLocked = append(tableLocked, row.GetInt64(0))
-	}
-
-	strTids := fmt.Sprintf("%v", tids)
-	logutil.BgLogger().Info("lock table ", zap.String("category", "stats"), zap.String("tableIDs", strTids))
-	for i, tid := range tids {
-		_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_table_locked(table_id) select %? from dual where not exists(select table_id from mysql.stats_table_locked where table_id = %?)", tid, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		// update handle
-		if !isTableLocked(tableLocked, tid) {
-			tableLocked = append(tableLocked, tid)
-		} else {
-			dupTables = append(dupTables, tables[i].Schema.L+"."+tables[i].Name.L)
-		}
-	}
-
-	//insert related partitions while don't warning duplicate partitions
-	for _, tid := range pids {
-		_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_table_locked(table_id) select %? from dual where not exists(select table_id from mysql.stats_table_locked where table_id = %?)", tid, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		if !isTableLocked(tableLocked, tid) {
-			tableLocked = append(tableLocked, tid)
-		}
-	}
-
-	err = finishTransaction(ctx, exec, err)
-	if err != nil {
-		return "", err
-	}
-	// update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated
-	h.tableLocked = tableLocked
-
-	if len(dupTables) > 0 {
-		tables := dupTables[0]
-		for i, table := range dupTables {
-			if i == 0 {
-				continue
-			}
-			tables += ", " + table
-		}
-		var msg string
-		if len(tids) > 1 {
-			if len(tids) > len(dupTables) {
-				msg = "skip locking locked tables: " + tables + ", other tables locked successfully"
-			} else {
-				msg = "skip locking locked tables: " + tables
-			}
-		} else {
-			msg = "skip locking locked table: " + tables
-		}
-		return msg, err
-	}
-	return "", err
-}
-
-// getStatsDeltaFromTableLocked get count, modify_count and version for the given table from mysql.stats_table_locked.
-func (h *Handle) getStatsDeltaFromTableLocked(ctx context.Context, tableID int64) (count, modifyCount int64, version uint64, err error) {
-	rows, _, err := h.execRestrictedSQL(ctx, "select count, modify_count, version from mysql.stats_table_locked where table_id = %?", tableID)
-	if err != nil {
-		return 0, 0, 0, err
-	}
-
-	if len(rows) == 0 {
-		return 0, 0, 0, nil
-	}
-	count = rows[0].GetInt64(0)
-	modifyCount = rows[0].GetInt64(1)
-	version = rows[0].GetUint64(2)
-	return count, modifyCount, version, nil
-}
-
-// RemoveLockedTables remove tables from table locked array
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return "", err
-	}
-
-	//load tables to check unlock the unlock table
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_table_locked")
-	if err != nil {
-		return "", err
-	}
-
-	nonlockedTables := make([]string, 0)
-	tableLocked := make([]int64, 0)
-	for _, row := range rows {
-		tableLocked = append(tableLocked, row.GetInt64(0))
-	}
-
-	strTids := fmt.Sprintf("%v", tids)
-	logutil.BgLogger().Info("unlock table ", zap.String("category", "stats"), zap.String("tableIDs", strTids))
-	for i, tid := range tids {
-		// get stats delta during table locked
-		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when getStatsDeltaFromTableLocked", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		// update stats_meta with stats delta
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when update mysql.stats_meta", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		cache.TableRowStatsCache.Invalidate(tid)
-
-		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when delete from mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		var exist bool
-		exist, tableLocked = removeIfTableLocked(tableLocked, tid)
-		if !exist {
-			nonlockedTables = append(nonlockedTables, tables[i].Schema.L+"."+tables[i].Name.L)
-		}
-	}
-	//delete related partitions while don't warning delete empty partitions
-	for _, tid := range pids {
-		// get stats delta during table locked
-		count, modifyCount, version, err := h.getStatsDeltaFromTableLocked(ctx, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when getStatsDeltaFromTableLocked", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		// update stats_meta with stats delta
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", version, count, modifyCount, tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when update mysql.stats_meta", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		cache.TableRowStatsCache.Invalidate(tid)
-
-		_, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_table_locked where table_id = %?", tid)
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when delete from mysql.stats_table_locked ", zap.String("category", "stats"), zap.Error(err))
-			return "", err
-		}
-		_, tableLocked = removeIfTableLocked(tableLocked, tid)
-	}
-
-	err = finishTransaction(ctx, exec, err)
-	if err != nil {
-		return "", err
-	}
-	// update handle.tableLocked after transaction success, if txn failed, tableLocked won't be updated
-	h.tableLocked = tableLocked
-
-	if len(nonlockedTables) > 0 {
-		tables := nonlockedTables[0]
-		for i, table := range nonlockedTables {
-			if i == 0 {
-				continue
-			}
-			tables += ", " + table
-		}
-		var msg string
-		if len(tids) > 1 {
-			if len(tids) > len(nonlockedTables) {
-				msg = "skip unlocking non-locked tables: " + tables + ", other tables unlocked successfully"
-			} else {
-				msg = "skip unlocking non-locked tables: " + tables
-			}
-		} else {
-			msg = "skip unlocking non-locked table: " + tables
-		}
-		return msg, err
-	}
-	return "", err
-}
-
-// IsTableLocked check whether table is locked in handle with Handle.Mutex
-func (h *Handle) IsTableLocked(tableID int64) bool {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return h.isTableLocked(tableID)
-}
-
-// IsTableLocked check whether table is locked in handle without Handle.Mutex
-func (h *Handle) isTableLocked(tableID int64) bool {
-	return isTableLocked(h.tableLocked, tableID)
-}
-
-// isTableLocked check whether table is locked
-func isTableLocked(tableLocked []int64, tableID int64) bool {
-	return lockTableIndexOf(tableLocked, tableID) > -1
-}
-
-// lockTableIndexOf get the locked table's index in the array
-func lockTableIndexOf(tableLocked []int64, tableID int64) int {
-	for idx, id := range tableLocked {
-		if id == tableID {
-			return idx
-		}
-	}
-	return -1
-}
-
-// removeIfTableLocked try to remove the table from table locked array
-func removeIfTableLocked(tableLocked []int64, tableID int64) (bool, []int64) {
-	idx := lockTableIndexOf(tableLocked, tableID)
-	if idx > -1 {
-		tableLocked = append(tableLocked[:idx], tableLocked[idx+1:]...)
-	}
-	return idx > -1, tableLocked
 }
 
 func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
@@ -460,9 +185,7 @@ func (h *Handle) Clear() {
 	h.globalMap.Lock()
 	h.globalMap.data = make(tableDeltaMap)
 	h.globalMap.Unlock()
-	h.colMap.Lock()
-	h.colMap.data = make(colStatsUsageMap)
-	h.colMap.Unlock()
+	h.colMap.reset()
 	h.mu.Unlock()
 }
 
@@ -493,7 +216,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	}
 	handle.statsCache = statsCache
 	handle.globalMap.data = make(tableDeltaMap)
-	handle.colMap.data = make(colStatsUsageMap)
+	handle.colMap = newStatsUsage()
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -550,7 +273,7 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 }
 
 // Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) error {
+func (h *Handle) Update(is infoschema.InfoSchema) error {
 	oldCache := h.statsCache.Load()
 	lastVersion := oldCache.Version()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
@@ -569,10 +292,6 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 	if err != nil {
 		return errors.Trace(err)
 	}
-	option := &cache.TableStatsOption{}
-	for _, opt := range opts {
-		opt(option)
-	}
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
 	for _, row := range rows {
@@ -587,7 +306,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.GetFromInternal(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -607,7 +326,7 @@ func (h *Handle) Update(is infoschema.InfoSchema, opts ...cache.TableStatsOpt) e
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache, tables, deletedTableIDs, opts...)
+	h.updateStatsCache(oldCache, tables, deletedTableIDs)
 	return nil
 }
 
@@ -996,31 +715,22 @@ func (h *Handle) GetMemConsumed() (size int64) {
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (h *Handle) GetTableStats(tblInfo *model.TableInfo, opts ...cache.TableStatsOpt) *statistics.Table {
-	return h.GetPartitionStats(tblInfo, tblInfo.ID, opts...)
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
+	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
-func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64, opts ...cache.TableStatsOpt) *statistics.Table {
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo)
+		tbl = statistics.PseudoTable(tblInfo, false)
 		tbl.PhysicalID = pid
 		return tbl
 	}
 	statsCache := h.statsCache.Load()
-	var ok bool
-	option := &cache.TableStatsOption{}
-	for _, opt := range opts {
-		opt(option)
-	}
-	if option.ByQuery() {
-		tbl, ok = statsCache.GetFromUser(pid)
-	} else {
-		tbl, ok = statsCache.GetFromInternal(pid)
-	}
+	tbl, ok := statsCache.Get(pid)
 	if !ok {
-		tbl = statistics.PseudoTable(tblInfo)
+		tbl = statistics.PseudoTable(tblInfo, false)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
 			h.updateStatsCache(statsCache, []*statistics.Table{tbl}, nil)
@@ -1042,9 +752,8 @@ func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
 // If it is in the COW mode. it overrides the global statsCache with a new one, it may fail
 // if the global statsCache has been modified by others already.
 // Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64,
-	opts ...cache.TableStatsOpt) (updated bool) {
-	h.statsCache.UpdateStatsCache(newCache, tables, deletedIDs, opts...)
+func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool) {
+	h.statsCache.UpdateStatsCache(newCache, tables, deletedIDs)
 	return true
 }
 
@@ -1079,7 +788,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 
 func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.GetFromInternal(col.TableID)
+	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -1128,7 +837,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.GetFromInternal(col.TableID)
+	tbl, ok = oldCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -1142,7 +851,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 
 func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.GetFromInternal(idx.TableID)
+	tbl, ok := oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -1181,7 +890,7 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
 	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.GetFromInternal(idx.TableID)
+	tbl, ok = oldCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -1223,7 +932,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 			err = err1
 		}
 	}()
-	statsTbl, ok := h.statsCache.Load().GetFromInternal(physicalID)
+	statsTbl, ok := h.statsCache.Load().Get(physicalID)
 	if !ok {
 		statsTbl = nil
 	}
@@ -1397,18 +1106,48 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 	if len(rows) > 0 {
 		snapshot := rows[0].GetUint64(0)
 		// A newer version analyze result has been written, so skip this writing.
-		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 {
+		// For multi-valued index analyze, this check is not needed because we expect there's another normal v2 analyze
+		// table task that may update the snapshot in stats_meta table (that task may finish before or after this task).
+		if snapshot >= results.Snapshot && results.StatsVer == statistics.Version2 && !results.ForMVIndex {
 			return nil
 		}
 		curCnt = int64(rows[0].GetUint64(1))
 		curModifyCnt = rows[0].GetInt64(2)
 	}
+
 	if len(rows) == 0 || results.StatsVer != statistics.Version2 {
-		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)", version, tableID, results.Count, results.Snapshot); err != nil {
+		// 1-1.
+		// a. There's no existing records we can update, we must insert a new row. Or
+		// b. it's stats v1.
+		// In these cases, we use REPLACE INTO to directly insert/update the version, count and snapshot.
+		snapShot := results.Snapshot
+		count := results.Count
+		if results.ForMVIndex {
+			snapShot = 0
+			count = 0
+		}
+		if _, err = exec.ExecuteInternal(ctx,
+			"replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)",
+			version,
+			tableID,
+			count,
+			snapShot,
+		); err != nil {
 			return err
 		}
 		statsVer = version
+	} else if results.ForMVIndex {
+		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
+		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
+		if _, err = exec.ExecuteInternal(ctx,
+			"update mysql.stats_meta set version=%? where table_id=%?",
+			version,
+			tableID,
+		); err != nil {
+			return err
+		}
 	} else {
+		// 1-3. There's already an existing records for this table, and we are handling a normal v2 analyze.
 		modifyCnt := curModifyCnt - results.BaseModifyCnt
 		if modifyCnt < 0 {
 			modifyCnt = 0
@@ -1440,7 +1179,14 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
 		}
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?", version, modifyCnt, cnt, results.Snapshot, tableID); err != nil {
+		if _, err = exec.ExecuteInternal(ctx,
+			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?",
+			version,
+			modifyCnt,
+			cnt,
+			results.Snapshot,
+			tableID,
+		); err != nil {
 			return err
 		}
 		statsVer = version
@@ -1811,7 +1557,7 @@ const updateStatsCacheRetryCnt = 5
 func (h *Handle) removeExtendedStatsItem(tableID int64, statsName string) {
 	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 		oldCache := h.statsCache.Load()
-		tbl, ok := oldCache.GetFromInternal(tableID)
+		tbl, ok := oldCache.Get(tableID)
 		if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
 			return
 		}
@@ -2287,10 +2033,11 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 	}
 	sc := v
 	sc.SetCapacity(c)
+	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
 }
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.statsCache.Load().Close()
 	h.gpool.Close()
+	h.statsCache.Load().Close()
 }

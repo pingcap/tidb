@@ -182,7 +182,7 @@ func TestLoadSchemaInfo(t *testing.T) {
 	s := newTiDBSuite(t)
 
 	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
-	ctx := metric.NewContext(context.Background(), metrics)
+	ctx := metric.WithMetric(context.Background(), metrics)
 
 	tableCntBefore := metric.ReadCounter(metrics.TableCounter.WithLabelValues(metric.TableStatePending, metric.TableResultSuccess))
 

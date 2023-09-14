@@ -3073,6 +3073,11 @@ func TestAlterTableExchangePartition(t *testing.T) {
 
 func TestExchangePartitionTableCompatiable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
 	type testCase struct {
 		ptSQL       string
 		ntSQL       string
@@ -3289,6 +3294,12 @@ func TestExchangePartitionTableCompatiable(t *testing.T) {
 			"create temporary table nt34 (id int);",
 			"alter table pt34 exchange partition p0 with table nt34;",
 			dbterror.ErrPartitionExchangeTempTable,
+		},
+		{
+			"create table pt35 (a int, b int, unique index(b)) partition by hash(a) partitions 1;",
+			"create table nt35 (a int, b int, unique index(b));",
+			"alter table pt35 exchange partition p0 with table nt35;",
+			dbterror.ErrPartitionExchangeDifferentOption,
 		},
 	}
 
@@ -6144,9 +6155,9 @@ func TestRemoveRangePartitioning(t *testing.T) {
 	tk.MustExec("create database RemovePartitioning")
 	tk.MustExec("use RemovePartitioning")
 	tk.MustExec(`create table tRange (a int unsigned primary key, b varchar(255))
-partition by range (a)
-(partition p0 values less than (1000000),
-partition pMax values less than maxvalue)`)
+	partition by range (a)
+	(partition p0 values less than (1000000),
+	partition pMax values less than maxvalue)`)
 	tk.MustExec(`insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000")`)
 	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
 		"tRange CREATE TABLE `tRange` (\n" +
@@ -6164,6 +6175,56 @@ partition pMax values less than maxvalue)`)
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	/* Test with nonclustered */
+	tk.MustExec(`drop table tRange`)
+	tk.MustExec(`create table tRange (a int unsigned primary key nonclustered, b varchar(255))
+partition by range (a)
+(partition p0 values less than (1000000),
+partition pMax values less than maxvalue)`)
+	tk.MustExec(`insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000")`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table tRange remove partitioning`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec(`insert into tRange values (1, "One"), (999998, "999998"), (1000001, "1000001"), (20000002, "20000002")`)
+
+	/* Test with both auto_inc and non-clustered */
+	tk.MustExec(`drop table tRange`)
+	tk.MustExec(`create table tRange (a int unsigned primary key nonclustered, b varchar(255))
+partition by range (a)
+(partition p0 values less than (1000000),
+partition pMax values less than maxvalue)`)
+	tk.MustExec(`insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000")`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table tRange remove partitioning`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec(`insert into tRange values (1, "One"), (999998, "999998"), (1000001, "1000001"), (20000002, "20000002")`)
 }
 
 func TestRemoveRangeColumnPartitioning(t *testing.T) {
@@ -6437,6 +6498,101 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
 }
 
+func TestRemovePartitioningAutoIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+
+	dbName := "RemovePartAutoIDs"
+	tk1.MustExec(`create schema ` + dbName)
+	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) partition by hash(a) partitions 3`)
+	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
+	tk1.MustExec(`insert into t values (null,18)`)
+	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use ` + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use ` + dbName)
+	waitFor := func(col int, tableName, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'alter table remove partitioning'`
+			res := tk4.MustQuery(sql).Rows()
+			if len(res) == 1 && res[0][col] == s {
+				break
+			}
+			for i := range res {
+				strs := make([]string, 0, len(res[i]))
+				for j := range res[i] {
+					strs = append(strs, res[i][j].(string))
+				}
+				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	alterChan := make(chan error)
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (null, 4)`)
+	go func() {
+		alterChan <- tk1.ExecToErr(`alter table t remove partitioning`)
+	}()
+	waitFor(4, "t", "delete only")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t values (null, 5)`)
+
+	tk2.MustExec(`insert into t values (null, 6)`)
+	tk3.MustExec(`insert into t values (null, 7)`)
+	tk2.MustExec(`COMMIT`)
+
+	waitFor(4, "t", "write only")
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (null, 8)`)
+
+	tk3.MustExec(`insert into t values (null, 9)`)
+	tk2.MustExec(`insert into t values (null, 10)`)
+	tk3.MustExec(`COMMIT`)
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "30 29 9"))
+	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "23 22 6", "27 26 8", "32 31 10"))
+
+	waitFor(4, "t", "write reorganization")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t values (null, 21)`)
+
+	tk2.MustExec(`insert into t values (null, 22)`)
+	tk3.MustExec(`insert into t values (null, 23)`)
+	tk2.MustExec(`COMMIT`)
+
+	/*
+		waitFor(4, "t", "delete reorganization")
+		tk2.MustExec(`BEGIN`)
+		tk2.MustExec(`insert into t values (null, 24)`)
+
+		tk3.MustExec(`insert into t values (null, 25)`)
+		tk2.MustExec(`insert into t values (null, 26)`)
+	*/
+	tk3.MustExec(`COMMIT`)
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
+		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+
+	//waitFor(4, "t", "public")
+	//tk2.MustExec(`commit`)
+	// TODO: Investigate and fix, but it is also related to https://github.com/pingcap/tidb/issues/46904
+	require.ErrorContains(t, <-alterChan, "[kv:1062]Duplicate entry '26' for key 't.PRIMARY'")
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
+		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+}
+
 func TestListDefinitionError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -6448,3 +6604,119 @@ func TestListDefinitionError(t *testing.T) {
 	tk.MustContainErrMsg(`alter table t add partition (partition p2 values less than (2))`, "[ddl:1480]Only RANGE PARTITIONING can use VALUES LESS THAN in partition definition")
 	tk.MustContainErrMsg(`alter table t add partition (partition p2)`, "[ddl:1479]Syntax : LIST PARTITIONING requires definition of VALUES IN for each partition")
 }
+
+func TestListExchangeValidate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database ListExchange")
+	tk.MustExec("use ListExchange")
+	tk.MustExec("create table lcp (id int, create_ts datetime, name varchar(10))\n" +
+		"partition by list columns (create_ts)\n" +
+		"(partition p20230829 values in ('2023-08-29'),partition p20230830 values in ('2023-08-30'))")
+	tk.MustExec(`insert into lcp values (1,'2023-08-29','a')`)
+	tk.MustExec(`insert into lcp values (2,'2023-08-30','b')`)
+	tk.MustContainErrMsg(`insert into lcp values (3,'2023-08-31','c')`,
+		"[table:1526]Table has no partition for value from column_list")
+
+	tk.MustExec(`create table t (id int, create_ts datetime, name varchar(10))`)
+	tk.MustExec(`insert into t values (3,'2023-08-31','c')`)
+
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p20230829 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lcp add partition
+		    (partition p202302 values in ('2023-02-01','2023-02-28',null),
+		     partition p202303 values in ('2023-03-01','2023-03-02','2023-03-31'))`)
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`truncate table t`)
+	tk.MustExec(`insert into t values (4,'2023-02-01','d'), (5,'2023-02-28','e'), (6, null, 'f')`)
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t`)
+	tk.MustExec(`insert into t values (4,'2023-03-01','d'), (5,'2023-03-02','e'), (6,'2023-03-31','f')`)
+	tk.MustContainErrMsg(`alter table lcp EXCHANGE PARTITION p202302 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lcp EXCHANGE PARTITION p202303 WITH TABLE t`)
+
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`CREATE TABLE lmcp (d date, name varchar(10), data varchar(255))
+					  PARTITION BY LIST COLUMNS(d,name)
+					  (partition p3 values IN (('2021-01-01','a'),('2021-01-02','b'),('2021-01-03','c')),
+					   partition p4 values IN (('2021-01-01','b'),(null,'a'),('2021-01-01',null),(null,null)),
+					   partition p2 values IN (('2021-01-01','c'),('2021-01-02','a')),
+					   partition p1 values IN (('2021-01-02','c')))`)
+	tk.MustExec(`CREATE TABLE t (d date, name varchar(10), data varchar(255))`)
+
+	tk.MustExec(`insert into t values ('2021-01-02', 'c', "OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`)
+
+	tk.MustExec(`insert into t values ('2021-01-01', 'c', "OK"), ('2021-01-02', 'a', "OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`)
+
+	tk.MustExec(`insert into t values ('2021-01-01', 'a', "OK"), ('2021-01-02','b', "OK"), ('2021-01-03','c', "OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`)
+
+	tk.MustExec(`insert into t values ('2021-01-01', 'b', "OK"), ('2021-01-01',null, "OK"), (null,'a', "OK"), (null,null,"OK")`)
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p1 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p2 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustContainErrMsg(`alter table lmcp EXCHANGE PARTITION p3 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lmcp EXCHANGE PARTITION p4 WITH TABLE t`)
+
+	tk.MustExec(`create table lp (a int, data varchar(255)) partition by list (a) (partition p0 values in (0,4), partition pNull values in (null))`)
+	tk.MustExec(`create table np (a int, data varchar(255))`)
+	tk.MustExec(`insert into np values (0,"OK"), (4,"OK")`)
+	tk.MustContainErrMsg(`alter table lp EXCHANGE PARTITION pNull WITH TABLE np`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lp EXCHANGE PARTITION p0 WITH TABLE np`)
+	tk.MustExec(`insert into np values (null,"OK")`)
+	tk.MustContainErrMsg(`alter table lp EXCHANGE PARTITION p0 WITH TABLE np`,
+		"[ddl:1737]Found a row that does not match the partition")
+	tk.MustExec(`alter table lp EXCHANGE PARTITION pNull WITH TABLE np`)
+	// TODO: Check EXCHANGE with DEFAULT partition!!
+}
+
+func TestRangeExchangeValidate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database RangeExchange")
+	tk.MustExec("use RangeExchange")
+	tk.MustExec(`CREATE TABLE t (d date, name varchar(10), data varchar(255))`)
+	tk.MustExec("create table rcp (d date, name varchar(10), data varchar(255))\n" +
+		"partition by range columns (d)\n" +
+		"(partition p20230829 values less than ('2023-08-30'),partition p20230830 values less than ('2023-08-31'))")
+	tk.MustExec(`insert into rcp values ('2023-08-29', 'a', "OK")`)
+	tk.MustExec(`insert into rcp values ('2023-08-30', 'b', "OK")`)
+	tk.MustContainErrMsg(`insert into rcp values ('2023-08-31', 'c', "FAIL")`,
+		"[table:1526]Table has no partition for value from column_list")
+	tk.MustExec(`insert into t values ('2023-08-31', 'c', "FAIL")`)
+	tk.MustContainErrMsg(`alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t`,
+		"[ddl:1737]Found a row that does not match the partition")
+	// TODO: Add test with a RANGE single partition (both normal AND maxvalue!)
+	// TODO: add test with maxvalue (1, 2, and more partitions)
+	// TODO: add test not in first partition (both last without maxvalue and also not last with/without maxvalue)
+}
+
+// TODO: check EXCHANGE how it handles null (for all types of partitioning!!!)

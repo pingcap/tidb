@@ -21,7 +21,7 @@ import (
 
 // task state machine
 //  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> reverting -> reverted/revert_failed
+//  2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //  3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
 //  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
@@ -48,12 +48,15 @@ const (
 
 // TaskStep is the step of task.
 const (
-	StepInit int64 = -1
+	StepInit int64 = 0
 	StepOne  int64 = 1
 	StepTwo  int64 = 2
 )
 
-// Task represents the task of distribute framework.
+// TaskIDLabelName is the label name of task id.
+const TaskIDLabelName = "task_id"
+
+// Task represents the task of distributed framework.
 type Task struct {
 	ID    int64
 	Key   string
@@ -94,6 +97,7 @@ type Subtask struct {
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
 	Meta       []byte
+	Summary    string
 }
 
 // NewSubtask create a new subtask.
@@ -117,6 +121,10 @@ type MinimalTask interface {
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample = "Example"
+	// TaskTypeExample2 is TaskType of Example.
+	TaskTypeExample2 = "Example1"
+	// TaskTypeExample3 is TaskType of Example.
+	TaskTypeExample3 = "Example2"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
 )
@@ -128,6 +136,10 @@ func Type2Int(t string) int {
 		return 1
 	case ImportInto:
 		return 2
+	case TaskTypeExample2:
+		return 3
+	case TaskTypeExample3:
+		return 4
 	default:
 		return 0
 	}
@@ -140,6 +152,10 @@ func Int2Type(i int) string {
 		return TaskTypeExample
 	case 2:
 		return ImportInto
+	case 3:
+		return TaskTypeExample2
+	case 4:
+		return TaskTypeExample3
 	default:
 		return ""
 	}

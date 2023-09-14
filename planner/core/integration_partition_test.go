@@ -986,7 +986,7 @@ func TestRangeColumnsMultiColumn(t *testing.T) {
 
 	tk.MustGetErrCode(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)`+
 		`(partition p0 values less than (NULL,NULL,NULL))`,
-		errno.ErrWrongTypeColumnValue)
+		errno.ErrParse)
 	tk.MustGetErrCode(`create table t (a int, b datetime, c varchar(255)) partition by range columns (a,b,c)`+
 		`(partition p1 values less than (`+strconv.FormatInt(math.MinInt32-1, 10)+`,'0000-00-00',""))`,
 		errno.ErrWrongTypeColumnValue)

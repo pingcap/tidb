@@ -12,10 +12,10 @@ go_test(
     deps = [
         "//parser/model",
         "//parser/mysql",
+        "//planner/cardinality",
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle",
-        "//statistics/handle/cache",
         "//testkit",
         "//testkit/testsetup",
         "//types",

@@ -102,6 +102,5 @@ func ProcessChunk(
 		return err
 	}
 	progress.AddColSize(encoder.GetColumnSize())
-	tableImporter.setLastInsertID(encoder.GetLastInsertID())
 	return nil
 }

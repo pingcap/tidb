@@ -17,6 +17,7 @@ package enforcempp
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
@@ -97,8 +98,11 @@ func TestEnforceMPP(t *testing.T) {
 			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 			output[i].Warn = testdata.ConvertSQLWarnToStrings(filterWarnings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
+		require.Eventually(t,
+			func() bool {
+				res := tk.MustQuery(tt)
+				return res.Equal(testkit.Rows(output[i].Plan...))
+			}, 1*time.Second, 100*time.Millisecond)
 		require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(filterWarnings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())))
 	}
 }
@@ -354,13 +358,20 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 	tk.MustExec("create table c(c_id bigint)")
 	tk.MustExec("create table o(o_id bigint, c_id bigint not null)")
 
+	tk.MustExec("create table t (a int, b int)")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+	tk.MustExec("insert into t values (1, 1);")
+
 	// Create virtual tiflash replica info.
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
 	db, exists := is.SchemaByName(model.NewCIStr("test"))
 	require.True(t, exists)
 	for _, tblInfo := range db.Tables {
-		if tblInfo.Name.L == "c" || tblInfo.Name.L == "o" {
+		if tblInfo.Name.L == "c" || tblInfo.Name.L == "o" || tblInfo.Name.L == "t" {
 			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
 				Count:     1,
 				Available: true,

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -241,8 +242,8 @@ func (p *PhysicalIndexLookUpReader) getPlanCostVer2(taskType property.TaskType, 
 
 	indexRows := getCardinality(p.indexPlan, option.CostFlag)
 	tableRows := getCardinality(p.indexPlan, option.CostFlag)
-	indexRowSize := getTblStats(p.indexPlan).GetAvgRowSize(p.SCtx(), p.indexPlan.Schema().Columns, true, false)
-	tableRowSize := getTblStats(p.tablePlan).GetAvgRowSize(p.SCtx(), p.tablePlan.Schema().Columns, false, false)
+	indexRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.indexPlan), p.indexPlan.Schema().Columns, true, false)
+	tableRowSize := cardinality.GetAvgRowSize(p.SCtx(), getTblStats(p.tablePlan), p.tablePlan.Schema().Columns, false, false)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	netFactor := getTaskNetFactorVer2(p, taskType)
 	requestFactor := getTaskRequestFactorVer2(p, taskType)
@@ -328,6 +329,20 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	sumIndexSideCost := sumCostVer2(indexSideCost...)
 
 	p.planCostVer2 = sumCostVer2(tableSideCost, sumIndexSideCost)
+	// give a bias to pushDown limit, since it will get the same cost with NON_PUSH_DOWN_LIMIT case via expect count.
+	// push down limit case may reduce cop request consumption if any in some cases.
+	//
+	// for index merge intersection case, if we want to attach limit to table/index side, we should enumerate double-read-cop task type.
+	// otherwise, the entire index-merge-reader will be encapsulated as root task, and limit can only be put outside of that.
+	// while, since limit doesn't contain any physical cost, the expected cnt has already pushed down as a kind of physical property.
+	// that means the 2 physical tree format:
+	// 		limit -> index merge reader
+	// 		index-merger-reader(with embedded limit)
+	// will have the same cost, actually if limit are more close to the fetch side, the fewer rows that table plan need to read.
+	// todo: refine the cost computation out from cost model.
+	if p.PushedLimit != nil {
+		p.planCostVer2 = mulCostVer2(p.planCostVer2, 0.99)
+	}
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }
@@ -395,7 +410,12 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	rows := getCardinality(p.children[0], option.CostFlag)
-	n := math.Max(1, float64(p.Count+p.Offset))
+	n := max(1, float64(p.Count+p.Offset))
+	if n > 10000 {
+		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
+		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
+		n = min(n, rows)
+	}
 	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)

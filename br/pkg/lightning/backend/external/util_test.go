@@ -18,8 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -45,16 +43,16 @@ func TestSeekPropsOffsets(t *testing.T) {
 	rc1 := &rangePropertiesCollector{
 		props: []*rangeProperty{
 			{
-				key:    []byte("key1"),
-				offset: 10,
+				firstKey: []byte("key1"),
+				offset:   10,
 			},
 			{
-				key:    []byte("key3"),
-				offset: 30,
+				firstKey: []byte("key3"),
+				offset:   30,
 			},
 			{
-				key:    []byte("key5"),
-				offset: 50,
+				firstKey: []byte("key5"),
+				offset:   50,
 			},
 		},
 	}
@@ -69,12 +67,12 @@ func TestSeekPropsOffsets(t *testing.T) {
 	rc2 := &rangePropertiesCollector{
 		props: []*rangeProperty{
 			{
-				key:    []byte("key2"),
-				offset: 20,
+				firstKey: []byte("key2"),
+				offset:   20,
 			},
 			{
-				key:    []byte("key4"),
-				offset: 40,
+				firstKey: []byte("key4"),
+				offset:   40,
 			},
 		},
 	}
@@ -126,37 +124,45 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 0)
-	kvPairs := make([]common.KvPair, 0, 30)
+		Build(store, "/subtask", "0")
+
+	keys := make([][]byte, 0, 30)
+	values := make([][]byte, 0, 30)
 	for i := 0; i < 30; i++ {
-		kvPairs = append(kvPairs, common.KvPair{
-			Key: []byte{byte(i)},
-			Val: []byte{byte(i)},
-		})
+		keys = append(keys, []byte{byte(i)})
+		values = append(values, []byte{byte(i)})
 	}
-	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w.Close(ctx)
+
+	for i, key := range keys {
+		err := w.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err := w.Close(ctx)
 	require.NoError(t, err)
 
 	w2 := NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 3)
-	err = w2.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+		Build(store, "/subtask", "3")
+	for i, key := range keys {
+		err := w2.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
 	require.NoError(t, err)
-	_, err = w2.Close(ctx)
+	err = w2.Close(ctx)
 	require.NoError(t, err)
 
 	w3 := NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 12)
-	err = w3.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w3.Close(ctx)
+		Build(store, "/subtask", "12")
+	for i, key := range keys {
+		err := w3.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err = w3.Close(ctx)
 	require.NoError(t, err)
 
 	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
@@ -171,4 +177,73 @@ func TestGetAllFileNames(t *testing.T) {
 		"/subtask/12/0", "/subtask/12/1", "/subtask/12/2",
 		"/subtask/3/0", "/subtask/3/1", "/subtask/3/2",
 	}, dataFiles)
+}
+
+func TestCleanUpFiles(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+	w := NewWriterBuilder().
+		SetMemorySizeLimit(20).
+		SetPropSizeDistance(5).
+		SetPropKeysDistance(3).
+		Build(store, "/subtask", "0")
+	keys := make([][]byte, 0, 30)
+	values := make([][]byte, 0, 30)
+	for i := 0; i < 30; i++ {
+		keys = append(keys, []byte{byte(i)})
+		values = append(values, []byte{byte(i)})
+	}
+	for i, key := range keys {
+		err := w.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err := w.Close(ctx)
+	require.NoError(t, err)
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"/subtask/0_stat/0", "/subtask/0_stat/1", "/subtask/0_stat/2",
+	}, statFiles)
+	require.Equal(t, []string{
+		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
+	}, dataFiles)
+
+	require.NoError(t, CleanUpFiles(ctx, store, "/subtask", 10))
+
+	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
+	require.NoError(t, err)
+	require.Equal(t, []string(nil), statFiles)
+	require.Equal(t, []string(nil), dataFiles)
+}
+
+func TestGetMaxOverlapping(t *testing.T) {
+	// [1, 3), [2, 4)
+	points := []Endpoint{
+		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{3}, Tp: ExclusiveEnd, Weight: 1},
+		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{4}, Tp: ExclusiveEnd, Weight: 1},
+	}
+	require.Equal(t, 2, GetMaxOverlapping(points))
+	// [1, 3), [2, 4), [3, 5)
+	points = []Endpoint{
+		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{3}, Tp: ExclusiveEnd, Weight: 1},
+		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{4}, Tp: ExclusiveEnd, Weight: 1},
+		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{5}, Tp: ExclusiveEnd, Weight: 1},
+	}
+	require.Equal(t, 2, GetMaxOverlapping(points))
+	// [1, 3], [2, 4], [3, 5]
+	points = []Endpoint{
+		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{3}, Tp: InclusiveEnd, Weight: 1},
+		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{4}, Tp: InclusiveEnd, Weight: 1},
+		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
+		{Key: []byte{5}, Tp: InclusiveEnd, Weight: 1},
+	}
+	require.Equal(t, 3, GetMaxOverlapping(points))
 }

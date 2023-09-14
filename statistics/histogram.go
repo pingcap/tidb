@@ -21,6 +21,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -127,10 +128,20 @@ func (hg *Histogram) GetLower(idx int) *types.Datum {
 	return &d
 }
 
+// LowerToDatum gets the lower bound of bucket `idx` to datum.
+func (hg *Histogram) LowerToDatum(idx int, d *types.Datum) {
+	hg.Bounds.GetRow(2*idx).DatumWithBuffer(0, hg.Tp, d)
+}
+
 // GetUpper gets the upper bound of bucket `idx`.
 func (hg *Histogram) GetUpper(idx int) *types.Datum {
 	d := hg.Bounds.GetRow(2*idx+1).GetDatum(0, hg.Tp)
 	return &d
+}
+
+// UpperToDatum gets the upper bound of bucket `idx` to datum.
+func (hg *Histogram) UpperToDatum(idx int, d *types.Datum) {
+	hg.Bounds.GetRow(2*idx+1).DatumWithBuffer(0, hg.Tp, d)
 }
 
 // MemoryUsage returns the total memory usage of this Histogram.
@@ -337,6 +348,45 @@ func (hg *Histogram) RemoveVals(valCntPairs []TopNMeta) {
 	}
 }
 
+// StandardizeForV2AnalyzeIndex fixes some "irregular" places in the Histogram, which come from current implementation of
+// analyze index task in v2.
+// For now, it does two things: 1. Remove empty buckets. 2. Reset Bucket.NDV to 0.
+func (hg *Histogram) StandardizeForV2AnalyzeIndex() {
+	if hg == nil || len(hg.Buckets) == 0 {
+		return
+	}
+	// Note that hg.Buckets is []Bucket instead of []*Bucket, so we avoid extra memory allocation for the struct Bucket
+	// in the process below.
+
+	// remainedBktIdxs are the positions of the eventually remained buckets in the original hg.Buckets slice.
+	remainedBktIdxs := make([]int, 0, len(hg.Buckets))
+	// We use two pointers here.
+	// checkingIdx is the "fast" one, and it iterates the hg.Buckets and check if they are empty one by one.
+	// When we find a non-empty bucket, we move it to the position where nextRemainedBktIdx, which is the "slow"
+	// pointer, points to.
+	nextRemainedBktIdx := 0
+	for checkingIdx := range hg.Buckets {
+		if hg.BucketCount(checkingIdx) <= 0 && hg.Buckets[checkingIdx].Repeat <= 0 {
+			continue
+		}
+		remainedBktIdxs = append(remainedBktIdxs, checkingIdx)
+		if nextRemainedBktIdx != checkingIdx {
+			hg.Buckets[nextRemainedBktIdx] = hg.Buckets[checkingIdx]
+		}
+		hg.Buckets[nextRemainedBktIdx].NDV = 0
+		nextRemainedBktIdx++
+	}
+	hg.Buckets = hg.Buckets[:nextRemainedBktIdx]
+
+	// Get the new Bounds from the original Bounds according to the indexes we collect.
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{hg.Tp}, len(remainedBktIdxs))
+	for _, i := range remainedBktIdxs {
+		c.AppendDatum(0, hg.GetLower(i))
+		c.AppendDatum(0, hg.GetUpper(i))
+	}
+	hg.Bounds = c
+}
+
 // AddIdxVals adds the given values to the histogram.
 func (hg *Histogram) AddIdxVals(idxValCntPairs []TopNMeta) {
 	totalAddCnt := int64(0)
@@ -382,10 +432,10 @@ func (hg *Histogram) ToString(idxCols int) string {
 	return strings.Join(strs, "\n")
 }
 
-// equalRowCount estimates the row count where the column equals to value.
+// EqualRowCount estimates the row count where the column equals to value.
 // matched: return true if this returned row count is from Bucket.Repeat or bucket NDV, which is more accurate than if not.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) equalRowCount(sctx sessionctx.Context, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
+func (hg *Histogram) EqualRowCount(sctx sessionctx.Context, value types.Datum, hasBucketNDV bool) (count float64, matched bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {
@@ -393,12 +443,12 @@ func (hg *Histogram) equalRowCount(sctx sessionctx.Context, value types.Datum, h
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	_, bucketIdx, inBucket, match := hg.locateBucket(sctx, value)
+	_, bucketIdx, inBucket, match := hg.LocateBucket(sctx, value)
 	if !inBucket {
 		return 0, false
 	}
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceBuckets(sctx, hg, []int{bucketIdx})
+		DebugTraceBuckets(sctx, hg, []int{bucketIdx})
 	}
 	if match {
 		return float64(hg.Buckets[bucketIdx].Repeat), true
@@ -409,15 +459,15 @@ func (hg *Histogram) equalRowCount(sctx sessionctx.Context, value types.Datum, h
 	return hg.NotNullCount() / float64(hg.NDV), false
 }
 
-// greaterRowCount estimates the row count where the column greater than value.
+// GreaterRowCount estimates the row count where the column greater than value.
 // It's deprecated. Only used for test.
-func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
-	histRowCount, _ := hg.equalRowCount(nil, value, false)
-	gtCount := hg.NotNullCount() - hg.lessRowCount(nil, value) - histRowCount
+func (hg *Histogram) GreaterRowCount(value types.Datum) float64 {
+	histRowCount, _ := hg.EqualRowCount(nil, value, false)
+	gtCount := hg.NotNullCount() - hg.LessRowCount(nil, value) - histRowCount
 	return math.Max(0, gtCount)
 }
 
-// locateBucket locates where a value falls in the range of the Histogram.
+// LocateBucket locates where a value falls in the range of the Histogram.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 //
 // Return value:
@@ -435,7 +485,7 @@ func (hg *Histogram) greaterRowCount(value types.Datum) float64 {
 // locateBucket(val2): false, 2, false, false
 // locateBucket(val3): false, 2, true, false
 // locateBucket(val4): true, 3, false, false
-func (hg *Histogram) locateBucket(sctx sessionctx.Context, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
+func (hg *Histogram) LocateBucket(sctx sessionctx.Context, value types.Datum) (exceed bool, bucketIdx int, inBucket, matchLastValue bool) {
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		defer func() {
 			debugTraceLocateBucket(sctx, &value, exceed, bucketIdx, inBucket, matchLastValue)
@@ -480,12 +530,12 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types
 	if hg.Bounds.NumRows() == 0 {
 		return 0, 0
 	}
-	exceed, bucketIdx, inBucket, match := hg.locateBucket(sctx, value)
+	exceed, bucketIdx, inBucket, match := hg.LocateBucket(sctx, value)
 	if exceed {
 		return hg.NotNullCount(), hg.Len() - 1
 	}
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceBuckets(sctx, hg, []int{bucketIdx - 1, bucketIdx})
+		DebugTraceBuckets(sctx, hg, []int{bucketIdx - 1, bucketIdx})
 	}
 	preCount := float64(0)
 	if bucketIdx > 0 {
@@ -501,8 +551,9 @@ func (hg *Histogram) LessRowCountWithBktIdx(sctx sessionctx.Context, value types
 	return preCount + hg.calcFraction(bucketIdx, &value)*(curCount-curRepeat-preCount), bucketIdx
 }
 
+// LessRowCount estimates the row count where the column less than value.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (hg *Histogram) lessRowCount(sctx sessionctx.Context, value types.Datum) float64 {
+func (hg *Histogram) LessRowCount(sctx sessionctx.Context, value types.Datum) float64 {
 	result, _ := hg.LessRowCountWithBktIdx(sctx, value)
 	return result
 }
@@ -510,8 +561,8 @@ func (hg *Histogram) lessRowCount(sctx sessionctx.Context, value types.Datum) fl
 // BetweenRowCount estimates the row count where column greater or equal to a and less than b.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (hg *Histogram) BetweenRowCount(sctx sessionctx.Context, a, b types.Datum) float64 {
-	lessCountA := hg.lessRowCount(sctx, a)
-	lessCountB := hg.lessRowCount(sctx, b)
+	lessCountA := hg.LessRowCount(sctx, a)
+	lessCountB := hg.LessRowCount(sctx, b)
 	// If lessCountA is not less than lessCountB, it may be that they fall to the same bucket and we cannot estimate
 	// the fraction, so we use `totalCount / NDV` to estimate the row count, but the result should not greater than
 	// lessCountB or notNullCount-lessCountA.
@@ -820,7 +871,8 @@ func (hg *Histogram) AvgCountPerNotNullValue(totalCount int64) float64 {
 	return totalNotNull / curNDV
 }
 
-func (hg *Histogram) outOfRange(val types.Datum) bool {
+// OutOfRange checks if the datum is out of range.
+func (hg *Histogram) OutOfRange(val types.Datum) bool {
 	if hg.Len() == 0 {
 		return false
 	}
@@ -828,7 +880,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
-// outOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
+// OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
 // As it shows below. To calculate the out-of-range row count, we need to calculate the percentage of the shaded area.
@@ -847,7 +899,7 @@ func (hg *Histogram) outOfRange(val types.Datum) bool {
          │   │
     lDatum  rDatum
 */
-func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount int64) (result float64) {
+func (hg *Histogram) OutOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum *types.Datum, modifyCount, histNDV int64) (result float64) {
 	debugTrace := sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace
 	if debugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -967,21 +1019,43 @@ func (hg *Histogram) outOfRangeRowCount(sctx sessionctx.Context, lDatum, rDatum 
 	}
 	rowCount = totalPercent * hg.NotNullCount()
 
+	// Upper bound logic
+
+	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != variable.OptObjectiveDeterminate
 	// Use the modifyCount as the upper bound. Note that modifyCount contains insert, delete and update. So this is
 	// a rather loose upper bound.
 	// There are some scenarios where we need to handle out-of-range estimation after both insert and delete happen.
 	// But we don't know how many increases are in the modifyCount. So we have to use this loose bound to ensure it
 	// can produce a reasonable results in this scenario.
-	if rowCount > float64(modifyCount) {
+	if rowCount > float64(modifyCount) && allowUseModifyCount {
 		return float64(modifyCount)
+	}
+
+	// In OptObjectiveDeterminate mode, we can't rely on the modify count anymore.
+	// An upper bound is necessary to make the estimation make sense for predicates with bound on only one end, like a > 1.
+	// But it's impossible to have a reliable upper bound in all cases.
+	// We use 1/NDV here (only the Histogram part is considered) and it seems reasonable and good enough for now.
+	if !allowUseModifyCount {
+		var upperBound float64
+		if histNDV > 0 {
+			upperBound = hg.NotNullCount() / float64(histNDV)
+		}
+		if rowCount > upperBound {
+			return upperBound
+		}
 	}
 	return rowCount
 }
 
 // Copy deep copies the histogram.
 func (hg *Histogram) Copy() *Histogram {
+	if hg == nil {
+		return nil
+	}
 	newHist := *hg
-	newHist.Bounds = hg.Bounds.CopyConstruct()
+	if hg.Bounds != nil {
+		newHist.Bounds = hg.Bounds.CopyConstruct()
+	}
 	newHist.Buckets = make([]Bucket, 0, len(hg.Buckets))
 	newHist.Buckets = append(newHist.Buckets, hg.Buckets...)
 	return &newHist
@@ -1072,6 +1146,20 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 	return nil
 }
 
+var bucket4MergingPool = sync.Pool{
+	New: func() any {
+		return newBucket4Meging()
+	},
+}
+
+func newbucket4MergingForRecycle() *bucket4Merging {
+	return bucket4MergingPool.Get().(*bucket4Merging)
+}
+
+func releasebucket4MergingForRecycle(b *bucket4Merging) {
+	bucket4MergingPool.Put(b)
+}
+
 // bucket4Merging is only used for merging partition hists to global hist.
 type bucket4Merging struct {
 	lower *types.Datum
@@ -1081,6 +1169,8 @@ type bucket4Merging struct {
 	disjointNDV int64
 }
 
+// newBucket4Meging creates a new bucket4Merging.
+// but we create it from bucket4MergingPool as soon as possible to reduce the cost of GC.
 func newBucket4Meging() *bucket4Merging {
 	return &bucket4Merging{
 		lower: new(types.Datum),
@@ -1099,9 +1189,9 @@ func newBucket4Meging() *bucket4Merging {
 func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 	buckets := make([]*bucket4Merging, 0, hg.Len())
 	for i := 0; i < hg.Len(); i++ {
-		b := newBucket4Meging()
-		hg.GetLower(i).Copy(b.lower)
-		hg.GetUpper(i).Copy(b.upper)
+		b := newbucket4MergingForRecycle()
+		hg.LowerToDatum(i, b.lower)
+		hg.UpperToDatum(i, b.upper)
 		b.Repeat = hg.Buckets[i].Repeat
 		b.NDV = hg.Buckets[i].NDV
 		b.Count = hg.Buckets[i].Count
@@ -1114,16 +1204,14 @@ func (hg *Histogram) buildBucket4Merging() []*bucket4Merging {
 }
 
 func (b *bucket4Merging) Clone() bucket4Merging {
-	return bucket4Merging{
-		lower: b.lower.Clone(),
-		upper: b.upper.Clone(),
-		Bucket: Bucket{
-			Repeat: b.Repeat,
-			NDV:    b.NDV,
-			Count:  b.Count,
-		},
-		disjointNDV: b.disjointNDV,
-	}
+	result := newbucket4MergingForRecycle()
+	result.Repeat = b.Repeat
+	result.NDV = b.NDV
+	b.upper.Copy(result.upper)
+	b.lower.Copy(result.lower)
+	result.Count = b.Count
+	result.disjointNDV = b.disjointNDV
+	return *result
 }
 
 // mergeBucketNDV merges bucket NDV from tow bucket `right` & `left`.
@@ -1134,8 +1222,8 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		return &res, nil
 	}
 	if right.NDV == 0 {
-		res.lower = left.lower.Clone()
-		res.upper = left.upper.Clone()
+		left.lower.Copy(res.lower)
+		left.upper.Copy(res.upper)
 		res.NDV = left.NDV
 		return &res, nil
 	}
@@ -1194,8 +1282,8 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// We add right.ndv in `disjointNDV`, and let `right.ndv = left.ndv` be used for subsequent merge.
 	// This is because, for the merging of many buckets, we merge them from back to front.
 	if lowerCompareUpper >= 0 {
-		res.upper = left.upper.Clone()
-		res.lower = left.lower.Clone()
+		left.upper.Copy(res.upper)
+		left.lower.Copy(res.lower)
 		res.disjointNDV += right.NDV
 		res.NDV = left.NDV
 		return &res, nil
@@ -1247,8 +1335,8 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	if len(buckets) == 0 {
 		return nil, errors.Errorf("not enough buckets to merge")
 	}
-	res := bucket4Merging{}
-	res.upper = buckets[len(buckets)-1].upper.Clone()
+	res := newbucket4MergingForRecycle()
+	buckets[len(buckets)-1].upper.Copy(res.upper)
 	right := buckets[len(buckets)-1].Clone()
 
 	totNDV := int64(0)
@@ -1279,13 +1367,13 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	if res.NDV > totNDV {
 		res.NDV = totNDV
 	}
-	return &res, nil
+	return res, nil
 }
 
 func (t *TopNMeta) buildBucket4Merging(d *types.Datum) *bucket4Merging {
-	res := newBucket4Meging()
-	res.lower = d.Clone()
-	res.upper = d.Clone()
+	res := newbucket4MergingForRecycle()
+	d.Copy(res.lower)
+	d.Copy(res.upper)
 	res.Count = int64(t.Count)
 	res.Repeat = int64(t.Count)
 	res.NDV = int64(1)
@@ -1310,12 +1398,13 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 				minValue = hist.GetLower(0).Clone()
 				continue
 			}
-			res, err := hist.GetLower(0).Compare(sc, minValue, collate.GetBinaryCollator())
+			tmpValue := hist.GetLower(0)
+			res, err := tmpValue.Compare(sc, minValue, collate.GetBinaryCollator())
 			if err != nil {
 				return nil, err
 			}
 			if res < 0 {
-				minValue = hist.GetLower(0).Clone()
+				minValue = tmpValue.Clone()
 			}
 		}
 	}
@@ -1356,6 +1445,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 			buckets[tail] = buckets[i]
 			tail++
 		}
+	}
+	for n := tail; n < len(buckets); n++ {
+		releasebucket4MergingForRecycle(buckets[n])
 	}
 	buckets = buckets[:tail]
 
@@ -1427,6 +1519,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 		}
 		globalBuckets = append(globalBuckets, merged)
 	}
+	for i := 0; i < len(buckets); i++ {
+		releasebucket4MergingForRecycle(buckets[i])
+	}
 	// Because we merge backwards, we need to flip the slices.
 	for i, j := 0, len(globalBuckets)-1; i < j; i, j = i+1, j-1 {
 		globalBuckets[i], globalBuckets[j] = globalBuckets[j], globalBuckets[i]
@@ -1436,12 +1531,12 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	if minValue == nil || len(globalBuckets) == 0 { // both hists and popedTopN are empty, returns an empty hist in this case
 		return NewHistogram(hists[0].ID, 0, totNull, hists[0].LastUpdateVersion, hists[0].Tp, len(globalBuckets), totColSize), nil
 	}
-	globalBuckets[0].lower = minValue.Clone()
+	minValue.Copy(globalBuckets[0].lower)
 	for i := 1; i < len(globalBuckets); i++ {
 		if globalBuckets[i].NDV == 1 { // there is only 1 value so lower = upper
-			globalBuckets[i].lower = globalBuckets[i].upper.Clone()
+			globalBuckets[i].upper.Copy(globalBuckets[i].lower)
 		} else {
-			globalBuckets[i].lower = globalBuckets[i-1].upper.Clone()
+			globalBuckets[i-1].upper.Copy(globalBuckets[i].lower)
 		}
 		globalBuckets[i].Count = globalBuckets[i].Count + globalBuckets[i-1].Count
 	}
@@ -1451,7 +1546,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	for _, bucket := range globalBuckets {
 		var repeat float64
 		for _, hist := range hists {
-			histRowCount, _ := hist.equalRowCount(nil, *bucket.upper, isIndex)
+			histRowCount, _ := hist.EqualRowCount(nil, *bucket.upper, isIndex)
 			repeat += histRowCount // only hists of indexes have bucket.NDV
 		}
 		if int64(repeat) > bucket.Repeat {
@@ -1497,6 +1592,14 @@ func NewStatsAllEvictedStatus() StatsLoadedStatus {
 	return StatsLoadedStatus{
 		statsInitialized: true,
 		evictedStatus:    AllEvicted,
+	}
+}
+
+// Copy copies the status
+func (s *StatsLoadedStatus) Copy() StatsLoadedStatus {
+	return StatsLoadedStatus{
+		statsInitialized: s.statsInitialized,
+		evictedStatus:    s.evictedStatus,
 	}
 }
 

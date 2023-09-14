@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -464,13 +465,19 @@ func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	delete(dc.jobCtx.jobCtxMap, job.ID)
 }
 
-func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
+func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobContext {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
+	var ctx *JobContext
 	if jobContext, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
-		return jobContext
+		ctx = jobContext
+	} else {
+		ctx = NewJobContext()
 	}
-	return NewJobContext()
+	if reorgMeta != nil && len(ctx.resourceGroupName) == 0 {
+		ctx.resourceGroupName = reorgMeta.ResourceGroupName
+	}
+	return ctx
 }
 
 func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
@@ -488,20 +495,6 @@ func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
 		runningJobIDs = append(runningJobIDs, id)
 	}
 	return runningJobIDs
-}
-
-func (dc *ddlCtx) setBackfillCtxJobContext(jobID int64, jobQuery string, jobType model.ActionType) (*JobContext, bool) {
-	dc.backfillCtx.Lock()
-	defer dc.backfillCtx.Unlock()
-
-	jobCtx, existent := dc.backfillCtx.jobCtxMap[jobID]
-	if !existent {
-		dc.setDDLLabelForTopSQL(jobID, jobQuery)
-		dc.setDDLSourceForDiagnosis(jobID, jobType)
-		jobCtx = dc.jobContext(jobID)
-		dc.backfillCtx.jobCtxMap[jobID] = jobCtx
-	}
-	return jobCtx, existent
 }
 
 type reorgContexts struct {
@@ -679,26 +672,21 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType("backfill")
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
-		})
+	scheduler.RegisterTaskType(BackfillTaskType,
+		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable) scheduler.Scheduler {
+			return newBackfillDistScheduler(ctx, id, taskID, taskTable, d)
+		}, scheduler.WithSummary,
+	)
 
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(ctx context.Context, _ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(ctx, taskMeta, d, step == proto.StepTwo)
-		})
-
-	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
+	backFillDsp, err := NewBackfillingDispatcherExt(d)
+	if err != nil {
+		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
+	} else {
+		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
+			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
+			})
+	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
@@ -1039,6 +1027,10 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	job.TraceInfo = &model.TraceInfo{
+		ConnectionID: ctx.GetSessionVars().ConnectionID,
+		SessionAlias: ctx.GetSessionVars().SessionAlias,
+	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.

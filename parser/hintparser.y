@@ -562,6 +562,22 @@ Value:
 	{
 		$$ = strconv.FormatUint($1, 10)
 	}
+|	'+' hintIntLit
+	{
+		$$ = strconv.FormatUint($2, 10)
+	}
+|	'-' hintIntLit
+	{
+		if $2 > 9223372036854775808 {
+			yylex.AppendError(yylex.Errorf("the Signed Value should be at the range of [-9223372036854775808, 9223372036854775807]."))
+			return 1
+		} else if $2 == 9223372036854775808 {
+			signed_one := int64(1)
+			$$ = strconv.FormatInt(signed_one<<63, 10)
+		} else {
+			$$ = strconv.FormatInt(-int64($2), 10)
+		}
+	}
 
 UnitOfBytes:
 	"MB"

@@ -19,14 +19,17 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // prettyFileNames removes the directory prefix except the last level from the
@@ -63,7 +66,7 @@ func seekPropsOffsets(
 	moved := false
 	for iter.Next() {
 		p := iter.prop()
-		propKey := kv.Key(p.key)
+		propKey := kv.Key(p.firstKey)
 		if propKey.Cmp(start) > 0 {
 			if !moved {
 				return nil, fmt.Errorf("start key %s is too small for stat files %v",
@@ -117,4 +120,124 @@ func GetAllFileNames(
 	sort.Strings(data)
 	sort.Strings(stats)
 	return data, stats, nil
+}
+
+// CleanUpFiles delete all data and stat files under one subDir.
+func CleanUpFiles(ctx context.Context,
+	store storage.ExternalStorage,
+	subDir string,
+	concurrency uint) error {
+	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
+	if err != nil {
+		return err
+	}
+
+	eg := &errgroup.Group{}
+	workerPool := utils.NewWorkerPool(concurrency, "delete global sort files")
+	for i := range dataNames {
+		data := dataNames[i]
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			err := store.DeleteFile(ctx, data)
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+	for i := range statNames {
+		stat := statNames[i]
+		workerPool.ApplyOnErrorGroup(eg, func() error {
+			err := store.DeleteFile(ctx, stat)
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+	}
+	return eg.Wait()
+}
+
+// MockExternalEngine generates an external engine with the given keys and values.
+func MockExternalEngine(
+	storage storage.ExternalStorage,
+	keys [][]byte,
+	values [][]byte,
+) (dataFiles []string, statsFiles []string, err error) {
+	subDir := "/mock-test"
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(128).
+		SetPropSizeDistance(32).
+		SetPropKeysDistance(4).
+		Build(storage, "/mock-test", "0")
+	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
+}
+
+// MockExternalEngineWithWriter generates an external engine with the given
+// writer, keys and values.
+func MockExternalEngineWithWriter(
+	storage storage.ExternalStorage,
+	writer *Writer,
+	subDir string,
+	keys [][]byte,
+	values [][]byte,
+) (dataFiles []string, statsFiles []string, err error) {
+	ctx := context.Background()
+	for i := range keys {
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	err = writer.Close(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return GetAllFileNames(ctx, storage, subDir)
+}
+
+// EndpointTp is the type of Endpoint.Key.
+type EndpointTp int
+
+const (
+	// ExclusiveEnd represents "..., Endpoint.Key)".
+	ExclusiveEnd EndpointTp = iota
+	// InclusiveStart represents "[Endpoint.Key, ...".
+	InclusiveStart
+	// InclusiveEnd represents "..., Endpoint.Key]".
+	InclusiveEnd
+)
+
+// Endpoint represents an endpoint of an interval which can be used by GetMaxOverlapping.
+type Endpoint struct {
+	Key    []byte
+	Tp     EndpointTp
+	Weight uint64 // all EndpointTp use positive weight
+}
+
+// GetMaxOverlapping returns the maximum overlapping weight treating given
+// `points` as endpoints of intervals. `points` are not required to be sorted,
+// and will be sorted in-place in this function.
+func GetMaxOverlapping(points []Endpoint) int {
+	slices.SortFunc(points, func(i, j Endpoint) int {
+		if cmp := bytes.Compare(i.Key, j.Key); cmp != 0 {
+			return cmp
+		}
+		return int(i.Tp) - int(j.Tp)
+	})
+	var maxWeight uint64
+	var curWeight uint64
+	for _, p := range points {
+		switch p.Tp {
+		case InclusiveStart:
+			curWeight += p.Weight
+		case ExclusiveEnd:
+			curWeight -= p.Weight
+		case InclusiveEnd:
+			curWeight -= p.Weight
+		}
+		if curWeight > maxWeight {
+			maxWeight = curWeight
+		}
+	}
+	return int(maxWeight)
 }

@@ -352,6 +352,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		Charset:         parentJob.Charset,
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
+		TraceInfo:       parentJob.TraceInfo,
 	}
 }
 
@@ -441,6 +442,9 @@ type Job struct {
 	// AdminOperator indicates where the Admin command comes, by the TiDB
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
+
+	// TraceInfo indicates the information for SQL tracing
+	TraceInfo *TraceInfo `json:"trace_info"`
 }
 
 // FinishTableJob is called when a job is finished.
