@@ -92,14 +92,11 @@ type Handle struct {
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
 
-	// globalMap contains all the delta map from collectors when we dump them to KV.
-	globalMap struct {
-		data tableDeltaMap
-		sync.Mutex
-	}
+	// tableDelta contains all the delta map from collectors when we dump them to KV.
+	tableDelta *tableDelta
 
-	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap *statsUsage
+	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
+	statsUsage *statsUsage
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -182,10 +179,8 @@ func (h *Handle) Clear() {
 	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
 	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead.ClearForTest()
-	h.globalMap.Lock()
-	h.globalMap.data = make(tableDeltaMap)
-	h.globalMap.Unlock()
-	h.colMap.reset()
+	h.tableDelta.reset()
+	h.statsUsage.reset()
 	h.mu.Unlock()
 }
 
@@ -215,8 +210,8 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 		return nil, err
 	}
 	handle.statsCache = statsCache
-	handle.globalMap.data = make(tableDeltaMap)
-	handle.colMap = newStatsUsage()
+	handle.tableDelta = newTableDelta()
+	handle.statsUsage = newStatsUsage()
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
