@@ -659,7 +659,7 @@
       "executor/test/tiflashtest": "executor/test/tiflashtest",
       "executor/test/unstabletest": "executor/test/unstabletest",
       "br/": "br code",
-      "session/test": "session/test code",
+      "session/": "session/ code",
       "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
       "timer/": "timer code",
