@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -523,6 +522,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		case *ast.SelectStmt:
 			ci := b.prepareCTECheckForSubQuery()
 			defer resetCTECheckForSubQuery(ci)
+			b.optFlag = b.optFlag | flagConstantPropagation
 			p, err = b.buildSelect(ctx, v)
 		case *ast.SetOprStmt:
 			ci := b.prepareCTECheckForSubQuery()
@@ -4722,10 +4722,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo)
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
 
 	allowPseudoTblTriggerLoading := false
@@ -4790,9 +4790,9 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.

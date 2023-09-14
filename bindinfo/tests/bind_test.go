@@ -35,6 +35,82 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestBindingInListEffect(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+
+	// binding created with `in (?)` can work for `in (?,?,?)`
+	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`create binding for select a from t where a in (1) using select a from t where a in (1)`)
+	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1, 2)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	// binding created with `in (?,?,?)` can work for `in (?)`
+	tk.MustQuery(`select b from t where b in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`create binding for select b from t where b in (1,2,3) using select b from t where b in (1,2,3)`)
+	tk.MustQuery(`select b from t where b in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+
+	// bindings with multiple in-lists can take effect
+	tk.MustQuery(`select * from t where a in (1) and b in (1) and c in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`create binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3) using
+select * from t where a in (1,2,3) and b in (1,2) and c in (1)`)
+	tk.MustQuery(`select * from t where a in (1) and b in (1) and c in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a in (1) and b in (1,2) and c in (1,2,3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t where a in (1,2,3) and b in (1,2) and c in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
+func TestBindingInListOperation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int)`)
+
+	// only 1 binding will be left
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
+	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1)`)
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1,2)`)
+	tk.MustExec(`create binding for select * from t where a in(1,2) using select * from t where a in(1,2)`)
+	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+
+	// create and drop
+	tk.MustExec(`create binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1,2,3)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`create binding for select * from t where a in(1) using select * from t where a in(1)`)
+	require.Equal(t, 1, len(tk.MustQuery(`show bindings`).Rows()))
+	tk.MustExec(`drop binding for select * from t where a in(1,2,3,4,5,6,7,8,9,0,11,12)`)
+	require.Equal(t, 0, len(tk.MustQuery(`show bindings`).Rows()))
+
+	// create and set status
+	tk.MustExec(`create global binding for select * from t where a in(1,2,3) using select * from t where a in(1)`)
+	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
+	tk.MustExec(`set binding disabled for select * from t where a in(1)`)
+	require.Equal(t, "disabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
+	tk.MustExec(`set binding enabled for select * from t where a in(1,2,3,4,5)`)
+	require.Equal(t, "enabled", tk.MustQuery(`show global bindings`).Rows()[0][3].(string))
+}
+
 func TestPrepareCacheWithBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -414,13 +490,57 @@ func TestBindingSymbolList(t *testing.T) {
 	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"))
 
 	// Normalize
-	sql, hash := parser.NormalizeDigest("select a, b from test . t where a = 1 limit 0, 1")
+	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a = 1 limit 0, 1")
 
 	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
+	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, bindinfo.Enabled, bind.Status)
+	require.NotNil(t, bind.Charset)
+	require.NotNil(t, bind.Collation)
+	require.NotNil(t, bind.CreateTime)
+	require.NotNil(t, bind.UpdateTime)
+}
+
+// TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
+func TestBindingInListWithSingleLiteral(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, INDEX ia (a), INDEX ib (b));")
+	tk.MustExec("insert into t value(1, 1);")
+
+	// GIVEN
+	sqlcmd := "select a, b from t where a in (1)"
+	binding := `create global binding for select a, b from t where a in (1, 2, 3) using select a, b from t use index (ib) where a in (1, 2, 3)`
+
+	// before binding
+	tk.MustQuery(sqlcmd)
+	require.Equal(t, "t:ia", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex(sqlcmd, "ia(a)"))
+
+	tk.MustExec(binding)
+
+	// after binding
+	tk.MustQuery(sqlcmd)
+	require.Equal(t, "t:ib", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
+	require.True(t, tk.MustUseIndex(sqlcmd, "ib(b)"))
+
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+
+	// Normalize
+	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a in (1)")
+
+	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
+	require.NotNil(t, bindData)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", bindData.OriginalSQL)
+	bind := bindData.Bindings[0]
+	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` IN (1,2,3)", bind.BindSQL)
 	require.Equal(t, "test", bindData.Db)
 	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
@@ -538,7 +658,7 @@ func TestErrorBind(t *testing.T) {
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	require.NoError(t, err, "err %v", err)
 
-	sql, hash := parser.NormalizeDigest("select * from test . t where i > ?")
+	sql, hash := parser.NormalizeDigestForBinding("select * from test . t where i > ?")
 	bindData := dom.BindHandle().GetBindRecord(hash.String(), sql, "test")
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.OriginalSQL)
@@ -1304,7 +1424,7 @@ func TestBindSQLDigest(t *testing.T) {
 		parser4binding := parser.New()
 		originNode, err := parser4binding.ParseOneStmt(c.origin, "utf8mb4", "utf8mb4_general_ci")
 		require.NoError(t, err)
-		_, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
+		_, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, "test", c.origin))
 		require.Equal(t, res[0][9], sqlDigestWithDB.String())
 	}
 }

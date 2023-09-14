@@ -1013,6 +1013,10 @@ func isConnectionResetError(err error) bool {
 	return strings.Contains(err.Error(), "read: connection reset")
 }
 
+func isConnectionRefusedError(err error) bool {
+	return strings.Contains(err.Error(), "connection refused")
+}
+
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	// for unit test
 	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
@@ -1023,6 +1027,9 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	})
 	if isConnectionResetError(r.Error) {
 		return true
+	}
+	if isConnectionRefusedError(r.Error) {
+		return false
 	}
 	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
 		// fast fail for unreachable linklocal address in EC2 containers.

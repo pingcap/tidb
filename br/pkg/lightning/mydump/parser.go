@@ -202,6 +202,7 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos gets the read position of current reader.
+// this always returns the position of the underlying file, either compressed or not.
 func (parser *blockParser) ScannedPos() (int64, error) {
 	return parser.reader.Seek(0, io.SeekCurrent)
 }

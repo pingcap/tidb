@@ -340,10 +340,10 @@ func TestSwitchMode(t *testing.T) {
 	for totalCnt < fileSize {
 		if rand.Intn(5) == 0 {
 			if modeUseCon {
-				br.SwitchReaderMode(false)
+				br.switchReaderMode(false)
 				modeUseCon = false
 			} else {
-				br.SwitchReaderMode(true)
+				br.switchReaderMode(true)
 				modeUseCon = true
 			}
 		}

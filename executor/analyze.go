@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -164,12 +163,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
-
-	if sessionVars.InRestrictedSQL {
-		return statsHandle.Update(infoSchema)
-	}
-
-	return statsHandle.Update(infoSchema, cache.WithTableStatsByQuery())
+	return statsHandle.Update(infoSchema)
 }
 
 // filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
@@ -179,35 +173,39 @@ func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, inf
 		skippedTables       []string
 		needAnalyzeTableCnt uint
 		tids                = make([]int64, 0, len(tasks))
-		// taskMap is used to collect the tasks that belong to the same table.
+		// tidMap is used to deduplicate table IDs.
 		// In stats v1, analyze for each index is a single task, and they have the same table id.
-		taskMap = make(map[int64][]*analyzeTask, len(tasks))
+		tidMap = make(map[int64]struct{}, len(tasks))
 	)
 
+	// Check the locked tables in one transaction.
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
 		tids = append(tids, tableID)
-		taskMap[tableID] = append(taskMap[tableID], task)
 	}
-
-	// Check the locked tables in one transaction.
-	lockedStatuses, err := statsHandle.QueryTablesLockedStatuses(tids...)
+	lockedTables, err := statsHandle.GetLockedTables(tids...)
 	if err != nil {
 		return nil, 0, nil, err
 	}
 
-	for tid, isLocked := range lockedStatuses {
+	for _, task := range tasks {
+		tableID := getTableIDFromTask(task)
+		_, isLocked := lockedTables[tableID]
 		if !isLocked {
-			filteredTasks = append(filteredTasks, taskMap[tid]...)
-			needAnalyzeTableCnt++
-		} else {
-			tbl, ok := infoSchema.TableByID(tid)
-			if !ok {
-				// Ignore this table because it may have been dropped.
-				logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tid))
+			filteredTasks = append(filteredTasks, task)
+		}
+		if _, ok := tidMap[tableID]; !ok {
+			if isLocked {
+				tbl, ok := infoSchema.TableByID(tableID)
+				if !ok {
+					logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", tableID))
+				} else {
+					skippedTables = append(skippedTables, tbl.Meta().Name.L)
+				}
 			} else {
-				skippedTables = append(skippedTables, tbl.Meta().Name.L)
+				needAnalyzeTableCnt++
 			}
+			tidMap[tableID] = struct{}{}
 		}
 	}
 

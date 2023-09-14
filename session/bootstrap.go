@@ -582,6 +582,11 @@ const (
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
+	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
+	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
+        host VARCHAR(100) NOT NULL PRIMARY KEY,
+        role VARCHAR(64),
+        keyspace_id bigint(8) NOT NULL DEFAULT -1);`
 
 	// CreateLoadDataJobs is a table that LOAD DATA uses
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
@@ -975,11 +980,19 @@ const (
 	version172 = 172
 	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
 	version173 = 173
+	// version 174
+	//   add column `step`, `error`; delete unique key; and add key idx_state_update_time
+	//   to `mysql.tidb_background_subtask_history`.
+	version174 = 174
+
+	// version 175
+	//   update normalized bindings of `in (?)` to `in (...)` to solve #44298.
+	version175 = 175
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version173
+var currentBootstrapVersion int64 = version175
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1121,6 +1134,8 @@ var (
 		upgradeToVer171,
 		upgradeToVer172,
 		upgradeToVer173,
+		upgradeToVer174,
+		upgradeToVer175,
 	}
 )
 
@@ -1179,12 +1194,9 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 }
 
 var (
-	// SupportUpgradeStateVer is exported for testing.
-	// The minimum version that can be upgraded by paused user DDL.
-	SupportUpgradeStateVer int64 = version145
 	// SupportUpgradeHTTPOpVer is exported for testing.
-	// The minimum version of the upgrade can be notified through the HTTP API.
-	SupportUpgradeHTTPOpVer int64 = version173
+	// The minimum version of the upgrade by paused user DDL can be notified through the HTTP API.
+	SupportUpgradeHTTPOpVer int64 = version174
 )
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
@@ -1196,9 +1208,7 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
-	if ver >= SupportUpgradeStateVer {
-		checkOrSyncUpgrade(s, ver)
-	}
+	printClusterState(s, ver)
 
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
@@ -2721,6 +2731,67 @@ func upgradeToVer173(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer174(s Session, ver int64) {
+	if ver >= version174 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history DROP INDEX `namespace`", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_task_key`(`task_key`)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_state_update_time`(`state_update_time`)", dbterror.ErrDupKeyName)
+}
+
+// upgradeToVer175 updates normalized bindings of `in (?)` to `in (...)` to solve
+// the issue #44298 that bindings for `in (?)` can't work for `in (?, ?, ?)`.
+// After this update, multiple bindings may have the same `original_sql`, but it's OK, and
+// for safety, don't remove duplicated bindings when upgrading.
+func upgradeToVer175(s Session, ver int64) {
+	if ver >= version175 {
+		return
+	}
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT original_sql, bind_sql FROM mysql.bind_info WHERE source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < req.NumRows(); i++ {
+			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL)
+			// update `in (?)` to `in (...)`
+			if originalNormalizedSQL == newNormalizedSQL {
+				continue // no need to update
+			}
+			mustExecute(s, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+	}
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2846,6 +2917,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTimers)
 	// create runaway_watch done
 	mustExecute(s, CreateDoneRunawayWatchTable)
+	// create dist_framework_meta
+	mustExecute(s, CreateDistFrameworkMeta)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -2967,7 +3040,6 @@ func doDMLWorks(s Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap version. Do not delete.")`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion,
 	)
-
 	writeSystemTZ(s)
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)

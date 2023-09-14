@@ -22,13 +22,14 @@ import (
 
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
+	"go.uber.org/mock/gomock"
 )
 
 type planErrDispatcherExt struct {
 	callTime int
+	cnt      int
 }
 
 var (
@@ -39,13 +40,13 @@ var (
 func (*planErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planErrDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
+func (p *planErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+	if gTask.Step == proto.StepInit {
 		if p.callTime == 0 {
 			p.callTime++
 			return nil, errors.New("retryable err")
 		}
-		gTask.Step = proto.StepOne
+		p.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -53,7 +54,7 @@ func (p *planErrDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskH
 		}, nil
 	}
 	if gTask.Step == proto.StepOne {
-		gTask.Step = proto.StepTwo
+		p.cnt = 4
 		return [][]byte{
 			[]byte("task4"),
 		}, nil
@@ -77,13 +78,31 @@ func (*planErrDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
+func (p *planErrDispatcherExt) StageFinished(task *proto.Task) bool {
+	if task.Step == proto.StepInit && p.cnt == 3 {
+		return true
+	}
+	if task.Step == proto.StepOne && p.cnt == 4 {
+		return true
+	}
+	return false
+}
+
+func (p *planErrDispatcherExt) Finished(task *proto.Task) bool {
+	if task.Step == proto.StepOne && p.cnt == 4 {
+		return true
+	}
+	return false
+}
+
 type planNotRetryableErrDispatcherExt struct {
+	cnt int
 }
 
 func (*planNotRetryableErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planNotRetryableErrDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (p *planNotRetryableErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
 	return nil, errors.New("not retryable err")
 }
 
@@ -99,34 +118,46 @@ func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-func TestPlanErr(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
-	m := sync.Map{}
+func (p *planNotRetryableErrDispatcherExt) StageFinished(task *proto.Task) bool {
+	if task.Step == proto.StepInit && p.cnt >= 3 {
+		return true
+	}
+	if task.Step == proto.StepOne && p.cnt >= 4 {
+		return true
+	}
+	return false
+}
 
-	RegisterTaskMeta(&m, &planErrDispatcherExt{0})
+func (p *planNotRetryableErrDispatcherExt) Finished(task *proto.Task) bool {
+	return task.Step == proto.StepOne && p.cnt >= 4
+}
+
+func TestPlanErr(t *testing.T) {
+	m := sync.Map{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestRevertPlanErr(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcherExt{0})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestPlanNotRetryableErr(t *testing.T) {
-	defer dispatcher.ClearDispatcherFactory()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
-
-	RegisterTaskMeta(&m, &planNotRetryableErrDispatcherExt{})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planNotRetryableErrDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()

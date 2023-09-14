@@ -209,7 +209,6 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 
 // It uses the modifyCount to adjust the influence of modifications on the table.
 func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
-	idx.CheckStats()
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {

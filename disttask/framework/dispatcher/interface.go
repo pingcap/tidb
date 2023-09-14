@@ -31,23 +31,35 @@ type Extension interface {
 	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
-	OnTick(ctx context.Context, gTask *proto.Task)
-	// OnNextStage is used to move the task to next stage, if returns no error and there's no new subtasks
-	// the task is finished.
+	OnTick(ctx context.Context, task *proto.Task)
+
+	// OnNextSubtasksBatch is used to generate batch of subtasks for current stage
 	// NOTE: don't change gTask.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
-	// 	2. subtasks of previous step has all finished with no error.
-	OnNextStage(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
+	// 	2. subtasks dispatched has all finished with no error.
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error)
+
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
 	// 	2. task is cancelled after we have dispatched some subtasks.
-	OnErrStage(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+	OnErrStage(ctx context.Context, h TaskHandle, task *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
-	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)
+	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, error)
+
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
+
+	// StageFinished is used to check if all subtasks in current stage are dispatched and processed.
+	// StageFinished is called before generating batch of subtasks.
+	StageFinished(task *proto.Task) bool
+
+	// Finished is used to check if all subtasks for the task are dispatched and processed.
+	// Finished is called before generating batch of subtasks.
+	// Once Finished return true, mark the task as succeed.
+	Finished(task *proto.Task) bool
 }
 
 // FactoryFn is used to create a dispatcher.

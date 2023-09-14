@@ -77,12 +77,12 @@ func newByteReader(ctx context.Context, storageReader storage.ExternalFileReader
 		bufOffset:     0,
 		conReader:     conReader,
 	}
-	r.SwitchReaderMode(defaultUseConcurrency)
+	r.switchReaderMode(defaultUseConcurrency)
 	return r, r.reload()
 }
 
-// SwitchReaderMode switches to concurrent reader.
-func (r *byteReader) SwitchReaderMode(useConcurrent bool) {
+// switchReaderMode switches to concurrent reader.
+func (r *byteReader) switchReaderMode(useConcurrent bool) {
 	r.useConcurrentReader.Store(useConcurrent)
 }
 
@@ -101,11 +101,6 @@ func (r *byteReader) switchToConcurrentReaderImpl() error {
 	r.useConcurrentReaderCurrent.Store(true)
 	r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
 	return nil
-}
-
-// UseConcurrentReader returns whether the reader is using concurrent reader.
-func (r *byteReader) UseConcurrentReader() bool {
-	return r.useConcurrentReader.Load()
 }
 
 func (r *byteReader) switchToNormalReaderImpl() error {

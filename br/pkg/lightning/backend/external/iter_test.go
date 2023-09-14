@@ -19,10 +19,10 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"strconv"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
@@ -75,7 +75,7 @@ func TestMergeKVIter(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -127,7 +127,7 @@ func TestOneUpstream(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -205,7 +205,7 @@ func TestCorruptContent(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -259,7 +259,7 @@ func generateMockFileReader() *kvReader {
 		propKeysDist: 2,
 	}
 	rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
 	if err != nil {
 		panic(err)
 	}
@@ -287,7 +287,7 @@ func BenchmarkValueT(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		rd := generateMockFileReader()
-		opener := func(ctx context.Context) (*kvReaderProxy, error) {
+		opener := func() (*kvReaderProxy, error) {
 			return &kvReaderProxy{r: rd}, nil
 		}
 		it, err := newMergeIter[kvPair, kvReaderProxy](ctx, []readerOpenerFn[kvPair, kvReaderProxy]{opener})
@@ -320,7 +320,7 @@ func (p kvReaderPointerProxy) next() (*kvPair, error) {
 }
 
 func (p kvReaderPointerProxy) setReadMode(useConcurrency bool) {
-	p.r.byteReader.SwitchReaderMode(useConcurrency)
+	p.r.byteReader.switchReaderMode(useConcurrency)
 }
 
 func (p kvReaderPointerProxy) close() error {
@@ -332,7 +332,7 @@ func BenchmarkPointerT(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		rd := generateMockFileReader()
-		opener := func(ctx context.Context) (*kvReaderPointerProxy, error) {
+		opener := func() (*kvReaderPointerProxy, error) {
 			return &kvReaderPointerProxy{r: rd}, nil
 		}
 		it, err := newMergeIter[*kvPair, kvReaderPointerProxy](ctx, []readerOpenerFn[*kvPair, kvReaderPointerProxy]{opener})
@@ -381,7 +381,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(100).
 		SetMemorySizeLimit(512*1024).
-		Build(st, "testprefix", 0)
+		Build(st, "testprefix", strconv.Itoa(0))
 
 	ConcurrentReaderBufferSize = 4 * 1024
 
@@ -397,10 +397,10 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 		kvs[0].Key = f(kvs[0].Key, i)
 		_, err := rand.Read(kvs[0].Val[0:])
 		require.NoError(t, err)
-		err = writer.AppendRows(context.Background(), nil, kv.MakeRowsFromKvPairs(kvs))
+		err = writer.WriteRow(context.Background(), kvs[0].Key, kvs[0].Val, nil)
 		require.NoError(t, err)
 	}
-	_, err := writer.Close(context.Background())
+	err := writer.Close(context.Background())
 	require.NoError(t, err)
 
 	dataNames, _, err := GetAllFileNames(context.Background(), st, "")
