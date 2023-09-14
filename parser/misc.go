@@ -931,6 +931,7 @@ var hintTokenMap = map[string]int{
 	"USE_CASCADES":            hintUseCascades,
 	"NTH_PLAN":                hintNthPlan,
 	"FORCE_INDEX":             hintForceIndex,
+	"NO_DECORRELATE":          hintNoDecorrelate,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

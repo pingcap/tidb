@@ -134,6 +134,8 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 			join.tp = plancodec.TypeJoin
 			p = join
 			appendApplySimplifiedTraceStep(apply, join, opt)
+		} else if apply.NoDecorrelate {
+			goto NoOptimize
 		} else if sel, ok := innerPlan.(*LogicalSelection); ok {
 			// If the inner plan is a selection, we add this condition to join predicates.
 			// Notice that no matter what kind of join is, it's always right.

@@ -106,6 +106,7 @@ import (
 	hintNthPlan               "NTH_PLAN"
 	hintLimitToCop            "LIMIT_TO_COP"
 	hintForceIndex            "FORCE_INDEX"
+	hintNoDecorrelate         "NO_DECORRELATE"
 
 	/* Other keywords */
 	hintOLAP            "OLAP"
@@ -581,6 +582,7 @@ NullaryHintName:
 |	"NO_INDEX_MERGE"
 |	"READ_CONSISTENT_REPLICA"
 |	"IGNORE_PLAN_CACHE"
+|	"NO_DECORRELATE"
 
 HintQueryType:
 	"OLAP"
@@ -646,6 +648,7 @@ Identifier:
 |	"USE_CASCADES"
 |	"NTH_PLAN"
 |	"FORCE_INDEX"
+|	"NO_DECORRELATE"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

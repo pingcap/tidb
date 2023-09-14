@@ -746,5 +746,57 @@
     "cases": [
         "select * from t where t.a < 3 and t.a < 3"
     ]
+  },
+  {
+    "name": "TestNoDecorrelateHint",
+    "cases": [
+      "select /*+ no_decorrelate() */ * from t1",
+      "select * from t1, (select /*+ no_decorrelate() */ * from t2) n",
+      "select a+1, b-1 from (select /*+ no_decorrelate() */ * from t1) n",
+      "select exists (select /*+ semi_join_rewrite(), no_decorrelate() */ * from t1 where t1.a=t3.a) from t3",
+
+      "select t1.a from t1 where t1.a in (select t2.b from t2 where t2.a = t1.b)",
+      "select t1.a from t1 where t1.a in (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b)",
+
+      "select t1.a from t1 where t1.a = any (select t2.b from t2 where t2.a = t1.b)",
+      "select t1.a from t1 where t1.a = any (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b)",
+
+      "select t1.a, t1.a != any (select t2.b from t2 where t2.a = t1.b) from t1",
+      "select t1.a, t1.a != any (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1",
+
+      "select t1.a, t1.a > all (select t2.b from t2 where t2.a = t1.b) from t1",
+      "select t1.a, t1.a > all (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1",
+
+      "select t1.a, (select t2.b from t2 where t2.a = t1.b) from t1",
+      "select t1.a, (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1",
+
+      "select t1.a, t1.b not in (select t3.b from t3) from t1",
+      "select t1.a, t1.b not in (select /*+ no_decorrelate() */ t3.b from t3) from t1",
+
+      "select exists (select t3.b from t3 where t3.a = t1.b limit 2) from t1",
+      "select exists (select /*+ no_decorrelate() */ t3.b from t3 where t3.a = t1.b limit 2) from t1",
+
+      "select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1",
+      "select t1.a, (select /*+ no_decorrelate() */ sum(t1.a) from t2 where t2.a = 10) from t1",
+
+      "select (select count(t3.a) from t3 where t3.b = t1.b) from t1;",
+      "select (select /*+ no_decorrelate() */ count(t3.a) from t3 where t3.b = t1.b) from t1;",
+
+      "SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+
+      "SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+      "SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%'",
+
+      "SELECT ta.id, 'split' as flag FROM ta WHERE ta.NAME ='chad999' and (select max(tb.code) from tb where ta.id=tb.id ) > 900",
+      "SELECT ta.id, 'split' as flag FROM ta WHERE ta.NAME ='chad999' and (select /*+ no_decorrelate() */ max(tb.code) from tb where ta.id=tb.id ) > 900",
+
+      "SELECT ta.NAME FROM ta WHERE EXISTS (select 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100",
+      "SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ semi_join_rewrite() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100",
+      "SELECT ta.NAME FROM ta WHERE EXISTS (select /*+ no_decorrelate() */ 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select /*+ no_decorrelate() */ max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select /*+ no_decorrelate() */ max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100"
+
+    ]
   }
 ]
