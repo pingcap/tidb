@@ -160,7 +160,7 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 
 // Unregister removes a backend context from the backend context manager.
 func (m *litBackendCtxMgr) Unregister(jobID int64) {
-	bc, exist := m.SyncMap.Load(jobID)
+	bc, exist := m.SyncMap.Delete(jobID)
 	if !exist {
 		return
 	}
@@ -170,7 +170,6 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 		bc.checkpointMgr.Close()
 	}
 	m.memRoot.Release(StructSizeBackendCtx)
-	m.Delete(jobID)
 	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),

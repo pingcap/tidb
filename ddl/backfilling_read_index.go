@@ -37,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type readIndexStage struct {
+type readIndexExecutor struct {
 	d     *ddl
 	job   *model.Job
 	index *model.IndexInfo
@@ -61,7 +61,7 @@ type readIndexSummary struct {
 	mu        sync.Mutex
 }
 
-func newReadIndexStage(
+func newReadIndexExecutor(
 	d *ddl,
 	job *model.Job,
 	index *model.IndexInfo,
@@ -70,8 +70,8 @@ func newReadIndexStage(
 	bc ingest.BackendCtx,
 	summary *execute.Summary,
 	cloudStorageURI string,
-) *readIndexStage {
-	return &readIndexStage{
+) *readIndexExecutor {
+	return &readIndexExecutor{
 		d:               d,
 		job:             job,
 		index:           index,
@@ -83,13 +83,13 @@ func newReadIndexStage(
 	}
 }
 
-func (*readIndexStage) Init(_ context.Context) error {
+func (*readIndexExecutor) Init(_ context.Context) error {
 	logutil.BgLogger().Info("read index stage init subtask exec env",
 		zap.String("category", "ddl"))
 	return nil
 }
 
-func (r *readIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.BgLogger().Info("read index stage run subtask",
 		zap.String("category", "ddl"))
 
@@ -146,19 +146,16 @@ func (r *readIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask)
 	return nil
 }
 
-func (r *readIndexStage) Cleanup(ctx context.Context) error {
+func (*readIndexExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("read index stage cleanup subtask exec env",
 		zap.String("category", "ddl"))
-	if _, ok := r.ptbl.(table.PartitionedTable); ok {
-		ingest.LitBackCtxMgr.Unregister(r.job.ID)
-	}
 	return nil
 }
 
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
-func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
@@ -194,14 +191,13 @@ func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask)
 	return nil
 }
 
-func (r *readIndexStage) Rollback(ctx context.Context) error {
+func (r *readIndexExecutor) Rollback(ctx context.Context) error {
 	logutil.Logger(ctx).Info("read index stage rollback backfill add index task",
 		zap.String("category", "ddl"), zap.Int64("jobID", r.job.ID))
-	ingest.LitBackCtxMgr.Unregister(r.job.ID)
 	return nil
 }
 
-func (r *readIndexStage) getTableStartEndKey(sm *BackfillSubTaskMeta) (
+func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	start, end kv.Key, tbl table.PhysicalTable, err error) {
 	currentVer, err1 := getValidCurrentVersion(r.d.store)
 	if err1 != nil {
@@ -224,7 +220,7 @@ func (r *readIndexStage) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	return start, end, tbl, nil
 }
 
-func (r *readIndexStage) buildLocalStorePipeline(
+func (r *readIndexExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
 	d *ddl,
 	sessCtx sessionctx.Context,
@@ -244,7 +240,7 @@ func (r *readIndexStage) buildLocalStorePipeline(
 		opCtx, d.store, d.sessPool, r.bc, ei, sessCtx, tbl, r.index, start, end, totalRowCount, counter)
 }
 
-func (r *readIndexStage) buildExternalStorePipeline(
+func (r *readIndexExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
 	d *ddl,
 	subtaskID int64,

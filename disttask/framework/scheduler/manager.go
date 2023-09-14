@@ -194,8 +194,8 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
-			m.onRunnableTask(ctx, t.ID, t.Type)
-			m.removeHandlingTask(task.ID)
+			m.onRunnableTask(ctx, t)
+			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
 		if err != nil {
@@ -254,15 +254,21 @@ type TestContext struct {
 var testContexts sync.Map
 
 // onRunnableTask handles a runnable task.
-func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType string) {
-	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("task_id", taskID), zap.Any("type", taskType))
+func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
+	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task_id", task.ID), zap.String("type", task.Type))
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
-	factory := getSchedulerFactory(taskType)
+	factory := getSchedulerFactory(task.Type)
 	if factory == nil {
-		m.onError(errors.Errorf("task type %s not found", taskType))
+		m.onError(errors.Errorf("task type %s not found", task.Type))
 		return
 	}
-	scheduler := factory(ctx, m.id, taskID, m.taskTable)
+	scheduler := factory(ctx, m.id, task, m.taskTable)
+	err := scheduler.Init(ctx)
+	if err != nil {
+		m.onError(err)
+		return
+	}
+	defer scheduler.Close()
 	for {
 		select {
 		case <-ctx.Done():
@@ -280,13 +286,14 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 				}
 			}()
 		})
-		task, err := m.taskTable.GetGlobalTaskByID(taskID)
+		task, err := m.taskTable.GetGlobalTaskByID(task.ID)
 		if err != nil {
 			m.onError(err)
 			return
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
-			logutil.Logger(m.logCtx).Info("onRunnableTask exit", zap.Any("task_id", taskID), zap.Int64("step", task.Step), zap.Any("state", task.State))
+			logutil.Logger(m.logCtx).Info("onRunnableTask exit",
+				zap.Int64("task_id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
 			return
 		}
 		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {

@@ -18,13 +18,14 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRegisterTaskType(t *testing.T) {
 	// other case might add task types, so we need to clear it first
 	ClearSchedulers()
-	factoryFn := func(ctx context.Context, id string, taskID int64, taskTable TaskTable) Scheduler {
+	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler {
 		return nil
 	}
 	RegisterTaskType("test1", factoryFn)

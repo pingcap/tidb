@@ -249,9 +249,9 @@ type importScheduler struct {
 	*scheduler.BaseScheduler
 }
 
-func newImportScheduler(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable) scheduler.Scheduler {
+func newImportScheduler(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
 	s := &importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, taskID, taskTable),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable),
 	}
 	s.BaseScheduler.Extension = s
 	return s

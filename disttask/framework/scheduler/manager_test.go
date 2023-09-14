@@ -101,14 +101,16 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.onRunnableTasks(context.Background(), nil)
 
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, taskID int64, taskTable TaskTable) Scheduler {
+		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler {
 			return mockInternalScheduler
 		})
 
 	// get subtask failed
+	mockInternalScheduler.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(false, errors.New("get subtask failed"))
+	mockInternalScheduler.EXPECT().Close()
 	m.onRunnableTasks(context.Background(), []*proto.Task{task})
 
 	// no subtask
@@ -164,7 +166,7 @@ func TestManager(t *testing.T) {
 		return mockPool, nil
 	})
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, taskID int64, taskTable TaskTable) Scheduler {
+		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler {
 			return mockInternalScheduler
 		})
 	id := "test"
@@ -177,6 +179,7 @@ func TestManager(t *testing.T) {
 		Return([]*proto.Task{task1, task2}, nil).AnyTimes()
 	mockTaskTable.EXPECT().GetGlobalTasksInStates(proto.TaskStateReverting).
 		Return([]*proto.Task{task2}, nil).AnyTimes()
+	mockInternalScheduler.EXPECT().Init(gomock.Any()).Return(nil)
 	// task1
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID1, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
@@ -188,9 +191,11 @@ func TestManager(t *testing.T) {
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(true, nil)
 	mockInternalScheduler.EXPECT().Run(gomock.Any(), task1).Return(nil)
+
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID1, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(false, nil).AnyTimes()
+	mockInternalScheduler.EXPECT().Close()
 	// task2
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
@@ -200,10 +205,12 @@ func TestManager(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(true, nil)
+	mockInternalScheduler.EXPECT().Init(gomock.Any()).Return(nil)
 	mockInternalScheduler.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(id, taskID2, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRevertPending}).
 		Return(false, nil).AnyTimes()
+	mockInternalScheduler.EXPECT().Close()
 	// for scheduler pool
 	mockPool.EXPECT().ReleaseAndWait().Do(func() {
 		wg.Wait()
