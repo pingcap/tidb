@@ -1161,7 +1161,7 @@ DROP USER root;
 	require.NoError(t, r.Close())
 	dom.Close()
 
-	session.SetRunBootstrapSQLFileInTest(false)
+	session.DisableRunBootstrapSQLFileInTest()
 
 	// Bootstrap with the second sql file, which would not been executed.
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
@@ -1219,7 +1219,7 @@ insert into test.t values ("abc"); -- invalid statement
 	require.Error(t, err)
 	require.NoError(t, store.Close())
 
-	session.SetRunBootstrapSQLFileInTest(false)
+	session.DisableRunBootstrapSQLFileInTest()
 
 	// Bootstrap with the second sql file, which would not been executed.
 	store, err = mockstore.NewMockStore()

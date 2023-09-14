@@ -1001,9 +1001,9 @@ var internalSQLTimeout = owner.ManagerSessionTTL + 15
 var runBootstrapSQLFile = false
 
 // Only used for test
-func SetRunBootstrapSQLFileInTest(v bool) {
+func DisableRunBootstrapSQLFileInTest() {
 	if intest.InTest {
-		runBootstrapSQLFile = v
+		runBootstrapSQLFile = false
 	}
 }
 
