@@ -948,29 +948,22 @@ func TestUpgradeToVer85(t *testing.T) {
 	MustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
 }
 
-func TestInitializeSQLFile(t *testing.T) {
-	testEmptyInitSQLFile(t)
-	testInitSystemVariable(t)
-	testInitUsers(t)
-	testErrorHappenWhileInit(t)
-}
-
-func testEmptyInitSQLFile(t *testing.T) {
-	// An non-existent sql file would stop the bootstrap of the tidb cluster
+func TestEmptyInitSQLFile(t *testing.T) {
+	// A non-existent sql file would stop the bootstrap of the tidb cluster
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
 	defer func() {
+		require.NoError(t, store.Close())
 		config.GetGlobalConfig().InitializeSQLFile = ""
 	}()
 
 	dom, err := BootstrapSession(store)
 	require.Nil(t, dom)
-	require.NoError(t, err)
-	require.NoError(t, store.Close())
+	require.Error(t, err)
 }
 
-func testInitSystemVariable(t *testing.T) {
+func TestInitSystemVariable(t *testing.T) {
 	// We create an initialize-sql-file and then bootstrap the server with it.
 	// The observed behavior should be that tidb_enable_noop_variables is now
 	// disabled, and the feature works as expected.
@@ -1024,9 +1017,9 @@ func testInitSystemVariable(t *testing.T) {
 	require.NoError(t, r.Close())
 }
 
-func testInitUsers(t *testing.T) {
+func TestInitUsers(t *testing.T) {
 	// Two sql files are set to 'initialize-sql-file' one after another,
-	// and only the first one are executed.
+	// and only the first one is executed.
 	var err error
 	sqlFiles := make([]*os.File, 2)
 	for i, name := range []string{"1.sql", "2.sql"} {
@@ -1132,7 +1125,7 @@ DROP USER root;
 	dom.Close()
 }
 
-func testErrorHappenWhileInit(t *testing.T) {
+func TestErrorHappenWhileInit(t *testing.T) {
 	// 1. parser error in sql file (1.sql) makes the bootstrap panic
 	// 2. other errors in sql file (2.sql) will be ignored
 	var err error
@@ -1168,7 +1161,7 @@ insert into test.t values ("abc"); -- invalid statement
 	// Bootstrap with the first sql file
 	dom, err := BootstrapSession(store)
 	require.Nil(t, dom)
-	require.NoError(t, err)
+	require.Error(t, err)
 	require.NoError(t, store.Close())
 
 	runBootstrapSQLFile = false
