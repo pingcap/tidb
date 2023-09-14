@@ -91,6 +91,9 @@ func updateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64,
 }
 
 func (m *tableDelta) merge(deltaMap map[int64]variable.TableDelta) {
+	if len(deltaMap) == 0 {
+		return
+	}
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	for id, item := range deltaMap {
