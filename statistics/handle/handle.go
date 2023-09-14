@@ -99,10 +99,7 @@ type Handle struct {
 	}
 
 	// colMap contains all the column stats usage information from collectors when we dump them to KV.
-	colMap struct {
-		data colStatsUsageMap
-		sync.Mutex
-	}
+	colMap *statsUsage
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -188,9 +185,7 @@ func (h *Handle) Clear() {
 	h.globalMap.Lock()
 	h.globalMap.data = make(tableDeltaMap)
 	h.globalMap.Unlock()
-	h.colMap.Lock()
-	h.colMap.data = make(colStatsUsageMap)
-	h.colMap.Unlock()
+	h.colMap.reset()
 	h.mu.Unlock()
 }
 
@@ -221,7 +216,7 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	}
 	handle.statsCache = statsCache
 	handle.globalMap.data = make(tableDeltaMap)
-	handle.colMap.data = make(colStatsUsageMap)
+	handle.colMap = newStatsUsage()
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)

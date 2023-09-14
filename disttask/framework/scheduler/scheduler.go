@@ -96,6 +96,11 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 	}()
 }
 
+// Init implements the Scheduler interface.
+func (*BaseScheduler) Init(_ context.Context) error {
+	return nil
+}
+
 // Run runs the scheduler task.
 func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	defer func() {
@@ -348,6 +353,10 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverted, nil)
 	}
 	return s.getError()
+}
+
+// Close closes the scheduler when all the subtasks are complete.
+func (*BaseScheduler) Close() {
 }
 
 func runSummaryCollectLoop(
