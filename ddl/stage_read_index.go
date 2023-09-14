@@ -272,7 +272,9 @@ func (r *readIndexStage) buildExternalStorePipeline(
 		}
 		s.mu.Unlock()
 	}
+	counter := metrics.BackfillTotalCounter.WithLabelValues(
+		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.index, start, end, totalRowCount, onClose)
+		tbl, r.index, start, end, totalRowCount, counter, onClose)
 }
