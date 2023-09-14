@@ -127,11 +127,12 @@ aliases:
     - gmhdbjd
     - lichunzhu
   sig-approvers-planner: # approvers for planner module
-    - AilinKid
-    - Rustin170506
-    - elsa0520
+    - chrysan
     - fixdb
-    - hawkingrei
-    - qw4990
-    - time-and-fate
     - winoros
+    - qw4990
+  sig-approvers-statistics: # approvers for statistics module
+    - chrysan
+    - fixdb
+    - winoros
+    - qw4990
