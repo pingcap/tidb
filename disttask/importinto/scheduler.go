@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -54,31 +55,34 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 }
 
-func (s *importStepExecutor) Init(ctx context.Context) error {
-	s.logger.Info("init subtask env")
-
+func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
-	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
+	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	astArgs, err := importer.ASTArgsFromStmt(s.taskMeta.Stmt)
+	astArgs, err := importer.ASTArgsFromStmt(taskMeta.Stmt)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(&s.taskMeta.Plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err = controller.InitDataStore(ctx); err != nil {
-		return err
+		return nil, err
 	}
 
-	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
+	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(false),
 		Job:      &asyncloaddata.Job{},
-	}, controller, s.taskID)
+	}, controller, taskID)
+}
+
+func (s *importStepExecutor) Init(ctx context.Context) error {
+	s.logger.Info("init subtask env")
+	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta)
 	if err != nil {
 		return err
 	}
@@ -241,6 +245,85 @@ func (s *importStepExecutor) Rollback(context.Context) error {
 	return nil
 }
 
+type writeAndIngestStepExecutor struct {
+	scheduler.EmptySubtaskExecutor
+	taskID        int64
+	taskMeta      *TaskMeta
+	logger        *zap.Logger
+	tableImporter *importer.TableImporter
+}
+
+var _ execute.SubtaskExecutor = &writeAndIngestStepExecutor{}
+
+func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
+	if err != nil {
+		return err
+	}
+	e.tableImporter = tableImporter
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	e.logger.Info("write and ingest kv", zap.Int64("subtask-id", subtask.ID))
+
+	sm := &WriteIngestStepMeta{}
+	err := json.Unmarshal(subtask.Meta, sm)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	localBackend := e.tableImporter.Backend()
+	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
+		External: &backend.ExternalEngineConfig{
+			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:     sm.DataFiles,
+			StatFiles:     sm.StatFiles,
+			MinKey:        sm.MinKey,
+			MaxKey:        sm.MaxKey,
+			SplitKeys:     sm.RangeSplitKeys,
+			TotalFileSize: int64(sm.TotalKVSize),
+			TotalKVCount:  0,
+		},
+	}, engineUUID)
+	if err != nil {
+		return err
+	}
+	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+}
+func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+	var subtaskMeta WriteIngestStepMeta
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return err
+	}
+	if subtaskMeta.KVGroup != dataKVGroup {
+		return nil
+	}
+
+	// only data kv group has loaded row count
+	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	localBackend := e.tableImporter.Backend()
+	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
+	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return err
+	}
+	subtask.Meta = newMeta
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
+	e.logger.Info("cleanup subtask env")
+	return e.tableImporter.Close()
+}
+
+func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
+	e.logger.Info("rollback")
+	return nil
+}
+
 type postStepExecutor struct {
 	scheduler.EmptySubtaskExecutor
 	taskID   int64
@@ -293,8 +376,14 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 	logger.Info("create step scheduler")
 
 	switch task.Step {
-	case StepImport:
+	case StepImport, StepEncodeAndSort:
 		return &importStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	case StepWriteAndIngest:
+		return &writeAndIngestStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,

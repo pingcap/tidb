@@ -496,6 +496,11 @@ func (ti *TableImporter) fullTableName() string {
 	return common.UniqueTable(ti.DBName, ti.Table.Meta().Name.O)
 }
 
+// Backend returns the backend of the importer.
+func (ti *TableImporter) Backend() *local.Backend {
+	return ti.backend
+}
+
 // Close implements the io.Closer interface.
 func (ti *TableImporter) Close() error {
 	ti.backend.Close()

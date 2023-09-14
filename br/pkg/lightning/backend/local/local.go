@@ -1689,6 +1689,17 @@ func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 	return e.importedKVCount.Load()
 }
 
+// GetExternalEngineKVStatistics returns kv statistics of some engine.
+func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (int64, int64) {
+	v, ok := local.externalEngine[engineUUID]
+	if !ok {
+		// we get it after import, but before clean up, so this should not happen
+		// todo: return error
+		return 0, 0
+	}
+	return v.KVStatistics()
+}
+
 // ResetEngine reset the engine and reclaim the space.
 func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) error {
 	// the only way to reset the engine + reclaim the space is to delete and reopen it 🤷

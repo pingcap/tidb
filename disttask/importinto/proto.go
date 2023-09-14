@@ -32,7 +32,7 @@ import (
 // the initial step is StepInit(-1)
 // steps are processed in the following order:
 // - local sort: StepInit -> StepImport -> StepPostProcess -> StepDone
-// - global sort: StepInit -> StepEncodeAndSort -> StepWriteAndIngest -> StepDone
+// - global sort: StepInit -> StepEncodeAndSort -> StepWriteAndIngest -> StepPostProcess -> StepDone
 const (
 	// StepImport we sort source data and ingest it into TiKV in this step.
 	StepImport int64 = 1
@@ -82,11 +82,18 @@ type ImportStepMeta struct {
 	SortedIndexMetas map[int64]*external.SortedKVMeta
 }
 
+const (
+	dataKVGroup = "data"
+)
+
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
+	KVGroup               string `json:"kv_group"`
 	external.SortedKVMeta `json:",inline"`
 	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+
+	Result Result
 }
 
 // PostProcessStepMeta is the meta of post process step.

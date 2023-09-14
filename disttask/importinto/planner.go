@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -295,7 +296,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*Write
 		return nil, err
 	}
 	specs := make([]*WriteIngestSpec, 0, 16)
-	for _, kvMeta := range kvMetas {
+	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, extStore, kvMeta)
 		if err1 != nil {
 			return nil, err1
@@ -329,6 +330,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*Write
 				}
 				// each subtask will write and ingest one range group
 				m := &WriteIngestStepMeta{
+					KVGroup: kvGroup,
 					SortedKVMeta: external.SortedKVMeta{
 						MinKey:    startKey,
 						MaxKey:    endKey,
@@ -355,7 +357,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*Write
 	return specs, nil
 }
 
-func getSortedKVMetas(subTaskMetas [][]byte) ([]*external.SortedKVMeta, error) {
+func getSortedKVMetas(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
 	dataKVMeta := &external.SortedKVMeta{}
 	indexKVMetas := make(map[int64]*external.SortedKVMeta)
 	for _, subTaskMeta := range subTaskMetas {
@@ -373,10 +375,10 @@ func getSortedKVMetas(subTaskMetas [][]byte) ([]*external.SortedKVMeta, error) {
 			}
 		}
 	}
-	res := make([]*external.SortedKVMeta, 0, 1+len(indexKVMetas))
-	res = append(res, dataKVMeta)
-	for _, item := range indexKVMetas {
-		res = append(res, item)
+	res := make(map[string]*external.SortedKVMeta, 1+len(indexKVMetas))
+	res[dataKVGroup] = dataKVMeta
+	for indexID, item := range indexKVMetas {
+		res[strconv.Itoa(int(indexID))] = item
 	}
 	return res, nil
 }
