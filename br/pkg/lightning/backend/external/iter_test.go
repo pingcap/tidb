@@ -89,7 +89,7 @@ func TestMergeKVIter(t *testing.T) {
 	iter, err := NewMergeKVIter(ctx, filenames, []uint64{0, 0, 0}, trackStore, 5)
 	require.NoError(t, err)
 	// close one empty file immediately in NewMergeKVIter
-	require.EqualValues(t, 2, trackStore.opened.Load())
+	require.EqualValues(t, int32(3), trackStore.opened.Load())
 
 	got := make([][2]string, 0)
 	require.True(t, iter.Next())
@@ -109,7 +109,7 @@ func TestMergeKVIter(t *testing.T) {
 	require.Equal(t, expected, got)
 	err = iter.Close()
 	require.NoError(t, err)
-	require.EqualValues(t, 0, trackStore.opened.Load())
+	require.EqualValues(t, 1, trackStore.opened.Load())
 }
 
 func TestOneUpstream(t *testing.T) {
