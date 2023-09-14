@@ -47,6 +47,7 @@ func newMergeSortStage(
 	cloudStoreURI string,
 ) (*mergeSortStage, error) {
 	return &mergeSortStage{
+		job:           job,
 		jobID:         jobID,
 		index:         index,
 		ptbl:          ptbl,
