@@ -30,6 +30,7 @@ import (
 )
 
 type mergeSortStage struct {
+	job           *model.Job
 	jobID         int64
 	index         *model.IndexInfo
 	ptbl          table.PhysicalTable
@@ -38,6 +39,7 @@ type mergeSortStage struct {
 }
 
 func newMergeSortStage(
+	job *model.Job,
 	jobID int64,
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
@@ -69,7 +71,6 @@ func (m *mergeSortStage) SplitSubtask(ctx context.Context, subtask *proto.Subtas
 			zap.Error(err))
 		return nil, err
 	}
-
 	local := m.bc.GetLocalBackend()
 	if local == nil {
 		return nil,
