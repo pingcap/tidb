@@ -52,7 +52,7 @@ type BackfillSubTaskMeta struct {
 	TotalKVSize    uint64   `json:"total_kv_size"`
 }
 
-// NewBackfillSubtaskExecutor creates a new backfill backfill subtask executor.
+// NewBackfillSubtaskExecutor creates a new backfill subtask executor.
 func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	bc ingest.BackendCtx, stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
