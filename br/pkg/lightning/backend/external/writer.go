@@ -87,7 +87,7 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    256 * size.MB,
+		memSizeLimit:    2048 * size.MB,
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
