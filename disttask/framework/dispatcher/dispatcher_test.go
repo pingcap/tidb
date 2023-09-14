@@ -17,6 +17,7 @@ package dispatcher_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/mock"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
 var (
@@ -198,6 +201,48 @@ func TestGetInstance(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, instanceIDs, len(serverIDs))
 	require.ElementsMatch(t, instanceIDs, serverIDs)
+}
+
+func TestTaskFailInManager(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockDispatcher := mock.NewMockDispatcher(ctrl)
+	mockDispatcher.EXPECT().Init().Return(errors.New("mock dispatcher init error"))
+
+	dspManager, mgr := MockDispatcherManager(t, pool)
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			return mockDispatcher
+		})
+	dspManager.Start()
+	defer dspManager.Stop()
+
+	// unknown task type
+	taskID, err := mgr.AddNewGlobalTask("test", "test-type", 1, nil)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		task, err := mgr.GetGlobalTaskByID(taskID)
+		require.NoError(t, err)
+		return task.State == proto.TaskStateFailed &&
+			strings.Contains(task.Error.Error(), "unknown task type")
+	}, time.Second*10, time.Millisecond*300)
+
+	// dispatcher init error
+	taskID, err = mgr.AddNewGlobalTask("test2", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		task, err := mgr.GetGlobalTaskByID(taskID)
+		require.NoError(t, err)
+		return task.State == proto.TaskStateFailed &&
+			strings.Contains(task.Error.Error(), "mock dispatcher init error")
+	}, time.Second*10, time.Millisecond*300)
 }
 
 func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel bool) {
