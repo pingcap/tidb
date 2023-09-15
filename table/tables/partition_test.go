@@ -16,10 +16,7 @@ package tables_test
 
 import (
 	"context"
-	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
@@ -33,9 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestPartitionBasic(t *testing.T) {
