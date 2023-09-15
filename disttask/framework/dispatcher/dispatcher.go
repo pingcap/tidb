@@ -119,7 +119,7 @@ func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, server
 }
 
 // Init implements the Dispatcher interface.
-func (d *BaseDispatcher) Init() error {
+func (*BaseDispatcher) Init() error {
 	return nil
 }
 

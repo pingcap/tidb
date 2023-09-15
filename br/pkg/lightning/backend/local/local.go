@@ -1690,7 +1690,8 @@ func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 }
 
 // GetExternalEngineKVStatistics returns kv statistics of some engine.
-func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (int64, int64) {
+func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
+	totalKVSize int64, totalKVCount int64) {
 	v, ok := local.externalEngine[engineUUID]
 	if !ok {
 		// we get it after import, but before clean up, so this should not happen

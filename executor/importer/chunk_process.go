@@ -385,7 +385,7 @@ func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows enco
 }
 
 // IsSynced implements backend.EngineWriter interface.
-func (w *IndexRouteWriter) IsSynced() bool {
+func (*IndexRouteWriter) IsSynced() bool {
 	return true
 }
 
