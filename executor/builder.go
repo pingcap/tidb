@@ -2670,7 +2670,11 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeSamplingPushdown(
+	task plannercore.AnalyzeColumnsTask,
+	opts map[ast.AnalyzeOptionType]uint64,
+	schemaForVirtualColEval *expression.Schema,
+) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
 	}
@@ -2844,7 +2848,12 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task pl
 	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(
+	task plannercore.AnalyzeColumnsTask,
+	opts map[ast.AnalyzeOptionType]uint64,
+	autoAnalyze string,
+	schemaForVirtualColEval *expression.Schema,
+) *analyzeTask {
 	if task.StatsVersion == statistics.Version2 {
 		return b.buildAnalyzeSamplingPushdown(task, opts, schemaForVirtualColEval)
 	}
@@ -3085,7 +3094,13 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastColumn(e, task, v.Opts)
 			} else {
-				columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, model.NewCIStr(task.AnalyzeInfo.DBName), task.TblInfo.Name, task.ColsInfo, task.TblInfo)
+				columns, _, err := expression.ColumnInfos2ColumnsAndNames(
+					b.ctx,
+					model.NewCIStr(task.AnalyzeInfo.DBName),
+					task.TblInfo.Name,
+					task.ColsInfo,
+					task.TblInfo,
+				)
 				if err != nil {
 					b.err = err
 					return nil
@@ -3094,6 +3109,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
 			}
 		}
+		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
