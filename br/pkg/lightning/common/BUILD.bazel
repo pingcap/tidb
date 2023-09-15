@@ -55,6 +55,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
+    shard_count = 21,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",

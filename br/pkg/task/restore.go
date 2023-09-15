@@ -191,11 +191,7 @@ type RestoreConfig struct {
 	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
 	PitrConcurrency uint32                      `json:"-" toml:"-"`
 
-	UseCheckpoint                     bool   `json:"use-checkpoint" toml:"use-checkpoint"`
-	checkpointSnapshotRestoreTaskName string `json:"-" toml:"-"`
-	checkpointLogRestoreTaskName      string `json:"-" toml:"-"`
-	checkpointTaskInfoClusterID       uint64 `json:"-" toml:"-"`
-	WaitTiflashReady                  bool   `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
+	WaitTiflashReady bool `json:"wait-tiflash-ready" toml:"wait-tiflash-ready"`
 
 	// for ebs-based restore
 	FullBackupType      FullBackupType        `json:"full-backup-type" toml:"full-backup-type"`

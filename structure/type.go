@@ -43,7 +43,8 @@ const (
 // Make linter happy, since encodeHashMetaKey is unused in this repo.
 var _ = (&TxStructure{}).encodeHashMetaKey
 
-func (t *TxStructure) encodeStringDataKey(key []byte) kv.Key {
+// EncodeStringDataKey will encode string key.
+func (t *TxStructure) EncodeStringDataKey(key []byte) kv.Key {
 	// for codec Encode, we may add extra bytes data, so here and following encode
 	// we will use extra length like 4 for a little optimization.
 	ek := make([]byte, 0, len(t.prefix)+len(key)+24)

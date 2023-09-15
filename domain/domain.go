@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/telemetry"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/types"
@@ -71,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/servermemorylimit"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -86,7 +88,7 @@ func NewMockDomain() *Domain {
 	do := &Domain{
 		infoCache: infoschema.NewCache(1),
 	}
-	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 1)
+	do.infoCache.Insert(infoschema.MockInfoSchema(nil), 0)
 	return do
 }
 
@@ -118,10 +120,15 @@ type Domain struct {
 	indexUsageSyncLease     time.Duration
 	dumpFileGcChecker       *dumpFileGcChecker
 	planReplayerHandle      *planReplayerHandle
-	expiredTimeStamp4PC     types.Time
-	logBackupAdvancer       *daemon.OwnerDaemon
-	historicalStatsWorker   *HistoricalStatsWorker
-	ttlJobManager           *ttlworker.JobManager
+	expiredTimeStamp4PC     struct {
+		// let `expiredTimeStamp4PC` use its own lock to avoid any block across domain.Reload()
+		// and compiler.Compile(), see issue https://github.com/pingcap/tidb/issues/45400
+		sync.RWMutex
+		expiredTimeStamp types.Time
+	}
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         *ttlworker.JobManager
 
 	serverID             uint64
 	serverIDSession      *concurrency.Session
@@ -172,8 +179,17 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, 0, nil, err
 	}
+	// fetch the commit timestamp of the schema diff
+	schemaTs, err := do.getTimestampForSchemaVersionWithNonEmptyDiff(m, neededSchemaVersion)
+	if err != nil {
+		logutil.BgLogger().Warn("failed to get schema version", zap.Error(err), zap.Int64("version", neededSchemaVersion))
+		schemaTs = 0
+	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
+		// try to insert here as well to correct the schemaTs if previous is wrong
+		// the insert method check if schemaTs is zero
+		do.infoCache.Insert(is, uint64(schemaTs))
 		return is, true, 0, nil, nil
 	}
 
@@ -192,7 +208,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < 100 {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
-			do.infoCache.Insert(is, startTS)
+			do.infoCache.Insert(is, uint64(schemaTs))
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
 				zap.Int64("neededSchemaVersion", neededSchemaVersion),
@@ -225,8 +241,25 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		zap.Duration("start time", time.Since(startTime)))
 
 	is := newISBuilder.Build()
-	do.infoCache.Insert(is, startTS)
+	do.infoCache.Insert(is, uint64(schemaTs))
 	return is, false, currentSchemaVersion, nil, nil
+}
+
+// Returns the timestamp of a schema version, which is the commit timestamp of the schema diff
+func (do *Domain) getTimestampForSchemaVersionWithNonEmptyDiff(m *meta.Meta, version int64) (int64, error) {
+	tikvStore, ok := do.Store().(helper.Storage)
+	if ok {
+		helper := helper.NewHelper(tikvStore)
+		data, err := helper.GetMvccByEncodedKey(m.EncodeSchemaDiffKey(version))
+		if err != nil {
+			return 0, err
+		}
+		if data == nil || data.Info == nil || len(data.Info.Writes) == 0 {
+			return 0, errors.Errorf("There is no Write MVCC info for the schema version")
+		}
+		return int64(data.Info.Writes[0].CommitTs), nil
+	}
+	return 0, errors.Errorf("cannot get store from domain")
 }
 
 func (do *Domain) sysFacHack() (pools.Resource, error) {
@@ -394,18 +427,18 @@ func (do *Domain) GetSnapshotMeta(startTS uint64) (*meta.Meta, error) {
 
 // ExpiredTimeStamp4PC gets expiredTimeStamp4PC from domain.
 func (do *Domain) ExpiredTimeStamp4PC() types.Time {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.RLock()
+	defer do.expiredTimeStamp4PC.RUnlock()
 
-	return do.expiredTimeStamp4PC
+	return do.expiredTimeStamp4PC.expiredTimeStamp
 }
 
 // SetExpiredTimeStamp4PC sets the expiredTimeStamp4PC from domain.
 func (do *Domain) SetExpiredTimeStamp4PC(time types.Time) {
-	do.m.Lock()
-	defer do.m.Unlock()
+	do.expiredTimeStamp4PC.Lock()
+	defer do.expiredTimeStamp4PC.Unlock()
 
-	do.expiredTimeStamp4PC = time
+	do.expiredTimeStamp4PC.expiredTimeStamp = time
 }
 
 // DDL gets DDL from domain.
@@ -898,7 +931,6 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		slowQuery:           newTopNSlowQueries(30, time.Hour*24*7, 500),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{GetPlanReplayerDirName(), GetOptimizerTraceDirName()}},
-		expiredTimeStamp4PC: types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp),
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
@@ -913,6 +945,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sessionctx.Context)}
 	do.initDomainSysVars()
+	do.expiredTimeStamp4PC.expiredTimeStamp = types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
 	return do
 }
 
@@ -1082,7 +1115,12 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		log.Warn("pd / etcd client not provided, won't begin Advancer.")
 		return nil
 	}
-	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	tikvStore, ok := do.Store().(tikv.Storage)
+	if !ok {
+		log.Warn("non tikv store, stop begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(tikvStore, pdClient, do.etcdClient, cfg)
 	if err != nil {
 		return err
 	}
