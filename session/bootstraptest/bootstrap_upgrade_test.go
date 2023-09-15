@@ -298,7 +298,7 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
 }
 
-const supportUpgradeHTTPOpVer = 146
+const supportUpgradeHTTPOpVer = int64(146)
 
 // TestUpgradeVersionWithUpgradeHTTPOp tests supportUpgradeHTTPOpVer upgrade supportUpgradeHTTPOpVer++ with HTTP op.
 func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {

@@ -1249,7 +1249,7 @@ func TestUpgrade(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
-	resp, err := ts.FetchStatus("/upgrade/start")
+	resp, err := ts.fetchStatus("/upgrade/start")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
@@ -1257,7 +1257,7 @@ func TestUpgrade(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	// test upgrade start
-	resp, err = ts.PostStatus("/upgrade/start", "application/x-www-form-urlencoded", nil)
+	resp, err = ts.postStatus("/upgrade/start", "application/x-www-form-urlencoded", nil)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := httputil.DumpResponse(resp, true)
@@ -1275,7 +1275,7 @@ func TestUpgrade(t *testing.T) {
 	require.True(t, isUpgrading)
 
 	// Do start upgrade again.
-	resp, err = ts.PostStatus("/upgrade/start", "application/x-www-form-urlencoded", nil)
+	resp, err = ts.postStatus("/upgrade/start", "application/x-www-form-urlencoded", nil)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1284,7 +1284,7 @@ func TestUpgrade(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "\"It's a duplicated op and the cluster is already in upgrading state.\"", string(body))
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in upgrading state.\"", string(body))
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
@@ -1293,7 +1293,7 @@ func TestUpgrade(t *testing.T) {
 	require.True(t, isUpgrading)
 
 	// test upgrade finish
-	resp, err = ts.PostStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
+	resp, err = ts.postStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1311,7 +1311,7 @@ func TestUpgrade(t *testing.T) {
 	require.False(t, isUpgrading)
 
 	// Do finish upgrade again.
-	resp, err = ts.PostStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
+	resp, err = ts.postStatus("/upgrade/finish", "application/x-www-form-urlencoded", nil)
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err = httputil.DumpResponse(resp, true)
@@ -1320,7 +1320,7 @@ func TestUpgrade(t *testing.T) {
 	body, err = io.ReadAll(resp.Body)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "\"It's a duplicated op and the cluster is already in normal state.\"", string(body))
+	require.Equal(t, "\"It's a duplicated operation and the cluster is already in normal state.\"", string(body))
 	// check the result
 	se, err = session.CreateSession(ts.store)
 	require.NoError(t, err)
