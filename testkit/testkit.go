@@ -256,13 +256,21 @@ func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) (bool, 
 // MustHavePlan checks if the result execution plan contains specific plan.
 func (tk *TestKit) MustHavePlan(sql string, plan string, args ...interface{}) {
 	has, rs := tk.hasPlan(sql, plan, args...)
-	tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
+	if rs != nil {
+		tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
+	} else {
+		tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s", sql, plan))
+	}
 }
 
 // MustNotHavePlan checks if the result execution plan contains specific plan.
 func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...interface{}) {
 	has, rs := tk.hasPlan(sql, plan, args...)
-	tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s, full plan %v", sql, plan, rs.Rows()))
+	if rs != nil {
+		tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s, full plan %v", sql, plan, rs.Rows()))
+	} else {
+		tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s", sql, plan))
+	}
 }
 
 // HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
