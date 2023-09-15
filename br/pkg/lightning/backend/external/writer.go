@@ -61,8 +61,11 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID           string
-	Seq                int
+	WriterID string
+	Seq      int
+	// Min and Max are the min and max key written by this writer, both are
+	// inclusive, i.e. [Min, Max].
+	// will be empty if no key is written.
 	Min                tidbkv.Key
 	Max                tidbkv.Key
 	TotalSize          uint64
