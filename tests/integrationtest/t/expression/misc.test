@@ -32,3 +32,87 @@ select time '20171231235959.999999';
 select ADDDATE('2008-01-34', -1);
 Show warnings;
 
+# TestTwoDecimalTruncate
+set sql_mode='';
+drop table if exists t;
+create table t1(a decimal(10,5), b decimal(10,1));
+insert into t1 values(123.12345, 123.12345);
+update t1 set b = a;
+select a, b from t1;
+select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002;
+set sql_mode=default;
+
+# TestDecimalMul
+drop table if exists t;
+create table t(a decimal(38, 17));
+insert into t select 0.5999991229316*0.918755041726043;
+select * from t;
+
+# TestDecimalDiv
+select cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30));
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30));
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30));
+
+# TestValuesFloat32
+drop table if exists t;
+create table t (i int key, j float);
+insert into t values (1, 0.01);
+select * from t;
+insert into t values (1, 0.02) on duplicate key update j = values (j);
+select * from t;
+
+# TestValuesEnum
+drop table if exists t;
+create table t (a bigint primary key, b enum('a','b','c'));
+insert into t values (1, "a");
+select * from t;
+insert into t values (1, "b") on duplicate key update b = values(b);
+select * from t;
+
+# TestRefineArgNullValues
+drop table if exists t;
+drop table if exists s;
+create table t(id int primary key, a int);
+create table s(a int);
+insert into s values(1),(2);
+select t.id = 1.234 from t right join s on t.a = s.a;
+
+# TestComplexShowVariables
+# This is an example SHOW VARIABLES from mysql-connector-java-5.1.34
+# It returns 19 rows in MySQL 5.7 (the language sysvar no longer exists in 5.6+)
+# and 16 rows in MySQL 8.0 (the aliases for tx_isolation is removed, along with query cache)
+# In the event that we hide noop sysvars in future, we must keep these variables.
+SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
+OR Variable_name = 'license' OR Variable_name = 'init_connect';
+
+# TestFloat64Inf
+select '1e800' + 1e100;
+select '-1e800' - 1e100;
+
+# TestIdentity
+drop table if exists identity;
+create table identity (id int not null primary key auto_increment);
+SELECT @@identity;
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+
+# TestLastInsertId
+drop table if exists lastinsertid;
+create table lastinsertid (id int not null primary key auto_increment);
+SELECT @@last_insert_id;
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();

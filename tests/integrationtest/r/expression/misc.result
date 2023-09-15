@@ -57,3 +57,127 @@ ADDDATE('2008-01-34', -1)
 NULL
 Show warnings;
 Level	Code	Message
+set sql_mode='';
+drop table if exists t;
+create table t1(a decimal(10,5), b decimal(10,1));
+insert into t1 values(123.12345, 123.12345);
+update t1 set b = a;
+select a, b from t1;
+a	b
+123.12345	123.1
+select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002;
+2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002
+2.000000000000000000000000000000
+set sql_mode=default;
+drop table if exists t;
+create table t(a decimal(38, 17));
+insert into t select 0.5999991229316*0.918755041726043;
+select * from t;
+a
+0.55125221922461136
+select cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30));
+cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30))
+1.000000000000000000000000000000
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30));
+cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30))
+0.047619047619047619047619047619
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30));
+cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30))
+0.003663003663003663003663003663
+drop table if exists t;
+create table t (i int key, j float);
+insert into t values (1, 0.01);
+select * from t;
+i	j
+1	0.01
+insert into t values (1, 0.02) on duplicate key update j = values (j);
+select * from t;
+i	j
+1	0.02
+drop table if exists t;
+create table t (a bigint primary key, b enum('a','b','c'));
+insert into t values (1, "a");
+select * from t;
+a	b
+1	a
+insert into t values (1, "b") on duplicate key update b = values(b);
+select * from t;
+a	b
+1	b
+drop table if exists t;
+drop table if exists s;
+create table t(id int primary key, a int);
+create table s(a int);
+insert into s values(1),(2);
+select t.id = 1.234 from t right join s on t.a = s.a;
+t.id = 1.234
+NULL
+NULL
+SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
+OR Variable_name = 'license' OR Variable_name = 'init_connect';
+Variable_name	Value
+character_set_client	utf8mb4
+character_set_connection	utf8mb4
+character_set_results	utf8mb4
+character_set_server	utf8mb4
+init_connect	
+interactive_timeout	28800
+license	Apache License 2.0
+lower_case_table_names	2
+max_allowed_packet	67108864
+net_buffer_length	16384
+net_write_timeout	60
+query_cache_size	1048576
+query_cache_type	OFF
+sql_mode	ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+system_time_zone	Asia/Shanghai
+time_zone	Asia/Shanghai
+transaction_isolation	REPEATABLE-READ
+tx_isolation	REPEATABLE-READ
+wait_timeout	28800
+select '1e800' + 1e100;
+'1e800' + 1e100
+1.7976931348623157e308
+select '-1e800' - 1e100;
+'-1e800' - 1e100
+-1.7976931348623157e308
+drop table if exists identity;
+create table identity (id int not null primary key auto_increment);
+SELECT @@identity;
+@@identity
+0
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+@@identity	LAST_INSERT_ID()
+1	1
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+@@identity	LAST_INSERT_ID()
+2	2
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+@@identity	LAST_INSERT_ID()
+3	3
+drop table if exists lastinsertid;
+create table lastinsertid (id int not null primary key auto_increment);
+SELECT @@last_insert_id;
+@@last_insert_id
+3
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+@@last_insert_id	LAST_INSERT_ID()
+1	1
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+@@last_insert_id	LAST_INSERT_ID()
+2	2
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+@@last_insert_id	LAST_INSERT_ID()
+3	3
