@@ -1442,3 +1442,27 @@ drop table if exists t;
 create table t (a bit(10));
 insert into t values(b'1111');
 select approx_percentile(a, 10) from t;
+
+# TestFuncNameConst
+DROP TABLE IF EXISTS t;
+CREATE TABLE t(a CHAR(20), b VARCHAR(20), c BIGINT);
+INSERT INTO t (b, c) values('hello', 1);
+SELECT name_const('test_int', 1), name_const('test_float', 3.1415);
+SELECT name_const('test_string', 'hello'), name_const('test_nil', null);
+SELECT name_const('test_string', 1) + c FROM t;
+SELECT concat('hello', name_const('test_string', 'world')) FROM t;
+SELECT NAME_CONST('come', -1);
+SELECT NAME_CONST('come', -1.0);
+-- error 1210
+select name_const(a,b) from t;
+-- error 1210
+select name_const(a,"hello") from t;
+-- error 1210
+select name_const("hello", b) from t;
+-- error 1210
+select name_const("hello", 1+1) from t;
+-- error 1210
+select name_const(concat('a', 'b'), 555) from t;
+-- error 1210
+select name_const(555) from t;
+select name_const("hello", 1);

@@ -30,3 +30,21 @@ insert into t values(1301.11, 1131.111, 100001111.111);
 insert into t values(20121212121260.1111111, 20121212126012.1111111, 20121212241212.1111111);
 -- sorted_result
 select cast(d1 as datetime), cast(f as datetime), cast(d2 as datetime) from t;
+
+# TestCastAsTime
+drop table if exists t;
+create table t (col1 bigint, col2 double, col3 decimal, col4 varchar(20), col5 json);
+insert into t values (1, 1, 1, "1", "1");
+insert into t values (null, null, null, null, null);
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;
+-- error 1426
+select cast(col1 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col2 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col3 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col4 as time(31)) from t where col1 is null;
+-- error 1426
+select cast(col5 as time(31)) from t where col1 is null;

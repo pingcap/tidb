@@ -58,3 +58,23 @@ NULL	NULL	NULL
 2000-01-11 00:00:00	2000-11-22 00:00:00	2003-12-12 00:00:00
 2012-12-12 00:00:00	0112-12-12 00:00:00	1112-12-12 00:00:00
 9999-11-11 00:00:00	2000-01-01 00:00:00	2012-12-12 12:12:12
+drop table if exists t;
+create table t (col1 bigint, col2 double, col3 decimal, col4 varchar(20), col5 json);
+insert into t values (1, 1, 1, "1", "1");
+insert into t values (null, null, null, null, null);
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 = 1;
+cast(col1 as time)	cast(col2 as time)	cast(col3 as time)	cast(col4 as time)	cast(col5 as time)
+00:00:01	00:00:01	00:00:01	00:00:01	NULL
+select cast(col1 as time), cast(col2 as time), cast(col3 as time), cast(col4 as time), cast(col5 as time) from t where col1 is null;
+cast(col1 as time)	cast(col2 as time)	cast(col3 as time)	cast(col4 as time)	cast(col5 as time)
+NULL	NULL	NULL	NULL	NULL
+select cast(col1 as time(31)) from t where col1 is null;
+Error 1426: Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col2 as time(31)) from t where col1 is null;
+Error 1426: Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col3 as time(31)) from t where col1 is null;
+Error 1426: Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col4 as time(31)) from t where col1 is null;
+Error 1426: Too big precision 31 specified for column 'CAST'. Maximum is 6.
+select cast(col5 as time(31)) from t where col1 is null;
+Error 1426: Too big precision 31 specified for column 'CAST'. Maximum is 6.
