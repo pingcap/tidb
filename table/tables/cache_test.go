@@ -80,7 +80,6 @@ func TestCacheTableBasicScan(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		tk.MustQuery("select * from join_t1 join join_t3").Check(testkit.Rows("1 3"))
 		if lastReadFromCache(tk) {
-			// if tk.HasPlan("select *from join_t1 join join_t3", "UnionScan") {
 			planUsed = true
 			break
 		}
@@ -94,7 +93,6 @@ func TestCacheTableBasicScan(t *testing.T) {
 			"10 110 1010", "12 112 1012", "14 114 1014", "16 116 1016", "18 118 1018",
 		))
 		if lastReadFromCache(tk) {
-			// if tk.HasPlan("select * from tmp1 where id>4 order by id", "UnionScan") {
 			planUsed = true
 			break
 		}

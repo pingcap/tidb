@@ -19,7 +19,6 @@ go_test(
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle",
-        "//statistics/handle/cache",
         "//statistics/handle/internal",
         "//testkit",
         "//testkit/testsetup",

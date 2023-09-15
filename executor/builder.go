@@ -1940,7 +1940,7 @@ func (b *executorBuilder) getSnapshot() (kv.Snapshot, error) {
 	replicaReadType := sessVars.GetReplicaRead()
 	snapshot.SetOption(kv.ReadReplicaScope, b.readReplicaScope)
 	snapshot.SetOption(kv.TaskID, sessVars.StmtCtx.TaskID)
-	snapshot.SetOption(kv.TidbKvReadTimeout, sessVars.GetTidbKvReadTimeout())
+	snapshot.SetOption(kv.TiKVClientReadTimeout, sessVars.GetTiKVClientReadTimeout())
 	snapshot.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
 	snapshot.SetOption(kv.ExplicitRequestSourceType, sessVars.ExplicitRequestSourceType)
 
@@ -2670,7 +2670,11 @@ func (b *executorBuilder) buildAnalyzeIndexIncremental(task plannercore.AnalyzeI
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeSamplingPushdown(
+	task plannercore.AnalyzeColumnsTask,
+	opts map[ast.AnalyzeOptionType]uint64,
+	schemaForVirtualColEval *expression.Schema,
+) *analyzeTask {
 	if task.V2Options != nil {
 		opts = task.V2Options.FilledOpts
 	}
@@ -2844,7 +2848,12 @@ func (b *executorBuilder) getApproximateTableCountFromStorage(tid int64, task pl
 	return pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(b.ctx, tid, task.DBName, task.TableName, task.PartitionName)
 }
 
-func (b *executorBuilder) buildAnalyzeColumnsPushdown(task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64, autoAnalyze string, schemaForVirtualColEval *expression.Schema) *analyzeTask {
+func (b *executorBuilder) buildAnalyzeColumnsPushdown(
+	task plannercore.AnalyzeColumnsTask,
+	opts map[ast.AnalyzeOptionType]uint64,
+	autoAnalyze string,
+	schemaForVirtualColEval *expression.Schema,
+) *analyzeTask {
 	if task.StatsVersion == statistics.Version2 {
 		return b.buildAnalyzeSamplingPushdown(task, opts, schemaForVirtualColEval)
 	}
@@ -3085,7 +3094,13 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 			if enableFastAnalyze {
 				b.buildAnalyzeFastColumn(e, task, v.Opts)
 			} else {
-				columns, _, err := expression.ColumnInfos2ColumnsAndNames(b.ctx, model.NewCIStr(task.AnalyzeInfo.DBName), task.TblInfo.Name, task.ColsInfo, task.TblInfo)
+				columns, _, err := expression.ColumnInfos2ColumnsAndNames(
+					b.ctx,
+					model.NewCIStr(task.AnalyzeInfo.DBName),
+					task.TblInfo.Name,
+					task.ColsInfo,
+					task.TblInfo,
+				)
 				if err != nil {
 					b.err = err
 					return nil
@@ -3094,6 +3109,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
 			}
 		}
+		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
 			return nil
 		}
@@ -5226,16 +5242,22 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		// `SELECT a FROM t WHERE a IN (1, 1, 2, 1, 2)` should not return duplicated rows
 		handles := make([]kv.Handle, 0, len(plan.Handles))
 		dedup := kv.NewHandleMap()
+		// Used for clear paritionIDs of duplicated rows.
+		dupPartPos := 0
 		if plan.IndexInfo == nil {
-			for _, handle := range plan.Handles {
+			for idx, handle := range plan.Handles {
 				if _, found := dedup.Get(handle); found {
 					continue
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		} else {
-			for _, value := range plan.IndexValues {
+			for idx, value := range plan.IndexValues {
 				if datumsContainNull(value) {
 					continue
 				}
@@ -5257,9 +5279,16 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 				}
 				dedup.Set(handle, true)
 				handles = append(handles, handle)
+				if len(plan.PartitionIDs) > 0 {
+					e.planPhysIDs[dupPartPos] = e.planPhysIDs[idx]
+					dupPartPos++
+				}
 			}
 		}
 		e.handles = handles
+		if dupPartPos > 0 {
+			e.planPhysIDs = e.planPhysIDs[:dupPartPos]
+		}
 		capacity = len(e.handles)
 	}
 	e.Base().SetInitCap(capacity)

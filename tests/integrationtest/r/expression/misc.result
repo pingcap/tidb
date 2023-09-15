@@ -1,0 +1,316 @@
+SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;
+LENGTH(b'')	LENGTH(B'')	b''+1	b''-1	B''+1
+0	0	1	-1	1
+select timestamp '2017-01-01 00:00:00';
+timestamp '2017-01-01 00:00:00'
+2017-01-01 00:00:00
+select timestamp '2017@01@01 00:00:00';
+timestamp '2017@01@01 00:00:00'
+2017-01-01 00:00:00
+select timestamp '2017@01@01 00~00~00';
+timestamp '2017@01@01 00~00~00'
+2017-01-01 00:00:00
+select timestamp '2017@01@0001 00~00~00.333';
+timestamp '2017@01@0001 00~00~00.333'
+2017-01-01 00:00:00.333
+select timestamp '00:00:00';
+Error 1292: Incorrect datetime value: '00:00:00'
+select timestamp '1992-01-03';
+Error 1292: Incorrect datetime value: '1992-01-03'
+select timestamp '20171231235959.999999';
+Error 1292: Incorrect datetime value: '20171231235959.999999'
+select time '117:01:12';
+time '117:01:12'
+117:01:12
+select time '01:00:00.999999';
+time '01:00:00.999999'
+01:00:00.999999
+select time '1 01:00:00';
+time '1 01:00:00'
+25:00:00
+select time '110:00:00';
+time '110:00:00'
+110:00:00
+select time'-1:1:1.123454656';
+time'-1:1:1.123454656'
+-01:01:01.123455
+select time '33:33';
+time '33:33'
+33:33:00
+select time '1.1';
+time '1.1'
+00:00:01.1
+select time '21';
+time '21'
+00:00:21
+select time '20 20:20';
+time '20 20:20'
+500:20:00
+select time '2017-01-01 00:00:00';
+Error 1292: Incorrect time value: '2017-01-01 00:00:00'
+select time '071231235959.999999';
+Error 1292: Incorrect time value: '071231235959.999999'
+select time '20171231235959.999999';
+Error 1292: Incorrect time value: '20171231235959.999999'
+select ADDDATE('2008-01-34', -1);
+ADDDATE('2008-01-34', -1)
+NULL
+Show warnings;
+Level	Code	Message
+set sql_mode='';
+drop table if exists t;
+create table t1(a decimal(10,5), b decimal(10,1));
+insert into t1 values(123.12345, 123.12345);
+update t1 set b = a;
+select a, b from t1;
+a	b
+123.12345	123.1
+select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002;
+2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002
+2.000000000000000000000000000000
+set sql_mode=default;
+drop table if exists t;
+create table t(a decimal(38, 17));
+insert into t select 0.5999991229316*0.918755041726043;
+select * from t;
+a
+0.55125221922461136
+select cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30));
+cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30))
+1.000000000000000000000000000000
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30));
+cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30))
+0.047619047619047619047619047619
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30));
+cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30))
+0.003663003663003663003663003663
+drop table if exists t;
+create table t (i int key, j float);
+insert into t values (1, 0.01);
+select * from t;
+i	j
+1	0.01
+insert into t values (1, 0.02) on duplicate key update j = values (j);
+select * from t;
+i	j
+1	0.02
+drop table if exists t;
+create table t (a bigint primary key, b enum('a','b','c'));
+insert into t values (1, "a");
+select * from t;
+a	b
+1	a
+insert into t values (1, "b") on duplicate key update b = values(b);
+select * from t;
+a	b
+1	b
+drop table if exists t;
+drop table if exists s;
+create table t(id int primary key, a int);
+create table s(a int);
+insert into s values(1),(2);
+select t.id = 1.234 from t right join s on t.a = s.a;
+t.id = 1.234
+NULL
+NULL
+SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
+OR Variable_name = 'license' OR Variable_name = 'init_connect';
+Variable_name	Value
+character_set_client	utf8mb4
+character_set_connection	utf8mb4
+character_set_results	utf8mb4
+character_set_server	utf8mb4
+init_connect	
+interactive_timeout	28800
+license	Apache License 2.0
+lower_case_table_names	2
+max_allowed_packet	67108864
+net_buffer_length	16384
+net_write_timeout	60
+query_cache_size	1048576
+query_cache_type	OFF
+sql_mode	ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
+system_time_zone	Asia/Shanghai
+time_zone	Asia/Shanghai
+transaction_isolation	REPEATABLE-READ
+tx_isolation	REPEATABLE-READ
+wait_timeout	28800
+select '1e800' + 1e100;
+'1e800' + 1e100
+1.7976931348623157e308
+select '-1e800' - 1e100;
+'-1e800' - 1e100
+-1.7976931348623157e308
+drop table if exists identity;
+create table identity (id int not null primary key auto_increment);
+SELECT @@identity;
+@@identity
+0
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+@@identity	LAST_INSERT_ID()
+1	1
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+@@identity	LAST_INSERT_ID()
+2	2
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+@@identity	LAST_INSERT_ID()
+3	3
+drop table if exists lastinsertid;
+create table lastinsertid (id int not null primary key auto_increment);
+SELECT @@last_insert_id;
+@@last_insert_id
+3
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+@@last_insert_id	LAST_INSERT_ID()
+1	1
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+@@last_insert_id	LAST_INSERT_ID()
+2	2
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+@@last_insert_id	LAST_INSERT_ID()
+3	3
+drop table if exists t;
+create table t (a int, b int as (a + 1));
+insert into t(a) values (1);
+select /*+ LIMIT_TO_COP() */ b from t limit 1;
+b
+2
+select /*+ LIMIT_TO_COP() */ b from t order by b limit 1;
+b
+2
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 float);
+CREATE TABLE t1(c0 float);
+INSERT INTO t1(c0) VALUES (0);
+INSERT INTO t0(c0) VALUES (0);
+SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;
+c0
+0
+drop table if exists kankan1, kankan2;
+create table kankan1(id int, name text);
+insert into kankan1 values(1, 'a');
+insert into kankan1 values(2, 'a');
+create table kankan2(id int, h1 text);
+insert into kankan2 values(2, 'z');
+select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id;
+id
+1
+2
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a varchar(2));
+insert t1 value ('10');
+insert t select a from t1;
+select a+0 from t;
+a+0
+12592
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a binary(2));
+insert t1 value ('10');
+insert t select a from t1;
+select a+0 from t;
+a+0
+12592
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a datetime);
+insert t1 value ('09-01-01');
+insert t select a from t1;
+select a+0 from t;
+a+0
+20090101000000
+drop table if exists t;
+create table t(a int);
+select /*+ unknown_hint(c1)*/ 1;
+1
+1
+show warnings;
+Level	Code	Message
+select 1 from /*+ test1() */ t;
+1
+show warnings;
+Level	Code	Message
+drop table if exists t;
+create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);
+insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");
+select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;
+values(a)	values(b)	values(c)	values(d)	values(e)	values(f)	values(g)
+NULL	NULL	NULL	NULL	NULL	NULL	NULL
+set global innodb_default_row_format = dynamic;
+set global innodb_default_row_format = 'dynamic';
+SHOW VARIABLES LIKE 'innodb_default_row_format';
+Variable_name	Value
+innodb_default_row_format	dynamic
+SHOW VARIABLES LIKE 'character_set_server';
+Variable_name	Value
+character_set_server	utf8mb4
+SHOW VARIABLES LIKE 'innodb_file_format';
+Variable_name	Value
+innodb_file_format	Barracuda
+SHOW VARIABLES LIKE 'innodb_large_prefix';
+Variable_name	Value
+innodb_large_prefix	ON
+drop table if exists t;
+create table t (c1 varchar(100), c2 varchar(128));
+prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
+set @a='1',@b=repeat('x', 80);
+execute pr1 using @a,@b;
+
+drop table if exists t;
+create table t(a int, b int, index(a));
+insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
+select * from t use index(a) where a is null order by b;
+a	b
+NULL	0
+NULL	1
+select * from t use index(a) where a<=>null order by b;
+a	b
+NULL	0
+NULL	1
+select * from t use index(a) where a<=>10 order by b;
+a	b
+10	11
+10	12
+drop table if exists t1;
+create table t1(a int, b int, c int, unique key(a, b, c));
+insert into t1 values (1, null, 1), (1, null, 2), (1, null, 3), (1, null, 4);
+insert into t1 values (1, 1, 1), (1, 2, 2), (1, 3, 33), (1, 4, 44);
+select c from t1 where a=1 and b<=>null and c>2 order by c;
+c
+3
+4
+select c from t1 where a=1 and b is null and c>2 order by c;
+c
+3
+4
+select c from t1 where a=1 and b is not null and c>2 order by c;
+c
+33
+44
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (d date NOT NULL) PARTITION BY RANGE (YEAR(d))
+(PARTITION p2016 VALUES LESS THAN (2017), PARTITION p2017 VALUES LESS THAN (2018), PARTITION p2018 VALUES LESS THAN (2019),
+PARTITION p2019 VALUES LESS THAN (2020), PARTITION pmax VALUES LESS THAN MAXVALUE);
+INSERT INTO t1 VALUES ('2016-01-01'), ('2016-06-01'), ('2016-09-01'), ('2017-01-01'),
+('2017-06-01'), ('2017-09-01'), ('2018-01-01'), ('2018-06-01'), ('2018-09-01'), ('2018-10-01'),
+('2018-11-01'), ('2018-12-01'), ('2018-12-31'), ('2019-01-01'), ('2019-06-01'), ('2019-09-01'),
+('2020-01-01'), ('2020-06-01'), ('2020-09-01');
+SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01';
+COUNT(*)
+6
+SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01';
+COUNT(*)
+12

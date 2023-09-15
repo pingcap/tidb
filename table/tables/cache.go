@@ -192,7 +192,7 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 	defer func() {
 		if r := recover(); r != nil {
 			log.Error("panic in the recoverable goroutine",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack trace"))
 		}
 		c.PutStateRemoteHandle(handle)

@@ -22,22 +22,27 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 )
 
-type datumMapCache struct {
+// DatumMapCache is used to store the mapping from the string type to datum type.
+// The datum is used to find the value in the histogram.
+type DatumMapCache struct {
 	datumMap map[hack.MutableString]types.Datum
 }
 
-func newDatumMapCache() *datumMapCache {
-	return &datumMapCache{
+// NewDatumMapCache creates a new DatumMapCache.
+func NewDatumMapCache() *DatumMapCache {
+	return &DatumMapCache{
 		datumMap: make(map[hack.MutableString]types.Datum),
 	}
 }
 
-func (d *datumMapCache) Get(key hack.MutableString) (val types.Datum, ok bool) {
+// Get gets the datum from the cache.
+func (d *DatumMapCache) Get(key hack.MutableString) (val types.Datum, ok bool) {
 	val, ok = d.datumMap[key]
 	return
 }
 
-func (d *datumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
+// Put puts the datum into the cache.
+func (d *DatumMapCache) Put(val TopNMeta, encodedVal hack.MutableString,
 	tp byte, isIndex bool, loc *time.Location) (dat types.Datum, err error) {
 	dat, err = topNMetaToDatum(val, tp, isIndex, loc)
 	if err != nil {

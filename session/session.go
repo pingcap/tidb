@@ -1559,6 +1559,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
+		SessionAlias:          s.sessionVars.SessionAlias,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -3444,7 +3445,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3516,9 +3517,9 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if failToLoadOrParseSQLFile {
+	if intest.InTest && failToLoadOrParseSQLFile {
 		dom.Close()
-		return nil, err
+		return nil, errors.New("Fail to load or parse sql file")
 	}
 	err = dom.InitDistTaskLoop(ctx)
 	if err != nil {

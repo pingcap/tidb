@@ -409,7 +409,13 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 	slices.Sort(ids)
 	for _, id := range ids {
 		idx := coll.Indices[id]
-		if idx != nil && idx.IsFullLoad() {
+		if idx == nil {
+			continue
+		}
+		if idx.Info != nil && idx.Info.MVIndex {
+			continue
+		}
+		if idx.IsFullLoad() {
 			return idx.TotalRowCount()
 		}
 	}

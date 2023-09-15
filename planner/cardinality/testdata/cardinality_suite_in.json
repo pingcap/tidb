@@ -454,5 +454,13 @@
       "select * from t where a = 100 and b = 350",
       "select * from t where a < -1500 and b > 400 and b < 403"
     ]
+  },
+  {
+    "name": "TestIndexJoinInnerRowCountUpperBound",
+    "cases": [
+      "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b",
+      "set @@tidb_opt_fix_control = '44855:ON'",
+      "explain format = 'brief' select /*+ inl_join(t2) */ * from (select * from t where t.a < 1) as t1 join t t2 where t2.a = 0 and t1.a = t2.b"
+    ]
   }
 ]

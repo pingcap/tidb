@@ -18,8 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -126,37 +124,45 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 0)
-	kvPairs := make([]common.KvPair, 0, 30)
+		Build(store, "/subtask", "0")
+
+	keys := make([][]byte, 0, 30)
+	values := make([][]byte, 0, 30)
 	for i := 0; i < 30; i++ {
-		kvPairs = append(kvPairs, common.KvPair{
-			Key: []byte{byte(i)},
-			Val: []byte{byte(i)},
-		})
+		keys = append(keys, []byte{byte(i)})
+		values = append(values, []byte{byte(i)})
 	}
-	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w.Close(ctx)
+
+	for i, key := range keys {
+		err := w.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err := w.Close(ctx)
 	require.NoError(t, err)
 
 	w2 := NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 3)
-	err = w2.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+		Build(store, "/subtask", "3")
+	for i, key := range keys {
+		err := w2.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
 	require.NoError(t, err)
-	_, err = w2.Close(ctx)
+	err = w2.Close(ctx)
 	require.NoError(t, err)
 
 	w3 := NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 12)
-	err = w3.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w3.Close(ctx)
+		Build(store, "/subtask", "12")
+	for i, key := range keys {
+		err := w3.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err = w3.Close(ctx)
 	require.NoError(t, err)
 
 	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
@@ -180,17 +186,18 @@ func TestCleanUpFiles(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 0)
-	kvPairs := make([]common.KvPair, 0, 30)
+		Build(store, "/subtask", "0")
+	keys := make([][]byte, 0, 30)
+	values := make([][]byte, 0, 30)
 	for i := 0; i < 30; i++ {
-		kvPairs = append(kvPairs, common.KvPair{
-			Key: []byte{byte(i)},
-			Val: []byte{byte(i)},
-		})
+		keys = append(keys, []byte{byte(i)})
+		values = append(values, []byte{byte(i)})
 	}
-	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w.Close(ctx)
+	for i, key := range keys {
+		err := w.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err := w.Close(ctx)
 	require.NoError(t, err)
 
 	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
