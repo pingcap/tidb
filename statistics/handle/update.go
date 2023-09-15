@@ -784,8 +784,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
 			if _, ok := lockedTables[tbl.Meta().ID]; ok {
-				logutil.BgLogger().Info("skip analyze locked table", zap.String("category", "stats"),
-					zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
 				continue
 			}
 			tblInfo := tbl.Meta()
@@ -809,9 +807,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			for _, def := range pi.Definitions {
 				if _, ok := lockedTables[def.ID]; !ok {
 					partitionDefs = append(partitionDefs, def)
-				} else {
-					logutil.BgLogger().Info("skip analyze locked partition", zap.String("category", "stats"),
-						zap.String("db", db), zap.String("table", tblInfo.Name.O), zap.String("partition", def.Name.O))
 				}
 			}
 			if pruneMode == variable.Dynamic {
