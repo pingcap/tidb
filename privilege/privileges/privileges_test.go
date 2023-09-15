@@ -455,7 +455,7 @@ func TestShowColumnGrants(t *testing.T) {
 	pc := privilege.GetPrivilegeManager(tk.Session())
 	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
 	require.NoError(t, err)
-	require.Equal(t, "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON test.column_table TO 'column'@'%'", strings.Join(gs, " "))
+	require.Equal(t, "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `test`.`column_table` TO 'column'@'%'", strings.Join(gs, " "))
 }
 
 func TestDropTablePrivileges(t *testing.T) {
@@ -2315,7 +2315,7 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil, nil)
 
-	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON db.* TO 'u1'@'%'"))
+	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON `db`.* TO 'u1'@'%'"))
 
 	tk.MustExec("GRANT SELECT ON d1.* to u2")
 	tk.MustExec("GRANT SELECT ON d2.* to u2 WITH GRANT OPTION")
@@ -2323,18 +2323,18 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON d4.* to u2")
 	tk.MustExec("GRANT SELECT ON d5.* to u2")
 	tk.MustQuery(`SHOW GRANTS FOR u2;`).Sort().Check(testkit.Rows(
-		"GRANT SELECT ON d1.* TO 'u2'@'%'",
-		"GRANT SELECT ON d2.* TO 'u2'@'%' WITH GRANT OPTION",
-		"GRANT SELECT ON d3.* TO 'u2'@'%'",
-		"GRANT SELECT ON d4.* TO 'u2'@'%'",
-		"GRANT SELECT ON d5.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d1`.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d2`.* TO 'u2'@'%' WITH GRANT OPTION",
+		"GRANT SELECT ON `d3`.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d4`.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d5`.* TO 'u2'@'%'",
 		"GRANT USAGE ON *.* TO 'u2'@'%'",
 	))
 
 	tk.MustExec("grant all on hchwang.* to u3 with grant option")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
 	tk.MustExec("revoke all on hchwang.* from u3")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
 
 	// Same again but with column privileges.
 
@@ -2344,8 +2344,8 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("revoke all on test.testgrant from u3")
 	tk.MustQuery(`SHOW GRANTS FOR u3`).Sort().Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'u3'@'%'",
-		"GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION",
-		"GRANT USAGE ON test.testgrant TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON `test`.`testgrant` TO 'u3'@'%' WITH GRANT OPTION",
 	))
 }
 
@@ -2382,8 +2382,8 @@ func TestGrantReferences(t *testing.T) {
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR referencesUser").Check(testkit.Rows(
 		`GRANT REFERENCES ON *.* TO 'referencesUser'@'%'`,
-		`GRANT REFERENCES ON reftestdb.* TO 'referencesUser'@'%'`,
-		`GRANT REFERENCES ON reftestdb.reftest TO 'referencesUser'@'%'`))
+		"GRANT REFERENCES ON `reftestdb`.* TO 'referencesUser'@'%'",
+		"GRANT REFERENCES ON `reftestdb`.`reftest` TO 'referencesUser'@'%'"))
 	tk.MustExec("DROP USER referencesUser")
 	tk.MustExec("DROP SCHEMA reftestdb")
 }
@@ -2535,7 +2535,7 @@ func TestGrantLockTables(t *testing.T) {
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
 		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
-		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+		"GRANT LOCK TABLES ON `lock_tables_db`.* TO 'lock_tables_user'@'%'"))
 	tk.MustExec("DROP USER lock_tables_user")
 	tk.MustExec("DROP DATABASE lock_tables_db")
 }
@@ -2576,16 +2576,16 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 
 	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT SELECT ON test.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT ON `test`.* TO 'joe'@'%'",
+		"GRANT UPDATE ON `role`.* TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT SELECT ON test.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT ON `test`.* TO 'joe'@'%'",
+		"GRANT UPDATE ON `role`.* TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 }
@@ -2703,7 +2703,7 @@ func TestGrantCreateTmpTables(t *testing.T) {
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		`GRANT CREATE TEMPORARY TABLES ON *.* TO 'u1'@'%'`,
-		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
+		"GRANT CREATE TEMPORARY TABLES ON `create_tmp_table_db`.* TO 'u1'@'%'"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
 }
@@ -2899,7 +2899,7 @@ func TestGrantEvent(t *testing.T) {
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		`GRANT EVENT ON *.* TO 'u1'@'%'`,
-		`GRANT EVENT ON event_db.* TO 'u1'@'%'`))
+		"GRANT EVENT ON `event_db`.* TO 'u1'@'%'"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE event_db")
 }
@@ -2923,7 +2923,7 @@ func TestGrantRoutine(t *testing.T) {
 	}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		`GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'u1'@'%'`,
-		`GRANT CREATE ROUTINE,ALTER ROUTINE ON routine_db.* TO 'u1'@'%'`))
+		"GRANT CREATE ROUTINE,ALTER ROUTINE ON `routine_db`.* TO 'u1'@'%'"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE routine_db")
 }
