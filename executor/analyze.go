@@ -532,7 +532,7 @@ func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("StartAnalyzeJob",
-				zap.String("start_time", job.StartTime.UTC().Format(types.TimeFormat)),
+				zap.Time("start_time", job.StartTime),
 				zap.Uint64("job id", *job.ID),
 			)
 		}
@@ -601,7 +601,7 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("FinishAnalyzeMergeJob",
-				zap.String("end_time", job.EndTime.UTC().Format(types.TimeFormat)),
+				zap.Time("end_time", job.EndTime),
 				zap.Uint64("job id", *job.ID),
 			)
 		}
@@ -646,8 +646,9 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		if val.(bool) {
 			logutil.BgLogger().Info("FinishAnalyzeJob",
 				zap.Int64("increase processed_rows", job.Progress.GetDeltaCount()),
-				zap.String("end_time", job.EndTime.UTC().Format(types.TimeFormat)),
+				zap.Time("end_time", job.EndTime),
 				zap.Uint64("job id", *job.ID),
+				zap.Error(analyzeErr),
 			)
 		}
 	})
