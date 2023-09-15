@@ -189,3 +189,37 @@ create table t (c1 varchar(100), c2 varchar(128));
 prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
 set @a='1',@b=repeat('x', 80);
 execute pr1 using @a,@b;
+
+# TestNullValueRange
+drop table if exists t;
+create table t(a int, b int, index(a));
+insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
+select * from t use index(a) where a is null order by b;
+select * from t use index(a) where a<=>null order by b;
+select * from t use index(a) where a<=>10 order by b;
+drop table if exists t1;
+create table t1(a int, b int, c int, unique key(a, b, c));
+insert into t1 values (1, null, 1), (1, null, 2), (1, null, 3), (1, null, 4);
+insert into t1 values (1, 1, 1), (1, 2, 2), (1, 3, 33), (1, 4, 44);
+select c from t1 where a=1 and b<=>null and c>2 order by c;
+select c from t1 where a=1 and b is null and c>2 order by c;
+select c from t1 where a=1 and b is not null and c>2 order by c;
+
+# TestPartitionPruningRelaxOP
+# Discovered while looking at issue 19941 (not completely related)
+# relaxOP relax the op > to >= and < to <=
+# Sometime we need to relax the condition, for example:
+# col < const => f(col) <= const
+# datetime < 2020-02-11 16:18:42 => to_days(datetime) <= to_days(2020-02-11)
+# We can't say:
+# datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (d date NOT NULL) PARTITION BY RANGE (YEAR(d))
+ (PARTITION p2016 VALUES LESS THAN (2017), PARTITION p2017 VALUES LESS THAN (2018), PARTITION p2018 VALUES LESS THAN (2019),
+ PARTITION p2019 VALUES LESS THAN (2020), PARTITION pmax VALUES LESS THAN MAXVALUE);
+INSERT INTO t1 VALUES ('2016-01-01'), ('2016-06-01'), ('2016-09-01'), ('2017-01-01'),
+('2017-06-01'), ('2017-09-01'), ('2018-01-01'), ('2018-06-01'), ('2018-09-01'), ('2018-10-01'),
+('2018-11-01'), ('2018-12-01'), ('2018-12-31'), ('2019-01-01'), ('2019-06-01'), ('2019-09-01'),
+('2020-01-01'), ('2020-06-01'), ('2020-09-01');
+SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01';
+SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01';

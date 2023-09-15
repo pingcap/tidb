@@ -269,3 +269,48 @@ prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
 set @a='1',@b=repeat('x', 80);
 execute pr1 using @a,@b;
 
+drop table if exists t;
+create table t(a int, b int, index(a));
+insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
+select * from t use index(a) where a is null order by b;
+a	b
+NULL	0
+NULL	1
+select * from t use index(a) where a<=>null order by b;
+a	b
+NULL	0
+NULL	1
+select * from t use index(a) where a<=>10 order by b;
+a	b
+10	11
+10	12
+drop table if exists t1;
+create table t1(a int, b int, c int, unique key(a, b, c));
+insert into t1 values (1, null, 1), (1, null, 2), (1, null, 3), (1, null, 4);
+insert into t1 values (1, 1, 1), (1, 2, 2), (1, 3, 33), (1, 4, 44);
+select c from t1 where a=1 and b<=>null and c>2 order by c;
+c
+3
+4
+select c from t1 where a=1 and b is null and c>2 order by c;
+c
+3
+4
+select c from t1 where a=1 and b is not null and c>2 order by c;
+c
+33
+44
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (d date NOT NULL) PARTITION BY RANGE (YEAR(d))
+(PARTITION p2016 VALUES LESS THAN (2017), PARTITION p2017 VALUES LESS THAN (2018), PARTITION p2018 VALUES LESS THAN (2019),
+PARTITION p2019 VALUES LESS THAN (2020), PARTITION pmax VALUES LESS THAN MAXVALUE);
+INSERT INTO t1 VALUES ('2016-01-01'), ('2016-06-01'), ('2016-09-01'), ('2017-01-01'),
+('2017-06-01'), ('2017-09-01'), ('2018-01-01'), ('2018-06-01'), ('2018-09-01'), ('2018-10-01'),
+('2018-11-01'), ('2018-12-01'), ('2018-12-31'), ('2019-01-01'), ('2019-06-01'), ('2019-09-01'),
+('2020-01-01'), ('2020-06-01'), ('2020-09-01');
+SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01';
+COUNT(*)
+6
+SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01';
+COUNT(*)
+12
