@@ -301,7 +301,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.RequestSource.RequestSourceInternal = sv.InRestrictedSQL
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
-	builder.Request.TidbKvReadTimeout = sv.GetTidbKvReadTimeout()
+	builder.Request.TiKVClientReadTimeout = sv.GetTiKVClientReadTimeout()
 	return builder
 }
 
