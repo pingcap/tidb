@@ -217,7 +217,7 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 	}
 
 	subTaskMetas := make([][]byte, 0, 100)
-	regionBatch := 120
+	regionBatch := 20
 	sort.Slice(recordRegionMetas, func(i, j int) bool {
 		return bytes.Compare(recordRegionMetas[i].StartKey(), recordRegionMetas[j].StartKey()) < 0
 	})
