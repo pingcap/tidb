@@ -1207,8 +1207,8 @@ func (b *bucket4Merging) Clone() bucket4Merging {
 	result := newbucket4MergingForRecycle()
 	result.Repeat = b.Repeat
 	result.NDV = b.NDV
-	b.upper.Copy(result.upper)
-	b.lower.Copy(result.lower)
+	b.upper.CopyTryNoAlloc(result.upper)
+	b.lower.CopyTryNoAlloc(result.lower)
 	result.Count = b.Count
 	result.disjointNDV = b.disjointNDV
 	return *result
