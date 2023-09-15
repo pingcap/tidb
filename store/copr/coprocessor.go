@@ -272,8 +272,6 @@ type copTask struct {
 
 	// timeout value for one kv readonly request
 	tikvClientReadTimeout uint64
-	// timeout value for one kv readonly reqeust
-	tidbKvReadTimeout uint64
 	// firstReadType is used to indicate the type of first read when retrying.
 	firstReadType string
 }
