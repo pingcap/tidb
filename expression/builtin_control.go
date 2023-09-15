@@ -66,9 +66,8 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 	if evalType == types.ETDecimal || evalType == types.ETInt {
 		maxArgFlen := 0
 		for i := range argTps {
-			unsignedFlag := mysql.HasUnsignedFlag(argTps[i].GetFlag())
 			flagLen := 0
-			if !unsignedFlag {
+			if !mysql.HasUnsignedFlag(argTps[i].GetFlag()) {
 				flagLen = 1
 			}
 			flen := argTps[i].GetFlen() - flagLen
