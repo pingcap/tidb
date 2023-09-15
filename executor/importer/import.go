@@ -208,6 +208,8 @@ type Plan struct {
 	User string `json:"-"`
 
 	IsRaftKV2 bool
+	// total data file size in bytes.
+	TotalFileSize int64
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -246,8 +248,6 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
-	// total data file size in bytes, only initialized when load from remote.
-	TotalFileSize int64
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {

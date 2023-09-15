@@ -79,7 +79,7 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 }
 
 // readerOpenerFn is a function that opens a sorted reader.
-type readerOpenerFn[T heapElem, R sortedReader[T]] func(ctx context.Context) (*R, error)
+type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 
 // newMergeIter creates a merge iterator for multiple sorted reader opener
 // functions.
@@ -106,12 +106,12 @@ func newMergeIter[
 	}
 
 	// Open readers in parallel.
-	wg, wgCtx := errgroup.WithContext(ctx)
+	wg := errgroup.Group{}
 	for i, f := range readerOpeners {
 		i := i
 		f := f
 		wg.Go(func() error {
-			rd, err := f(wgCtx)
+			rd, err := f()
 			switch err {
 			case nil:
 			case io.EOF:
@@ -280,7 +280,7 @@ func NewMergeKVIter(
 
 	for i := range paths {
 		i := i
-		readerOpeners = append(readerOpeners, func(ctx context.Context) (*kvReaderProxy, error) {
+		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
 			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
 			if err != nil {
 				return nil, err
@@ -353,7 +353,7 @@ func NewMergePropIter(
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(paths))
 	for i := range paths {
 		i := i
-		readerOpeners = append(readerOpeners, func(ctx context.Context) (*statReaderProxy, error) {
+		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
 			rd, err := newStatsReader(ctx, exStorage, paths[i], 4096)
 			if err != nil {
 				return nil, err

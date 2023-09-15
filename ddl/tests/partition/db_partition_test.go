@@ -6155,9 +6155,9 @@ func TestRemoveRangePartitioning(t *testing.T) {
 	tk.MustExec("create database RemovePartitioning")
 	tk.MustExec("use RemovePartitioning")
 	tk.MustExec(`create table tRange (a int unsigned primary key, b varchar(255))
-partition by range (a)
-(partition p0 values less than (1000000),
-partition pMax values less than maxvalue)`)
+	partition by range (a)
+	(partition p0 values less than (1000000),
+	partition pMax values less than maxvalue)`)
 	tk.MustExec(`insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000")`)
 	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
 		"tRange CREATE TABLE `tRange` (\n" +
@@ -6175,6 +6175,56 @@ partition pMax values less than maxvalue)`)
 		"  `b` varchar(255) DEFAULT NULL,\n" +
 		"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	/* Test with nonclustered */
+	tk.MustExec(`drop table tRange`)
+	tk.MustExec(`create table tRange (a int unsigned primary key nonclustered, b varchar(255))
+partition by range (a)
+(partition p0 values less than (1000000),
+partition pMax values less than maxvalue)`)
+	tk.MustExec(`insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000")`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table tRange remove partitioning`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec(`insert into tRange values (1, "One"), (999998, "999998"), (1000001, "1000001"), (20000002, "20000002")`)
+
+	/* Test with both auto_inc and non-clustered */
+	tk.MustExec(`drop table tRange`)
+	tk.MustExec(`create table tRange (a int unsigned primary key nonclustered, b varchar(255))
+partition by range (a)
+(partition p0 values less than (1000000),
+partition pMax values less than maxvalue)`)
+	tk.MustExec(`insert into tRange values (0, "Zero"), (999999, "999999"), (1000000, "1000000"), (20000000, "20000000")`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\n" +
+		"PARTITION BY RANGE (`a`)\n" +
+		"(PARTITION `p0` VALUES LESS THAN (1000000),\n" +
+		" PARTITION `pMax` VALUES LESS THAN (MAXVALUE))"))
+	tk.MustExec(`alter table tRange remove partitioning`)
+	tk.MustQuery(`show create table tRange`).Check(testkit.Rows("" +
+		"tRange CREATE TABLE `tRange` (\n" +
+		"  `a` int(10) unsigned NOT NULL,\n" +
+		"  `b` varchar(255) DEFAULT NULL,\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec(`insert into tRange values (1, "One"), (999998, "999998"), (1000001, "1000001"), (20000002, "20000002")`)
 }
 
 func TestRemoveRangeColumnPartitioning(t *testing.T) {
@@ -6446,6 +6496,101 @@ func TestRemoveListColumnsPartitioning(t *testing.T) {
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`show stats_meta where db_name = 'RemoveListPartitioning' and table_name = 't'`).Sort().CheckAt([]int{0, 1, 2, 4, 5}, [][]interface{}{
 		{"RemoveListPartitioning", "t", "", "0", "95"}})
+}
+
+func TestRemovePartitioningAutoIDs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+
+	dbName := "RemovePartAutoIDs"
+	tk1.MustExec(`create schema ` + dbName)
+	tk1.MustExec(`use ` + dbName)
+	tk1.MustExec(`CREATE TABLE t (a int auto_increment primary key nonclustered, b varchar(255), key (b)) partition by hash(a) partitions 3`)
+	tk1.MustExec(`insert into t values (11,11),(2,2),(null,12)`)
+	tk1.MustExec(`insert into t values (null,18)`)
+	tk1.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows("13 11 11", "14 2 2", "15 12 12", "17 16 18"))
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use ` + dbName)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use ` + dbName)
+	waitFor := func(col int, tableName, s string) {
+		for {
+			tk4 := testkit.NewTestKit(t, store)
+			tk4.MustExec(`use test`)
+			sql := `admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'alter table remove partitioning'`
+			res := tk4.MustQuery(sql).Rows()
+			if len(res) == 1 && res[0][col] == s {
+				break
+			}
+			for i := range res {
+				strs := make([]string, 0, len(res[i]))
+				for j := range res[i] {
+					strs = append(strs, res[i][j].(string))
+				}
+				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	alterChan := make(chan error)
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (null, 4)`)
+	go func() {
+		alterChan <- tk1.ExecToErr(`alter table t remove partitioning`)
+	}()
+	waitFor(4, "t", "delete only")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t values (null, 5)`)
+
+	tk2.MustExec(`insert into t values (null, 6)`)
+	tk3.MustExec(`insert into t values (null, 7)`)
+	tk2.MustExec(`COMMIT`)
+
+	waitFor(4, "t", "write only")
+	tk2.MustExec(`BEGIN`)
+	tk2.MustExec(`insert into t values (null, 8)`)
+
+	tk3.MustExec(`insert into t values (null, 9)`)
+	tk2.MustExec(`insert into t values (null, 10)`)
+	tk3.MustExec(`COMMIT`)
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "30 29 9"))
+	tk2.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "23 22 6", "27 26 8", "32 31 10"))
+
+	waitFor(4, "t", "write reorganization")
+	tk3.MustExec(`BEGIN`)
+	tk3.MustExec(`insert into t values (null, 21)`)
+
+	tk2.MustExec(`insert into t values (null, 22)`)
+	tk3.MustExec(`insert into t values (null, 23)`)
+	tk2.MustExec(`COMMIT`)
+
+	/*
+		waitFor(4, "t", "delete reorganization")
+		tk2.MustExec(`BEGIN`)
+		tk2.MustExec(`insert into t values (null, 24)`)
+
+		tk3.MustExec(`insert into t values (null, 25)`)
+		tk2.MustExec(`insert into t values (null, 26)`)
+	*/
+	tk3.MustExec(`COMMIT`)
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
+		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
+
+	//waitFor(4, "t", "public")
+	//tk2.MustExec(`commit`)
+	// TODO: Investigate and fix, but it is also related to https://github.com/pingcap/tidb/issues/46904
+	require.ErrorContains(t, <-alterChan, "[kv:1062]Duplicate entry '26' for key 't.PRIMARY'")
+	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
+		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
+		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",
+		"32 31 10", "35 34 21", "38 37 22", "41 40 23"))
 }
 
 func TestListDefinitionError(t *testing.T) {

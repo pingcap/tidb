@@ -2517,3 +2517,114 @@ INSERT INTO t1 VALUES (0);
 SELECT c1>=CAST('-787360724' AS TIME) FROM t1;
 c1>=CAST('-787360724' AS TIME)
 1
+select '123' union select cast(45678 as char);
+123
+123
+45678
+select '123' union select cast(45678 as char(2));
+123
+123
+45
+drop table if exists t;
+create table t(a int);
+insert into t values(45678);
+select '123' union select cast(a as char) from t;
+123
+123
+45678
+select '123' union select cast(a as char(2)) from t;
+123
+123
+45
+SET time_zone='Europe/Vilnius';
+SELECT UNIX_TIMESTAMP('2020-03-29 03:45:00');
+UNIX_TIMESTAMP('2020-03-29 03:45:00')
+1585443600
+SELECT FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'));
+FROM_UNIXTIME(UNIX_TIMESTAMP('2020-03-29 03:45:00'))
+2020-03-29 04:00:00
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (dt DATETIME NULL);
+INSERT INTO t VALUES ('2021-10-31 02:30:00'), ('2021-03-28 02:30:00'), ('2020-10-04 02:15:00'), ('2020-03-29 03:45:00'), (NULL);
+SELECT dt, UNIX_TIMESTAMP(dt) FROM t;
+dt	UNIX_TIMESTAMP(dt)
+NULL	NULL
+2020-03-29 03:45:00	1585443600
+2020-10-04 02:15:00	1601766900
+2021-03-28 02:30:00	1616891400
+2021-10-31 02:30:00	1635636600
+SET time_zone=default;
+DROP TABLE IF EXISTS test;
+CREATE TABLE test ( c1 varchar(20));
+INSERT INTO test VALUES (101111),(11100),(101111),(101111);
+set tidb_enable_vectorized_expression = true;
+SELECT DATE_ADD(c1, INTERVAL 1 DAY_HOUR) from test;
+DATE_ADD(c1, INTERVAL 1 DAY_HOUR)
+NULL
+2010-11-11 01:00:00
+2010-11-11 01:00:00
+2010-11-11 01:00:00
+set tidb_enable_vectorized_expression = default;
+drop table if exists t;
+create table t(a timestamp) partition by range(unix_timestamp(a)) (partition p0 values less than(unix_timestamp('2019-02-16 14:20:00')), partition p1 values less than (maxvalue));
+insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01');
+select * from t where a between timestamp'2019-02-16 14:19:00' and timestamp'2019-02-16 14:21:00';
+a
+2019-02-16 14:19:59
+2019-02-16 14:20:01
+drop table if exists t;
+create table t(a timestamp);
+insert into t values('2019-02-16 14:19:59'), ('2019-02-16 14:20:01');
+select * from t where a < timestamp'2019-02-16 14:21:00';
+a
+2019-02-16 14:19:59
+2019-02-16 14:20:01
+drop table if exists t;
+CREATE TABLE t(c varchar(100), index idx(c(100)));
+INSERT INTO t VALUES (NULL),('1'),('0'),(''),('aaabbb'),('0abc'),('123e456'),('0.0001deadsfeww');
+select * from t where c;
+c
+0.0001deadsfeww
+1
+123e456
+select /*+ USE_INDEX(t, idx) */ * from t where c;
+c
+0.0001deadsfeww
+1
+123e456
+select /*+ IGNORE_INDEX(t, idx) */* from t where c;
+c
+0.0001deadsfeww
+1
+123e456
+drop table if exists t0;
+create table t0 (c1 DATE, c2 TIME, c3 DATETIME, c4 TIMESTAMP);
+insert into t0 values ('1000-01-01', '-838:59:59', '1000-01-01 00:00:00', '1970-01-01 08:00:01');
+insert into t0 values ('9999-12-31', '838:59:59', '9999-12-31 23:59:59', '2038-01-19 11:14:07');
+select avg(c1), avg(c2), avg(c3), avg(c4) from t0;
+avg(c1)	avg(c2)	avg(c3)	avg(c4)
+54995666.0000	0.0000	54995666117979.5000	20040110095704.0000
+select -1.0 % -1.0;
+-1.0 % -1.0
+0.0
+drop table if exists t1;
+create table t1(`pk` int primary key,`col_float_key_signed` float  ,key (`col_float_key_signed`));
+insert into t1 values (0, null), (1, 0), (2, -0), (3, 1), (-1,-1);
+select * from t1 where ( `col_float_key_signed` % `col_float_key_signed`) IS FALSE;
+pk	col_float_key_signed
+-1	-1
+3	1
+select  `col_float_key_signed` , `col_float_key_signed` % `col_float_key_signed` from t1;
+col_float_key_signed	`col_float_key_signed` % `col_float_key_signed`
+NULL	NULL
+-1	-0
+0	NULL
+0	NULL
+1	0
+select  `col_float_key_signed` , (`col_float_key_signed` % `col_float_key_signed`) IS FALSE from t1;
+col_float_key_signed	(`col_float_key_signed` % `col_float_key_signed`) IS FALSE
+NULL	0
+-1	1
+0	0
+0	0
+1	1

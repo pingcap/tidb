@@ -22,12 +22,12 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type ingestIndexStage struct {
-	d     *ddl
 	jobID int64
 	index *model.IndexInfo
 	ptbl  table.PhysicalTable
@@ -48,7 +48,7 @@ func newIngestIndexStage(
 	}
 }
 
-func (i *ingestIndexStage) Init(_ context.Context) error {
+func (i *ingestIndexStage) Init(ctx context.Context) error {
 	log.Info("ingest index stage init subtask exec env", zap.String("category", "ddl"))
 	_, _, err := i.bc.Flush(i.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
@@ -56,30 +56,30 @@ func (i *ingestIndexStage) Init(_ context.Context) error {
 			err = convertToKeyExistsErr(err, i.index, i.ptbl.Meta())
 			return err
 		}
-		log.Error("flush error", zap.String("category", "ddl"), zap.Error(err))
+		log.Error("flush error", zap.Error(err))
 		return err
 	}
 	return err
 }
 
-func (*ingestIndexStage) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
-	log.Info("ingest index stage split subtask", zap.String("category", "ddl"))
-	return nil, nil
+func (*ingestIndexStage) RunSubtask(ctx context.Context, _ *proto.Subtask) error {
+	logutil.Logger(ctx).Info("ingest index stage split subtask")
+	return nil
 }
 
-func (i *ingestIndexStage) Cleanup(_ context.Context) error {
-	log.Info("ingest index stage cleanup subtask exec env", zap.String("category", "ddl"))
+func (i *ingestIndexStage) Cleanup(ctx context.Context) error {
+	logutil.Logger(ctx).Info("ingest index stage cleanup subtask exec env")
 	ingest.LitBackCtxMgr.Unregister(i.jobID)
 	return nil
 }
 
-func (*ingestIndexStage) OnFinished(_ context.Context, subtask []byte) ([]byte, error) {
-	return subtask, nil
+func (*ingestIndexStage) OnFinished(ctx context.Context, _ *proto.Subtask) error {
+	logutil.Logger(ctx).Info("ingest index stage finish subtask")
+	return nil
 }
 
-func (i *ingestIndexStage) Rollback(_ context.Context) error {
-	log.Info("ingest index stage rollback backfill add index task",
-		zap.String("category", "ddl"), zap.Int64("jobID", i.jobID))
+func (i *ingestIndexStage) Rollback(ctx context.Context) error {
+	logutil.Logger(ctx).Info("ingest index stage rollback backfill add index task")
 	ingest.LitBackCtxMgr.Unregister(i.jobID)
 	return nil
 }

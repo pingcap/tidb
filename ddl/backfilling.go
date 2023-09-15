@@ -543,7 +543,7 @@ func getBatchTasks(t table.Table, reorgInfo *reorgInfo, kvRanges []kv.KeyRange,
 	job := reorgInfo.Job
 	//nolint:forcetypeassert
 	phyTbl := t.(table.PhysicalTable)
-	jobCtx := reorgInfo.d.jobContext(job.ID)
+	jobCtx := reorgInfo.NewJobContext()
 	for _, keyRange := range kvRanges {
 		taskID := taskIDAlloc.alloc()
 		startKey := keyRange.StartKey
@@ -684,7 +684,7 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 		}
 	})
 
-	jc := dc.jobContext(job.ID)
+	jc := reorgInfo.NewJobContext()
 	sessCtx := newContext(reorgInfo.d.store)
 	scheduler, err := newBackfillScheduler(dc.ctx, reorgInfo, sessPool, bfWorkerType, t, sessCtx, jc)
 	if err != nil {
@@ -780,6 +780,7 @@ func iterateSnapshotKeys(ctx *JobContext, store kv.Storage, priority int, keyPre
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		snap.SetOption(kv.ResourceGroupTagger, tagger)
 	}
+	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 
 	it, err := snap.Iter(firstKey, upperBound)
 	if err != nil {
@@ -824,6 +825,7 @@ func GetRangeEndKey(ctx *JobContext, store kv.Storage, priority int, keyPrefix k
 	if tagger := ctx.getResourceGroupTaggerForTopSQL(); tagger != nil {
 		snap.SetOption(kv.ResourceGroupTagger, tagger)
 	}
+	snap.SetOption(kv.ResourceGroupName, ctx.resourceGroupName)
 	snap.SetOption(kv.RequestSourceInternal, true)
 	snap.SetOption(kv.RequestSourceType, ctx.ddlJobSourceType())
 	snap.SetOption(kv.ExplicitRequestSourceType, kvutil.ExplicitTypeDDL)

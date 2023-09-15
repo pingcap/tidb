@@ -905,16 +905,13 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			// IndexMerge.PushedLimit is applied before table scan fetching, limiting the indexPartialPlan rows returned (it maybe ordered if orderBy items not empty)
 			// TableProbeSide sink limit is applied on the top of table plan, which will quickly shut down the both fetch-back and read-back process.
 			if len(cop.rootTaskConds) == 0 {
-				// if cop.indexPlanFinished = true
-				// 		indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
-				//		suspendLimitAboveTablePlan()
-				// else
-				// 		todo: cop.indexPlanFinished = false indicates the table side is a pure table-scan, so we sink the limit as index merge embedded push-down Limit theoretically.
-				// 		todo: while currently in the execution layer, intersection concurrency framework is not quickly suitable for us to do the limit cut down or the order by operation.
-				// 		so currently, we just put the limit at the top of table plan rather than a embedded pushedLimit inside indexMergeReader.
-				// 		t = cop.convertToRootTask(p.SCtx())
-				//		sunk = p.sinkIntoIndexMerge(t)
-				suspendLimitAboveTablePlan()
+				if cop.indexPlanFinished {
+					// indicates the table side is not a pure table-scan, so we could only append the limit upon the table plan.
+					suspendLimitAboveTablePlan()
+				} else {
+					t = cop.convertToRootTask(p.SCtx())
+					sunk = p.sinkIntoIndexMerge(t)
+				}
 			} else {
 				// otherwise, suspend the limit out of index merge reader.
 				t = cop.convertToRootTask(p.SCtx())
@@ -1017,11 +1014,16 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t task) bool {
 		Count:  p.Count,
 		Offset: p.Offset,
 	}
+	// since ts.statsInfo.rowcount may dramatically smaller than limit.statsInfo.
+	// like limit: rowcount=1
+	//      ts:    rowcount=0.0025
 	originStats := ts.StatsInfo()
-	ts.SetStats(p.StatsInfo())
 	if originStats != nil {
 		// keep the original stats version
 		ts.StatsInfo().StatsVersion = originStats.StatsVersion
+		if originStats.RowCount < p.StatsInfo().RowCount {
+			ts.StatsInfo().RowCount = originStats.RowCount
+		}
 	}
 	needProj := p.schema.Len() != root.p.Schema().Len()
 	if !needProj {

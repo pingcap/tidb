@@ -19,11 +19,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/logutil/zap"
@@ -34,6 +36,9 @@ var (
 	DefaultDispatchConcurrency = 4
 	checkTaskRunningInterval   = 3 * time.Second
 )
+
+// WaitTaskFinished is used to sync the test.
+var WaitTaskFinished = make(chan struct{})
 
 func (dm *Manager) getRunningTaskCnt() int {
 	dm.runningTasks.RLock()
@@ -115,6 +120,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 // Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
+	dm.wg.Run(dm.gcSubtaskHistoryTable)
 	dm.inited = true
 }
 
@@ -196,6 +202,35 @@ func (dm *Manager) dispatchTaskLoop() {
 	}
 }
 
+func (dm *Manager) gcSubtaskHistoryTable() {
+	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
+	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
+		if seconds, ok := val.(int); ok {
+			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
+		}
+
+		<-WaitTaskFinished
+	})
+
+	logutil.Logger(dm.ctx).Info("task table gc loop start")
+	ticker := time.NewTicker(historySubtaskTableGcInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-dm.ctx.Done():
+			logutil.BgLogger().Info("subtask history table gc loop exits", zap.Error(dm.ctx.Err()))
+			return
+		case <-ticker.C:
+			err := dm.taskMgr.GC()
+			if err != nil {
+				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
+			} else {
+				logutil.Logger(dm.ctx).Info("subtask history table gc")
+			}
+		}
+	}
+}
+
 func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 	if cnt >= DefaultDispatchConcurrency {
 		log.Info("dispatch task loop, running task cnt is more than concurrency limitation",
@@ -210,6 +245,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 	_ = dm.gPool.Run(func() {
 		dispatcherFactory := GetDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
+		defer dispatcher.Close()
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)

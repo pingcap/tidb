@@ -87,7 +87,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 }
 
 // Get implements statsCacheInner
-func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
+func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
 		return s.resultKeySet.Get(tid)

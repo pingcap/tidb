@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"sync"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -48,7 +49,7 @@ func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
 	log.Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -149,6 +150,11 @@ func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return m.checkpointMgr
 }
 
+// GetLocalBackend returns the local backend.
+func (*MockBackendCtx) GetLocalBackend() *local.Backend {
+	return nil
+}
+
 // MockWriteHook the hook for write in mock engine.
 type MockWriteHook func(key, val []byte)
 
@@ -188,7 +194,7 @@ func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
 }
 
 // CreateWriter implements Engine.CreateWriter interface.
-func (m *MockEngineInfo) CreateWriter(id int, _ bool) (Writer, error) {
+func (m *MockEngineInfo) CreateWriter(id int) (Writer, error) {
 	log.Info("mock engine info create writer", zap.Int("id", id))
 	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }
@@ -201,7 +207,7 @@ type MockWriter struct {
 }
 
 // WriteRow implements Writer.WriteRow interface.
-func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
+func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle) error {
 	log.Info("mock writer write row",
 		zap.String("key", hex.EncodeToString(key)),
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
@@ -221,4 +227,9 @@ func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
 // LockForWrite implements Writer.LockForWrite interface.
 func (*MockWriter) LockForWrite() func() {
 	return func() {}
+}
+
+// Close implements Writer.Close interface.
+func (*MockWriter) Close(_ context.Context) error {
+	return nil
 }

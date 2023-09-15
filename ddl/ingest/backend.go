@@ -52,6 +52,8 @@ type BackendCtx interface {
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
+
+	GetLocalBackend() *local.Backend
 }
 
 // FlushMode is used to control how to flush.
@@ -268,4 +270,9 @@ func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
 // GetCheckpointManager returns the checkpoint manager attached to the backend context.
 func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return bc.checkpointMgr
+}
+
+// GetLocalBackend returns the local backend.
+func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
+	return bc.backend
 }
