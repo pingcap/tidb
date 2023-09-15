@@ -258,6 +258,7 @@ func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
 	if err != nil {
 		return err
 	}
+	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
@@ -382,6 +383,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	if err != nil {
 		return errors.Trace(err)
 	}
+	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)

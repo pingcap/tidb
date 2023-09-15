@@ -200,6 +200,7 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 	if err != nil {
 		return err
 	}
+	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
@@ -353,9 +354,12 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 }
 
 func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
