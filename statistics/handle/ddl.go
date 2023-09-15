@@ -115,11 +115,15 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 // updateStatsVersion will set statistics version to the newest TS,
 // then tidb-server will reload automatic.
 func (h *Handle) updateStatsVersion() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -250,10 +254,12 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 }
 
 func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -371,11 +377,14 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	exec := se.(sqlexec.SQLExecutor)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
