@@ -2460,8 +2460,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		var ptInfo []schemaIDAndTableInfo
 		if len(nt.Constraints) > 0 {
 			pt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-				ExchangePartitionTableID:     nt.ID,
-				ExchangePartitionPartitionID: defID,
+				ExchangePartitionTableID: nt.ID,
+				ExchangePartitionDefID:   defID,
 			}
 			ptInfo = append(ptInfo, schemaIDAndTableInfo{
 				schemaID: ptSchemaID,
@@ -2469,8 +2469,8 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			})
 		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionTableID:     ptID,
-			ExchangePartitionPartitionID: defID,
+			ExchangePartitionTableID: ptID,
+			ExchangePartitionDefID:   defID,
 		}
 		// We need an interim schema version,
 		// so there are no non-matching rows inserted

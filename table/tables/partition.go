@@ -1605,7 +1605,7 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
 	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
-	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionPartitionID == pid &&
+	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == pid &&
 		variable.EnableCheckConstraint.Load() {
 		err = checkConstraintForExchangePartition(ctx, r, pid, exchangePartitionInfo.ExchangePartitionTableID)
 		if err != nil {
@@ -1738,7 +1738,7 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
 	}
 	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
-	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionPartitionID == to &&
+	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
 		variable.EnableCheckConstraint.Load() {
 		err = checkConstraintForExchangePartition(ctx, newData, to, exchangePartitionInfo.ExchangePartitionTableID)
 		if err != nil {

@@ -251,6 +251,9 @@ func (s *schemaVersionSyncer) UpdateSelfVersion(ctx context.Context, jobID int64
 
 // OwnerUpdateGlobalVersion implements SchemaSyncer.OwnerUpdateGlobalVersion interface.
 func (s *schemaVersionSyncer) OwnerUpdateGlobalVersion(ctx context.Context, version int64) error {
+	logutil.BgLogger().Info(fmt.Sprintf("owner update version:%v", version))
+	version -= 1
+	logutil.BgLogger().Info(fmt.Sprintf("owner really update version:%v", version))
 	startTime := time.Now()
 	ver := strconv.FormatInt(version, 10)
 	// TODO: If the version is larger than the original global version, we need set the version.

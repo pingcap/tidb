@@ -330,7 +330,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 		sctx,
 		pt.Meta().Partition,
 		row,
-		tbl.ExchangePartitionInfo.ExchangePartitionPartitionID,
+		tbl.ExchangePartitionInfo.ExchangePartitionDefID,
 		tbl.ID,
 	)
 	if err != nil {
