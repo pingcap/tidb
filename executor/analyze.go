@@ -151,11 +151,12 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
-
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
-	err = e.handleGlobalStats(ctx, needGlobalStats, globalStatsMap)
-	if err != nil {
-		return err
+	if needGlobalStats {
+		err = e.handleGlobalStats(ctx, globalStatsMap)
+		if err != nil {
+			return err
+		}
 	}
 
 	// Update analyze options to mysql.analyze_options for auto analyze.
@@ -310,10 +311,15 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 }
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
-func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
-	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
+func (e *AnalyzeExec) handleResultsError(
+	ctx context.Context,
+	concurrency int,
+	needGlobalStats bool,
+	globalStatsMap globalStatsMap,
+	resultsCh <-chan *statistics.AnalyzeResults,
+) error {
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
-	// If 'partitionStatsConcurrency' > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
+	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	if partitionStatsConcurrency > 1 {
 		dom := domain.GetDomain(e.Ctx())
@@ -548,6 +554,7 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 	if job == nil || job.ID == nil {
 		return
 	}
+
 	job.EndTime = time.Now()
 	var sql string
 	var args []interface{}
