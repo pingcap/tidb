@@ -65,12 +65,13 @@ func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *rollbackDispatcherExt) StageFinished(task *proto.Task) bool {
-	return task.Step == proto.StepInit && dsp.cnt >= 3
-}
-
-func (dsp *rollbackDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepInit && dsp.cnt >= 3
+func (dsp *rollbackDispatcherExt) GetNextStep(task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	default:
+		return proto.StepDone
+	}
 }
 
 func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map) {

@@ -21,7 +21,7 @@ encountered.
 
 For latency sensitive applications, providing predictable sub-second read latency by set fast retrying
 is valuable. queries that are usually very fast (such as point-select query), setting the value
-of `tidb_kv_read_timeout` to short value like  `500ms`, the TiDB cluster would be more tolerable
+of `tikv_client_read_timeout` to short value like  `500ms`, the TiDB cluster would be more tolerable
 for network latency or io latency jitter for a single storage node, because the retry are more quickly.
 
 This would be helpful if the requests could be processed by more than 1 candidate targets, for example
@@ -31,11 +31,11 @@ follower or stale read requests that could be handled by multiple available peer
 
 A possible improvement suggested by [#44771](https://github.com/pingcap/tidb/issues/44771) is to make the
 timeout values of specific KV requests configurable. For example:
-- Adding a session variable `tidb_kv_read_timeout`, which is used to control the timeout for a single 
+- Adding a session variable `tikv_client_read_timeout`, which is used to control the timeout for a single 
 TiKV read RPC request. When the user sets the value of this variable, all read RPC request timeouts will use this value. 
 The default value of this variable is 0, and the timeout of TiKV read RPC requests is still the original 
 value of `ReadTimeoutShort` and `ReadTimeoutMedium`.
-- Adding statement level hint like `SELECT /*+ tidb_kv_read_timeout(500ms) */ * FROM t where id = ?;` to
+- Support statement level hint like `SELECT /*+ set_var(tikv_client_read_timeout=500) */ * FROM t where id = ?;` to
 set the timeout value of the KV requests of this single query to the certain value.
 
 ### Example Usage
@@ -48,35 +48,23 @@ set @@tidb_read_staleness=-5;
 set @@tidb_tikv_tidb_timeout=500;
 select * from t where id = 1;
 # The unit is miliseconds. The query hint usage.
-select /*+ tidb_kv_read_timeout(500ms) */ * FROM t where id = 1;
+select /*+ set_var(tikv_client_read_timeout=500) */ * FROM t where id = 1;
 ```
 
 ### Problems
 
-- Setting the variable `tidb_kv_read_timeout ` may not be easy if it affects the timeout for all 
+- Setting the variable `tikv_client_read_timeout ` may not be easy if it affects the timeout for all 
 TiKV read requests, such as Get, BatchGet, Cop in this session.A timeout of 1 second may be sufficient for GET requests, 
 but may be small for COP requests. Some large COP requests may keep timing out and could not be processed properly.
-- If the value of the variable or query hint `tidb_kv_read_timeout` is set too small, more retries will occur, 
+- If the value of the variable or query hint `tikv_client_read_timeout` is set too small, more retries will occur, 
 increasing the load pressure on the TiDB cluster. In the worst case the query would not return until the 
-max backoff timeout is reached if the `tidb_kv_read_timeout` is set to a value which none of the replicas
+max backoff timeout is reached if the `tikv_client_read_timeout` is set to a value which none of the replicas
 could finish processing within that time.
 
 
 ## Detailed Design
 
 The query hint usage would be more flexible and safer as the impact is limited to a single query.
-
-### Add Hint Support For `tidb_kv_read_timeout`
-
-- Add related field in the `StatementContext` struct like
-```go
-type StmtHints struct {
-	...
-	KVReadTimeout: Duration
-}
-```
-- Support `tidb_kv_read_timeout` processing in `ExtractTableHintsFromStmtNode` and `handleStmtHints` functions, 
-convert the user input hint value into correspond field of `StmtContext` so it could be used later.
 
 ### Support Timeout Configuration For Get And Batch-Get
 
@@ -237,7 +225,7 @@ There’s already a query level timeout configuration `max_execution_time` which
 variables and query hints. 
 
 If the timeout of RPC or TiKV requests could derive the timeout values from the `max_execution_time` in an 
-intelligent way, it’s not needed to expose another variable or usage like `tidb_kv_read_timeout`.
+intelligent way, it’s not needed to expose another variable or usage like `tikv_client_read_timeout`.
 
 For example, consider the strategy:
 - The  `max_execution_time` is configured to `1s` on the query level

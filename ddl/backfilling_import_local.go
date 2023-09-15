@@ -48,7 +48,7 @@ func newImportFromLocalStepExecutor(
 }
 
 func (i *localImportExecutor) Init(ctx context.Context) error {
-	logutil.Logger(ctx).Info("ingest index stage init subtask exec env")
+	logutil.Logger(ctx).Info("local import executor init subtask exec env")
 	_, _, err := i.bc.Flush(i.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
@@ -62,21 +62,21 @@ func (i *localImportExecutor) Init(ctx context.Context) error {
 }
 
 func (*localImportExecutor) RunSubtask(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("ingest index stage split subtask")
+	logutil.Logger(ctx).Info("local import executor run subtask")
 	return nil
 }
 
 func (*localImportExecutor) Cleanup(ctx context.Context) error {
-	logutil.Logger(ctx).Info("ingest index stage cleanup subtask exec env")
+	logutil.Logger(ctx).Info("local import executor cleanup subtask exec env")
 	return nil
 }
 
 func (*localImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("ingest index stage finish subtask")
+	logutil.Logger(ctx).Info("local import executor finish subtask")
 	return nil
 }
 
 func (*localImportExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("ingest index stage rollback backfill add index task")
+	logutil.Logger(ctx).Info("local import executor rollback subtask")
 	return nil
 }

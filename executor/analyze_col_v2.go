@@ -55,17 +55,16 @@ type AnalyzeColumnsExecV2 struct {
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.AnalyzeResults {
 	analyzeResult := e.analyzeColumnsPushDownV2()
-	// do not retry if succeed / not oom error / not auto-analyze / samplerate not set
-	if analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
-		!e.ctx.GetSessionVars().InRestrictedSQL ||
-		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0 {
+	if e.notRetryable(analyzeResult) {
 		return analyzeResult
 	}
+
 	finishJobWithLog(e.ctx, analyzeResult.Job, analyzeResult.Err)
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	if statsHandle == nil {
 		return analyzeResult
 	}
+
 	var statsTbl *statistics.Table
 	tid := e.tableID.GetStatisticsID()
 	if tid == e.tableInfo.ID {
@@ -76,6 +75,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.A
 	if statsTbl == nil || statsTbl.RealtimeCount <= 0 {
 		return analyzeResult
 	}
+
 	newSampleRate := math.Min(1, float64(config.DefRowsForSampleRate)/float64(statsTbl.RealtimeCount))
 	if newSampleRate >= *e.analyzePB.ColReq.SampleRate {
 		return analyzeResult
@@ -85,6 +85,13 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownWithRetryV2() *statistics.A
 	AddNewAnalyzeJob(e.ctx, e.job)
 	StartAnalyzeJob(e.ctx, e.job)
 	return e.analyzeColumnsPushDownV2()
+}
+
+// Do **not** retry if succeed / not oom error / not auto-analyze / samplerate not set.
+func (e *AnalyzeColumnsExecV2) notRetryable(analyzeResult *statistics.AnalyzeResults) bool {
+	return analyzeResult.Err == nil || analyzeResult.Err != errAnalyzeOOM ||
+		!e.ctx.GetSessionVars().InRestrictedSQL ||
+		e.analyzePB.ColReq == nil || *e.analyzePB.ColReq.SampleRate <= 0
 }
 
 func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeResults {
@@ -98,6 +105,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 	} else {
 		ranges = ranger.FullIntRange(false)
 	}
+
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
 	specialIndexes := make([]*model.IndexInfo, 0, len(e.indexes))
 	specialIndexesOffsets := make([]int, 0, len(e.indexes))
@@ -126,7 +134,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 		e.handleNDVForSpecialIndexes(specialIndexes, idxNDVPushDownCh)
 	})
 	defer wg.Wait()
-	count, hists, topns, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
+	count, hists, topNs, fmSketches, extStats, err := e.buildSamplingStats(ranges, collExtStats, specialIndexesOffsets, idxNDVPushDownCh)
 	if err != nil {
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
@@ -134,7 +142,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 	cLen := len(e.analyzePB.ColReq.ColumnsInfo)
 	colGroupResult := &statistics.AnalyzeResult{
 		Hist:    hists[cLen:],
-		TopNs:   topns[cLen:],
+		TopNs:   topNs[cLen:],
 		Fms:     fmSketches[cLen:],
 		IsIndex: 1,
 	}
@@ -148,7 +156,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 	}
 	colResult := &statistics.AnalyzeResult{
 		Hist:  hists[:cLen],
-		TopNs: topns[:cLen],
+		TopNs: topNs[:cLen],
 		Fms:   fmSketches[:cLen],
 	}
 	return &statistics.AnalyzeResults{
@@ -235,6 +243,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	extStats *statistics.ExtendedStatsColl,
 	err error,
 ) {
+	// Open memory tracker and resultHandler.
 	if err = e.open(ranges); err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -243,16 +252,20 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			err = err1
 		}
 	}()
+
 	l := len(e.analyzePB.ColReq.ColumnsInfo) + len(e.analyzePB.ColReq.ColumnGroups)
 	rootRowCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
 	for i := 0; i < l; i++ {
 		rootRowCollector.Base().FMSketches = append(rootRowCollector.Base().FMSketches, statistics.NewFMSketch(maxSketchSize))
 	}
+
 	sc := e.ctx.GetSessionVars().StmtCtx
 	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
+
+	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
 	mergeTaskCh := make(chan []byte, statsConcurrency)
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
@@ -260,10 +273,13 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
 	}
+
+	// Start read data from resultHandler and send them to mergeTaskCh.
 	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
 	}
 
+	// Merge the result from collectors.
 	mergeWorkerPanicCnt := 0
 	for mergeWorkerPanicCnt < statsConcurrency {
 		mergeResult, ok := <-mergeResultCh
@@ -291,7 +307,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		return 0, nil, nil, nil, nil, err
 	}
 
-	// handling virtual columns
+	// Handling virtual columns.
 	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
 	if len(virtualColIdx) > 0 {
 		fieldTps := make([]*types.FieldType, 0, len(virtualColIdx))

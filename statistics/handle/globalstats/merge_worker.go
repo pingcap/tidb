@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statistics
+package globalstats
 
 import (
 	"sync"
@@ -20,17 +20,18 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/util/hack"
 )
 
 // StatsWrapper wrapper stats
 type StatsWrapper struct {
-	AllHg   []*Histogram
-	AllTopN []*TopN
+	AllHg   []*statistics.Histogram
+	AllTopN []*statistics.TopN
 }
 
 // NewStatsWrapper returns wrapper
-func NewStatsWrapper(hg []*Histogram, topN []*TopN) *StatsWrapper {
+func NewStatsWrapper(hg []*statistics.Histogram, topN []*statistics.TopN) *StatsWrapper {
 	return &StatsWrapper{
 		AllHg:   hg,
 		AllTopN: topN,
@@ -80,8 +81,8 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
 	Err       error
-	TopN      *TopN
-	PopedTopn []TopNMeta
+	TopN      *statistics.TopN
+	PopedTopn []statistics.TopNMeta
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
@@ -95,7 +96,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		allTopNs := worker.statsWrapper.AllTopN
 		allHists := worker.statsWrapper.AllHg
 		resp := &TopnStatsMergeResponse{}
-		if checkEmptyTopNs(checkTopNs) {
+		if statistics.CheckEmptyTopNs(checkTopNs) {
 			worker.respCh <- resp
 			return
 		}
@@ -104,11 +105,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		counter := make(map[hack.MutableString]float64)
 		// datumMap is used to store the mapping from the string type to datum type.
 		// The datum is used to find the value in the histogram.
-		datumMap := newDatumMapCache()
+		datumMap := statistics.NewDatumMapCache()
 
 		for i, topN := range checkTopNs {
 			if atomic.LoadUint32(worker.killed) == 1 {
-				resp.Err = errors.Trace(ErrQueryInterrupted)
+				resp.Err = errors.Trace(statistics.ErrQueryInterrupted)
 				worker.respCh <- resp
 				return
 			}
@@ -128,11 +129,11 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 				// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 				for j := 0; j < partNum; j++ {
 					if atomic.LoadUint32(worker.killed) == 1 {
-						resp.Err = errors.Trace(ErrQueryInterrupted)
+						resp.Err = errors.Trace(statistics.ErrQueryInterrupted)
 						worker.respCh <- resp
 						return
 					}
-					if (j == i && version >= 2) || allTopNs[j].findTopN(val.Encoded) != -1 {
+					if (j == i && version >= 2) || allTopNs[j].FindTopN(val.Encoded) != -1 {
 						continue
 					}
 					// Get the encodedVal from the hists[j]
@@ -152,7 +153,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 						counter[encodedVal] += count
 						// Remove the value corresponding to encodedVal from the histogram.
 						worker.shardMutex[j].Lock()
-						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 						worker.shardMutex[j].Unlock()
 					}
 				}
@@ -163,12 +164,12 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			worker.respCh <- resp
 			continue
 		}
-		sorted := make([]TopNMeta, 0, numTop)
+		sorted := make([]statistics.TopNMeta, 0, numTop)
 		for value, cnt := range counter {
 			data := hack.Slice(string(value))
-			sorted = append(sorted, TopNMeta{Encoded: data, Count: uint64(cnt)})
+			sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
 		}
-		globalTopN, leftTopN := GetMergedTopNFromSortedSlice(sorted, n)
+		globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
 		resp.TopN = globalTopN
 		resp.PopedTopn = leftTopN
 		worker.respCh <- resp
