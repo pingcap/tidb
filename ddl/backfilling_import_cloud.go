@@ -30,6 +30,7 @@ import (
 )
 
 type cloudImportExecutor struct {
+	job           *model.Job
 	jobID         int64
 	index         *model.IndexInfo
 	ptbl          table.PhysicalTable
@@ -38,6 +39,7 @@ type cloudImportExecutor struct {
 }
 
 func newCloudImportExecutor(
+	job *model.Job,
 	jobID int64,
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
@@ -45,6 +47,7 @@ func newCloudImportExecutor(
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
+		job:           job,
 		jobID:         jobID,
 		index:         index,
 		ptbl:          ptbl,
@@ -54,12 +57,12 @@ func newCloudImportExecutor(
 }
 
 func (*cloudImportExecutor) Init(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort stage init subtask exec env")
+	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	return nil
 }
 
 func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	logutil.Logger(ctx).Info("merge sort stage split subtask")
+	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask.Meta, sm)
@@ -95,16 +98,16 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 }
 
 func (*cloudImportExecutor) Cleanup(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort stage clean up subtask env")
+	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	return nil
 }
 
 func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("merge sort stage finish subtask")
+	logutil.Logger(ctx).Info("cloud import executor finish subtask")
 	return nil
 }
 
 func (*cloudImportExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort stage rollback subtask")
+	logutil.Logger(ctx).Info("cloud import executor rollback subtask")
 	return nil
 }
