@@ -387,7 +387,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		failpoint.Return(errors.New("mockDynamicDispatchErr"))
 	})
 
-	nextStep := d.GetNextStep(d.Task)
+	nextStep := d.GetNextStep(d, d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
 		zap.Int64("current-step", d.Task.Step),
 		zap.Int64("next-step", nextStep))

@@ -120,7 +120,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 				multiStats = append(multiStats, subtask.MultipleFilesStats...)
 			}
 			if external.GetMaxOverlappingTotal(multiStats) > 1000 {
-
+				return generateMergePlan(taskHandle, gTask)
 			}
 			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 		}
@@ -130,11 +130,33 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 	}
 }
 
-func (*backfillingDispatcherExt) GetNextStep(task *proto.Task) int64 {
+func (h *backfillingDispatcherExt) GetNextStep(
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+) int64 {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
 	case proto.StepOne:
+		// if data files overlaps too much, we need a merge step.
+		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
+		if err != nil {
+			// TODO(lance6716): should we return error?
+			return proto.StepTwo
+		}
+		multiStats := make([]external.MultipleFilesStat, 0, 100)
+		for _, bs := range subTaskMetas {
+			var subtask BackfillSubTaskMeta
+			err = json.Unmarshal(bs, &subtask)
+			if err != nil {
+				// TODO(lance6716): should we return error?
+				return proto.StepTwo
+			}
+			multiStats = append(multiStats, subtask.MultipleFilesStats...)
+		}
+		if external.GetMaxOverlappingTotal(multiStats) > 1000 {
+			return proto.StepThree
+		}
 		return proto.StepTwo
 	default:
 		// current step should be proto.StepOne
@@ -345,69 +367,34 @@ func generateMergeSortPlan(
 }
 
 func generateMergePlan(
-	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
-	jobID int64,
-	cloudStorageURI string,
 ) ([][]byte, error) {
 	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID)
-	if err != nil {
-		return nil, err
-	}
-	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	start := 0
 	step := 1000
+	metaArr := make([][]byte, 0, 16)
 	for start < len(dataFiles) {
 		end := start + step
 		if end > len(dataFiles) {
 			end = len(dataFiles)
 		}
-		external.Mer
-	}
-
-	metaArr := make([][]byte, 0, 16)
-	startKey := firstKey
-	var endKey kv.Key
-	for {
-		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
-		if err != nil {
-			return nil, err
-		}
-		if len(endKeyOfGroup) == 0 {
-			endKey = lastKey.Next()
-		} else {
-			endKey = kv.Key(endKeyOfGroup).Clone()
-		}
-		logutil.Logger(ctx).Info("split subtask range",
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
-		if startKey.Cmp(endKey) >= 0 {
-			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
-				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
-		}
 		m := &BackfillSubTaskMeta{
-			MinKey:         startKey,
-			MaxKey:         endKey,
-			DataFiles:      dataFiles,
-			StatFiles:      statFiles,
-			RangeSplitKeys: rangeSplitKeys,
-			TotalKVSize:    totalSize / uint64(len(instanceIDs)),
+			DataFiles: dataFiles[start:end],
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
 			return nil, err
 		}
 		metaArr = append(metaArr, metaBytes)
-		if len(endKeyOfGroup) == 0 {
-			return metaArr, nil
-		}
-		startKey = endKey
+
+		start = end
 	}
+	return metaArr, nil
 }
 
 func getRangeSplitter(
