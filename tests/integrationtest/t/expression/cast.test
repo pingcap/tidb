@@ -1,14 +1,19 @@
 # TestCastStrToInt
+--enable_warnings
 select cast('' as signed);
-show warnings;
+--disable_warnings
+--enable_warnings
 select cast('12345abcde' as signed);
-show warnings;
+--disable_warnings
+--enable_warnings
 select cast('123e456' as signed);
-show warnings;
+--disable_warnings
+--enable_warnings
 select cast('-12345abcde' as signed);
-show warnings;
+--disable_warnings
+--enable_warnings
 select cast('-123e456' as signed);
-show warnings;
+--disable_warnings
 
 # TestCastCoer
 select coercibility(binary('a'));
