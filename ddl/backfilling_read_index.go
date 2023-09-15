@@ -92,7 +92,8 @@ func (*readIndexExecutor) Init(_ context.Context) error {
 
 func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.BgLogger().Info("read index executor run subtask",
-		zap.String("category", "ddl"))
+		zap.String("category", "ddl"),
+		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
