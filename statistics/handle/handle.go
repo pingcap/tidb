@@ -977,10 +977,15 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -988,12 +993,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	version := txn.StartTS()
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
@@ -1030,7 +1034,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
 	}
-	sc := h.mu.ctx.GetSessionVars().StmtCtx
+	sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
 	lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, isIndex, hg)
 	if err != nil {
@@ -1057,10 +1061,15 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -1068,11 +1077,10 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
 	cache.TableRowStatsCache.Invalidate(tableID)
@@ -1131,10 +1139,15 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 		return errors.Trace(err)
 	}
 	strColIDs := string(bytes)
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -1161,11 +1174,10 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
 		}
 	}
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
 	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
@@ -1211,9 +1223,13 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
 	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -1225,11 +1241,10 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		}
 		err = err1
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
 	}
@@ -1412,10 +1427,15 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	if extStats == nil || len(extStats.Stats) == 0 {
 		return nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -1423,11 +1443,10 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	for name, item := range extStats.Stats {
 		bytes, err := json.Marshal(item.ColIDs)
 		if err != nil {
@@ -1641,9 +1660,14 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	if err != nil {
 		return version, errors.Trace(err)
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return 0, err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return version, errors.Trace(err)
