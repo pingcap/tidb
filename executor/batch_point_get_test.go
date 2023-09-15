@@ -380,10 +380,10 @@ func TestBatchPointGetIssue46779(t *testing.T) {
 	tk.MustExec("CREATE TABLE t1 (id int, c varchar(128), primary key (id)) PARTITION BY HASH (id) PARTITIONS 3;")
 	tk.MustExec(`insert into t1 values (1, "a"), (11, "b"), (21, "c")`)
 	query := "select * from t1 where id in (1, 1, 11)"
-	require.True(t, tk.HasPlan(query, "Batch_Point_Get")) // check if BatchPointGet is used
+	tk.MustHavePlan(query, "Batch_Point_Get") // check if BatchPointGet is used
 	tk.MustQuery(query).Sort().Check(testkit.Rows("1 a", "11 b"))
 	query = "select * from t1 where id in (1, 11, 11, 21)"
-	require.True(t, tk.HasPlan(query, "Batch_Point_Get")) // check if BatchPointGet is used
+	tk.MustHavePlan(query, "Batch_Point_Get") // check if BatchPointGet is used
 	tk.MustQuery(query).Sort().Check(testkit.Rows("1 a", "11 b", "21 c"))
 
 	tk.MustExec("drop table if exists t2")
@@ -393,9 +393,9 @@ func TestBatchPointGetIssue46779(t *testing.T) {
 		partition p2 values less than (30));`)
 	tk.MustExec(`insert into t2 values (1, "a"), (11, "b"), (21, "c")`)
 	query = "select * from t2 where id in (1, 1, 11)"
-	require.True(t, tk.HasPlan(query, "Batch_Point_Get")) // check if BatchPointGet is used
+	tk.MustHavePlan(query, "Batch_Point_Get") // check if BatchPointGet is used
 	tk.MustQuery(query).Sort().Check(testkit.Rows("1 a", "11 b"))
-	require.True(t, tk.HasPlan(query, "Batch_Point_Get")) // check if BatchPointGet is used
+	tk.MustHavePlan(query, "Batch_Point_Get") // check if BatchPointGet is used
 	query = "select * from t2 where id in (1, 11, 11, 21)"
 	tk.MustQuery(query).Sort().Check(testkit.Rows("1 a", "11 b", "21 c"))
 }
