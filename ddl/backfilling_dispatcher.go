@@ -63,10 +63,12 @@ func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-// OnNextSubtasksBatch generate batch of next stage's plan.
-func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
+// OnNextSubtasksBatch generate batch of next step's plan.
+func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
+	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	step int64,
 ) (taskMeta [][]byte, err error) {
 	var gTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &gTaskMeta); err != nil {
@@ -88,10 +90,10 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 	}
 	// generate partition table's plan.
 	if tblInfo.Partition != nil {
-		switch gTask.Step {
-		case proto.StepInit:
-			return generatePartitionPlan(tblInfo)
+		switch step {
 		case proto.StepOne:
+			return generatePartitionPlan(tblInfo)
+		case proto.StepThree:
 			if useExtStore {
 				return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 			}
@@ -101,27 +103,11 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 		}
 	}
 	// generate non-partition table's plan.
-	switch gTask.Step {
-	case proto.StepInit:
-		return generateNonPartitionPlan(h.d, tblInfo, job)
+	switch step {
 	case proto.StepOne:
+		return generateNonPartitionPlan(h.d, tblInfo, job)
+	case proto.StepThree:
 		if useExtStore {
-			subTaskMetas, err2 := taskHandle.GetPreviousSubtaskMetas(gTask.ID, proto.StepInit)
-			if err2 != nil {
-				return nil, err2
-			}
-			multiStats := make([]external.MultipleFilesStat, 0, 100)
-			for _, bs := range subTaskMetas {
-				var subtask BackfillSubTaskMeta
-				err = json.Unmarshal(bs, &subtask)
-				if err != nil {
-					return nil, err
-				}
-				multiStats = append(multiStats, subtask.MultipleFilesStats...)
-			}
-			if external.GetMaxOverlappingTotal(multiStats) > 1000 {
-				return generateMergePlan(taskHandle, gTask)
-			}
 			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 		}
 		return generateIngestTaskPlan(ctx)
@@ -150,16 +136,18 @@ func (h *backfillingDispatcherExt) GetNextStep(
 			err = json.Unmarshal(bs, &subtask)
 			if err != nil {
 				// TODO(lance6716): should we return error?
-				return proto.StepTwo
+				return proto.StepThree
 			}
 			multiStats = append(multiStats, subtask.MultipleFilesStats...)
 		}
 		if external.GetMaxOverlappingTotal(multiStats) > 1000 {
-			return proto.StepThree
+			return proto.StepTwo
 		}
-		return proto.StepTwo
+		return proto.StepThree
+	case proto.StepTwo:
+		return proto.StepThree
 	default:
-		// current step should be proto.StepOne
+		// current step should be proto.StepThree
 		return proto.StepDone
 	}
 }

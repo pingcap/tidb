@@ -239,13 +239,13 @@ func TestMultiFileStatOverlap(t *testing.T) {
 	s1 := MultipleFilesStat{MinKey: dbkv.Key{1}, MaxKey: dbkv.Key{100}, MaxOverlappingNum: 100}
 	s2 := MultipleFilesStat{MinKey: dbkv.Key{5}, MaxKey: dbkv.Key{102}, MaxOverlappingNum: 90}
 	s3 := MultipleFilesStat{MinKey: dbkv.Key{111}, MaxKey: dbkv.Key{200}, MaxOverlappingNum: 200}
-	require.Equal(t, 200, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+	require.EqualValues(t, 200, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
 
 	s3.MaxOverlappingNum = 70
-	require.Equal(t, 190, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+	require.EqualValues(t, 190, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
 
 	s3.MinKey = dbkv.Key{0}
-	require.Equal(t, 260, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+	require.EqualValues(t, 260, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
 }
 
 func TestWriterMultiFileStat(t *testing.T) {

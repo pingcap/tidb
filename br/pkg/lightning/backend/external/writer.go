@@ -191,7 +191,7 @@ type MultipleFilesStat struct {
 	MinKey            tidbkv.Key  `json:"min-key"`
 	MaxKey            tidbkv.Key  `json:"max-key"`
 	Filenames         [][2]string `json:"filenames"` // [dataFile, statFile]
-	MaxOverlappingNum int         `json:"max-overlapping-num"`
+	MaxOverlappingNum int64       `json:"max-overlapping-num"`
 }
 
 func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
@@ -219,16 +219,15 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 	m.MaxOverlappingNum = GetMaxOverlapping(points)
 }
 
-func GetMaxOverlappingTotal(stats []MultipleFilesStat) int {
-	slices.SortFunc(stats, func(a, b MultipleFilesStat) int {
-		return a.MinKey.Cmp(b.MinKey)
-	})
-	points := make([]Endpoint, 0, 100)
+// GetMaxOverlappingTotal assume the most overlapping case from given stats and
+// returns the overlapping level.
+func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
+	points := make([]Endpoint, 0, len(stats)*2)
 	for _, stat := range stats {
-		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: int64(stat.MaxOverlappingNum)})
+		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: stat.MaxOverlappingNum})
 	}
 	for _, stat := range stats {
-		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: int64(stat.MaxOverlappingNum)})
+		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: stat.MaxOverlappingNum})
 	}
 
 	return GetMaxOverlapping(points)

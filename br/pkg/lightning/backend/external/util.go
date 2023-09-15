@@ -217,7 +217,7 @@ type Endpoint struct {
 // GetMaxOverlapping returns the maximum overlapping weight treating given
 // `points` as endpoints of intervals. `points` are not required to be sorted,
 // and will be sorted in-place in this function.
-func GetMaxOverlapping(points []Endpoint) int {
+func GetMaxOverlapping(points []Endpoint) int64 {
 	slices.SortFunc(points, func(i, j Endpoint) int {
 		if cmp := bytes.Compare(i.Key, j.Key); cmp != 0 {
 			return cmp
@@ -230,14 +230,12 @@ func GetMaxOverlapping(points []Endpoint) int {
 		switch p.Tp {
 		case InclusiveStart:
 			curWeight += p.Weight
-		case ExclusiveEnd:
-			curWeight -= p.Weight
-		case InclusiveEnd:
+		case ExclusiveEnd, InclusiveEnd:
 			curWeight -= p.Weight
 		}
 		if curWeight > maxWeight {
 			maxWeight = curWeight
 		}
 	}
-	return int(maxWeight)
+	return maxWeight
 }

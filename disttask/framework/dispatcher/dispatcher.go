@@ -433,7 +433,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 
 	for {
 		// 3. generate a batch of subtasks.
-		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task)
+		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, nextStep)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return d.handlePlanErr(err)
