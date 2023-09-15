@@ -1732,3 +1732,15 @@ func (h *Handle) Close() {
 	h.globalstatushandler.Close()
 	h.statsCache.Load().Close()
 }
+
+func getSessionTxnStartTS(se interface{}) (uint64, error) {
+	sctx, ok := se.(sessionctx.Context)
+	if !ok {
+		return 0, errors.New("se is not sessionctx.Context")
+	}
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return 0, err
+	}
+	return txn.StartTS(), nil
+}
