@@ -96,7 +96,6 @@ const (
 			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
 			KEY (task_id, table_name),
 			INDEX (index_name),
-			INDEX (raw_key),
 			INDEX (table_name, index_name)
 		);
 	`
@@ -152,17 +151,10 @@ const (
 	`
 
 	selectDataConflictKeysReplace = `
-		SELECT raw_key
+		SELECT raw_key, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND index_name = 'PRIMARY'
-		GROUP BY raw_key;
-	`
-
-	selectDataConflictByKeysReplace = `
-		SELECT raw_value, raw_handle
-		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND index_name = 'PRIMARY'
-		AND raw_key = ?;
+		ORDER BY raw_key;
 	`
 
 	insertIntoDupRecord = `
@@ -671,113 +663,99 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return errors.Trace(err)
 		}
 		defer dataKvRows.Close()
+
+		var previousRawKey, latestValue []byte
+		var mustKeepKvPairs *kv.Pairs
+
 		for dataKvRows.Next() {
-			var rawKey []byte
-			if err := dataKvRows.Scan(&rawKey); err != nil {
+			var rawKey, rawValue, rawHandle []byte
+			if err := dataKvRows.Scan(&rawKey, &rawValue, &rawHandle); err != nil {
 				return errors.Trace(err)
 			}
-			em.logger.Debug("got group raw_key from table",
-				logutil.Key("raw_key", rawKey))
+			em.logger.Debug("got group raw_key, raw_value, raw_handle from table",
+				logutil.Key("raw_key", rawKey),
+				zap.Binary("raw_value", rawValue),
+				zap.Binary("raw_handle", rawHandle))
 
-			var mustKeepKvPairs *kv.Pairs
-
-			// get the latest value of rawKey from downstream TiDB
-			latestValue, err := fnGetLatest(gCtx, rawKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			if latestValue != nil {
-				handle, err := tablecodec.DecodeRowKey(rawKey)
+			if !bytes.Equal(rawKey, previousRawKey) {
+				previousRawKey = rawKey
+				// get the latest value of rawKey from downstream TiDB
+				latestValue, err = fnGetLatest(gCtx, rawKey)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
-					tbl.Meta(), handle, tbl.Cols(), latestValue)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				// find out all the KV pairs that are contained in the data KV
-				mustKeepKvPairs = encoder.SessionCtx.TakeKvPairs()
-			}
-
-			dataKvRowsByRawKey, err := em.db.QueryContext(
-				gCtx, fmt.Sprintf(selectDataConflictByKeysReplace, em.schemaEscaped),
-				tableName, rawKey)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			for dataKvRowsByRawKey.Next() {
-				var rawValue, rawHandle []byte
-				if err := dataKvRowsByRawKey.Scan(&rawValue, &rawHandle); err != nil {
-					return errors.Trace(err)
-				}
-				em.logger.Debug("got raw_value, raw_handle group by raw_key",
-					zap.Binary("raw_value", rawValue),
-					zap.Binary("raw_handle", rawHandle))
-
-				// if the latest value of rawKey equals to rawValue, that means this data KV is maintained in downstream TiDB
-				// if not, that means this data KV has been deleted due to overwritten index KV
-				if bytes.Equal(rawValue, latestValue) {
-					continue
-				}
-
-				handle, err := tablecodec.DecodeRowKey(rawHandle)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
-					tbl.Meta(), handle, tbl.Cols(), rawValue)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
-				if err != nil {
-					return errors.Trace(err)
-				}
-
-				// find out all the KV pairs that are contained in the data KV
-				kvPairs := encoder.SessionCtx.TakeKvPairs()
-				for _, kvPair := range kvPairs.Pairs {
-					em.logger.Debug("got encoded KV",
-						logutil.Key("key", kvPair.Key),
-						zap.Binary("value", kvPair.Val))
-					kvLatestValue, err := fnGetLatest(gCtx, kvPair.Key)
-					if tikverr.IsErrNotFound(err) || kvLatestValue == nil {
-						continue
-					}
+				if latestValue != nil {
+					handle, err := tablecodec.DecodeRowKey(rawKey)
 					if err != nil {
 						return errors.Trace(err)
 					}
-
-					// if the value of the KV pair is not equal to the latest value of the key of the KV pair
-					// that means the value of the KV pair has been overwritten, so it needs no extra operation
-					if !bytes.Equal(kvLatestValue, kvPair.Val) {
-						continue
-					}
-
-					// if the KV pair is contained in mustKeepKvPairs, we cannot delete it
-					// if not, delete the KV pair
-					isContained := slices.ContainsFunc(mustKeepKvPairs.Pairs, func(mustKeepKvPair common.KvPair) bool {
-						return bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val)
-					})
-					if isContained {
-						continue
-					}
-
-					if err := fnDeleteKey(gCtx, kvPair.Key); err != nil {
+					decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+						tbl.Meta(), handle, tbl.Cols(), latestValue)
+					if err != nil {
 						return errors.Trace(err)
 					}
+					_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					// calculate the new mustKeepKvPairs corresponding to the new rawKey
+					// find out all the KV pairs that are contained in the data KV
+					mustKeepKvPairs = encoder.SessionCtx.TakeKvPairs()
 				}
 			}
-			if err := dataKvRowsByRawKey.Err(); err != nil {
+
+			// if the latest value of rawKey equals to rawValue, that means this data KV is maintained in downstream TiDB
+			// if not, that means this data KV has been deleted due to overwritten index KV
+			if bytes.Equal(rawValue, latestValue) {
+				continue
+			}
+
+			handle, err := tablecodec.DecodeRowKey(rawHandle)
+			if err != nil {
 				return errors.Trace(err)
 			}
-			if err := dataKvRowsByRawKey.Close(); err != nil {
+			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+				tbl.Meta(), handle, tbl.Cols(), rawValue)
+			if err != nil {
 				return errors.Trace(err)
+			}
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// find out all the KV pairs that are contained in the data KV
+			kvPairs := encoder.SessionCtx.TakeKvPairs()
+			for _, kvPair := range kvPairs.Pairs {
+				em.logger.Debug("got encoded KV",
+					logutil.Key("key", kvPair.Key),
+					zap.Binary("value", kvPair.Val))
+				kvLatestValue, err := fnGetLatest(gCtx, kvPair.Key)
+				if tikverr.IsErrNotFound(err) || kvLatestValue == nil {
+					continue
+				}
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				// if the value of the KV pair is not equal to the latest value of the key of the KV pair
+				// that means the value of the KV pair has been overwritten, so it needs no extra operation
+				if !bytes.Equal(kvLatestValue, kvPair.Val) {
+					continue
+				}
+
+				// if the KV pair is contained in mustKeepKvPairs, we cannot delete it
+				// if not, delete the KV pair
+				isContained := slices.ContainsFunc(mustKeepKvPairs.Pairs, func(mustKeepKvPair common.KvPair) bool {
+					return bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val)
+				})
+				if isContained {
+					continue
+				}
+
+				if err := fnDeleteKey(gCtx, kvPair.Key); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 		if err := dataKvRows.Err(); err != nil {
