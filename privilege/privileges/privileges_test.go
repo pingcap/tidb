@@ -295,7 +295,7 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	tk.MustExec(`GRANT Index ON test1.* TO  'show'@'localhost';`)
@@ -303,8 +303,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT INDEX ON test1.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT INDEX ON `test1`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add another db privilege to the same db and test again.
@@ -313,8 +313,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT DELETE,INDEX ON test1.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT DELETE,INDEX ON `test1`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	tk.MustExec(`GRANT ALL ON test1.* TO  'show'@'localhost';`)
@@ -322,8 +322,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add table scope privileges
@@ -332,9 +332,9 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 4)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'",
+		"GRANT UPDATE ON `test`.`test` TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Revoke the db privilege of `test` and test again. See issue #30855.
@@ -343,8 +343,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'",
+		"GRANT UPDATE ON `test`.`test` TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add another table privilege and test again.
@@ -353,8 +353,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT SELECT,UPDATE ON test.test TO 'show'@'localhost'`}
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'",
+		"GRANT SELECT,UPDATE ON `test`.`test` TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Expected behavior: Usage still exists after revoking all privileges
