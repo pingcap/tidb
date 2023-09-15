@@ -635,15 +635,13 @@ func (c *TopN) Copy() *TopN {
 	if c == nil {
 		return nil
 	}
-	topN := make([]TopNMeta, len(c.TopN))
+	result := GetTopNPoolMap(len(c.TopN))
 	for i, t := range c.TopN {
-		topN[i].Encoded = make([]byte, len(t.Encoded))
-		copy(topN[i].Encoded, t.Encoded)
-		topN[i].Count = t.Count
+		result.TopN[i].Encoded = make([]byte, len(t.Encoded))
+		copy(result.TopN[i].Encoded, t.Encoded)
+		result.TopN[i].Count = t.Count
 	}
-	return &TopN{
-		TopN: topN,
-	}
+	return result
 }
 
 // TopNMeta stores the unit of the TopN.
