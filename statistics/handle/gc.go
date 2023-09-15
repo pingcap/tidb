@@ -258,11 +258,14 @@ func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -270,11 +273,10 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
 	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
 		return err
@@ -307,9 +309,12 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -318,11 +323,10 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
 	for _, statsID := range statsIDs {
 		// We only update the version so that other tidb will know that this table is deleted.
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
