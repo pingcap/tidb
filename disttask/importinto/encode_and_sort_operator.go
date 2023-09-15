@@ -150,6 +150,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				})
 			prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
+			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 			return writer
@@ -159,6 +160,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
 		prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
+		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
 		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
