@@ -1,0 +1,59 @@
+SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;
+LENGTH(b'')	LENGTH(B'')	b''+1	b''-1	B''+1
+0	0	1	-1	1
+select timestamp '2017-01-01 00:00:00';
+timestamp '2017-01-01 00:00:00'
+2017-01-01 00:00:00
+select timestamp '2017@01@01 00:00:00';
+timestamp '2017@01@01 00:00:00'
+2017-01-01 00:00:00
+select timestamp '2017@01@01 00~00~00';
+timestamp '2017@01@01 00~00~00'
+2017-01-01 00:00:00
+select timestamp '2017@01@0001 00~00~00.333';
+timestamp '2017@01@0001 00~00~00.333'
+2017-01-01 00:00:00.333
+select timestamp '00:00:00';
+Error 1292: Incorrect datetime value: '00:00:00'
+select timestamp '1992-01-03';
+Error 1292: Incorrect datetime value: '1992-01-03'
+select timestamp '20171231235959.999999';
+Error 1292: Incorrect datetime value: '20171231235959.999999'
+select time '117:01:12';
+time '117:01:12'
+117:01:12
+select time '01:00:00.999999';
+time '01:00:00.999999'
+01:00:00.999999
+select time '1 01:00:00';
+time '1 01:00:00'
+25:00:00
+select time '110:00:00';
+time '110:00:00'
+110:00:00
+select time'-1:1:1.123454656';
+time'-1:1:1.123454656'
+-01:01:01.123455
+select time '33:33';
+time '33:33'
+33:33:00
+select time '1.1';
+time '1.1'
+00:00:01.1
+select time '21';
+time '21'
+00:00:21
+select time '20 20:20';
+time '20 20:20'
+500:20:00
+select time '2017-01-01 00:00:00';
+Error 1292: Incorrect time value: '2017-01-01 00:00:00'
+select time '071231235959.999999';
+Error 1292: Incorrect time value: '071231235959.999999'
+select time '20171231235959.999999';
+Error 1292: Incorrect time value: '20171231235959.999999'
+select ADDDATE('2008-01-34', -1);
+ADDDATE('2008-01-34', -1)
+NULL
+Show warnings;
+Level	Code	Message

@@ -1,0 +1,34 @@
+# TestLiterals
+SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;
+
+# TestTimestampLiteral
+select timestamp '2017-01-01 00:00:00';
+select timestamp '2017@01@01 00:00:00';
+select timestamp '2017@01@01 00~00~00';
+select timestamp '2017@01@0001 00~00~00.333';
+-- error 1292
+select timestamp '00:00:00';
+-- error 1292
+select timestamp '1992-01-03';
+-- error 1292
+select timestamp '20171231235959.999999';
+
+# TestTimeLiteral
+select time '117:01:12';
+select time '01:00:00.999999';
+select time '1 01:00:00';
+select time '110:00:00';
+select time'-1:1:1.123454656';
+select time '33:33';
+select time '1.1';
+select time '21';
+select time '20 20:20';
+-- error 1292
+select time '2017-01-01 00:00:00';
+-- error 1292
+select time '071231235959.999999';
+-- error 1292
+select time '20171231235959.999999';
+select ADDDATE('2008-01-34', -1);
+Show warnings;
+
