@@ -636,10 +636,19 @@ func (c *TopN) Copy() *TopN {
 		return nil
 	}
 	result := GetTopNPoolMap(len(c.TopN))
+	isAppend := len(result.TopN) == 0
 	for i, t := range c.TopN {
-		result.TopN[i].Encoded = make([]byte, len(t.Encoded))
-		copy(result.TopN[i].Encoded, t.Encoded)
-		result.TopN[i].Count = t.Count
+		if isAppend {
+			var tmp TopNMeta
+			tmp.Encoded = make([]byte, len(t.Encoded))
+			copy(tmp.Encoded, t.Encoded)
+			tmp.Count = t.Count
+			result.TopN = append(result.TopN, tmp)
+		} else {
+			result.TopN[i].Encoded = make([]byte, len(t.Encoded))
+			copy(result.TopN[i].Encoded, t.Encoded)
+			result.TopN[i].Count = t.Count
+		}
 	}
 	return result
 }
