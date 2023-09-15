@@ -82,26 +82,88 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 	}
 
 	// Insert related partitions while don't warning duplicate partitions.
-	checkedTables = GetLockedTables(lockedTables, pids...)
+	lockedPartitions := GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
-		if _, ok := checkedTables[pid]; !ok {
+		if _, ok := lockedPartitions[pid]; !ok {
 			if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
 				return "", err
 			}
 		}
 	}
 
-	msg := generateSkippedTablesMessage(tids, skippedTables, lockAction, lockedStatus)
+	msg := generateSkippedMessage(tids, skippedTables, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
 
-func generateSkippedTablesMessage(tids []int64, dupTables []string, action, status string) string {
-	if len(dupTables) > 0 {
-		tables := strings.Join(dupTables, ", ")
+// AddLockedPartitions add locked partitions id to store.
+// If the whole table is locked, then skip all partitions of the table.
+// - exec: sql executor.
+// - tid: table id of which will be locked.
+// - tableName: table name of which will be locked.
+// - pidNames: partition ids of which will be locked.
+// Return the message of skipped tables and error.
+func AddLockedPartitions(
+	exec sqlexec.RestrictedSQLExecutor,
+	tid int64,
+	tableName *ast.TableName,
+	pidNames map[int64]string,
+) (string, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+
+	err := startTransaction(ctx, exec)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		// Commit transaction.
+		err = finishTransaction(ctx, exec, err)
+	}()
+
+	// Load tables to check duplicate before insert.
+	lockedTables, err := QueryLockedTables(exec)
+	if err != nil {
+		return "", err
+	}
+	pids := make([]int64, 0, len(pidNames))
+	for pid := range pidNames {
+		pids = append(pids, pid)
+	}
+	statsLogger.Info("lock partitions", zap.Int64("tableID", tid), zap.Int64s("partitionIDs", pids))
+
+	// Check if whole table is locked.
+	// Then we can skip locking partitions.
+	// It is not necessary to lock partitions if whole table is locked.
+	checkedTables := GetLockedTables(lockedTables, tid)
+	if _, locked := checkedTables[tid]; locked {
+		return "skip locking partitions of locked table: " + tableName.Schema.L + "." + tableName.Name.L, err
+	}
+
+	// Insert related partitions and warning already locked partitions.
+	skippedPartitions := make([]string, 0, len(pids))
+	lockedPartitions := GetLockedTables(lockedTables, pids...)
+	for _, pid := range pids {
+		if _, ok := lockedPartitions[pid]; !ok {
+			if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
+				return "", err
+			}
+		} else {
+			partition := generatePartitionFullName(tableName, pidNames[pid])
+			skippedPartitions = append(skippedPartitions, partition)
+		}
+	}
+
+	msg := generateSkippedMessage(pids, skippedPartitions, lockAction, lockedStatus)
+	// Note: defer commit transaction, so we can't use `return nil` here.
+	return msg, err
+}
+
+func generateSkippedMessage(ids []int64, skippedNames []string, action, status string) string {
+	if len(skippedNames) > 0 {
+		tables := strings.Join(skippedNames, ", ")
 		var msg string
-		if len(tids) > 1 {
-			if len(tids) > len(dupTables) {
+		if len(ids) > 1 {
+			if len(ids) > len(skippedNames) {
 				msg = fmt.Sprintf("skip %s %s tables: %s, other tables %s successfully", action, status, tables, status)
 			} else {
 				msg = fmt.Sprintf("skip %s %s tables: %s", action, status, tables)

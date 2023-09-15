@@ -443,7 +443,6 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	defer func() {
 		h.tableDelta.merge(deltaMap)
 	}()
-	// TODO: pass in do.InfoSchema() to DumpStatsDeltaToKV.
 	is := func() infoschema.InfoSchema {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -454,7 +453,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 		if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
 			continue
 		}
-		updated, err := h.dumpTableStatCountToKV(id, item)
+		updated, err := h.dumpTableStatCountToKV(is, id, item)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -477,11 +476,11 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
-	statsVer := uint64(0)
+func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
+	statsVersion := uint64(0)
 	defer func() {
-		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(id, statsVer, StatsMetaHistorySourceFlushStats)
+		if err == nil && statsVersion != 0 {
+			h.recordHistoricalStatsMeta(physicalTableID, statsVersion, StatsMetaHistorySourceFlushStats)
 		}
 	}()
 	if delta.Count == 0 {
@@ -503,53 +502,94 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	startTS := txn.StartTS()
-	updateStatsMeta := func(id int64) error {
-		lockedTables, err := h.GetLockedTables(id)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// This lock is already locked on it so it use isTableLockedWithoutLock without lock.
-		if _, ok := lockedTables[id]; ok {
-			if delta.Delta < 0 {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-			} else {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
-			}
-		} else {
-			if delta.Delta < 0 {
-				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
-					"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)", startTS, id, delta.Count, -delta.Delta, -delta.Delta)
-			} else {
-				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-					"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
-			}
-			cache.TableRowStatsCache.Invalidate(id)
-		}
-		statsVer = startTS
-		return errors.Trace(err)
+	statsVersion = txn.StartTS()
+
+	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
+	// Check if the table and its partitions are locked.
+	tidAndPid := make([]int64, 0, 2)
+	if tbl != nil {
+		tidAndPid = append(tidAndPid, tbl.Meta().ID)
 	}
-	if err = updateStatsMeta(id); err != nil {
+	tidAndPid = append(tidAndPid, physicalTableID)
+	lockedTables, err := h.GetLockedTables(tidAndPid...)
+	if err != nil {
 		return
 	}
-	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 
-	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
-	if is == nil {
-		return false, errors.New("cannot get the information schema")
-	}
-	if tbl, _, _ := is.FindTableByPartitionID(id); tbl != nil {
-		if err = updateStatsMeta(tbl.Meta().ID); err != nil {
+	var affectedRows uint64
+	// If it's a partitioned table and its global-stats exists,
+	// update its count and modify_count as well.
+	if tbl != nil {
+		// We need to check if the table and the partition are locked.
+		isTableLocked := false
+		isPartitionLocked := false
+		tableID := tbl.Meta().ID
+		if _, ok := lockedTables[tableID]; ok {
+			isTableLocked = true
+		}
+		if _, ok := lockedTables[physicalTableID]; ok {
+			isPartitionLocked = true
+		}
+		tableOrPartitionLocked := isTableLocked || isPartitionLocked
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
+			physicalTableID, tableOrPartitionLocked); err != nil {
 			return
 		}
+		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+		// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
+			return
+		}
+		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+	} else {
+		// This is a non-partitioned table.
+		// Check if it's locked.
+		isTableLocked := false
+		if _, ok := lockedTables[physicalTableID]; ok {
+			isTableLocked = true
+		}
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
+			physicalTableID, isTableLocked); err != nil {
+			return
+		}
+		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 	}
 
-	affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 	updated = affectedRows > 0
 	return
+}
+
+func updateStatsMeta(
+	ctx context.Context,
+	exec sqlexec.SQLExecutor,
+	startTS uint64,
+	delta variable.TableDelta,
+	id int64,
+	isLocked bool,
+) (err error) {
+	if isLocked {
+		if delta.Delta < 0 {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?",
+				startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		} else {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?",
+				startTS, delta.Delta, delta.Count, id)
+		}
+	} else {
+		if delta.Delta < 0 {
+			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
+				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
+		} else {
+			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
+				id, delta.Count, delta.Delta)
+		}
+		cache.TableRowStatsCache.Invalidate(id)
+	}
+	return err
 }
 
 func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
@@ -768,12 +808,20 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 
-		tids := make([]int64, 0, len(tbls))
+		// We need to check every partition of every table to see if it needs to be analyzed.
+		tidsAndPids := make([]int64, 0, len(tbls))
 		for _, tbl := range tbls {
-			tids = append(tids, tbl.Meta().ID)
+			tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
+			tblInfo := tbl.Meta()
+			pi := tblInfo.GetPartitionInfo()
+			if pi != nil {
+				for _, def := range pi.Definitions {
+					tidsAndPids = append(tidsAndPids, def.ID)
+				}
+			}
 		}
 
-		lockedTables, err := h.GetLockedTables(tids...)
+		lockedTables, err := h.GetLockedTables(tidsAndPids...)
 		if err != nil {
 			logutil.BgLogger().Error("check table lock failed",
 				zap.String("category", "stats"), zap.Error(err))
@@ -781,11 +829,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		}
 
 		for _, tbl := range tbls {
-			// If table locked, skip analyze.
+			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
 			if _, ok := lockedTables[tbl.Meta().ID]; ok {
-				logutil.BgLogger().Info("skip analyze locked table", zap.String("category", "stats"),
-					zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
 				continue
 			}
 			tblInfo := tbl.Meta()
@@ -804,14 +850,21 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				}
 				continue
 			}
+			// Only analyze the partition that has not been locked.
+			var partitionDefs []model.PartitionDefinition
+			for _, def := range pi.Definitions {
+				if _, ok := lockedTables[def.ID]; !ok {
+					partitionDefs = append(partitionDefs, def)
+				}
+			}
 			if pruneMode == variable.Dynamic {
-				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
+				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, partitionDefs, db, autoAnalyzeRatio, analyzeSnapshot)
 				if analyzed {
 					return true
 				}
 				continue
 			}
-			for _, def := range pi.Definitions {
+			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O, def.Name.O)
@@ -857,13 +910,13 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	return false
 }
 
-func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
+func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition, db string, ratio float64, analyzeSnapshot bool) bool {
 	h.mu.RLock()
 	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
 	h.mu.RUnlock()
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	partitionNames := make([]interface{}, 0, len(pi.Definitions))
-	for _, def := range pi.Definitions {
+	partitionNames := make([]interface{}, 0, len(partitionDefs))
+	for _, def := range partitionDefs {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
@@ -911,7 +964,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 		if idx.State != model.StatePublic {
 			continue
 		}
-		for _, def := range pi.Definitions {
+		for _, def := range partitionDefs {
 			partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
 			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
 				partitionNames = append(partitionNames, def.Name.O)
