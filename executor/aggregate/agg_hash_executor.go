@@ -143,6 +143,8 @@ type HashAggExec struct {
 	tmpChkForSpill *chunk.Chunk
 	// spillAction save the Action for spilling.
 	spillAction *AggSpillDiskAction
+	// spillHelper helps to carry out the spill action
+	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
 }
@@ -194,6 +196,7 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
+		e.spillHelper.close()
 	}
 	return e.BaseExecutor.Close()
 }
@@ -252,7 +255,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	}
 }
 
-func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
+func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	sessionVars := e.Ctx().GetSessionVars()
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
@@ -274,10 +277,33 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
 	e.initRuntimeStats()
 
+	e.spillHelper = &parallelHashAggSpillHelper{
+		spilledChunksIO:                   make([][]*chunk.ListInDisk, spilledPartitionNum),
+		spillTriggered:                    0,
+		isSpilling:                        0,
+		isPartialStage:                    partialStageFlag,
+		hasError:                          0,
+		runningPartialWorkerNum:           int32(partialConcurrency),
+		waitingWorkerNum:                  0,
+		partitionNeedRestore:              spilledPartitionNum,
+		waitForPartialWorkersSyncer:       make(chan struct{}),
+		spillActionAndPartialWorkerSyncer: make(chan struct{}),
+	}
+
+	workerSync := partialWorkerSync{
+		totalFinalWorkerNum:     finalConcurrency,
+		totalPartialWorkerNum:   partialConcurrency,
+		runningPartialWorkerNum: partialConcurrency,
+		alivePartialWorkerNum:   partialConcurrency,
+		partialWorkDoneNotifier: make(chan struct{}),
+		partialAndFinalNotifier: make(chan struct{}),
+	}
+
 	// Init partial workers.
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
 			baseHashAggWorker: newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			ctx:               ctx,
 			inputCh:           e.partialInputChs[i],
 			outputChs:         e.partialOutputChs,
 			giveBackCh:        e.inputCh,
@@ -299,6 +325,8 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 				return append(e.Base().RetFieldTypes(), types.NewFieldType(mysql.TypeString))
 			},
 			spillSerializeHelpers: make([]aggfuncs.SpillSerializeHelper, 0, len(e.PartialAggFuncs)),
+			spillHelper:           e.spillHelper,
+			workerSync:            &workerSync,
 		}
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)

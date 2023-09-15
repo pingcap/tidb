@@ -51,6 +51,7 @@ func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, p
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
 	baseHashAggWorker
+	ctx sessionctx.Context
 
 	inputCh        chan *chunk.Chunk
 	outputChs      []chan *HashAggIntermData
@@ -94,6 +95,37 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
+func (w *HashAggPartialWorker) waitForTheFinishOfSpill() {
+	// Notify the action that I'm in waiting status
+	w.spillHelper.lock.Lock()
+	w.spillHelper.waitingWorkerNum++
+	w.spillHelper.lock.Unlock()
+	w.spillHelper.waitForPartialWorkersSyncer <- struct{}{}
+
+	// Wait for the finish of spill
+	<-w.spillHelper.spillActionAndPartialWorkerSyncer
+	w.spillHelper.lock.Lock()
+	w.spillHelper.waitingWorkerNum--
+	w.spillHelper.lock.Unlock()
+}
+
+func (w *HashAggPartialWorker) waitForSpillDoneBeforeWorkerExit() {
+	for {
+		w.spillHelper.lock.Lock()
+		if w.spillHelper.isInSpilling() {
+			w.spillHelper.lock.Unlock()
+			w.waitForTheFinishOfSpill()
+			continue
+		}
+		w.spillHelper.runningPartialWorkerNum--
+		if w.spillHelper.runningPartialWorkerNum == 0 {
+			w.spillHelper.leavePartialStage()
+		}
+		w.spillHelper.lock.Unlock()
+		return
+	}
+}
+
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
 	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
@@ -106,14 +138,12 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		w.workerSync.waitForRunningWorkers()
 
 		if !hasError {
-			if w.spillHelper.isInSpillMode() {
+			if w.spillHelper.isSpillTriggered() {
 				// Do not put `w.spillHelper.needSpill()` and `len(w.groupKey) > 0` judgement in one line
 				if len(w.groupKey) > 0 {
-					if err := w.spillDataToDisk(ctx); err != nil {
+					if err := w.spillDataToDisk(); err != nil {
 						w.globalOutputCh <- &AfFinalResult{err: err}
-					}
-					if err := w.spillRemainingDataToDisk(ctx); err != nil {
-						w.globalOutputCh <- &AfFinalResult{err: err}
+						w.spillHelper.setError()
 					}
 				}
 				w.spillHelper.addListInDisks(w.spilledChunksIO)
@@ -121,6 +151,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 				w.shuffleIntermData(sc, finalConcurrency)
 			}
 		}
+
+		// TODO Do we need to handle something when error happens?
 
 		w.workerSync.waitForExitOfAliveWorkers()
 
@@ -138,6 +170,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 
 		if !ok {
+			w.waitForSpillDoneBeforeWorkerExit()
 			return
 		}
 
@@ -145,6 +178,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
 			hasError = true
 			w.globalOutputCh <- &AfFinalResult{err: err}
+			w.spillHelper.setError()
+			w.waitForSpillDoneBeforeWorkerExit()
 			return
 		}
 		if w.stats != nil {
@@ -156,13 +191,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		// so we set needShuffle to be true.
 		needShuffle = true
 
-		if w.spillHelper.isInSpillMode() {
-			err := w.spillDataToDisk(ctx)
-			if err != nil {
-				hasError = true
-				w.globalOutputCh <- &AfFinalResult{err: err}
-				return
-			}
+		if w.spillHelper.isInSpilling() {
+			w.waitForTheFinishOfSpill()
 		}
 	}
 }
@@ -229,7 +259,7 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 	}
 }
 
-func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
+func (w *HashAggPartialWorker) spillDataToDisk() error {
 	if len(w.partialResultsMap) == 0 {
 		return nil
 	}
@@ -237,6 +267,8 @@ func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
 	w.prepareForSpillWhenNeeded()
 	for key, partialResults := range w.partialResultsMap {
 		partitionNum := int(murmur3.Sum32([]byte(key))) % spilledPartitionNum
+
+		// Spill data when tmp chunk is full
 		if w.tmpChksForSpill[partitionNum].IsFull() {
 			err := w.spilledChunksIO[partitionNum].Add(w.tmpChksForSpill[partitionNum])
 			if err != nil {
@@ -245,10 +277,12 @@ func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
 			w.tmpChksForSpill[partitionNum].Reset()
 		}
 
+		// Serialize agg meta data to the tmp chunk
 		for i, aggFunc := range w.aggFuncs {
-			aggFunc.SerializeForSpill(ctx, partialResults[i], w.tmpChksForSpill[partitionNum], &(w.spillSerializeHelpers[i]))
+			aggFunc.SerializePartialResult(w.ctx, partialResults[i], w.tmpChksForSpill[partitionNum], &(w.spillSerializeHelpers[i]))
 		}
 
+		// Append key
 		w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
 	}
 
@@ -257,9 +291,16 @@ func (w *HashAggPartialWorker) spillDataToDisk(ctx sessionctx.Context) error {
 	w.memTracker.Consume(-w.partialResultsMem)
 	w.BInMap = 0
 	w.partialResultsMem = 0
+
+	// Trigger the spill of remaining data
+	err := w.spillRemainingDataToDisk(w.ctx)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
+// Some tmp chunks may no be full, so we need to manually trigger the spill action.
 func (w *HashAggPartialWorker) spillRemainingDataToDisk(ctx sessionctx.Context) error {
 	for i := 0; i < spilledPartitionNum; i++ {
 		if w.tmpChksForSpill[i].NumRows() > 0 {
@@ -279,11 +320,11 @@ func (w *HashAggPartialWorker) spillRemainingDataToDisk(ctx sessionctx.Context) 
 //	Stage 2. do something, include checking if we need to spill data to disk
 //	Stage 3. descrease one alive partial worker number and notify final worker to execute
 type partialWorkerSync struct {
-	lock                  sync.Mutex
-	totalFinalWorkerNum   int
-	totalPartialWorkerNum int
-	runningWorkerNum      int
-	aliveWorkerNum        int
+	lock                    sync.Mutex
+	totalFinalWorkerNum     int
+	totalPartialWorkerNum   int
+	runningPartialWorkerNum int
+	alivePartialWorkerNum   int
 
 	// The last running partial worker will send msg to this channel
 	// so that the waiting workers can step to the next stage.
@@ -296,8 +337,8 @@ type partialWorkerSync struct {
 
 func (p *partialWorkerSync) waitForRunningWorkers() {
 	p.lock.Lock()
-	p.runningWorkerNum--
-	isTheLastWorker := (p.runningWorkerNum == 0)
+	p.runningPartialWorkerNum--
+	isTheLastWorker := (p.runningPartialWorkerNum == 0)
 	p.lock.Unlock()
 
 	if isTheLastWorker {
@@ -312,8 +353,8 @@ func (p *partialWorkerSync) waitForRunningWorkers() {
 
 func (p *partialWorkerSync) waitForExitOfAliveWorkers() {
 	p.lock.Lock()
-	p.aliveWorkerNum--
-	isTheLastWorker := (p.aliveWorkerNum == 0)
+	p.alivePartialWorkerNum--
+	isTheLastWorker := (p.alivePartialWorkerNum == 0)
 	p.lock.Unlock()
 
 	if isTheLastWorker {

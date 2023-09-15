@@ -193,10 +193,7 @@ func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, res
 
 		// Deserialize bytes to agg function's meta data
 		for aggPos, aggFunc := range w.aggFuncsForRestoring {
-			partialResult, memDelta, err := aggFunc.DeserializeToPartialResultForSpill(ctx, chunk)
-			if err != nil {
-				return 0, err
-			}
+			partialResult, memDelta := aggFunc.DeserializePartialResult(ctx, chunk)
 			partialResultsRestored[aggPos] = partialResult
 			totalMemDelta += memDelta
 		}
@@ -251,6 +248,8 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 		if err != nil {
 			return false, err
 		}
+
+		// TODO What it will do when out of memory quota?
 		w.memTracker.Consume(memDelta)
 	}
 
@@ -280,7 +279,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	// Wait for the finish of all partial workers
 	<-w.partialAndFinalNotifier
 
-	if w.spillHelper.isInSpillMode() {
+	if w.spillHelper.isSpillTriggered() {
 		for {
 			hasData, err := w.restoreOnePartition(ctx)
 			if err != nil {
