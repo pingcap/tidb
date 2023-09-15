@@ -75,6 +75,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		return nil, err
 	}
 
+	job := &gTaskMeta.Job
 	useExtStore := len(gTaskMeta.CloudStorageURI) > 0
 	defer func() {
 		// Only redact when the task is complete.
@@ -83,29 +84,18 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 	}()
 
-	job := &gTaskMeta.Job
-	tblInfo, err := getTblInfo(h.d, job)
-	if err != nil {
-		return nil, err
-	}
-	// generate partition table's plan.
-	if tblInfo.Partition != nil {
-		switch step {
-		case proto.StepOne:
-			return generatePartitionPlan(tblInfo)
-		case proto.StepThree:
-			if useExtStore {
-				return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
-			}
-			return nil, nil
-		default:
-			return nil, nil
-		}
-	}
-	// generate non-partition table's plan.
 	switch step {
 	case proto.StepOne:
+		tblInfo, err := getTblInfo(h.d, job)
+		if err != nil {
+			return nil, err
+		}
+		if tblInfo.Partition != nil {
+			return generatePartitionPlan(tblInfo)
+		}
 		return generateNonPartitionPlan(h.d, tblInfo, job)
+	case proto.StepTwo:
+		return generateMergePlan(taskHandle, gTask)
 	case proto.StepThree:
 		if useExtStore {
 			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
