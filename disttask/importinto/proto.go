@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/meta/autoid"
 )
 
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
@@ -34,7 +34,6 @@ const (
 	// StepImport we sort source data and ingest it into TiKV in this step.
 	StepImport int64 = 1
 	// StepPostProcess we verify checksum and add index in this step.
-	// TODO: Might split into StepValidate and StepAddIndex later.
 	StepPostProcess int64 = 2
 )
 
@@ -66,12 +65,18 @@ type ImportStepMeta struct {
 	Chunks   []Chunk
 	Checksum Checksum
 	Result   Result
+	// MaxIDs stores the max id that have been used during encoding for each allocator type.
+	// the max id is same among all allocator types for now, since we're using same base, see
+	// NewPanickingAllocators for more info.
+	MaxIDs map[autoid.AllocatorType]int64
 }
 
 // PostProcessStepMeta is the meta of post process step.
 type PostProcessStepMeta struct {
 	// accumulated checksum of all subtasks in import step.
 	Checksum Checksum
+	// MaxIDs of max all max-ids of subtasks in import step.
+	MaxIDs map[autoid.AllocatorType]int64
 }
 
 // SharedVars is the shared variables between subtask and minimal tasks.
@@ -102,22 +107,10 @@ func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
 }
 
-// postProcessStepMinimalTask is the minimal task of post process step.
-type postProcessStepMinimalTask struct {
-	meta     PostProcessStepMeta
-	taskMeta *TaskMeta
-	logger   *zap.Logger
-}
-
-func (*postProcessStepMinimalTask) IsMinimalTask() {}
-
-func (*postProcessStepMinimalTask) String() string {
-	return "post process"
-}
-
 // Chunk records the chunk information.
 type Chunk struct {
 	Path         string
+	FileSize     int64
 	Offset       int64
 	EndOffset    int64
 	PrevRowIDMax int64

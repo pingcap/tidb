@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//metrics",
-        "//resourcemanager",
         "//resourcemanager/util",
         "//util",
         "//util/syncutil",
@@ -25,11 +24,13 @@ go_test(
     embed = [":workerpool"],
     flaky = True,
     race = "on",
+    shard_count = 4,
     deps = [
         "//resourcemanager/util",
         "//testkit/testsetup",
         "//util/logutil",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_sync//errgroup",
         "@org_uber_go_goleak//:goleak",
         "@org_uber_go_zap//:zap",
     ],

@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"runtime/trace"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/util/mvmap"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 var _ exec.Executor = &IndexLookUpJoin{}
@@ -439,7 +439,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	for requiredRows > task.outerResult.Len() {
 		chk := ow.ctx.GetSessionVars().GetNewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize, maxChunkSize, ow.executor.Base().AllocPool)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
-		err := Next(ctx, ow.executor, chk)
+		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
 			return task, err
 		}
@@ -656,12 +656,12 @@ func (iw *innerWorker) sortAndDedupLookUpContents(lookUpContents []*indexJoinLoo
 		return lookUpContents
 	}
 	sc := iw.ctx.GetSessionVars().StmtCtx
-	slices.SortFunc(lookUpContents, func(i, j *indexJoinLookUpContent) bool {
+	slices.SortFunc(lookUpContents, func(i, j *indexJoinLookUpContent) int {
 		cmp := compareRow(sc, i.keys, j.keys, iw.keyCollators)
 		if cmp != 0 || iw.nextColCompareFilters == nil {
-			return cmp < 0
+			return cmp
 		}
-		return iw.nextColCompareFilters.CompareRow(i.row, j.row) < 0
+		return iw.nextColCompareFilters.CompareRow(i.row, j.row)
 	})
 	deDupedLookupKeys := lookUpContents[:1]
 	for i := 1; i < len(lookUpContents); i++ {
@@ -702,7 +702,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		return err
 	}
 
-	innerResult := chunk.NewList(retTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
+	innerResult := chunk.NewList(exec.RetTypes(innerExec), iw.ctx.GetSessionVars().MaxChunkSize, iw.ctx.GetSessionVars().MaxChunkSize)
 	innerResult.GetMemTracker().SetLabel(memory.LabelForBuildSideResult)
 	innerResult.GetMemTracker().AttachTo(task.memTracker)
 	for {
@@ -711,7 +711,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			return ctx.Err()
 		default:
 		}
-		err := Next(ctx, innerExec, iw.executorChk)
+		err := exec.Next(ctx, innerExec, iw.executorChk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
@@ -720,7 +720,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 			break
 		}
 		innerResult.Add(iw.executorChk)
-		iw.executorChk = tryNewCacheChunk(innerExec)
+		iw.executorChk = exec.TryNewCacheChunk(innerExec)
 	}
 	task.innerResult = innerResult
 	return nil

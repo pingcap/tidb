@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/gcworker",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/utils",
         "//ddl",
         "//ddl/label",
         "//ddl/placement",
@@ -37,7 +36,6 @@ go_library(
         "@com_github_tikv_client_go_v2//txnkv/txnlock",
         "@com_github_tikv_client_go_v2//util",
         "@com_github_tikv_pd_client//:client",
-        "@org_golang_x_exp//slices",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -52,7 +50,7 @@ go_test(
     embed = [":gcworker"],
     flaky = True,
     race = "on",
-    shard_count = 30,
+    shard_count = 29,
     deps = [
         "//ddl/placement",
         "//ddl/util",

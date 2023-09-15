@@ -178,6 +178,7 @@ func GenLogFields(costTime time.Duration, info *ProcessInfo, needTruncateSQL boo
 		sql = fmt.Sprintf("%s len(%d)", sql[:logSQLLen], len(sql))
 	}
 	logFields = append(logFields, zap.String("sql", sql))
+	logFields = append(logFields, zap.String("session_alias", info.SessionAlias))
 	return logFields
 }
 
@@ -282,4 +283,16 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 		lines = append(lines, line)
 	}
 	return lines, nil
+}
+
+// IsInCorrectIdentifierName checks if the identifier is incorrect.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func IsInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
 }

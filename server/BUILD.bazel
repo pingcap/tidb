@@ -36,6 +36,7 @@ go_library(
         "//parser/ast",
         "//parser/auth",
         "//parser/charset",
+        "//parser/model",
         "//parser/mysql",
         "//parser/terror",
         "//planner/core",
@@ -136,7 +137,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":server"],
     flaky = True,
-    shard_count = 46,
+    shard_count = 48,
     deps = [
         "//config",
         "//domain",

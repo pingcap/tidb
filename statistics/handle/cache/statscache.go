@@ -45,15 +45,18 @@ func (s *StatsCachePointer) Load() *StatsCache {
 
 // Replace replaces the cache with the new cache.
 func (s *StatsCachePointer) Replace(newCache *StatsCache) {
-	s.Store(newCache)
+	old := s.Swap(newCache)
+	if old != nil {
+		old.Close()
+	}
 	metrics.CostGauge.Set(float64(newCache.Cost()))
 }
 
 // UpdateStatsCache updates the cache with the new cache.
-func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
+func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64) {
 	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
-		s.Load().Update(tables, deletedIDs, opts...)
+		s.Load().Update(tables, deletedIDs)
 	} else {
-		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs, opts...))
+		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs))
 	}
 }

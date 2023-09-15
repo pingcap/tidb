@@ -18,20 +18,23 @@ import (
 	"fmt"
 )
 
+// NonPartitionTableID is the partition id for non-partition table.
+const NonPartitionTableID = -1
+
 // AnalyzeTableID is hybrid table id used to analyze table.
 type AnalyzeTableID struct {
 	TableID int64
 	// PartitionID is used for the construction of partition table statistics. It indicate the ID of the partition.
-	// If the table is not the partition table, the PartitionID will be equal to -1.
+	// If the table is not the partition table, the PartitionID will be equal to NonPartitionTableID.
 	PartitionID int64
 }
 
 // GetStatisticsID is used to obtain the table ID to build statistics.
-// If the 'PartitionID == -1', we use the TableID to build the statistics for non-partition tables.
+// If the 'PartitionID == NonPartitionTableID', we use the TableID to build the statistics for non-partition tables.
 // Otherwise, we use the PartitionID to build the statistics of the partitions in the partition tables.
 func (h *AnalyzeTableID) GetStatisticsID() int64 {
 	statisticsID := h.TableID
-	if h.PartitionID != -1 {
+	if h.PartitionID != NonPartitionTableID {
 		statisticsID = h.PartitionID
 	}
 	return statisticsID
@@ -39,7 +42,7 @@ func (h *AnalyzeTableID) GetStatisticsID() int64 {
 
 // IsPartitionTable indicates whether the table is partition table.
 func (h *AnalyzeTableID) IsPartitionTable() bool {
-	return h.PartitionID != -1
+	return h.PartitionID != NonPartitionTableID
 }
 
 func (h *AnalyzeTableID) String() string {
@@ -80,4 +83,20 @@ type AnalyzeResults struct {
 	BaseCount int64
 	// BaseModifyCnt is the original modify_count in mysql.stats_meta at the beginning of analyze.
 	BaseModifyCnt int64
+	// For multi-valued index analyze, there are some very different behaviors, so we add this field to indicate it.
+	//
+	// Analyze result of multi-valued index come from an independent v2 analyze index task (AnalyzeIndexExec), and it's
+	// done by a scan on the index data and building stats. According to the original design rational of v2 stats, we
+	// should use the same samples to build stats for all columns/indexes. We created an exceptional case here to avoid
+	// loading the samples of JSON columns to tidb, which may cost too much memory, and we can't handle such case very
+	// well now.
+	//
+	// As the definition of multi-valued index, the row count and NDV of this index may be higher than the table row
+	// count. So we can't use this result to update the table-level row count.
+	// The snapshot field is used by v2 analyze to check if there are concurrent analyze, so we also can't update it.
+	// The multi-valued index analyze task is always together with another normal v2 analyze table task, which will
+	// take care of those table-level fields.
+	// In conclusion, when saving the analyze result for mv index, we need to store the index stats, as for the
+	// table-level fields, we only need to update the version.
+	ForMVIndex bool
 }

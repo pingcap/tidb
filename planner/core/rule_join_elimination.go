@@ -28,8 +28,8 @@ type outerJoinEliminator struct {
 }
 
 // tryToEliminateOuterJoin will eliminate outer join plan base on the following rules
-//  1. outer join elimination: For example left outer join, if the parent only use the
-//     columns from left table and the join key of right table(the inner table) is a unique
+//  1. outer join elimination: For example left outer join, if the parent doesn't use the
+//     columns from right table and the join key of right table(the inner table) is a unique
 //     key of the right table. the left outer join can be eliminated.
 //  2. outer join elimination with duplicate agnostic aggregate functions: For example left outer join.
 //     If the parent only use the columns from left table with 'distinct' label. The left outer join can
@@ -51,12 +51,20 @@ func (o *outerJoinEliminator) tryToEliminateOuterJoin(p *LogicalJoin, aggCols []
 	for _, outerCol := range outerPlan.Schema().Columns {
 		outerUniqueIDs.Insert(outerCol.UniqueID)
 	}
-	matched := IsColsAllFromOuterTable(parentCols, outerUniqueIDs)
-	if !matched {
-		return p, false, nil
+
+	// in case of count(*) FROM R LOJ S, the parentCols is empty, but
+	// still need to proceed to check whether we can eliminate outer join.
+	// In fact, we only care about whether there is any column from inner
+	// table, if there is none, we are good.
+	if len(parentCols) > 0 {
+		matched := IsColsAllFromOuterTable(parentCols, outerUniqueIDs)
+		if !matched {
+			return p, false, nil
+		}
 	}
+
 	// outer join elimination with duplicate agnostic aggregate functions
-	matched = IsColsAllFromOuterTable(aggCols, outerUniqueIDs)
+	matched := IsColsAllFromOuterTable(aggCols, outerUniqueIDs)
 	if matched {
 		appendOuterJoinEliminateAggregationTraceStep(p, outerPlan, aggCols, opt)
 		return outerPlan, true, nil

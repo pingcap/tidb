@@ -105,6 +105,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		require.NotNil(t, otrace)
 		physicalList := getList(otrace)
 		require.True(t, checkList(physicalList, testcase.physicalList))
+		domain.GetDomain(sctx).StatsHandle().Close()
 	}
 }
 
@@ -148,6 +149,9 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 	sctx.GetSessionVars().AllowAggPushDown = true
 	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
@@ -155,7 +159,8 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	plan, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)
 	flag := uint64(0)
-	flag = flag | 1<<1 | 1<<3 | 1<<8 | 1<<12 | 1<<15
+	// flagGcSubstitute | flagStabilizeResults | flagSkewDistinctAgg | flagEliminateOuterJoin | flagPushDownAgg
+	flag |= flag | 1<<1 | 1<<3 | 1<<8 | 1<<13 | 1<<16
 	_, _, err = core.DoOptimize(context.TODO(), sctx, flag, plan.(core.LogicalPlan))
 	require.NoError(t, err)
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
@@ -211,6 +216,9 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 	err = core.Preprocess(context.Background(), ctx, stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: dom.InfoSchema()}))
 	require.NoError(t, err)
 	sctx := core.MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())

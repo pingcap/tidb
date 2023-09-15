@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
@@ -85,89 +85,37 @@ const (
 )
 
 // Next implements the Executor Next interface.
+// It will collect all the sample task and run them concurrently.
 func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
-	var tasks []*analyzeTask
-	tids := make([]int64, 0)
-	skipedTables := make([]string, 0)
-	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	for _, task := range e.tasks {
-		var tableID statistics.AnalyzeTableID
-		switch task.taskType {
-		case colTask:
-			tableID = task.colExec.tableID
-		case idxTask:
-			tableID = task.idxExec.tableID
-		case fastTask:
-			tableID = task.fastExec.tableID
-		case pkIncrementalTask:
-			tableID = task.colIncrementalExec.tableID
-		case idxIncrementalTask:
-			tableID = task.idxIncrementalExec.tableID
-		}
-		// skip locked tables
-		if !statsHandle.IsTableLocked(tableID.TableID) {
-			tasks = append(tasks, task)
-		}
-		// generate warning message
-		dup := false
-		for _, id := range tids {
-			if id == tableID.TableID {
-				dup = true
-				break
-			}
-		}
-		//avoid generate duplicate tables
-		if !dup {
-			if statsHandle.IsTableLocked(tableID.TableID) {
-				tbl, ok := is.TableByID(tableID.TableID)
-				if !ok {
-					return nil
-				}
-				skipedTables = append(skipedTables, tbl.Meta().Name.L)
-			}
-			tids = append(tids, tableID.TableID)
-		}
-	}
+	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
+	sessionVars := e.Ctx().GetSessionVars()
 
-	if len(skipedTables) > 0 {
-		tables := skipedTables[0]
-		for i, table := range skipedTables {
-			if i == 0 {
-				continue
-			}
-			tables += ", " + table
-		}
-		var msg string
-		if len(tids) > 1 {
-			if len(tids) > len(skipedTables) {
-				msg = "skip analyze locked tables: " + tables + ", other tables will be analyzed"
-			} else {
-				msg = "skip analyze locked tables: " + tables
-			}
-		} else {
-			msg = "skip analyze locked table: " + tables
-		}
-
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+	// Filter the locked tables.
+	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
+	if err != nil {
+		return err
 	}
+	warnLockedTableMsg(sessionVars, needAnalyzeTableCnt, skippedTables)
 
 	if len(tasks) == 0 {
 		return nil
 	}
 
+	// Get the min number of goroutines for parallel execution.
 	concurrency, err := getBuildStatsConcurrency(e.Ctx())
 	if err != nil {
 		return err
 	}
-	taskCh := make(chan *analyzeTask, len(tasks))
+	concurrency = min(len(tasks), concurrency)
+
+	// Start workers with channel to collect results.
+	taskCh := make(chan *analyzeTask, concurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
-	if len(tasks) < concurrency {
-		concurrency = len(tasks)
-	}
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
+
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
@@ -176,13 +124,17 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
+
 	for _, task := range tasks {
 		taskCh <- task
 	}
 	close(taskCh)
+
+	// Wait all workers done and close the results channel.
 	e.wg.Wait()
 	close(resultsCh)
-	pruneMode := variable.PartitionPruneMode(e.Ctx().GetSessionVars().PartitionPruneMode.Load())
+
+	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
@@ -199,20 +151,134 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
-
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
-	err = e.handleGlobalStats(ctx, needGlobalStats, globalStatsMap)
-	if err != nil {
-		return err
+	if needGlobalStats {
+		err = e.handleGlobalStats(ctx, globalStatsMap)
+		if err != nil {
+			return err
+		}
 	}
+
+	// Update analyze options to mysql.analyze_options for auto analyze.
 	err = e.saveV2AnalyzeOpts()
 	if err != nil {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
+		sessionVars.StmtCtx.AppendWarning(err)
 	}
-	if e.Ctx().GetSessionVars().InRestrictedSQL {
-		return statsHandle.Update(e.Ctx().GetInfoSchema().(infoschema.InfoSchema))
+	return statsHandle.Update(infoSchema)
+}
+
+// filterAndCollectTasks filters the tasks that are not locked and collects the table IDs.
+func filterAndCollectTasks(tasks []*analyzeTask, statsHandle *handle.Handle, infoSchema infoschema.InfoSchema) ([]*analyzeTask, uint, []string, error) {
+	var (
+		filteredTasks       []*analyzeTask
+		skippedTables       []string
+		needAnalyzeTableCnt uint
+		// tidMap is used to deduplicate table IDs.
+		// In stats v1, analyze for each index is a single task, and they have the same table id.
+		tidAndPidsMap = make(map[int64]struct{}, len(tasks))
+	)
+
+	lockedTableAndPartitionIDs, err := getLockedTableAndPartitionIDs(statsHandle, tasks)
+	if err != nil {
+		return nil, 0, nil, err
 	}
-	return statsHandle.Update(e.Ctx().GetInfoSchema().(infoschema.InfoSchema), cache.WithTableStatsByQuery())
+
+	for _, task := range tasks {
+		// Check if the table or partition is locked.
+		tableID := getTableIDFromTask(task)
+		_, isLocked := lockedTableAndPartitionIDs[tableID.TableID]
+		// If the whole table is not locked, we should check whether the partition is locked.
+		if !isLocked && tableID.IsPartitionTable() {
+			_, isLocked = lockedTableAndPartitionIDs[tableID.PartitionID]
+		}
+
+		// Only analyze the table that is not locked.
+		if !isLocked {
+			filteredTasks = append(filteredTasks, task)
+		}
+
+		// Get the physical table ID.
+		physicalTableID := tableID.TableID
+		if tableID.IsPartitionTable() {
+			physicalTableID = tableID.PartitionID
+		}
+		if _, ok := tidAndPidsMap[physicalTableID]; !ok {
+			if isLocked {
+				if tableID.IsPartitionTable() {
+					tbl, _, def := infoSchema.FindTableByPartitionID(tableID.PartitionID)
+					if def == nil {
+						logutil.BgLogger().Warn("Unknown partition ID in analyze task", zap.Int64("pid", tableID.PartitionID))
+					} else {
+						schema, _ := infoSchema.SchemaByTable(tbl.Meta())
+						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s partition (%s)", schema.Name, tbl.Meta().Name.O, def.Name.O))
+					}
+				} else {
+					tbl, ok := infoSchema.TableByID(physicalTableID)
+					if !ok {
+						logutil.BgLogger().Warn("Unknown table ID in analyze task", zap.Int64("tid", physicalTableID))
+					} else {
+						schema, _ := infoSchema.SchemaByTable(tbl.Meta())
+						skippedTables = append(skippedTables, fmt.Sprintf("%s.%s", schema.Name, tbl.Meta().Name.O))
+					}
+				}
+			} else {
+				needAnalyzeTableCnt++
+			}
+			tidAndPidsMap[physicalTableID] = struct{}{}
+		}
+	}
+
+	return filteredTasks, needAnalyzeTableCnt, skippedTables, nil
+}
+
+// getLockedTableAndPartitionIDs queries the locked tables and partitions.
+func getLockedTableAndPartitionIDs(statsHandle *handle.Handle, tasks []*analyzeTask) (map[int64]struct{}, error) {
+	tidAndPids := make([]int64, 0, len(tasks))
+	// Check the locked tables in one transaction.
+	// We need to check all tables and its partitions.
+	// Because if the whole table is locked, we should skip all partitions.
+	for _, task := range tasks {
+		tableID := getTableIDFromTask(task)
+		tidAndPids = append(tidAndPids, tableID.TableID)
+		if tableID.IsPartitionTable() {
+			tidAndPids = append(tidAndPids, tableID.PartitionID)
+		}
+	}
+	return statsHandle.GetLockedTables(tidAndPids...)
+}
+
+// warnLockedTableMsg warns the locked table IDs.
+func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt uint, skippedTables []string) {
+	if len(skippedTables) > 0 {
+		tables := strings.Join(skippedTables, ", ")
+		var msg string
+		if len(skippedTables) > 1 {
+			msg = "skip analyze locked tables: %s"
+			if needAnalyzeTableCnt > 0 {
+				msg = "skip analyze locked tables: %s, other tables will be analyzed"
+			}
+		} else {
+			msg = "skip analyze locked table: %s"
+		}
+		sessionVars.StmtCtx.AppendWarning(errors.Errorf(msg, tables))
+	}
+}
+
+func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
+	switch task.taskType {
+	case colTask:
+		return task.colExec.tableID
+	case idxTask:
+		return task.idxExec.tableID
+	case fastTask:
+		return task.fastExec.tableID
+	case pkIncrementalTask:
+		return task.colIncrementalExec.tableID
+	case idxIncrementalTask:
+		return task.idxIncrementalExec.tableID
+	}
+
+	panic("unreachable")
 }
 
 func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
@@ -277,10 +343,15 @@ func recordHistoricalStats(sctx sessionctx.Context, tableID int64) error {
 }
 
 // handleResultsError will handle the error fetch from resultsCh and record it in log
-func (e *AnalyzeExec) handleResultsError(ctx context.Context, concurrency int, needGlobalStats bool,
-	globalStatsMap globalStatsMap, resultsCh <-chan *statistics.AnalyzeResults) error {
+func (e *AnalyzeExec) handleResultsError(
+	ctx context.Context,
+	concurrency int,
+	needGlobalStats bool,
+	globalStatsMap globalStatsMap,
+	resultsCh <-chan *statistics.AnalyzeResults,
+) error {
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
-	// If 'partitionStatsConcurrency' > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
+	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	if partitionStatsConcurrency > 1 {
 		dom := domain.GetDomain(e.Ctx())
@@ -515,6 +586,7 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 	if job == nil || job.ID == nil {
 		return
 	}
+
 	job.EndTime = time.Now()
 	var sql string
 	var args []interface{}

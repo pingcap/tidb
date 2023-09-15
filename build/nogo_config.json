@@ -287,7 +287,7 @@
       "tools/check/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
-      "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "tests/integrationtest/main.go": "ignore tests/integrationtest code",
       "GOROOT/": "ignore code",
       "server/internal/testserverclient/server_client.go": "ignore server_client code",
       ".*_generated\\.go$": "ignore generated code"
@@ -338,6 +338,7 @@
   },
   "lll": {
     "exclude_files": {
+      ".*_test\\.go$": "ignore test code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
@@ -410,6 +411,7 @@
       "planner/core/": "ignore core code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
+      "planner/cardinality/": "ignore cardinality code",
       "planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
       "planner/funcdep/only_full_group_by_test.go": "ignore only_full_group_by code",
       "dumpling/export": "ignore export code",
@@ -511,6 +513,8 @@
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
+      "expression/a": "expression/a code",
+      "expression/builtin.go": "expression/builtin code",
       "expression/builtin_cast.go": "expression/builtin_cast code",
       "server/": "server/ code",
       "distsql/": "distsql code",
@@ -600,8 +604,30 @@
       "ddl/tests/partition/": "more than 50"
     },
     "only_files": {
+      "br/pkg/version/": "br/pkg/version/ coded",
+      "br/pkg/utils/storewatch/": "br/pkg/utils/storewatch/ coded",
+      "br/pkg/utils/iter/": "br/pkg/utils/iter/ coded",
+      "br/pkg/utils/": "br/pkg/utils/ coded",
+      "br/pkg/task/show/": "br/pkg/task/show/ coded",
+      "br/pkg/task/": "br/pkg/task/ coded",
+      "br/pkg/streamhelper/spans/": "br/pkg/streamhelper/spans/ coded",
+      "br/pkg/streamhelper/": "br/pkg/streamhelper/ coded",
+      "br/pkg/stream/": "br/pkg/stream/ coded",
+      "br/pkg/storage/": "br/pkg/storage/ coded",
+      "br/pkg/rtree/": "br/pkg/rtree/ coded",
+      "br/pkg/restore/tiflashrec/": "br/pkg/restore/tiflashrec/ coded",
+      "br/pkg/restore/split/": "br/pkg/restore/split/ coded",
+      "br/pkg/restore/ingestrec/": "br/pkg/restore/ingestrec/ coded",
+      "br/pkg/pdutil/": "br/pkg/pdutil/ coded",
+      "br/pkg/metautil/": "br/pkg/metautil/ coded",
+      "br/pkg/logutil/": "br/pkg/logutil/ coded",
+      "br/pkg/gluetidb/": "br/pkg/gluetidb/ coded",
+      "br/pkg/conn/": "br/pkg/conn/ coded",
+      "br/pkg/checkpoint/": "br/pkg/checkpoint/ coded",
+      "br/pkg/backup/": "br/pkg/backup/ coded",
       "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
       "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "planer/core/casetest/dag": "planer/core/casetest/dag",
       "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
       "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
       "planer/core/casetest/hint": "planer/core/casetest/hint",
@@ -1236,6 +1262,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1243,6 +1270,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1250,6 +1278,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1258,6 +1287,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -1266,6 +1296,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }

@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/executor/internal/exec"
@@ -31,7 +32,6 @@ import (
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/tikv"
-	"golang.org/x/exp/slices"
 )
 
 var _ exec.Executor = &TableSampleExecutor{}
@@ -227,12 +227,12 @@ func splitIntoMultiRanges(store kv.Storage, startKey, endKey kv.Key) ([]kv.KeyRa
 }
 
 func sortRanges(ranges []kv.KeyRange, isDesc bool) {
-	slices.SortFunc(ranges, func(i, j kv.KeyRange) bool {
+	slices.SortFunc(ranges, func(i, j kv.KeyRange) int {
 		ir, jr := i.StartKey, j.StartKey
 		if !isDesc {
-			return ir.Cmp(jr) < 0
+			return ir.Cmp(jr)
 		}
-		return ir.Cmp(jr) > 0
+		return -ir.Cmp(jr)
 	})
 }
 

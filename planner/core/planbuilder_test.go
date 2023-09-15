@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/kv"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -119,7 +119,11 @@ func TestGetPathByIndexName(t *testing.T) {
 }
 
 func TestRewriterPool(t *testing.T) {
-	builder, _ := NewPlanBuilder().Init(MockContext(), nil, &hint.BlockHintProcessor{})
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
@@ -167,6 +171,9 @@ func TestDisableFold(t *testing.T) {
 	}
 
 	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	for _, c := range cases {
 		st, err := parser.New().ParseOneStmt(c.SQL, "", "")
 		require.NoError(t, err)
@@ -231,13 +238,11 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	col, cst := &expression.Column{RetType: types.NewFieldType(mysql.TypeString)}, &expression.Constant{RetType: types.NewFieldType(mysql.TypeLonglong)}
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
-	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
 
 	// table scan
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
@@ -263,7 +268,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 	schema := expression.NewSchema(col)
 	tblInfo := &model.TableInfo{}
 	idxInfo := &model.IndexInfo{}
-	hist := &statistics.Histogram{Bounds: chunk.New(nil, 0, 0)}
 	aggDesc1, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	aggDesc2, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncCount, []expression.Expression{cst}, true)
@@ -274,7 +278,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
-		Hist:            hist,
 	}
 	tableScan = tableScan.Init(ctx, 0)
 	tableScan.SetSchema(schema)
@@ -294,7 +297,6 @@ func TestPhysicalPlanClone(t *testing.T) {
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		Hist:             hist,
 		dataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
@@ -542,7 +544,7 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, 
 	return nil
 }
 
-func TestHandleAnalyzeOptions(t *testing.T) {
+func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
 
 	tests := []struct {
@@ -559,7 +561,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(16384+1, "", ""),
 				},
 			},
-			statsVer:    1,
+			statsVer:    statistics.Version1,
 			ExpectedErr: "Value of analyze option TOPN should not be larger than 16384",
 		},
 		{
@@ -570,7 +572,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(1, "", ""),
 				},
 			},
-			statsVer:    1,
+			statsVer:    statistics.Version1,
 			ExpectedErr: "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2",
 		},
 		{
@@ -581,7 +583,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(2, "", ""),
 				},
 			},
-			statsVer:    2,
+			statsVer:    statistics.Version2,
 			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
 		},
 		{
@@ -607,7 +609,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(0.1, "", ""),
 				},
 			},
-			statsVer:    2,
+			statsVer:    statistics.Version2,
 			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
 		},
 		{
@@ -622,7 +624,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(2048, "", ""),
 				},
 			},
-			statsVer:    2,
+			statsVer:    statistics.Version1,
 			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
 		},
 	}
@@ -636,6 +638,98 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 			} else {
 				require.NoError(t, err)
 			}
+
+			if tt.statsVer == statistics.Version2 {
+				_, err := handleAnalyzeOptionsV2(tt.opts)
+				if tt.ExpectedErr != "" {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), tt.ExpectedErr)
+				} else {
+					require.NoError(t, err)
+				}
+			}
 		})
 	}
+}
+
+func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+
+	// Create a new TableName instance.
+	tableName := &ast.TableName{
+		Schema: model.NewCIStr("test"),
+		Name:   model.NewCIStr("my_table"),
+	}
+	columns := []*model.ColumnInfo{
+		{
+			ID:        1,
+			Name:      model.NewCIStr("id"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			ID:        2,
+			Name:      model.NewCIStr("name"),
+			FieldType: *types.NewFieldType(mysql.TypeString),
+		},
+		{
+			ID:        3,
+			Name:      model.NewCIStr("age"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		},
+	}
+	tableName.TableInfo = &model.TableInfo{
+		Columns: columns,
+	}
+
+	// Test case 1: DefaultChoice.
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.DefaultChoice, nil, nil, nil, false, false)
+	require.NoError(t, err)
+	require.Equal(t, columns, cols)
+
+	// Test case 2: AllColumns.
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
+	require.NoError(t, err)
+	require.Equal(t, columns, cols)
+
+	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
+
+	// TODO(hi-rustin): Find a better way to mock SQL execution.
+	// Test case 3: PredicateColumns.
+
+	// Test case 4: ColumnList.
+	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
+	mustAnalyzedCols.data[3] = struct{}{}
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	require.NoError(t, err)
+	require.Equal(t, specifiedCols, cols)
+}
+
+func TestRequireInsertAndSelectPriv(t *testing.T) {
+	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
+	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+
+	tables := []*ast.TableName{
+		{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("t1"),
+		},
+		{
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("t2"),
+		},
+	}
+
+	pb.requireInsertAndSelectPriv(tables)
+	require.Len(t, pb.visitInfo, 4)
+	require.Equal(t, "test", pb.visitInfo[0].db)
+	require.Equal(t, "t1", pb.visitInfo[0].table)
+	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
+	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
 }

@@ -884,10 +884,13 @@ type SessionVars struct {
 	// not limit and spill will never happen
 	TiFlashMaxBytesBeforeExternalSort int64
 
-	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `true`, means never use pipeline model in tiflash.
-	// Value set to `true` means try to execute query with pipeline model in tiflash.
-	TiFlashEnablePipelineMode bool
+	// TiFlash max query memory per node, -1 and 0 means no limit, and the default value is 0
+	// If TiFlashMaxQueryMemoryPerNode > 0 && TiFlashQuerySpillRatio > 0, it will trigger auto spill in TiFlash side, and when auto spill
+	// is triggered, per executor's memory usage threshold set by TiFlashMaxBytesBeforeExternalJoin/TiFlashMaxBytesBeforeExternalGroupBy/TiFlashMaxBytesBeforeExternalSort will be ignored.
+	TiFlashMaxQueryMemoryPerNode int64
+
+	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
+	TiFlashQuerySpillRatio float64
 
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
@@ -968,6 +971,9 @@ type SessionVars struct {
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
+
+	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
+	DefaultCollationForUTF8MB4 string
 
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
@@ -1070,9 +1076,9 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
-	// TidbKvReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// TiKVClientReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
-	TidbKvReadTimeout uint64
+	TiKVClientReadTimeout uint64
 
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
@@ -1534,6 +1540,15 @@ type SessionVars struct {
 	// When set to true, skip missing partition stats and continue to merge other partition stats to global stats.
 	// When set to false, give up merging partition stats to global stats.
 	SkipMissingPartitionStats bool
+
+	// SessionAlias is the identifier of the session
+	SessionAlias string
+
+	// OptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// For now, the possible values and corresponding behaviors are:
+	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
+	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
+	OptObjective string
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1996,6 +2011,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2034,7 +2050,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalJoin = DefTiFlashMaxBytesBeforeExternalJoin
 	vars.TiFlashMaxBytesBeforeExternalGroupBy = DefTiFlashMaxBytesBeforeExternalGroupBy
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
-	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
+	vars.TiFlashMaxQueryMemoryPerNode = DefTiFlashMemQuotaQueryPerNode
+	vars.TiFlashQuerySpillRatio = DefTiFlashQuerySpillRatio
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -2491,20 +2508,6 @@ func (s *SessionVars) GetGlobalSystemVar(ctx context.Context, name string) (stri
 	return sv.GetGlobalFromHook(ctx, s)
 }
 
-// SetStmtVar sets system variable and updates SessionVars states.
-func (s *SessionVars) SetStmtVar(name string, value string) error {
-	name = strings.ToLower(name)
-	sysVar := GetSysVar(name)
-	if sysVar == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	sVal, err := sysVar.Validate(s, value, ScopeSession)
-	if err != nil {
-		return err
-	}
-	return s.setStmtVar(name, sVal)
-}
-
 // SetSystemVar sets the value of a system variable for session scope.
 // Values are automatically normalized (i.e. oN / on / 1 => ON)
 // and the validation function is run. To set with less validation, see
@@ -2519,6 +2522,25 @@ func (s *SessionVars) SetSystemVar(name string, val string) error {
 		return err
 	}
 	return sv.SetSessionFromHook(s, val)
+}
+
+// SetSystemVarWithOldValAsRet is wrapper of SetSystemVar. Return the old value for later use.
+func (s *SessionVars) SetSystemVarWithOldValAsRet(name string, val string) (string, error) {
+	sv := GetSysVar(name)
+	if sv == nil {
+		return "", ErrUnknownSystemVar.GenWithStackByArgs(name)
+	}
+	val, err := sv.Validate(s, val, ScopeSession)
+	if err != nil {
+		return "", err
+	}
+	// The map s.systems[sv.Name] is lazy initialized. If we directly read it, we might read empty result.
+	// Since this code path is not a hot path, we directly call GetSessionOrGlobalSystemVar to get the value safely.
+	oldV, err := s.GetSessionOrGlobalSystemVar(context.Background(), sv.Name)
+	if err != nil {
+		return "", err
+	}
+	return oldV, sv.SetSessionFromHook(s, val)
 }
 
 // SetSystemVarWithoutValidation sets the value of a system variable for session scope.
@@ -2952,6 +2974,8 @@ const (
 	SlowLogHostStr = "Host"
 	// SlowLogConnIDStr is slow log field name.
 	SlowLogConnIDStr = "Conn_ID"
+	// SlowLogSessAliasStr is the session alias set by user
+	SlowLogSessAliasStr = "Session_alias"
 	// SlowLogQueryTimeStr is slow log field name.
 	SlowLogQueryTimeStr = "Query_time"
 	// SlowLogParseTimeStr is the parse sql time.
@@ -3153,6 +3177,9 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	}
 	if s.ConnectionID != 0 {
 		writeSlowLogItem(&buf, SlowLogConnIDStr, strconv.FormatUint(s.ConnectionID, 10))
+	}
+	if s.SessionAlias != "" {
+		writeSlowLogItem(&buf, SlowLogSessAliasStr, s.SessionAlias)
 	}
 	if logItems.ExecRetryCount > 0 {
 		buf.WriteString(SlowLogRowPrefixStr)
@@ -3504,12 +3531,9 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
-// GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
-func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
-	if s.StmtCtx.HasTidbKvReadTimeout {
-		return s.StmtCtx.TidbKvReadTimeout
-	}
-	return s.TidbKvReadTimeout
+// GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
+	return s.TiKVClientReadTimeout
 }
 
 // RuntimeFilterType type of runtime filter "IN"
@@ -3612,4 +3636,18 @@ func RuntimeFilterModeStringToMode(name string) (RuntimeFilterMode, bool) {
 	default:
 		return -1, false
 	}
+}
+
+const (
+	// OptObjectiveModerate is a possible value and the default value for TiDBOptObjective.
+	// Please see comments of SessionVars.OptObjective for details.
+	OptObjectiveModerate string = "moderate"
+	// OptObjectiveDeterminate is a possible value for TiDBOptObjective.
+	OptObjectiveDeterminate = "determinate"
+)
+
+// GetOptObjective return the session variable "tidb_opt_objective".
+// Please see comments of SessionVars.OptObjective for details.
+func (s *SessionVars) GetOptObjective() string {
+	return s.OptObjective
 }

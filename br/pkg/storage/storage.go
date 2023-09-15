@@ -7,10 +7,14 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"go.uber.org/zap"
 )
 
 // Permission represents the permission we need to check in create storage.
@@ -27,6 +31,8 @@ const (
 	GetObject Permission = "GetObject"
 	// PutObject represents PutObject permission
 	PutObject Permission = "PutObject"
+
+	DefaultRequestConcurrency uint = 128
 )
 
 // WalkOption is the option of storage.WalkDir.
@@ -197,4 +203,55 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}
+}
+
+// Different from `http.DefaultTransport`, set the `MaxIdleConns` and `MaxIdleConnsPerHost`
+// to the actual request concurrency to reuse tcp connection as much as possible.
+func GetDefaultHttpClient(concurrency uint) *http.Client {
+	transport, _ := CloneDefaultHttpTransport()
+	transport.MaxIdleConns = int(concurrency)
+	transport.MaxIdleConnsPerHost = int(concurrency)
+	return &http.Client{
+		Transport: transport,
+	}
+}
+
+func CloneDefaultHttpTransport() (*http.Transport, bool) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	return transport.Clone(), ok
+}
+
+// GetMaxOffset returns the max offset of the file.
+func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n int64, err error) {
+	s3storage, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.New("only support s3 storage")
+	}
+	output, err := s3storage.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s3storage.options.Bucket),
+		Key:    aws.String(s3storage.options.Prefix + name),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return *output.ContentLength, nil
+}
+
+// ReadDataInRange reads data from storage in range [start, start+len(p)).
+func ReadDataInRange(ctx context.Context, storage ExternalStorage, name string, start int64, p []byte) (n int, err error) {
+	s3storage, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.New("only support s3 storage")
+	}
+	rd, _, err := s3storage.open(ctx, name, start, start+int64(len(p)))
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		err := rd.Close()
+		if err != nil {
+			log.FromContext(ctx).Warn("failed to close reader", zap.Error(err))
+		}
+	}()
+	return io.ReadFull(rd, p)
 }

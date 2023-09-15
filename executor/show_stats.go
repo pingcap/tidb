@@ -15,8 +15,10 @@
 package executor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -24,11 +26,11 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
-	"golang.org/x/exp/slices"
 )
 
 func (e *ShowExec) fetchShowStatsExtended() error {
@@ -158,6 +160,14 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
+
+	type LockedTableInfo struct {
+		dbName        string
+		tblName       string
+		partitionName string
+	}
+	tableInfo := make(map[int64]*LockedTableInfo)
+
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
@@ -166,25 +176,37 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				if h.IsTableLocked(tbl.ID) {
-					e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, partitionName)
-				}
+				tableInfo[tbl.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, partitionName}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if h.IsTableLocked(def.ID) {
-							e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
-						}
+						tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if h.IsTableLocked(def.ID) {
-						e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
-					}
+					tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
 				}
 			}
 		}
 	}
+
+	tids := make([]int64, 0, len(tableInfo))
+	for tid := range tableInfo {
+		tids = append(tids, tid)
+	}
+
+	lockedTables, err := h.GetLockedTables(tids...)
+	if err != nil {
+		return err
+	}
+
+	for _, tid := range tids {
+		if _, ok := lockedTables[tid]; ok {
+			info := tableInfo[tid]
+			e.appendTableForStatsLocked(info.dbName, info.tblName, info.partitionName)
+		}
+	}
+
 	return nil
 }
 
@@ -224,7 +246,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !col.IsStatsInitialized() {
 			continue
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.RealtimeCount, false),
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {
@@ -384,7 +406,7 @@ func stableColsStats(colStats map[int64]*statistics.Column) (cols []*statistics.
 	for _, col := range colStats {
 		cols = append(cols, col)
 	}
-	slices.SortFunc(cols, func(i, j *statistics.Column) bool { return i.ID < j.ID })
+	slices.SortFunc(cols, func(i, j *statistics.Column) int { return cmp.Compare(i.ID, j.ID) })
 	return
 }
 
@@ -392,7 +414,7 @@ func stableIdxsStats(idxStats map[int64]*statistics.Index) (idxs []*statistics.I
 	for _, idx := range idxStats {
 		idxs = append(idxs, idx)
 	}
-	slices.SortFunc(idxs, func(i, j *statistics.Index) bool { return i.ID < j.ID })
+	slices.SortFunc(idxs, func(i, j *statistics.Index) int { return cmp.Compare(i.ID, j.ID) })
 	return
 }
 

@@ -37,8 +37,6 @@ const (
 	StatsMetaHistorySourceExtendedStats = "extended stats"
 	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
 	StatsMetaHistorySourceSchemaChange = "schema change"
-	// StatsMetaHistorySourceFeedBack indicates stats history meta source from feedback
-	StatsMetaHistorySourceFeedBack = "feedback"
 )
 
 func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64, source string) error {
@@ -86,7 +84,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 		return
 	}
 	sc := v
-	tbl, ok := sc.GetFromInternal(tableID)
+	tbl, ok := sc.Get(tableID)
 	if !ok {
 		return
 	}

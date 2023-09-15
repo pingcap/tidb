@@ -16,9 +16,11 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"math"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -33,13 +35,10 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
-	"golang.org/x/exp/slices"
 )
 
 // topNThreshold is the minimum ratio of the number of topN elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -100,7 +99,6 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		}
 	}
 	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].cnt > sorted[j].cnt })
-
 	failpoint.Inject("StabilizeV1AnalyzeTopN", func(val failpoint.Value) {
 		if val.(bool) {
 			// The earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count.
@@ -117,7 +115,7 @@ func newTopNHelper(sample [][]byte, numTop uint32) *topNHelper {
 		sumTopN   uint64
 		sampleNDV = uint32(len(sorted))
 	)
-	numTop = mathutil.Min(sampleNDV, numTop) // Ensure numTop no larger than sampNDV.
+	numTop = min(sampleNDV, numTop) // Ensure numTop no larger than sampNDV.
 	// Only element whose frequency is not smaller than 2/3 multiples the
 	// frequency of the n-th element are added to the TopN statistics. We chose
 	// 2/3 as an empirical value because the average cardinality estimation
@@ -144,7 +142,7 @@ func NewCMSketchAndTopN(d, w int32, sample [][]byte, numTop uint32, rowCount uin
 	helper := newTopNHelper(sample, numTop)
 	// rowCount is not a accurate value when fast analyzing
 	// In some cases, if user triggers fast analyze when rowCount is close to sampleSize, unexpected bahavior might happen.
-	rowCount = mathutil.Max(rowCount, uint64(len(sample)))
+	rowCount = max(rowCount, uint64(len(sample)))
 	estimateNDV, scaleRatio := calculateEstimateNDV(helper, rowCount)
 	defaultVal := calculateDefaultVal(helper, estimateNDV, scaleRatio, rowCount)
 	c, t := buildCMSAndTopN(helper, d, w, scaleRatio, defaultVal)
@@ -183,7 +181,7 @@ func calculateDefaultVal(helper *topNHelper, estimateNDV, scaleRatio, rowCount u
 		return 1
 	}
 	estimateRemainingCount := rowCount - (helper.sampleSize-helper.onlyOnceItems)*scaleRatio
-	return estimateRemainingCount / mathutil.Max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
+	return estimateRemainingCount / max(1, estimateNDV-sampleNDV+helper.onlyOnceItems)
 }
 
 // MemoryUsage returns the total memory usage of a CMSketch.
@@ -260,17 +258,18 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 	}
 }
 
-func queryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
+// QueryValue is used to query the count of specified value.
+func QueryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
 	}
-	bytes, err := tablecodec.EncodeValue(sc, nil, val)
+	rawData, err := tablecodec.EncodeValue(sc, nil, val)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	h1, h2 := murmur3.Sum128(bytes)
-	if ret, ok := t.QueryTopN(sctx, bytes); ok {
+	h1, h2 := murmur3.Sum128(rawData)
+	if ret, ok := t.QueryTopN(sctx, rawData); ok {
 		return ret, nil
 	}
 	return c.queryHashValue(sctx, h1, h2), nil
@@ -289,7 +288,7 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
 	originVals := make([]uint32, c.depth)
-	min := uint32(math.MaxUint32)
+	minValue := uint32(math.MaxUint32)
 	useDefaultValue := false
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -309,8 +308,8 @@ func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (resul
 	for i := range c.table {
 		j := (h1 + h2*uint64(i)) % uint64(c.width)
 		originVals[i] = c.table[i][j]
-		if min > c.table[i][j] {
-			min = c.table[i][j]
+		if minValue > c.table[i][j] {
+			minValue = c.table[i][j]
 		}
 		noise := (c.count - uint64(c.table[i][j])) / (uint64(c.width) - 1)
 		if uint64(c.table[i][j]) == 0 {
@@ -323,8 +322,8 @@ func (c *CMSketch) queryHashValue(sctx sessionctx.Context, h1, h2 uint64) (resul
 	}
 	slices.Sort(vals)
 	res := vals[(c.depth-1)/2] + (vals[c.depth/2]-vals[(c.depth-1)/2])/2
-	if res > min+temp {
-		res = min + temp
+	if res > minValue+temp {
+		res = minValue + temp
 	}
 	if res == 0 {
 		return uint64(0)
@@ -386,7 +385,7 @@ func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, _ uint32) erro
 	for i := range c.table {
 		c.count = 0
 		for j := range c.table[i] {
-			c.table[i][j] = mathutil.Max(c.table[i][j], rc.table[i][j])
+			c.table[i][j] = max(c.table[i][j], rc.table[i][j])
 			c.count += uint64(c.table[i][j])
 		}
 	}
@@ -438,7 +437,7 @@ func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
 	if len(protoTopN) == 0 {
 		return nil
 	}
-	topN := NewTopN(32)
+	topN := NewTopN(len(protoTopN))
 	for _, e := range protoTopN {
 		d := make([]byte, len(e.Data))
 		copy(d, e.Data)
@@ -521,7 +520,7 @@ func (c *CMSketch) GetWidthAndDepth() (width, depth int32) {
 // CalcDefaultValForAnalyze calculate the default value for Analyze.
 // The value of it is count / NDV in CMSketch. This means count and NDV are not include topN.
 func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
-	c.defaultValue = c.count / mathutil.Max(1, ndv)
+	c.defaultValue = c.count / max(1, ndv)
 }
 
 // TopN stores most-common values, which is used to estimate point queries.
@@ -625,7 +624,7 @@ func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, foun
 	if c == nil {
 		return 0, false
 	}
-	idx := c.findTopN(d)
+	idx := c.FindTopN(d)
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
 	}
@@ -635,17 +634,13 @@ func (c *TopN) QueryTopN(sctx sessionctx.Context, d []byte) (result uint64, foun
 	return c.TopN[idx].Count, true
 }
 
-func (c *TopN) findTopN(d []byte) int {
+// FindTopN finds the index of the given value in the TopN.
+func (c *TopN) FindTopN(d []byte) int {
 	if c == nil {
 		return -1
 	}
-	match := false
-	idx := sort.Search(len(c.TopN), func(i int) bool {
-		cmp := bytes.Compare(c.TopN[i].Encoded, d)
-		if cmp == 0 {
-			match = true
-		}
-		return cmp >= 0
+	idx, match := slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
+		return bytes.Compare(a.Encoded, b)
 	})
 	if !match {
 		return -1
@@ -660,11 +655,11 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 		return 0, false
 	}
 	idx = sort.Search(len(c.TopN), func(i int) bool {
-		cmp := bytes.Compare(c.TopN[i].Encoded, d)
-		if cmp == 0 {
+		cmpRst := bytes.Compare(c.TopN[i].Encoded, d)
+		if cmpRst == 0 {
 			match = true
 		}
-		return cmp >= 0
+		return cmpRst >= 0
 	})
 	return idx, match
 }
@@ -699,8 +694,8 @@ func (c *TopN) Sort() {
 	if c == nil {
 		return
 	}
-	slices.SortFunc(c.TopN, func(i, j TopNMeta) bool {
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+	slices.SortFunc(c.TopN, func(i, j TopNMeta) int {
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
 }
 
@@ -742,7 +737,7 @@ func (c *TopN) RemoveVal(val []byte) {
 	if c == nil {
 		return
 	}
-	pos := c.findTopN(val)
+	pos := c.FindTopN(val)
 	if pos == -1 {
 		return
 	}
@@ -767,7 +762,7 @@ func (c *TopN) updateTopNWithDelta(d []byte, delta uint64, increase bool) bool {
 	if c == nil || c.TopN == nil {
 		return false
 	}
-	idx := c.findTopN(d)
+	idx := c.FindTopN(d)
 	if idx >= 0 {
 		if increase {
 			c.TopN[idx].Count += delta
@@ -796,7 +791,7 @@ func NewTopN(n int) *TopN {
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
 func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram,
 	isIndex bool, killed *uint32) (*TopN, []TopNMeta, []*Histogram, error) {
-	if checkEmptyTopNs(topNs) {
+	if CheckEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
 	partNum := len(topNs)
@@ -804,7 +799,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	counter := make(map[hack.MutableString]float64)
 	// datumMap is used to store the mapping from the string type to datum type.
 	// The datum is used to find the value in the histogram.
-	datumMap := make(map[hack.MutableString]types.Datum)
+	datumMap := NewDatumMapCache()
 	for i, topN := range topNs {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -827,37 +822,20 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				if atomic.LoadUint32(killed) == 1 {
 					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
 				}
-				if (j == i && version >= 2) || topNs[j].findTopN(val.Encoded) != -1 {
+				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
 					continue
 				}
 				// Get the encodedVal from the hists[j]
-				datum, exists := datumMap[encodedVal]
+				datum, exists := datumMap.Get(encodedVal)
 				if !exists {
-					// If the datumMap does not have the encodedVal datum,
-					// we should generate the datum based on the encoded value.
-					// This part is copied from the function MergePartitionHist2GlobalHist.
-					var d types.Datum
-					if isIndex {
-						d.SetBytes(val.Encoded)
-					} else {
-						var err error
-						if types.IsTypeTime(hists[0].Tp.GetType()) {
-							// Handle date time values specially since they are encoded to int and we'll get int values if using DecodeOne.
-							_, d, err = codec.DecodeAsDateTime(val.Encoded, hists[0].Tp.GetType(), loc)
-						} else if types.IsTypeFloat(hists[0].Tp.GetType()) {
-							_, d, err = codec.DecodeAsFloat32(val.Encoded, hists[0].Tp.GetType())
-						} else {
-							_, d, err = codec.DecodeOne(val.Encoded)
-						}
-						if err != nil {
-							return nil, nil, nil, err
-						}
+					d, err := datumMap.Put(val, encodedVal, hists[0].Tp.GetType(), isIndex, loc)
+					if err != nil {
+						return nil, nil, nil, err
 					}
-					datumMap[encodedVal] = d
 					datum = d
 				}
 				// Get the row count which the value is equal to the encodedVal from histogram.
-				count, _ := hists[j].equalRowCount(nil, datum, isIndex)
+				count, _ := hists[j].EqualRowCount(nil, datum, isIndex)
 				if count != 0 {
 					counter[encodedVal] += count
 					// Remove the value corresponding to encodedVal from the histogram.
@@ -875,7 +853,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 		data := hack.Slice(string(value))
 		sorted = append(sorted, TopNMeta{Encoded: data, Count: uint64(cnt)})
 	}
-	globalTopN, leftTopN := getMergedTopNFromSortedSlice(sorted, n)
+	globalTopN, leftTopN := GetMergedTopNFromSortedSlice(sorted, n)
 	return globalTopN, leftTopN, hists, nil
 }
 
@@ -884,7 +862,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 // The output parameters are the newly generated TopN structure and the remaining numbers.
 // Notice: The n can be 0. So n has no default value, we must explicitly specify this value.
 func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
-	if checkEmptyTopNs(topNs) {
+	if CheckEmptyTopNs(topNs) {
 		return nil, nil
 	}
 	// Different TopN structures may hold the same value, we have to merge them.
@@ -906,10 +884,11 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 		data := hack.Slice(string(value))
 		sorted = append(sorted, TopNMeta{Encoded: data, Count: cnt})
 	}
-	return getMergedTopNFromSortedSlice(sorted, n)
+	return GetMergedTopNFromSortedSlice(sorted, n)
 }
 
-func checkEmptyTopNs(topNs []*TopN) bool {
+// CheckEmptyTopNs checks whether all TopNs are empty.
+func CheckEmptyTopNs(topNs []*TopN) bool {
 	count := uint64(0)
 	for _, topN := range topNs {
 		count += topN.TotalCount()
@@ -918,29 +897,28 @@ func checkEmptyTopNs(topNs []*TopN) bool {
 }
 
 // SortTopnMeta sort topnMeta
-func SortTopnMeta(topnMetas []TopNMeta) []TopNMeta {
-	slices.SortFunc(topnMetas, func(i, j TopNMeta) bool {
+func SortTopnMeta(topnMetas []TopNMeta) {
+	slices.SortFunc(topnMetas, func(i, j TopNMeta) int {
 		if i.Count != j.Count {
-			return i.Count > j.Count
+			return cmp.Compare(j.Count, i.Count)
 		}
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
+		return bytes.Compare(i.Encoded, j.Encoded)
 	})
-	return topnMetas
+}
+
+// TopnMetaCompare compare topnMeta
+func TopnMetaCompare(i, j TopNMeta) int {
+	c := cmp.Compare(i.Count, j.Count)
+	if c == 0 {
+		return c
+	}
+	return bytes.Compare(i.Encoded, j.Encoded)
 }
 
 // GetMergedTopNFromSortedSlice returns merged topn
 func GetMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	return getMergedTopNFromSortedSlice(sorted, n)
-}
-
-func getMergedTopNFromSortedSlice(sorted []TopNMeta, n uint32) (*TopN, []TopNMeta) {
-	slices.SortFunc(sorted, func(i, j TopNMeta) bool {
-		if i.Count != j.Count {
-			return i.Count > j.Count
-		}
-		return bytes.Compare(i.Encoded, j.Encoded) < 0
-	})
-	n = mathutil.Min(uint32(len(sorted)), n)
+	SortTopnMeta(sorted)
+	n = min(uint32(len(sorted)), n)
 
 	var finalTopN TopN
 	finalTopN.TopN = sorted[:n]

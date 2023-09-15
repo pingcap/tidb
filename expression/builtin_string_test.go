@@ -491,56 +491,32 @@ func TestRight(t *testing.T) {
 }
 
 func TestRepeat(t *testing.T) {
+	cases := []struct {
+		args   []interface{}
+		isNull bool
+		res    string
+	}{
+		{[]interface{}{"a", int64(2)}, false, "aa"},
+		{[]interface{}{"a", uint64(16777217)}, false, strings.Repeat("a", 16777217)},
+		{[]interface{}{"a", int64(16777216)}, false, strings.Repeat("a", 16777216)},
+		{[]interface{}{"a", int64(-1)}, false, ""},
+		{[]interface{}{"a", int64(0)}, false, ""},
+		{[]interface{}{"a", uint64(0)}, false, ""},
+	}
+
 	ctx := createContext(t)
-	args := []interface{}{"a", int64(2)}
 	fc := funcs[ast.Repeat]
-	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "aa", v.GetString())
-
-	args = []interface{}{"a", uint64(2)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "aa", v.GetString())
-
-	args = []interface{}{"a", uint64(16777217)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, v.IsNull())
-
-	args = []interface{}{"a", uint64(16777216)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.False(t, v.IsNull())
-
-	args = []interface{}{"a", int64(-1)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "", v.GetString())
-
-	args = []interface{}{"a", int64(0)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "", v.GetString())
-
-	args = []interface{}{"a", uint64(0)}
-	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(args...)))
-	require.NoError(t, err)
-	v, err = evalBuiltinFunc(f, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, "", v.GetString())
+	for _, c := range cases {
+		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(c.args...)))
+		require.NoError(t, err)
+		v, err := evalBuiltinFunc(f, chunk.Row{})
+		require.NoError(t, err)
+		if c.isNull {
+			require.True(t, v.IsNull())
+		} else {
+			require.Equal(t, v.GetString(), c.res)
+		}
+	}
 }
 
 func TestRepeatSig(t *testing.T) {
@@ -1581,6 +1557,10 @@ func TestLpad(t *testing.T) {
 		{"hi", 5, "", nil},
 		{"hi", 5, "ab", "abahi"},
 		{"hi", 6, "ab", "ababhi"},
+		{"中文", 5, "字符", "字符字中文"},
+		{"中文", 1, "a", "中"},
+		{"中文", -5, "字符", nil},
+		{"中文", 10, "", nil},
 	}
 	fc := funcs[ast.Lpad]
 	for _, test := range tests {
@@ -1617,6 +1597,10 @@ func TestRpad(t *testing.T) {
 		{"hi", 5, "", nil},
 		{"hi", 5, "ab", "hiaba"},
 		{"hi", 6, "ab", "hiabab"},
+		{"中文", 5, "字符", "中文字符字"},
+		{"中文", 1, "a", "中"},
+		{"中文", -5, "字符", nil},
+		{"中文", 10, "", nil},
 	}
 	fc := funcs[ast.Rpad]
 	for _, test := range tests {
@@ -2604,6 +2588,10 @@ func TestWeightString(t *testing.T) {
 			f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{str, padding, length}))
 		}
 		require.NoError(t, err)
+
+		retType := f.getRetTp()
+		require.Equal(t, charset.CollationBin, retType.GetCollate())
+
 		// Reset warnings.
 		ctx.GetSessionVars().StmtCtx.ResetForRetry()
 		result, err := evalBuiltinFunc(f, chunk.Row{})
@@ -2708,7 +2696,7 @@ func TestCIWeightString(t *testing.T) {
 			}
 			res, err := result.ToString()
 			require.NoError(t, err)
-			require.Equal(t, test.expect, res)
+			require.Equal(t, test.expect, res, "test case: '%s' '%s' %d", test.str, test.padding, test.length)
 		}
 	}
 
@@ -2746,6 +2734,24 @@ func TestCIWeightString(t *testing.T) {
 		{"中", "BINARY", 5, "中\x00\x00"},
 	}
 
+	unicode0900Tests := []weightStringTest{
+		{"aAÁàãăâ", "NONE", 0, "\x1cG\x1cG\x1cG\x1cG\x1cG\x1cG\x1cG"},
+		{"中", "NONE", 0, "\xfb\x40\xce\x2d"},
+		{"a", "CHAR", 5, "\x1c\x47\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"a ", "CHAR", 5, "\x1c\x47\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"中", "CHAR", 5, "\xfb\x40\xce\x2d\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"中 ", "CHAR", 5, "\xfb\x40\xce\x2d\x02\x09\x02\x09\x02\x09\x02\x09"},
+		{"a", "BINARY", 1, "a"},
+		{"ab", "BINARY", 1, "a"},
+		{"a", "BINARY", 5, "a\x00\x00\x00\x00"},
+		{"a ", "BINARY", 5, "a \x00\x00\x00"},
+		{"中", "BINARY", 1, "\xe4"},
+		{"中", "BINARY", 2, "\xe4\xb8"},
+		{"中", "BINARY", 3, "中"},
+		{"中", "BINARY", 5, "中\x00\x00"},
+	}
+
 	checkResult("utf8mb4_general_ci", generalTests)
 	checkResult("utf8mb4_unicode_ci", unicodeTests)
+	checkResult("utf8mb4_0900_ai_ci", unicode0900Tests)
 }

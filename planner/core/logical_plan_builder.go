@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -163,8 +162,6 @@ const (
 	HintNoIndexMerge = "no_index_merge"
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
-	// HintTidbKvReadTimeout specifies timeout value for any readonly kv request in milliseconds
-	HintTidbKvReadTimeout = "tidb_kv_read_timeout"
 )
 
 const (
@@ -523,6 +520,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		case *ast.SelectStmt:
 			ci := b.prepareCTECheckForSubQuery()
 			defer resetCTECheckForSubQuery(ci)
+			b.optFlag = b.optFlag | flagConstantPropagation
 			p, err = b.buildSelect(ctx, v)
 		case *ast.SetOprStmt:
 			ci := b.prepareCTECheckForSubQuery()
@@ -547,8 +545,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
-		if !isTableName && b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load() != nil {
-			plannerSelectBlockAsName := *(b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load())
+		if plannerSelectBlockAsName := *(b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()); len(plannerSelectBlockAsName) > 0 && !isTableName {
 			plannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
@@ -714,7 +711,8 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
-			if name.TblName.L != firstName.TblName.L || name.DBName.L != firstName.DBName.L {
+			if name.TblName.L != firstName.TblName.L ||
+				(name.DBName.L != "" && firstName.DBName.L != "" && name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
 				return nil
 			}
 		}
@@ -4466,6 +4464,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		for _, tName := range l.Tables {
+			// CTE has no *model.TableInfo, we need to skip it.
+			if tName.TableInfo == nil {
+				continue
+			}
 			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
 		}
 		p, err = b.buildSelectLock(p, l)
@@ -4691,6 +4693,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
+// Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
 func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
@@ -4713,21 +4716,45 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tblInfo)
+		return statistics.PseudoTable(tblInfo, false)
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo)
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+	}
+
+	allowPseudoTblTriggerLoading := false
+	// In OptObjectiveDeterminate mode, we need to ignore the real-time stats.
+	// To achieve this, we copy the statsTbl and reset the real-time stats fields (set ModifyCount to 0 and set
+	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
+	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
+		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
+			// Here is a case that we need specially care about:
+			// The original stats table from the stats cache is not a pseudo table, but the analyze row count is 0 (probably
+			// because of no col/idx stats are loaded), which will makes it a pseudo table according to the rule 2 below.
+			// Normally, a pseudo table won't trigger stats loading since we assume it means "no stats available", but
+			// in such case, we need it able to trigger stats loading.
+			// That's why we use the special allowPseudoTblTriggerLoading flag here.
+			if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
+				allowPseudoTblTriggerLoading = true
+			}
+			// Copy it so we can modify the ModifyCount and the RealtimeCount safely.
+			statsTbl = statsTbl.ShallowCopy()
+			statsTbl.RealtimeCount = analyzeCount
+			statsTbl.ModifyCount = 0
+		}
 	}
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
-		return statistics.PseudoTable(tblInfo)
+		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading)
 	}
 
 	// 3. statistics is uninitialized or outdated.
@@ -4745,6 +4772,44 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	return statsTbl
+}
+
+// getLatestVersionFromStatsTable gets statistics information for a table specified by "tableID", and get the max
+// LastUpdateVersion among all Columns and Indices in it.
+// Its overall logic is quite similar to getStatsTable(). During plan cache matching, only the latest version is needed.
+// In such case, compared to getStatsTable(), this function can save some copies, memory allocations and unnecessary
+// checks. Also, this function won't trigger metrics changes.
+func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	// 1. tidb-server started and statistics handle has not been initialized. Pseudo stats table.
+	if statsHandle == nil {
+		return 0
+	}
+
+	var statsTbl *statistics.Table
+	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+	}
+
+	// 2. Table row count from statistics is zero. Pseudo stats table.
+	realtimeRowCount := statsTbl.RealtimeCount
+	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+		realtimeRowCount = max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+	}
+	if realtimeRowCount == 0 {
+		return 0
+	}
+
+	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
+	for _, col := range statsTbl.Columns {
+		version = max(version, col.LastUpdateVersion)
+	}
+	for _, idx := range statsTbl.Indices {
+		version = max(version, idx.LastUpdateVersion)
+	}
+	return version
 }
 
 func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {

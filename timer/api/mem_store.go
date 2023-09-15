@@ -17,12 +17,13 @@ package api
 import (
 	"context"
 	"encoding/hex"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"golang.org/x/exp/slices"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 type memStoreWatcher struct {
@@ -75,6 +76,7 @@ func (s *memoryStoreCore) Create(_ context.Context, record *TimerRecord) (string
 	record = record.Clone()
 	uid := uuid.New()
 	record.ID = hex.EncodeToString(uid[:])
+	record.Location = getMemStoreTimeZoneLoc(record.TimeZone)
 	record.Version = 1
 	record.CreateTime = time.Now()
 
@@ -130,7 +132,7 @@ func (s *memoryStoreCore) Update(_ context.Context, timerID string, update *Time
 		return ErrTimerNotExist
 	}
 
-	newRecord, err := update.Apply(record)
+	newRecord, err := update.apply(record)
 	if err != nil {
 		return err
 	}
@@ -288,4 +290,16 @@ func (n *memTimerWatchEventNotifier) Close() {
 	}
 	n.mu.Unlock()
 	n.wg.Wait()
+}
+
+func getMemStoreTimeZoneLoc(tz string) *time.Location {
+	if tz == "" {
+		return timeutil.SystemLocation()
+	}
+
+	if loc, err := timeutil.ParseTimeZone(tz); err == nil {
+		return loc
+	}
+
+	return timeutil.SystemLocation()
 }

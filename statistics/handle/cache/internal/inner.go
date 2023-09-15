@@ -24,7 +24,7 @@ import (
 //  2. remove remove the Version method.
 type StatsCacheInner interface {
 	// Get gets the cache.
-	Get(tid int64, moveFront bool) (*statistics.Table, bool)
+	Get(tid int64) (*statistics.Table, bool)
 	// Put puts a cache.
 	Put(tid int64, tbl *statistics.Table) bool
 	// Del deletes a cache.
@@ -39,10 +39,6 @@ type StatsCacheInner interface {
 	Copy() StatsCacheInner
 	// SetCapacity sets the capacity of the cache
 	SetCapacity(int64)
-
-	// Front returns the front element's owner tableID, only used for test
-	// TODO: this method is mainly for test, remove it in the future.
-	Front() int64
 	// Close stops the cache
 	Close()
 }

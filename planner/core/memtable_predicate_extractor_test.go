@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"testing"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/slices"
 )
 
 func getLogicalMemTable(t *testing.T, dom *domain.Domain, se session.Session, parser *parser.Parser, sql string) *plannercore.LogicalMemTable {
@@ -1700,6 +1700,11 @@ func TestPredicateQuery(t *testing.T) {
 	tk.MustQuery("show full tables like '%lmn'").Check(testkit.Rows("abclmn BASE TABLE"))
 	tk.MustGetErrCode("show tables like T", errno.ErrBadField)
 	tk.MustGetErrCode("show tables like `T`", errno.ErrBadField)
+
+	// For issue46618
+	tk.MustExec("create table _bar (id int);")
+	tk.MustExec("create table bar (id int);")
+	require.Len(t, tk.MustQuery(`show tables like '\_%'`).Rows(), 1)
 }
 
 func TestTikvRegionStatusExtractor(t *testing.T) {

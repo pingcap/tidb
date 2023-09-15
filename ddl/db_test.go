@@ -953,7 +953,7 @@ func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 }
 
-func TestCreateTableWithIntegerLengthWaring(t *testing.T) {
+func TestCreateTableWithIntegerLengthWarning(t *testing.T) {
 	// Inject the strict-integer-display-width variable in parser directly.
 	parsertypes.TiDBStrictIntegerDisplayWidth = true
 	defer func() { parsertypes.TiDBStrictIntegerDisplayWidth = false }()
@@ -963,47 +963,47 @@ func TestCreateTableWithIntegerLengthWaring(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 
 	tk.MustExec("create table t(a tinyint(1))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a smallint(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a mediumint(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a bigint(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a integer(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int1(1))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustExec("create table t(a int1(1))") // Note that int1(1) is tinyint(1) which is boolean-ish
+	tk.MustQuery("show warnings").Check(testkit.Rows())
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int2(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int3(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int4(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int8(2))")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:1681]Integer display width is deprecated and will be removed in a future release."))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1681 Integer display width is deprecated and will be removed in a future release."))
 
 	tk.MustExec("drop table if exists t")
 }
@@ -1260,7 +1260,7 @@ func TestLogAndShowSlowLog(t *testing.T) {
 	_, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, dbTestLease)
 
 	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "aaa", Duration: time.Second, Internal: true})
-	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second})
+	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "bbb", Duration: 3 * time.Second, SessAlias: "alias1"})
 	dom.LogSlowQuery(&domain.SlowQueryInfo{SQL: "ccc", Duration: 2 * time.Second})
 	// Collecting slow queries is asynchronous, wait a while to ensure it's done.
 	time.Sleep(5 * time.Millisecond)
@@ -1268,9 +1268,11 @@ func TestLogAndShowSlowLog(t *testing.T) {
 	result := dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2})
 	require.Len(t, result, 2)
 	require.Equal(t, "bbb", result[0].SQL)
+	require.Equal(t, "alias1", result[0].SessAlias)
 	require.Equal(t, 3*time.Second, result[0].Duration)
 	require.Equal(t, "ccc", result[1].SQL)
 	require.Equal(t, 2*time.Second, result[1].Duration)
+	require.Empty(t, result[1].SessAlias)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowTop, Count: 2, Kind: ast.ShowSlowKindInternal})
 	require.Len(t, result, 1)
@@ -1282,18 +1284,23 @@ func TestLogAndShowSlowLog(t *testing.T) {
 	require.Len(t, result, 3)
 	require.Equal(t, "bbb", result[0].SQL)
 	require.Equal(t, 3*time.Second, result[0].Duration)
+	require.Equal(t, "alias1", result[0].SessAlias)
 	require.Equal(t, "ccc", result[1].SQL)
 	require.Equal(t, 2*time.Second, result[1].Duration)
+	require.Empty(t, result[1].SessAlias)
 	require.Equal(t, "aaa", result[2].SQL)
 	require.Equal(t, time.Second, result[2].Duration)
 	require.True(t, result[2].Internal)
+	require.Empty(t, result[2].SessAlias)
 
 	result = dom.ShowSlowQuery(&ast.ShowSlow{Tp: ast.ShowSlowRecent, Count: 2})
 	require.Len(t, result, 2)
 	require.Equal(t, "ccc", result[0].SQL)
 	require.Equal(t, 2*time.Second, result[0].Duration)
+	require.Empty(t, result[0].SessAlias)
 	require.Equal(t, "bbb", result[1].SQL)
 	require.Equal(t, 3*time.Second, result[1].Duration)
+	require.Equal(t, "alias1", result[1].SessAlias)
 }
 
 func TestReportingMinStartTimestamp(t *testing.T) {

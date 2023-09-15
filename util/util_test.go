@@ -47,12 +47,13 @@ func TestLogFormat(t *testing.T) {
 		RefCountOfStmtCtx: &refCount,
 		MemTracker:        mem,
 		RedactSQL:         false,
+		SessionAlias:      "alias123",
 	}
 	costTime := time.Second * 233
 	logSQLTruncateLen := 1024 * 8
 	logFields := GenLogFields(costTime, info, true)
 
-	assert.Len(t, logFields, 7)
+	assert.Len(t, logFields, 8)
 	assert.Equal(t, "cost_time", logFields[0].Key)
 	assert.Equal(t, "233s", logFields[0].String)
 	assert.Equal(t, "conn", logFields[1].Key)
@@ -75,6 +76,7 @@ func TestLogFormat(t *testing.T) {
 	assert.Equal(t, len(logFields[6].String), logSQLTruncateLen+10)
 	logFields = GenLogFields(costTime, info, false)
 	assert.Equal(t, len(logFields[6].String), len(mockTooLongQuery))
+	assert.Equal(t, logFields[7].String, "alias123")
 }
 
 func TestReadLine(t *testing.T) {
@@ -93,4 +95,22 @@ line3`))
 	line, err = ReadLine(reader, 1024)
 	require.Equal(t, io.EOF, err)
 	require.Len(t, line, 0)
+}
+
+func TestIsInCorrectIdentifierName(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		correct bool
+	}{
+		{"Empty identifier", "", true},
+		{"Ending space", "test ", true},
+		{"Correct identifier", "test", false},
+		{"Other correct Identifier", "aaa --\n\txyz", false},
+	}
+
+	for _, tc := range tests {
+		got := IsInCorrectIdentifierName(tc.input)
+		require.Equalf(t, tc.correct, got, "IsInCorrectIdentifierName(%v) != %v", tc.name, tc.correct)
+	}
 }

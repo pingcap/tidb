@@ -102,6 +102,8 @@ const (
 	ActionCreateResourceGroup           ActionType = 68
 	ActionAlterResourceGroup            ActionType = 69
 	ActionDropResourceGroup             ActionType = 70
+	ActionAlterTablePartitioning        ActionType = 71
+	ActionRemovePartitioning            ActionType = 72
 )
 
 var actionMap = map[ActionType]string{
@@ -170,6 +172,8 @@ var actionMap = map[ActionType]string{
 	ActionCreateResourceGroup:           "create resource group",
 	ActionAlterResourceGroup:            "alter resource group",
 	ActionDropResourceGroup:             "drop resource group",
+	ActionAlterTablePartitioning:        "alter table partition by",
+	ActionRemovePartitioning:            "alter table remove partitioning",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
@@ -348,6 +352,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		Charset:         parentJob.Charset,
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
+		TraceInfo:       parentJob.TraceInfo,
 	}
 }
 
@@ -437,6 +442,9 @@ type Job struct {
 	// AdminOperator indicates where the Admin command comes, by the TiDB
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
+
+	// TraceInfo indicates the information for SQL tracing
+	TraceInfo *TraceInfo `json:"trace_info"`
 }
 
 // FinishTableJob is called when a job is finished.
@@ -797,7 +805,8 @@ func (job *Job) NotStarted() bool {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition:
+	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
+		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
 		if len(job.CtxVars) > 0 {

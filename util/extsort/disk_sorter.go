@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -210,10 +210,8 @@ func (sw *sstWriter) Close() (retErr error) {
 		meta := &fileMetadata{
 			fileNum: sw.fileNum,
 		}
-		smallest := writerMeta.Smallest(pebble.DefaultComparer.Compare)
-		largest := writerMeta.Largest(pebble.DefaultComparer.Compare)
-		meta.startKey = slices.Clone(smallest.UserKey)
-		meta.lastKey = slices.Clone(largest.UserKey)
+		meta.startKey = slices.Clone(writerMeta.SmallestPoint.UserKey)
+		meta.lastKey = slices.Clone(writerMeta.LargestPoint.UserKey)
 		// Make endKey is exclusive. To avoid unnecessary overlap,
 		// we append 0 to make endKey is the smallest key which is
 		// greater than the last key.
@@ -339,12 +337,12 @@ type sstIter struct {
 }
 
 func (si *sstIter) Seek(key []byte) bool {
-	si.key, si.value = si.iter.SeekGE(key)
+	si.key, si.value = si.iter.SeekGE(key, false)
 	return si.key != nil
 }
 
 func (si *sstIter) First() bool {
-	si.key, si.value = si.iter.SeekGE(nil)
+	si.key, si.value = si.iter.SeekGE(nil, false)
 	return si.key != nil
 }
 
@@ -432,8 +430,8 @@ type openIterFunc func(file *fileMetadata) (Iterator, error)
 // newMergingIter returns an iterator that merges the given files.
 // orderedFiles must be ordered by start key, otherwise it panics.
 func newMergingIter(orderedFiles []*fileMetadata, openIter openIterFunc) *mergingIter {
-	if !slices.IsSortedFunc(orderedFiles, func(a, b *fileMetadata) bool {
-		return bytes.Compare(a.startKey, b.startKey) < 0
+	if !slices.IsSortedFunc(orderedFiles, func(a, b *fileMetadata) int {
+		return bytes.Compare(a.startKey, b.startKey)
 	}) {
 		panic("newMergingIter: orderedFiles are not ordered by start key")
 	}
@@ -605,8 +603,8 @@ func (m *mergingIter) Last() bool {
 
 	// Sort files by last key in reverse order.
 	files := slices.Clone(m.orderedFiles)
-	slices.SortFunc(files, func(a, b *fileMetadata) bool {
-		return bytes.Compare(a.lastKey, b.lastKey) > 0
+	slices.SortFunc(files, func(a, b *fileMetadata) int {
+		return bytes.Compare(b.lastKey, a.lastKey)
 	})
 
 	// Since we don't need to implement Prev() method,
@@ -835,8 +833,8 @@ func (d *DiskSorter) init() error {
 		files = append(files, file)
 	}
 	if _, err := d.fs.Stat(d.fs.PathJoin(d.dirname, diskSorterSortedFile)); err == nil {
-		slices.SortFunc(files, func(a, b *fileMetadata) bool {
-			return bytes.Compare(a.startKey, b.startKey) < 0
+		slices.SortFunc(files, func(a, b *fileMetadata) int {
+			return bytes.Compare(a.startKey, b.startKey)
 		})
 		d.orderedFiles = files
 		d.state.Store(diskSorterStateSorted)
@@ -939,8 +937,8 @@ func (d *DiskSorter) doSort(ctx context.Context) error {
 	}
 	d.orderedFiles = d.pendingFiles.files
 	d.pendingFiles.files = nil
-	slices.SortFunc(d.orderedFiles, func(a, b *fileMetadata) bool {
-		return bytes.Compare(a.startKey, b.startKey) < 0
+	slices.SortFunc(d.orderedFiles, func(a, b *fileMetadata) int {
+		return bytes.Compare(a.startKey, b.startKey)
 	})
 	files := pickCompactionFiles(d.orderedFiles, d.opts.CompactionThreshold, d.opts.Logger)
 	for len(files) > 0 {
@@ -1013,8 +1011,8 @@ func (d *DiskSorter) compactFiles(ctx context.Context, files []*fileMetadata) er
 			newOrderedFiles = append(newOrderedFiles, file)
 		}
 	}
-	slices.SortFunc(newOrderedFiles, func(a, b *fileMetadata) bool {
-		return bytes.Compare(a.startKey, b.startKey) < 0
+	slices.SortFunc(newOrderedFiles, func(a, b *fileMetadata) int {
+		return bytes.Compare(a.startKey, b.startKey)
 	})
 	d.orderedFiles = newOrderedFiles
 	return nil
@@ -1043,8 +1041,8 @@ func pickCompactionFiles(
 			depth: -1,
 		})
 	}
-	slices.SortFunc(intervals, func(a, b interval) bool {
-		return bytes.Compare(a.key, b.key) < 0
+	slices.SortFunc(intervals, func(a, b interval) int {
+		return bytes.Compare(a.key, b.key)
 	})
 
 	// Compute the maximum overlap depth of each interval.
@@ -1095,8 +1093,8 @@ func pickCompactionFiles(
 
 func splitCompactionFiles(files []*fileMetadata, maxCompactionDepth int) [][]*fileMetadata {
 	// Split files into non-overlapping groups.
-	slices.SortFunc(files, func(a, b *fileMetadata) bool {
-		return bytes.Compare(a.startKey, b.startKey) < 0
+	slices.SortFunc(files, func(a, b *fileMetadata) int {
+		return bytes.Compare(a.startKey, b.startKey)
 	})
 	var groups [][]*fileMetadata
 	curGroup := []*fileMetadata{files[0]}
@@ -1155,8 +1153,8 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 	// If there is no kv stats, return a single compaction for all files.
 	if len(buckets) == 0 {
 		overlapFiles := slices.Clone(files)
-		slices.SortFunc(overlapFiles, func(a, b *fileMetadata) bool {
-			return bytes.Compare(a.startKey, b.startKey) < 0
+		slices.SortFunc(overlapFiles, func(a, b *fileMetadata) int {
+			return bytes.Compare(a.startKey, b.startKey)
 		})
 		return []*compaction{{
 			startKey:     startKey,
@@ -1165,8 +1163,8 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 		}}
 	}
 
-	slices.SortFunc(buckets, func(a, b kvStatsBucket) bool {
-		return bytes.Compare(a.UpperBound, b.UpperBound) < 0
+	slices.SortFunc(buckets, func(a, b kvStatsBucket) int {
+		return bytes.Compare(a.UpperBound, b.UpperBound)
 	})
 	// Merge buckets with the same upper bound.
 	n := 0
@@ -1224,8 +1222,8 @@ func buildCompactions(files []*fileMetadata, maxCompactionSize int) []*compactio
 				c.overlapFiles = append(c.overlapFiles, file)
 			}
 		}
-		slices.SortFunc(c.overlapFiles, func(a, b *fileMetadata) bool {
-			return bytes.Compare(a.startKey, b.startKey) < 0
+		slices.SortFunc(c.overlapFiles, func(a, b *fileMetadata) int {
+			return bytes.Compare(a.startKey, b.startKey)
 		})
 	}
 	return compactions
@@ -1377,8 +1375,8 @@ func (w *diskSorterWriter) flush() error {
 		return err
 	}
 
-	slices.SortFunc(w.kvs, func(a, b keyValue) bool {
-		return bytes.Compare(a.key, b.key) < 0
+	slices.SortFunc(w.kvs, func(a, b keyValue) int {
+		return bytes.Compare(a.key, b.key)
 	})
 	for _, kv := range w.kvs {
 		if err := sw.Set(kv.key, kv.value); err != nil {

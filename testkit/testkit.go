@@ -35,11 +35,13 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
+	"google.golang.org/grpc"
 )
 
 var testKitIDGenerator atomic.Uint64
@@ -176,7 +178,7 @@ func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ..
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
-	tk.require.True(tk.HasPlan(sql, "IndexLookUp", args...))
+	tk.MustHavePlan(sql, "IndexLookUp", args...)
 	return tk.MustQuery(sql, args...)
 }
 
@@ -241,15 +243,26 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
-// HasPlan checks if the result execution plan contains specific plan.
-func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
+func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) (bool, *Result) {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
-			return true
+			return true, rs
 		}
 	}
-	return false
+	return false, rs
+}
+
+// MustHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustHavePlan(sql string, plan string, args ...interface{}) {
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
+}
+
+// MustNotHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...interface{}) {
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }
 
 // HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
@@ -568,4 +581,17 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+// MockPumpClient is a mock pump client.
+type MockPumpClient struct{}
+
+// WriteBinlog is a mock method.
+func (m MockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+// PullBinlogs is a mock method.
+func (m MockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return nil, nil
 }

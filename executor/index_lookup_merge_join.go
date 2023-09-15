@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"runtime/trace"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -38,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // IndexLookUpMergeJoin realizes IndexLookUpJoin by merge join
@@ -358,8 +358,8 @@ func (omw *outerMergeWorker) buildTask(ctx context.Context) (*lookUpMergeJoinTas
 		requiredRows = omw.maxBatchSize
 	}
 	for requiredRows > 0 {
-		execChk := tryNewCacheChunk(omw.executor)
-		err := Next(ctx, omw.executor, execChk)
+		execChk := exec.TryNewCacheChunk(omw.executor)
+		err := exec.Next(ctx, omw.executor, execChk)
 		if err != nil {
 			return task, err
 		}
@@ -450,23 +450,29 @@ func (imw *innerMergeWorker) handleTask(ctx context.Context, task *lookUpMergeJo
 	// Because the necessary condition of merge join is both outer and inner keep order of join keys.
 	// In this case, we need sort the outer side.
 	if imw.outerMergeCtx.needOuterSort {
-		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) bool {
+		slices.SortFunc(task.outerOrderIdx, func(idxI, idxJ chunk.RowPtr) int {
 			rowI, rowJ := task.outerResult.GetRow(idxI), task.outerResult.GetRow(idxJ)
-			var cmp int64
+			var c int64
 			var err error
 			for _, keyOff := range imw.keyOff2KeyOffOrderByIdx {
 				joinKey := imw.outerMergeCtx.joinKeys[keyOff]
-				cmp, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
+				c, _, err = imw.outerMergeCtx.compareFuncs[keyOff](imw.ctx, joinKey, joinKey, rowI, rowJ)
 				terror.Log(err)
-				if cmp != 0 {
+				if c != 0 {
 					break
 				}
 			}
-			if cmp != 0 || imw.nextColCompareFilters == nil {
-				return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
+			if c != 0 || imw.nextColCompareFilters == nil {
+				if imw.desc {
+					return int(-c)
+				}
+				return int(c)
 			}
-			cmp = int64(imw.nextColCompareFilters.CompareRow(rowI, rowJ))
-			return (cmp < 0 && !imw.desc) || (cmp > 0 && imw.desc)
+			c = int64(imw.nextColCompareFilters.CompareRow(rowI, rowJ))
+			if imw.desc {
+				return int(-c)
+			}
+			return int(c)
 		})
 	}
 	dLookUpKeys, err := imw.constructDatumLookupKeys(task)
@@ -707,8 +713,8 @@ func (imw *innerMergeWorker) dedupDatumLookUpKeys(lookUpContents []*indexJoinLoo
 
 // fetchNextInnerResult collects a chunk of inner results from inner child executor.
 func (imw *innerMergeWorker) fetchNextInnerResult(ctx context.Context, task *lookUpMergeJoinTask) (beginRow chunk.Row, err error) {
-	task.innerResult = imw.ctx.GetSessionVars().GetNewChunkWithCapacity(retTypes(imw.innerExec), imw.ctx.GetSessionVars().MaxChunkSize, imw.ctx.GetSessionVars().MaxChunkSize, imw.innerExec.Base().AllocPool)
-	err = Next(ctx, imw.innerExec, task.innerResult)
+	task.innerResult = imw.ctx.GetSessionVars().GetNewChunkWithCapacity(exec.RetTypes(imw.innerExec), imw.ctx.GetSessionVars().MaxChunkSize, imw.ctx.GetSessionVars().MaxChunkSize, imw.innerExec.Base().AllocPool)
+	err = exec.Next(ctx, imw.innerExec, task.innerResult)
 	task.innerIter = chunk.NewIterator4Chunk(task.innerResult)
 	beginRow = task.innerIter.Begin()
 	return
