@@ -276,13 +276,12 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]*ImportSpec, er
 
 func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*WriteIngestSpec, error) {
 	ctx := planCtx.Ctx
-	backend, err := storage.ParseBackend(p.Plan.CloudStorageURI, nil)
-	if err != nil {
-		return nil, err
+	controller, err2 := buildController(p)
+	if err2 != nil {
+		return nil, err2
 	}
-	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
-	if err != nil {
-		return nil, err
+	if err2 = controller.InitDataStore(ctx); err2 != nil {
+		return nil, err2
 	}
 	// kvMetas contains data kv meta and all index kv metas.
 	// each kvMeta will be split into multiple range group individually,
@@ -293,7 +292,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*Write
 	}
 	specs := make([]*WriteIngestSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
-		splitter, err1 := getRangeSplitter(ctx, extStore, kvMeta)
+		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
 		if err1 != nil {
 			return nil, err1
 		}
