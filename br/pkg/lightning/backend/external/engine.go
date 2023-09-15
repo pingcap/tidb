@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/hex"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/cockroachdb/pebble"
@@ -43,7 +44,8 @@ type Engine struct {
 	splitKeys  [][]byte
 	bufPool    *membuf.Pool
 
-	iter *MergeKVIter
+	mu   sync.Mutex
+	iter map[int]*MergeKVIter
 
 	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
@@ -91,6 +93,7 @@ func NewExternalEngine(
 		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
+		iter:               map[int]*MergeKVIter{},
 	}
 }
 
@@ -99,7 +102,7 @@ func NewExternalEngine(
 // are allocated from Engine.bufPool and must be released by
 // MemoryIngestData.Finish(). For external.Engine, LoadIngestData must be called
 // with strictly increasing start / end key.
-func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.IngestData, error) {
+func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte, iterOffset int) (common.IngestData, error) {
 	if bytes.Equal(start, end) {
 		return nil, errors.Errorf("start key and end key must not be the same: %s",
 			hex.EncodeToString(start))
@@ -110,24 +113,32 @@ func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.
 	values := make([][]byte, 0, 1024)
 	memBuf := e.bufPool.NewBuffer()
 
-	if e.iter == nil {
-		iter, err := e.createMergeIter(ctx, start)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		e.iter = iter
-	} else {
+	var iter *MergeKVIter
+
+	e.mu.Lock()
+	it, ok := e.iter[iterOffset]
+	if ok {
+		iter = it
 		// there should be a key that just exceeds the end key in last LoadIngestData
 		// invocation.
-		k, v := e.iter.Key(), e.iter.Value()
+		k, v := it.Key(), it.Value()
 		keys = append(keys, memBuf.AddBytes(k))
 		values = append(values, memBuf.AddBytes(v))
+	} else {
+		it, err := e.createMergeIter(ctx, start)
+		if err != nil {
+			e.mu.Unlock()
+			return nil, errors.Trace(err)
+		}
+		e.iter[iterOffset] = it
+		iter = it
 	}
+	e.mu.Unlock()
 
 	cnt := 0
-	for e.iter.Next() {
+	for iter.Next() {
 		cnt++
-		k, v := e.iter.Key(), e.iter.Value()
+		k, v := iter.Key(), iter.Value()
 		if bytes.Compare(k, start) < 0 {
 			continue
 		}
@@ -137,8 +148,8 @@ func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.
 		keys = append(keys, memBuf.AddBytes(k))
 		values = append(values, memBuf.AddBytes(v))
 	}
-	if e.iter.Error() != nil {
-		return nil, errors.Trace(e.iter.Error())
+	if iter.Error() != nil {
+		return nil, errors.Trace(iter.Error())
 	}
 
 	logutil.Logger(ctx).Info("load data from external storage",
@@ -228,10 +239,22 @@ func (e *Engine) SplitRanges(
 
 // Close releases the resources of the engine.
 func (e *Engine) Close() error {
-	if e.iter == nil {
+	if len(e.iter) == 0 {
 		return nil
 	}
-	return errors.Trace(e.iter.Close())
+
+	var firstErr error
+
+	for _, it := range e.iter {
+		if err := it.Close(); err != nil {
+			if firstErr != nil {
+				firstErr = errors.Trace(err)
+			}
+			continue
+		}
+	}
+
+	return firstErr
 }
 
 // MemoryIngestData is the in-memory implementation of IngestData.

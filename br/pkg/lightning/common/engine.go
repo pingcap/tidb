@@ -32,7 +32,7 @@ type Engine interface {
 	// ID is the identifier of an engine.
 	ID() string
 	// LoadIngestData returns an IngestData that contains the data in [start, end).
-	LoadIngestData(ctx context.Context, start, end []byte) (IngestData, error)
+	LoadIngestData(ctx context.Context, start, end []byte, iterOffset int) (IngestData, error)
 	// KVStatistics returns the total kv size and total kv count.
 	KVStatistics() (totalKVSize int64, totalKVCount int64)
 	// ImportedStatistics returns the imported kv size and imported kv count.

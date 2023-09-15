@@ -1177,51 +1177,77 @@ func (local *Backend) generateAndSendJob(
 
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
+	iterCnt := 4
+	iterGroupRange := make([][]common.Range, iterCnt)
+	for i := 0; i < iterCnt; i++ {
+		startOffset := i * len(jobRanges) / iterCnt
+		endOffset := (i + 1) * len(jobRanges) / iterCnt
+		if i == iterCnt-1 {
+			endOffset = len(jobRanges)
+		}
+		iterGroupRange[i] = jobRanges[startOffset:endOffset]
+	}
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(local.WorkerConcurrency)
-	for _, jobRange := range jobRanges {
-		r := jobRange
-		data, err := engine.LoadIngestData(ctx, r.Start, r.End)
-		if err != nil {
-			cancel()
-			err2 := eg.Wait()
-			if err2 != nil && !common.IsContextCanceledError(err2) {
-				logger.Warn("meet error when canceling", log.ShortError(err2))
-			}
-			return errors.Trace(err)
-		}
-		eg.Go(func() error {
-			if egCtx.Err() != nil {
-				return nil
-			}
 
-			failpoint.Inject("beforeGenerateJob", nil)
-			jobs, err := local.generateJobForRange(egCtx, data, r, regionSplitSize, regionSplitKeys)
-			if err != nil {
-				if common.IsContextCanceledError(err) {
-					return nil
+	var wg sync.WaitGroup
+	wg.Add(iterCnt)
+	var iterEg errgroup.Group
+	for i := 0; i < iterCnt; i++ {
+		i := i
+		iterEg.Go(func() error {
+			for _, jobRange := range iterGroupRange[i] {
+				r := jobRange
+				data, err := engine.LoadIngestData(ctx, r.Start, r.End, i)
+				if err != nil {
+					cancel()
+					err2 := eg.Wait()
+					if err2 != nil && !common.IsContextCanceledError(err2) {
+						logger.Warn("meet error when canceling", log.ShortError(err2))
+					}
+					return errors.Trace(err)
 				}
-				return err
-			}
-			for _, job := range jobs {
-				jobWg.Add(1)
-				select {
-				case <-egCtx.Done():
-					// this job is not put into jobToWorkerCh
-					jobWg.Done()
-					// if the context is canceled, it means worker has error, the first error can be
-					// found by worker's error group LATER. if this function returns an error it will
-					// seize the "first error".
+				eg.Go(func() error {
+					if egCtx.Err() != nil {
+						return nil
+					}
+
+					failpoint.Inject("beforeGenerateJob", nil)
+					jobs, err := local.generateJobForRange(egCtx, data, r, regionSplitSize, regionSplitKeys)
+					if err != nil {
+						if common.IsContextCanceledError(err) {
+							return nil
+						}
+						return err
+					}
+					for _, job := range jobs {
+						jobWg.Add(1)
+						select {
+						case <-egCtx.Done():
+							// this job is not put into jobToWorkerCh
+							jobWg.Done()
+							// if the context is canceled, it means worker has error, the first error can be
+							// found by worker's error group LATER. if this function returns an error it will
+							// seize the "first error".
+							return nil
+						case jobToWorkerCh <- job:
+						}
+					}
 					return nil
-				case jobToWorkerCh <- job:
-				}
+				})
 			}
 			return nil
 		})
 	}
-	return eg.Wait()
+	err := eg.Wait()
+	if err != nil {
+		return err
+	}
+
+	return iterEg.Wait()
 }
 
 // fakeRegionJobs is used in test, the injected job can be found by (startKey, endKey).

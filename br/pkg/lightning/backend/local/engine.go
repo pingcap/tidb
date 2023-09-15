@@ -1038,9 +1038,7 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVCount.Add(totalCount)
 }
 
-// LoadIngestData return (local) Engine itself because Engine has implemented
-// IngestData interface.
-func (e *Engine) LoadIngestData(_ context.Context, _, _ []byte) (common.IngestData, error) {
+func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte, iterOffset int) (common.IngestData, error) {
 	return e, nil
 }
 
