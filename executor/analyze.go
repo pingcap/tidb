@@ -561,6 +561,14 @@ func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if err != nil {
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
 	}
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("StartAnalyzeJob",
+				zap.Time("start_time", job.StartTime),
+				zap.Uint64("job id", *job.ID),
+			)
+		}
+	})
 }
 
 // UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
@@ -579,6 +587,14 @@ func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCo
 	if err != nil {
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
 	}
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("UpdateAnalyzeJob",
+				zap.Int64("increase processed_rows", delta),
+				zap.Uint64("job id", *job.ID),
+			)
+		}
+	})
 }
 
 // FinishAnalyzeMergeJob finishes analyze merge job
@@ -614,6 +630,14 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 		}
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
 	}
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("FinishAnalyzeMergeJob",
+				zap.Time("end_time", job.EndTime),
+				zap.Uint64("job id", *job.ID),
+			)
+		}
+	})
 }
 
 // FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
@@ -650,6 +674,16 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		}
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
 	}
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("FinishAnalyzeJob",
+				zap.Int64("increase processed_rows", job.Progress.GetDeltaCount()),
+				zap.Time("end_time", job.EndTime),
+				zap.Uint64("job id", *job.ID),
+				zap.Error(analyzeErr),
+			)
+		}
+	})
 }
 
 func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {
