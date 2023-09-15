@@ -194,6 +194,39 @@ func TestSkipLockPartition(t *testing.T) {
 	))
 }
 
+func TestUnlockOnePartitionOfLockedTableWouldFail(t *testing.T) {
+	_, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
+
+	handle := domain.GetDomain(tk.Session()).StatsHandle()
+	// Get partition stats.
+	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
+	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	for _, col := range partition0Stats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
+	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	for _, col := range partition1Stats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	tk.MustExec("lock stats t")
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, 3, num)
+
+	// Unlock the partition and check the warning.
+	tk.MustExec("unlock stats t partition p0")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip unlocking partitions of locked table: test.t",
+	))
+
+	// No partition is unlocked.
+	rows = tk.MustQuery(selectTableLockSQL).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, 3, num)
+}
+
 func TestUnlockTheWholeTableWouldUnlockLockedPartitionsAndGenerateWarning(t *testing.T) {
 	_, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
 
