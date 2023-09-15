@@ -243,24 +243,26 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
-func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) bool {
+func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) (bool, *Result) {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
-			return true
+			return true, rs
 		}
 	}
-	return false
+	return false, rs
 }
 
 // MustHavePlan checks if the result execution plan contains specific plan.
 func (tk *TestKit) MustHavePlan(sql string, plan string, args ...interface{}) {
-	tk.require.True(tk.hasPlan(sql, plan, args...), fmt.Sprintf("%s doesn't have plan %s", sql, plan))
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }
 
 // MustNotHavePlan checks if the result execution plan contains specific plan.
 func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...interface{}) {
-	tk.require.False(tk.hasPlan(sql, plan, args...), fmt.Sprintf("%s shouldn't have plan %s", sql, plan))
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }
 
 // HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
