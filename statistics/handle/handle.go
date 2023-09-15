@@ -18,7 +18,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/failpoint"
 	"math"
 	"slices"
 	"strconv"
@@ -28,6 +27,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
