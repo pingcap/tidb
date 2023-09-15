@@ -84,6 +84,8 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case proto.StepTwo:
+		return newMergeSortExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+	case proto.StepThree:
 		if len(bgm.CloudStorageURI) > 0 {
 			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
