@@ -1191,7 +1191,7 @@ func TestExchangePartitionStates(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish, issue #46815.
+		// Sleep 50ms to wait load InfoSchema finish, issue #46815.
 		time.Sleep(50 * time.Millisecond)
 	}
 	waitFor("t", "write only", 4)
@@ -1300,6 +1300,8 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
+		// Sleep 50ms to wait load InfoSchema finish, issue #46815.
+		time.Sleep(50 * time.Millisecond)
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
