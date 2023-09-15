@@ -739,9 +739,13 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot, source)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	return SaveTableStatsToStorage(sctx, results, analyzeSnapshot, source)
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
