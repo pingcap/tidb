@@ -8,7 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 50,
+    shard_count = 41,
     deps = [
         "//config",
         "//domain",
@@ -31,7 +31,6 @@ go_test(
         "//util/codec",
         "//util/collate",
         "//util/sem",
-        "//util/sqlexec",
         "//util/timeutil",
         "//util/versioninfo",
         "@com_github_pingcap_errors//:errors",

@@ -1,0 +1,40 @@
+# TestInMeetsPrepareAndExecute
+prepare pr1 from 'select ? in (1,?,?)';
+set @a=1, @b=2, @c=3;
+execute pr1 using @a,@b,@c;
+prepare pr2 from 'select 3 in (1,?,?)';
+set @a=2, @b=3;
+execute pr2 using @a,@b;
+prepare pr3 from 'select ? in (1,2,3)';
+set @a=4;
+execute pr3 using @a;
+prepare pr4 from 'select ? in (?,?,?)';
+set @a=1, @b=2, @c=3, @d=4;
+execute pr4 using @a,@b,@c,@d;
+
+# TestOrderByFuncPlanCache
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'SELECT * FROM t order by rand()';
+execute stmt;
+prepare stmt from 'SELECT * FROM t order by now()';
+execute stmt;
+
+# TestSelectLimitPlanCache
+drop table if exists t;
+create table t(a int);
+insert into t values(1), (2), (3);
+set @@session.sql_select_limit = 1;
+prepare stmt from 'SELECT * FROM t';
+execute stmt;
+set @@session.sql_select_limit = default;
+execute stmt;
+set @@session.sql_select_limit = 2;
+execute stmt;
+set @@session.sql_select_limit = 1;
+execute stmt;
+set @@session.sql_select_limit = default;
+execute stmt;
+set @@session.sql_select_limit = 2;
+execute stmt;
+set sql_select_limit=default;
