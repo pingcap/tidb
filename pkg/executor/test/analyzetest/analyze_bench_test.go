@@ -22,7 +22,7 @@ import (
 )
 
 const (
-	partitionCount    = 3000
+	partitionCount    = 1000
 	partitioninterval = 100
 )
 
