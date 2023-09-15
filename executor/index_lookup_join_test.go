@@ -192,7 +192,7 @@ func TestInapplicableIndexJoinHint(t *testing.T) {
 
 	query := `select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
     (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;`
-	tk.HasPlan(query, "IndexJoin")
+	tk.MustHavePlan(query, "IndexJoin")
 }
 
 func TestIndexJoinOverflow(t *testing.T) {

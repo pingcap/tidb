@@ -143,7 +143,7 @@ func TestClusteredUnionScanIndexLookup(t *testing.T) {
 	tk.MustExec("begin")
 	tk.MustExec("update t set a = a + 1, pk = '222' where a = 1;")
 	sql := "select pk, c from t where a = 2;"
-	tk.HasPlan(sql, "IndexLookUp")
+	tk.MustHavePlan(sql, "IndexLookUp")
 	tk.MustQuery(sql).Check(testkit.Rows("222 3"))
 
 	tk.MustExec("commit")
@@ -258,8 +258,8 @@ func TestClusteredPrefixingPrimaryKey(t *testing.T) {
 
 	tk.MustGetErrCode("insert into t(name, b) values('aaa', 3);", errno.ErrDupEntry)
 	sql := "select * from t use index(primary) where name = 'aaaaa';"
-	tk.HasPlan(sql, "TableReader")
-	tk.HasPlan(sql, "TableRangeScan")
+	tk.MustHavePlan(sql, "TableReader")
+	tk.MustHavePlan(sql, "TableRangeScan")
 	tk.MustQuery(sql).Check(testkit.Rows("aaaaa 1 <nil>"))
 	tk.MustExec("admin check table t;")
 

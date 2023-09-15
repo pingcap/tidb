@@ -178,7 +178,7 @@ func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ..
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
-	tk.require.True(tk.HasPlan(sql, "IndexLookUp", args...))
+	tk.MustHavePlan(sql, "IndexLookUp", args...)
 	return tk.MustQuery(sql, args...)
 }
 
@@ -243,15 +243,26 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
-// HasPlan checks if the result execution plan contains specific plan.
-func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
+func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) (bool, *Result) {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
-			return true
+			return true, rs
 		}
 	}
-	return false
+	return false, rs
+}
+
+// MustHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustHavePlan(sql string, plan string, args ...interface{}) {
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
+}
+
+// MustNotHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...interface{}) {
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }
 
 // HasTiFlashPlan checks if the result execution plan contains TiFlash plan.

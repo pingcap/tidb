@@ -30,19 +30,15 @@ func TestSPMForIntersectionIndexMerge(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, d int, e int, index ia(a), index ib(b), index ic(c), index id(d), index ie(e))")
-	require.False(t, tk.HasPlan("select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)", "IndexMerge"))
-	require.True(t,
-		tk.HasPlan("select /*+ use_index_merge(t, ia, ib, ic, id, ie) */ * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)",
-			"IndexMerge",
-		),
-	)
+	tk.MustNotHavePlan("select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)", "IndexMerge")
+	tk.MustHavePlan("select /*+ use_index_merge(t, ia, ib, ic, id, ie) */ * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)", "IndexMerge")
 	tk.MustExec(`
 create global binding for
 	select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)
 using
 	select /*+ use_index_merge(t, ia, ib, ic, id, ie) */ * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)
 `)
-	require.True(t, tk.HasPlan("select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)", "IndexMerge"))
+	tk.MustHavePlan("select * from t where a = 10 and b = 20 and c > 30 and d is null and e in (0, 100)", "IndexMerge")
 }
 
 func TestPlanCacheForIntersectionIndexMerge(t *testing.T) {

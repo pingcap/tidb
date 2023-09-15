@@ -147,7 +147,7 @@ func TestIssue25489(t *testing.T) {
 		PARTITION PMX VALUES LESS THAN (MAXVALUE)
 	  ) ;`)
 	query := "select col1, col2 from UK_RP16939 where col1 in (116, 48, -30);"
-	require.False(t, tk.HasPlan(query, "Batch_Point_Get"))
+	tk.MustNotHavePlan(query, "Batch_Point_Get")
 	tk.MustQuery(query).Check(testkit.Rows())
 	tk.MustExec("drop table if exists UK_RP16939;")
 
@@ -165,7 +165,7 @@ func TestIssue25489(t *testing.T) {
 		PARTITION P1 VALUES IN (-22, 63),
 		PARTITION P2 VALUES IN (75, 90)
 	  ) ;`)
-	require.False(t, tk.HasPlan(query, "Batch_Point_Get"))
+	tk.MustNotHavePlan(query, "Batch_Point_Get")
 	tk.MustQuery(query).Check(testkit.Rows())
 	tk.MustExec("drop table if exists UK_RP16939;")
 }

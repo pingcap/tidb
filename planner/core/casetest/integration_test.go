@@ -1230,16 +1230,16 @@ func TestFixControl45132(t *testing.T) {
 	}
 	tk.MustExec(`analyze table t`)
 	// the cost model prefers to use TableScan instead of IndexLookup to avoid double requests.
-	require.True(t, tk.HasPlan(`select * from t where a=2`, `TableFullScan`))
+	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:99"`)
 	tk.MustIndexLookup(`select * from t where a=2`) // index lookup
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:500"`)
-	require.True(t, tk.HasPlan(`select * from t where a=2`, `TableFullScan`))
+	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
-	require.True(t, tk.HasPlan(`select * from t where a=2`, `TableFullScan`))
+	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 }
 
 func TestFixControl44262(t *testing.T) {

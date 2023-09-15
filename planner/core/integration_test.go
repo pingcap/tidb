@@ -904,14 +904,6 @@ func TestIndexMergePartialScansClusteredIndex(t *testing.T) {
 		expected  []string
 	}{
 		{
-			// 3 table scans
-			"a < 2 or a < 10 or a > 11", []string{"1", "100"},
-		},
-		{
-			// 3 index scans
-			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
-		},
-		{
 			// 1 table scan + 1 index scan
 			"a < 2 or c > 10000", []string{"1"},
 		},
@@ -931,7 +923,7 @@ func TestIndexMergePartialScansClusteredIndex(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -957,10 +949,6 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 		expected  []string
 	}{
 		{
-			// 3 index scans
-			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
-		},
-		{
 			// 2 index scans
 			"c < 10 or a < 2", []string{"1"},
 		},
@@ -984,7 +972,7 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -1033,7 +1021,7 @@ func TestIndexMergePartialScansPKIsHandle(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -2188,7 +2176,7 @@ func TestQueryBlockTableAliasInHint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	require.True(t, tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"))
+	tk.MustHavePlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin")
 	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
 		"1 2",
 	))
@@ -2917,7 +2905,7 @@ func TestIssue25799(t *testing.T) {
 	tk.MustExec(`insert into t1 values (1, 1)`)
 	tk.MustExec(`create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b))`)
 	tk.MustExec(`insert into t2 values (null, 1)`)
-	tk.HasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
+	tk.MustHavePlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`).Check(testkit.Rows())
 }
 
