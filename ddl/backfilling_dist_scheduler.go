@@ -150,7 +150,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
-	case proto.StepOne, proto.StepTwo:
+	case proto.StepOne, proto.StepTwo, proto.StepThree:
 		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
