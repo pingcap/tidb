@@ -33,7 +33,9 @@ Tests <!-- At least one of them must be included. -->
 - [ ] Unit test
 - [ ] Integration test
 - [ ] Manual test (add detailed scripts or steps below)
-- [ ] No code
+- [ ] No need to test
+  > - [ ] I checked and no code files have been changed.
+  > <!-- Or your custom  "No need to test" reasons -->  
 
 Side effects
 
