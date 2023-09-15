@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -999,4 +1001,256 @@ func TestRequestSource(t *testing.T) {
 	tk.MustExecWithContext(selectCtx, "select count(*) from t;")
 	tk.MustQueryWithContext(selectCtx, "select b from t where a = 1;")
 	tk.MustQueryWithContext(selectCtx, "select b from t where a in (1, 2, 3);")
+}
+
+func TestEmptyInitSQLFile(t *testing.T) {
+	// A non-existent sql file would stop the bootstrap of the tidb cluster
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	dom, err := session.BootstrapSession(store)
+	require.Nil(t, dom)
+	require.Error(t, err)
+}
+
+func TestInitSystemVariable(t *testing.T) {
+	// We create an initialize-sql-file and then bootstrap the server with it.
+	// The observed behavior should be that tidb_enable_noop_variables is now
+	// disabled, and the feature works as expected.
+	initializeSQLFile, err := os.CreateTemp("", "init.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := initializeSQLFile.Name()
+		err = initializeSQLFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// Implicitly test multi-line init files
+	_, err = initializeSQLFile.WriteString(
+		"CREATE DATABASE initsqlfiletest;\n" +
+			"SET GLOBAL tidb_enable_noop_variables = OFF;\n")
+	require.NoError(t, err)
+
+	// Create a mock store
+	// Set the config parameter for initialize sql file
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the InitializeSQLFile config option
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	ctx := context.Background()
+	r := session.MustExecToRecodeSet(t, se, `SHOW VARIABLES LIKE 'query_cache_type'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows()) // not shown in noopvariables mode
+	require.NoError(t, r.Close())
+
+	r = session.MustExecToRecodeSet(t, se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, []byte("OFF"), row.GetBytes(1))
+	require.NoError(t, r.Close())
+}
+
+func TestInitUsers(t *testing.T) {
+	// Two sql files are set to 'initialize-sql-file' one after another,
+	// and only the first one is executed.
+	var err error
+	sqlFiles := make([]*os.File, 2)
+	for i, name := range []string{"1.sql", "2.sql"} {
+		sqlFiles[i], err = os.CreateTemp("", name)
+		require.NoError(t, err)
+	}
+	defer func() {
+		for _, sqlFile := range sqlFiles {
+			path := sqlFile.Name()
+			err = sqlFile.Close()
+			require.NoError(t, err)
+			err = os.Remove(path)
+			require.NoError(t, err)
+		}
+	}()
+	_, err = sqlFiles[0].WriteString(`
+CREATE USER cloud_admin;
+GRANT BACKUP_ADMIN, RESTORE_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT DASHBOARD_CLIENT on *.* TO 'cloud_admin'@'%';
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT CONNECTION_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_CONNECTION_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_USER_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_REPLICA_WRITER_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT CREATE USER ON *.* TO 'cloud_admin'@'%';
+GRANT RELOAD ON *.* TO 'cloud_admin'@'%';
+GRANT PROCESS ON *.* TO 'cloud_admin'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON mysql.* TO 'cloud_admin'@'%';
+GRANT SELECT ON information_schema.* TO 'cloud_admin'@'%';
+GRANT SELECT ON performance_schema.* TO 'cloud_admin'@'%';
+GRANT SHOW DATABASES on *.* TO 'cloud_admin'@'%';
+GRANT REFERENCES ON *.* TO 'cloud_admin'@'%';
+GRANT SELECT ON *.* TO 'cloud_admin'@'%';
+GRANT INDEX ON *.* TO 'cloud_admin'@'%';
+GRANT INSERT ON *.* TO 'cloud_admin'@'%';
+GRANT UPDATE ON *.* TO 'cloud_admin'@'%';
+GRANT DELETE ON *.* TO 'cloud_admin'@'%';
+GRANT CREATE ON *.* TO 'cloud_admin'@'%';
+GRANT DROP ON *.* TO 'cloud_admin'@'%';
+GRANT ALTER ON *.* TO 'cloud_admin'@'%';
+GRANT CREATE VIEW ON *.* TO 'cloud_admin'@'%';
+GRANT SHUTDOWN, CONFIG ON *.* TO 'cloud_admin'@'%';
+REVOKE SHUTDOWN, CONFIG ON *.* FROM root;
+
+DROP USER root;
+`)
+	require.NoError(t, err)
+	_, err = sqlFiles[1].WriteString("drop user cloud_admin;")
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the first sql file
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	ctx := context.Background()
+	// 'cloud_admin' has been created successfully
+	r := session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'cloud_admin'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "cloud_admin", row.GetString(0))
+	require.NoError(t, r.Close())
+	// 'root' has been deleted successfully
+	r = session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'root'`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
+	require.NoError(t, r.Close())
+	dom.Close()
+
+	session.DisableRunBootstrapSQLFileInTest()
+
+	// Bootstrap with the second sql file, which would not been executed.
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	se = session.CreateSessionAndSetID(t, store)
+	r = session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'cloud_admin'`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row = req.GetRow(0)
+	require.Equal(t, "cloud_admin", row.GetString(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
+func TestErrorHappenWhileInit(t *testing.T) {
+	// 1. parser error in sql file (1.sql) makes the bootstrap panic
+	// 2. other errors in sql file (2.sql) will be ignored
+	var err error
+	sqlFiles := make([]*os.File, 2)
+	for i, name := range []string{"1.sql", "2.sql"} {
+		sqlFiles[i], err = os.CreateTemp("", name)
+		require.NoError(t, err)
+	}
+	defer func() {
+		for _, sqlFile := range sqlFiles {
+			path := sqlFile.Name()
+			err = sqlFile.Close()
+			require.NoError(t, err)
+			err = os.Remove(path)
+			require.NoError(t, err)
+		}
+	}()
+	_, err = sqlFiles[0].WriteString("create table test.t (c in);")
+	require.NoError(t, err)
+	_, err = sqlFiles[1].WriteString(`
+create table test.t (c int);
+insert into test.t values ("abc"); -- invalid statement
+`)
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
+	defer func() {
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the first sql file
+	dom, err := session.BootstrapSession(store)
+	require.Nil(t, dom)
+	require.Error(t, err)
+	require.NoError(t, store.Close())
+
+	session.DisableRunBootstrapSQLFileInTest()
+
+	// Bootstrap with the second sql file, which would not been executed.
+	store, err = mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	ctx := context.Background()
+	_ = session.MustExecToRecodeSet(t, se, `use test;`)
+	require.NoError(t, err)
+	// Table t has been created.
+	r := session.MustExecToRecodeSet(t, se, `show tables;`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "t", row.GetString(0))
+	require.NoError(t, r.Close())
+	// But data is failed to inserted since the error
+	r = session.MustExecToRecodeSet(t, se, `select * from test.t`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
+	require.NoError(t, r.Close())
+	dom.Close()
 }

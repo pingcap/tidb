@@ -429,12 +429,12 @@ func (stm *TaskManager) GetSubtaskInStatesCnt(taskID int64, states ...interface{
 
 // CollectSubTaskError collects the subtask error.
 func (stm *TaskManager) CollectSubTaskError(taskID int64) ([]error, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select error from mysql.tidb_background_subtask
-             where task_key = %? AND state = %?`, taskID, proto.TaskStateFailed)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		`select error from mysql.tidb_background_subtask
+             where task_key = %? AND state in (%?, %?)`, taskID, proto.TaskStateFailed, proto.TaskStateCanceled)
 	if err != nil {
 		return nil, err
 	}
-
 	subTaskErrors := make([]error, 0, len(rs))
 	for _, row := range rs {
 		if row.IsNull(0) {
@@ -613,7 +613,7 @@ func (stm *TaskManager) AddSubTasks(task *proto.Task, subtasks []*proto.Subtask)
 			_, err := ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
 					(step, task_key, exec_id, meta, state, type, checkpoint, summary)
 					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
-				task.Step, task.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
+				subtask.Step, task.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
 			if err != nil {
 				return err
 			}
@@ -677,7 +677,7 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 				_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
 					(step, task_key, exec_id, meta, state, type, checkpoint, summary)
 					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
-					gTask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
+					subtask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
 				if err != nil {
 					return err
 				}
