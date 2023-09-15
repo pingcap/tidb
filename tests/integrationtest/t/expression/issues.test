@@ -1286,8 +1286,6 @@ set session sql_mode = '';
 insert into t values(4, 'a');
 --enable_warnings
 insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2);
---disable_warnings
---enable_warnings
 insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2);
 --disable_warnings
 set @@sql_mode=default;
@@ -1479,14 +1477,8 @@ select coercibility(lag(b, 1, 'B') over w) from t window w as (order by b);
 # TestIssue11177
 --enable_warnings
 SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;
---disable_warnings
---enable_warnings
 SELECT 'aa' BETWEEN 'bb' AND 0;
---disable_warnings
---enable_warnings
 select 1 between 0 and b'110';
---disable_warnings
---enable_warnings
 select 'b' between 'a' and b'110';
 --disable_warnings
 

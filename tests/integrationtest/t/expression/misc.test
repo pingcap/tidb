@@ -166,8 +166,6 @@ drop table if exists t;
 create table t(a int);
 --enable_warnings
 select /*+ unknown_hint(c1)*/ 1;
---disable_warnings
---enable_warnings
 select 1 from /*+ test1() */ t;
 --disable_warnings
 

@@ -295,11 +295,7 @@ select json_objectagg(b, a) from t;
 # TestCastJSONOpaqueValueToNumeric
 --enable_warnings
 select cast(cast(b'010101' as json) as signed);
---disable_warnings
---enable_warnings
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed);
---disable_warnings
---enable_warnings
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);
 --disable_warnings
 

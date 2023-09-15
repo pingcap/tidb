@@ -1,17 +1,9 @@
 # TestCastStrToInt
 --enable_warnings
 select cast('' as signed);
---disable_warnings
---enable_warnings
 select cast('12345abcde' as signed);
---disable_warnings
---enable_warnings
 select cast('123e456' as signed);
---disable_warnings
---enable_warnings
 select cast('-12345abcde' as signed);
---disable_warnings
---enable_warnings
 select cast('-123e456' as signed);
 --disable_warnings
 
