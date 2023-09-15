@@ -106,6 +106,22 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
 		return generateNonPartitionPlan(h.d, tblInfo, job)
 	case proto.StepOne:
 		if useExtStore {
+			subTaskMetas, err2 := taskHandle.GetPreviousSubtaskMetas(gTask.ID, proto.StepInit)
+			if err2 != nil {
+				return nil, err2
+			}
+			multiStats := make([]external.MultipleFilesStat, 0, 100)
+			for _, bs := range subTaskMetas {
+				var subtask BackfillSubTaskMeta
+				err = json.Unmarshal(bs, &subtask)
+				if err != nil {
+					return nil, err
+				}
+				multiStats = append(multiStats, subtask.MultipleFilesStats...)
+			}
+			if external.GetMaxOverlappingTotal(multiStats) > 1000 {
+
+			}
 			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 		}
 		return generateIngestTaskPlan(ctx)
@@ -285,6 +301,72 @@ func generateMergeSortPlan(
 			logutil.Logger(ctx).Error("failed to close range splitter", zap.Error(err))
 		}
 	}()
+
+	metaArr := make([][]byte, 0, 16)
+	startKey := firstKey
+	var endKey kv.Key
+	for {
+		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
+		if err != nil {
+			return nil, err
+		}
+		if len(endKeyOfGroup) == 0 {
+			endKey = lastKey.Next()
+		} else {
+			endKey = kv.Key(endKeyOfGroup).Clone()
+		}
+		logutil.Logger(ctx).Info("split subtask range",
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)))
+		if startKey.Cmp(endKey) >= 0 {
+			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		m := &BackfillSubTaskMeta{
+			MinKey:         startKey,
+			MaxKey:         endKey,
+			DataFiles:      dataFiles,
+			StatFiles:      statFiles,
+			RangeSplitKeys: rangeSplitKeys,
+			TotalKVSize:    totalSize / uint64(len(instanceIDs)),
+		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
+		if len(endKeyOfGroup) == 0 {
+			return metaArr, nil
+		}
+		startKey = endKey
+	}
+}
+
+func generateMergePlan(
+	ctx context.Context,
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+	jobID int64,
+	cloudStorageURI string,
+) ([][]byte, error) {
+	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	start := 0
+	step := 1000
+	for start < len(dataFiles) {
+		end := start + step
+		if end > len(dataFiles) {
+			end = len(dataFiles)
+		}
+		external.Mer
+	}
 
 	metaArr := make([][]byte, 0, 16)
 	startKey := firstKey
