@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/failpoint"
 	"math"
 	"slices"
 	"strconv"
@@ -1700,6 +1701,17 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 	}
 	job.ID = new(uint64)
 	*job.ID = rows[0].GetUint64(0)
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("InsertAnalyzeJob",
+				zap.String("table_schema", job.DBName),
+				zap.String("table_name", job.TableName),
+				zap.String("partition_name", job.PartitionName),
+				zap.String("job_info", jobInfo),
+				zap.Uint64("job_id", *job.ID),
+			)
+		}
+	})
 	return nil
 }
 
