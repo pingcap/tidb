@@ -553,6 +553,9 @@ func GetTopNPoolMap(size int) *TopN {
 }
 
 func ReleaseTopNPoolMap(topN *TopN) {
+	if topN == nil {
+		return
+	}
 	size := cap(topN.TopN)
 	pool, ok := topNPoolMap[size]
 	if !ok {
