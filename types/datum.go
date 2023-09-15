@@ -103,7 +103,11 @@ func (d *Datum) Copy(dst *Datum) {
 
 // CopyTryNoAlloc deep copies a Datum into destination without allocation.
 func (d *Datum) CopyTryNoAlloc(dst *Datum) {
-	*dst = *d
+	dst.k = d.k
+	dst.decimal = d.decimal
+	dst.length = d.length
+	dst.i = d.i
+	dst.collation = d.collation
 	if d.b != nil {
 		if len(d.b) != cap(dst.b) {
 			dst.b = make([]byte, len(d.b))
