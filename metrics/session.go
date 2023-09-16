@@ -278,5 +278,9 @@ const (
 	LblFairLockingStmtEffective = "stmt-effective"
 	LblScope                    = "scope"
 
-	LblStatus = "status"
+	LblTaskStatus  = "status"
+	LblTaskType    = "task_id"
+	LblTaskID      = "task_type"
+	LblSubTaskID   = "subtask_id"
+	LblSchedulerID = "scheduler_id"
 )

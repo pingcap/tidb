@@ -145,12 +145,6 @@ func (dm *Manager) dispatchTaskLoop() {
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
-			cnt := dm.getRunningTaskCnt()
-			fmt.Println(cnt)
-			if dm.checkConcurrencyOverflow(cnt) {
-				break
-			}
-
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			tasks, err := dm.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateCancelling)
 			if err != nil {
@@ -162,11 +156,29 @@ func (dm *Manager) dispatchTaskLoop() {
 			if len(tasks) == 0 {
 				break
 			}
+			waitcnt := make(map[string]int)
+			for _, task := range tasks {
+				waitcnt[task.Type] = 0
+			}
+			for _, task := range tasks {
+				if !dm.isRunningTask(task.ID) {
+					waitcnt[task.Type]++
+					tidbmetrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, tidbmetrics.DpWaitingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(task.StartTime)).Microseconds()))
+				}
+			}
+
+			cnt := dm.getRunningTaskCnt()
+			if dm.checkConcurrencyOverflow(cnt) {
+				break
+			}
+
 			for _, task := range tasks {
 				// This global task is running, so no need to reprocess it.
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
+				startTime := time.Now()
+				tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpDispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
@@ -182,18 +194,27 @@ func (dm *Manager) dispatchTaskLoop() {
 					}
 					continue
 				}
+
 				// the task is not in runningTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
-					dm.startDispatcher(task)
+					dm.startDispatcher(task, startTime)
 					cnt++
+					waitcnt[task.Type]--
 					continue
 				}
 				if dm.checkConcurrencyOverflow(cnt) {
 					break
 				}
-				dm.startDispatcher(task)
+				dm.startDispatcher(task, startTime)
 				cnt++
+				waitcnt[task.Type]--
+			}
+			for _, task := range tasks {
+				if !dm.isRunningTask(task.ID) {
+					tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpWaitingStatus).Set(float64(waitcnt[task.Type]))
+					tidbmetrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, tidbmetrics.DpWaitingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(task.StartTime)).Microseconds()))
+				}
 			}
 		}
 	}
@@ -208,22 +229,19 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 	return false
 }
 
-func (dm *Manager) startDispatcher(task *proto.Task) {
+func (dm *Manager) startDispatcher(task *proto.Task, startTime time.Time) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
 		dispatcherFactory := GetDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		dm.setRunningTask(task, dispatcher)
-		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(tidbmetrics.DpRunningStatus).Inc()
-		cnt := dm.getRunningTaskCnt()
-		fmt.Println("cntcntcntcntcntcntcntcntcntcntcntcntcntcntcntcnt")
-		fmt.Println(cnt)
-
-		fmt.Println(tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(tidbmetrics.DpRunningStatus).Desc())
-		fmt.Println("cntcntcntcntcntcntcntcntcntcntcntcntcntcntcntcnt")
+		tidbmetrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, tidbmetrics.DpDispatchingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(startTime)).Microseconds()))
+		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpDispatchingStatus).Dec()
+		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpRunningStatus).Inc()
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
-		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(tidbmetrics.DpRunningStatus).Dec()
+		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpRunningStatus).Dec()
+		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpcompletedStatus).Inc()
 	})
 }
 
