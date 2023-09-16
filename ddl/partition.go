@@ -3487,7 +3487,6 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 				checkNt = true
 			} else {
 				buf.WriteString(" or ")
-
 			}
 			buf.WriteString(genConstraintCondition(pCons))
 		}
