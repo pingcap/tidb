@@ -3280,6 +3280,14 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
 }
 
+func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 2)
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+}
+
 func TestShowGrantsSQLMode(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -3287,24 +3295,15 @@ func TestShowGrantsSQLMode(t *testing.T) {
 	ctx, _ := tk.Session().(sessionctx.Context)
 	tk.MustExec(`CREATE USER 'show_sql_mode'@'localhost' identified by '123';`)
 	tk.MustExec(`GRANT Select ON test.* TO 'show_sql_mode'@'localhost';`)
-	pc := privilege.GetPrivilegeManager(tk.Session())
 
-	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
-	require.NoError(t, err)
-	require.Len(t, gs, 2)
-	expected := []string{
+	testShowGrantsSQLMode(t, tk, []string{
 		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
 		"GRANT SELECT ON `test`.* TO 'show_sql_mode'@'localhost'",
-	}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+	})
 
-	ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
-	gs, err = pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
-	require.NoError(t, err)
-	require.Len(t, gs, 2)
-	expected = []string{
+	ctx.GetSessionVars().SQLMode = mysql.SetSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
+	testShowGrantsSQLMode(t, tk, []string{
 		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
 		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
-	}
-	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+	})
 }
