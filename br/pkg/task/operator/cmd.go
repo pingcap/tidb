@@ -112,7 +112,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 
 func goPauseImporting(ctx *AdaptEnvForSnapshotBackupContext) error {
 	denyLightning := utils.NewDenyImporting("prepare_for_snapshot_backup", ctx.kvMgr)
-	if _, err := denyLightning.DenyAllStore(ctx, ctx.cfg.TTL); err != nil {
+	if _, err := denyLightning.DenyAllStores(ctx, ctx.cfg.TTL); err != nil {
 		return errors.Trace(err)
 	}
 	ctx.ReadyL("pause_lightning")

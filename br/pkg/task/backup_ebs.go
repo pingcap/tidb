@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -144,6 +145,16 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		if e != nil {
 			return errors.Trace(err)
 		}
+		denyLightning := utils.NewDenyImporting("backup_ebs_command", mgr.StoreManager)
+		_, err := denyLightning.DenyAllStores(ctx, utils.DefaultBRGCSafePointTTL)
+		if err != nil {
+			return errors.Annotate(err, "lightning from running")
+		}
+		go func() {
+			if err := denyLightning.Keeper(ctx, utils.DefaultBRGCSafePointTTL); err != nil {
+				log.Warn("cannot keep deny importing, the backup archive may not be useable if there were importing.", logutil.ShortError(err))
+			}
+		}()
 		defer func() {
 			if ctx.Err() != nil {
 				log.Warn("context canceled, doing clean work with background context")
@@ -154,6 +165,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 			}
 			if restoreE := restoreFunc(ctx); restoreE != nil {
 				log.Warn("failed to restore removed schedulers, you may need to restore them manually", zap.Error(restoreE))
+			}
+			res, err := denyLightning.AllowAllStores(ctx)
+			if err != nil {
+				log.Warn("failed to restore importing, you may need to wait until you are able to start importing", zap.Duration("wait_for", utils.DefaultBRGCSafePointTTL))
+			}
+			if err := denyLightning.ConsistentWithPrev(res); err != nil {
+				log.Warn("lightning hasn't been denied during restoring, the backup archive may not be usable.", logutil.ShortError(err))
 			}
 		}()
 	}

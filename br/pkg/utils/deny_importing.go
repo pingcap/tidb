@@ -6,6 +6,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -53,9 +54,9 @@ func NewDenyImporting(name string, env DenyImportingEnv) *DenyImporting {
 	}
 }
 
-// DenyAllStore tries to deny all current stores' lightning execution for the period of time.
+// DenyAllStores tries to deny all current stores' lightning execution for the period of time.
 // Returns a map mapping store ID to whether they are already denied to import tasks.
-func (d *DenyImporting) DenyAllStore(ctx context.Context, dur time.Duration) (map[uint64]bool, error) {
+func (d *DenyImporting) DenyAllStores(ctx context.Context, dur time.Duration) (map[uint64]bool, error) {
 	return d.forEachStores(ctx, func() *import_sstpb.DenyImportRPCRequest {
 		return &import_sstpb.DenyImportRPCRequest{
 			ShouldDenyImports: true,
@@ -110,6 +111,7 @@ func (d *DenyImporting) ConsistentWithPrev(result map[uint64]bool) error {
 }
 
 func (d *DenyImporting) Keeper(ctx context.Context, ttl time.Duration) error {
+	lastSuccess := time.Now()
 	t := time.NewTicker(ttl / DenyLightningUpdateFrequency)
 	defer t.Stop()
 	for {
@@ -117,13 +119,20 @@ func (d *DenyImporting) Keeper(ctx context.Context, ttl time.Duration) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-t.C:
-			res, err := d.DenyAllStore(ctx, ttl)
+			res, err := d.DenyAllStores(ctx, ttl)
 			if err != nil {
-				return err
+				if time.Since(lastSuccess) < ttl {
+					logutil.CL(ctx).Warn("Failed to send deny one of the stores.", logutil.ShortError(err))
+					continue
+				} else {
+					return err
+				}
 			}
 			if err := d.ConsistentWithPrev(res); err != nil {
 				return err
 			}
+
+			lastSuccess = time.Now()
 		}
 	}
 }
