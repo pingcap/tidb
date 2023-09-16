@@ -3291,7 +3291,7 @@ func TestShowGrantsSQLMode(t *testing.T) {
 
 	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
 	require.NoError(t, err)
-	require.Len(t, gs, 1)
+	require.Len(t, gs, 2)
 	expected := []string{
 		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
 		"GRANT SELECT ON `test`.* TO 'show_sql_mode'@'localhost'",
@@ -3301,7 +3301,7 @@ func TestShowGrantsSQLMode(t *testing.T) {
 	ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
 	gs, err = pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
 	require.NoError(t, err)
-	require.Len(t, gs, 1)
+	require.Len(t, gs, 2)
 	expected = []string{
 		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
 		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
