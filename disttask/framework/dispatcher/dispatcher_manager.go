@@ -16,6 +16,7 @@ package dispatcher
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -145,7 +146,7 @@ func (dm *Manager) dispatchTaskLoop() {
 			return
 		case <-ticker.C:
 			cnt := dm.getRunningTaskCnt()
-			tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(tidbmetrics.DpRunningStatus).Set(float64(cnt))
+			fmt.Println(cnt)
 			if dm.checkConcurrencyOverflow(cnt) {
 				break
 			}
@@ -213,8 +214,16 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 		dispatcherFactory := GetDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		dm.setRunningTask(task, dispatcher)
+		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(tidbmetrics.DpRunningStatus).Inc()
+		cnt := dm.getRunningTaskCnt()
+		fmt.Println("cntcntcntcntcntcntcntcntcntcntcntcntcntcntcntcnt")
+		fmt.Println(cnt)
+
+		fmt.Println(tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(tidbmetrics.DpRunningStatus).Desc())
+		fmt.Println("cntcntcntcntcntcntcntcntcntcntcntcntcntcntcntcnt")
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
+		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(tidbmetrics.DpRunningStatus).Dec()
 	})
 }
 
