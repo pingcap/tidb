@@ -132,7 +132,6 @@ aliases:
     - winoros
     - qw4990
   sig-approvers-statistics: # approvers for statistics module
-    - chrysan
     - fixdb
     - winoros
     - qw4990
