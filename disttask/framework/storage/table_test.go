@@ -80,6 +80,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, task4, 1)
 	require.Equal(t, task, task4[0])
+	require.GreaterOrEqual(t, task4[0].StateUpdateTime, task.StateUpdateTime)
 
 	prevState := task.State
 	task.State = proto.TaskStateRunning
@@ -90,11 +91,12 @@ func TestGlobalTaskTable(t *testing.T) {
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
-	require.Equal(t, task, task5[0])
+	require.Equal(t, task.State, task5[0].State)
 
 	task6, err := gm.GetGlobalTaskByKey("key1")
 	require.NoError(t, err)
-	require.Equal(t, task, task6)
+	require.Len(t, task5, 1)
+	require.Equal(t, task.State, task6.State)
 
 	// test cannot insert task with dup key
 	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
@@ -169,9 +171,6 @@ func TestSubTaskTable(t *testing.T) {
 	ok, err := sm.HasSubtasksInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.True(t, ok)
-
-	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
-	require.NoError(t, err)
 
 	ts := time.Now()
 	time.Sleep(time.Second)
@@ -323,11 +322,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	subTasks := []*proto.Subtask{
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance1",
 			Meta:        []byte("m1"),
 		},
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance2",
 			Meta:        []byte("m2"),
@@ -362,11 +363,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateReverting
 	subTasks = []*proto.Subtask{
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance3",
 			Meta:        []byte("m3"),
 		},
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance4",
 			Meta:        []byte("m4"),

@@ -26,20 +26,20 @@ import (
 	"go.uber.org/zap"
 )
 
-type ingestIndexStage struct {
+type localImportExecutor struct {
 	jobID int64
 	index *model.IndexInfo
 	ptbl  table.PhysicalTable
 	bc    ingest.BackendCtx
 }
 
-func newIngestIndexStage(
+func newImportFromLocalStepExecutor(
 	jobID int64,
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
 	bc ingest.BackendCtx,
-) *ingestIndexStage {
-	return &ingestIndexStage{
+) *localImportExecutor {
+	return &localImportExecutor{
 		jobID: jobID,
 		index: index,
 		ptbl:  ptbl,
@@ -47,8 +47,8 @@ func newIngestIndexStage(
 	}
 }
 
-func (i *ingestIndexStage) Init(ctx context.Context) error {
-	logutil.Logger(ctx).Info("ingest index stage init subtask exec env")
+func (i *localImportExecutor) Init(ctx context.Context) error {
+	logutil.Logger(ctx).Info("local import executor init subtask exec env")
 	_, _, err := i.bc.Flush(i.index.ID, ingest.FlushModeForceGlobal)
 	if err != nil {
 		if common.ErrFoundDuplicateKeys.Equal(err) {
@@ -61,24 +61,22 @@ func (i *ingestIndexStage) Init(ctx context.Context) error {
 	return err
 }
 
-func (*ingestIndexStage) RunSubtask(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("ingest index stage split subtask")
+func (*localImportExecutor) RunSubtask(ctx context.Context, _ *proto.Subtask) error {
+	logutil.Logger(ctx).Info("local import executor run subtask")
 	return nil
 }
 
-func (i *ingestIndexStage) Cleanup(ctx context.Context) error {
-	logutil.Logger(ctx).Info("ingest index stage cleanup subtask exec env")
-	ingest.LitBackCtxMgr.Unregister(i.jobID)
+func (*localImportExecutor) Cleanup(ctx context.Context) error {
+	logutil.Logger(ctx).Info("local import executor cleanup subtask exec env")
 	return nil
 }
 
-func (*ingestIndexStage) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("ingest index stage finish subtask")
+func (*localImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
+	logutil.Logger(ctx).Info("local import executor finish subtask")
 	return nil
 }
 
-func (i *ingestIndexStage) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("ingest index stage rollback backfill add index task")
-	ingest.LitBackCtxMgr.Unregister(i.jobID)
+func (*localImportExecutor) Rollback(ctx context.Context) error {
+	logutil.Logger(ctx).Info("local import executor rollback subtask")
 	return nil
 }

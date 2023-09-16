@@ -160,6 +160,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	idxInfo *model.IndexInfo,
 	startKey, endKey kv.Key,
 	totalRowCount *atomic.Int64,
+	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
 ) (*operator.AsyncPipeline, error) {
 	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
@@ -188,7 +189,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, index, extStore, srcChkPool, writerCnt, onClose)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, index, totalRowCount, nil)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, index, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -471,12 +472,9 @@ func NewWriteExternalStoreOperator(
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			builder := external.NewWriterBuilder().
-				SetOnCloseFunc(onClose)
-			if index.Meta().Unique {
-				builder = builder.EnableDuplicationDetection()
-			}
+				SetOnCloseFunc(onClose).
+				SetKeyDuplicationEncoding(index.Meta().Unique)
 			writerID := uuid.New().String()
-
 			prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 			writer := builder.Build(store, prefix, writerID)
 
