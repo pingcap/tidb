@@ -13,7 +13,6 @@ aliases:
     - bb7133
     - tiancaiamao
   sig-approvers-bindinfo: # approvers for bindinfo module
-    - chrysan
     - fixdb
     - winoros
     - qw4990
