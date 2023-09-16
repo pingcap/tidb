@@ -43,7 +43,6 @@ aliases:
     - lichunzhu
     - okJiang
   sig-approvers-planner: # approvers for planner module
-    - chrysan
     - fixdb
     - winoros
     - qw4990
