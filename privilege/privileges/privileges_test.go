@@ -3279,3 +3279,26 @@ func TestNilHandleInConnectionVerification(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
 }
+
+func TestShowGrantsSQLMode(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ctx, _ := tk.Session().(sessionctx.Context)
+	tk.MustExec(`CREATE USER 'show-sql-mode'@'localhost' identified by '123';`)
+	tk.MustExec(`GRANT Select ON test.* TO 'show-sql-mode'@'localhost';`)
+	pc := privilege.GetPrivilegeManager(tk.Session())
+
+	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 1)
+	expected := []string{"GRANT SELECT ON `test`.* TO 'show'@'localhost'"}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+
+	ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
+	gs, err = pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 1)
+	expected = []string{"GRANT SELECT ON \"test\".* TO 'show'@'localhost'"}
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+}
