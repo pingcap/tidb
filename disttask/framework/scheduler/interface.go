@@ -45,10 +45,12 @@ type Pool interface {
 }
 
 // Scheduler is the subtask scheduler for a task.
-// each task type should implement this interface.
+// Each task type should implement this interface.
 type Scheduler interface {
+	Init(context.Context) error
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
+	Close()
 }
 
 // Extension extends the scheduler.

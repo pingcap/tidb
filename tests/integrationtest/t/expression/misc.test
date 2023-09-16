@@ -1,0 +1,225 @@
+# TestLiterals
+SELECT LENGTH(b''), LENGTH(B''), b''+1, b''-1, B''+1;
+
+# TestTimestampLiteral
+select timestamp '2017-01-01 00:00:00';
+select timestamp '2017@01@01 00:00:00';
+select timestamp '2017@01@01 00~00~00';
+select timestamp '2017@01@0001 00~00~00.333';
+-- error 1292
+select timestamp '00:00:00';
+-- error 1292
+select timestamp '1992-01-03';
+-- error 1292
+select timestamp '20171231235959.999999';
+
+# TestTimeLiteral
+select time '117:01:12';
+select time '01:00:00.999999';
+select time '1 01:00:00';
+select time '110:00:00';
+select time'-1:1:1.123454656';
+select time '33:33';
+select time '1.1';
+select time '21';
+select time '20 20:20';
+-- error 1292
+select time '2017-01-01 00:00:00';
+-- error 1292
+select time '071231235959.999999';
+-- error 1292
+select time '20171231235959.999999';
+select ADDDATE('2008-01-34', -1);
+Show warnings;
+
+# TestTwoDecimalTruncate
+set sql_mode='';
+drop table if exists t;
+create table t1(a decimal(10,5), b decimal(10,1));
+insert into t1 values(123.12345, 123.12345);
+update t1 set b = a;
+select a, b from t1;
+select 2.00000000000000000000000000000001 * 1.000000000000000000000000000000000000000000002;
+set sql_mode=default;
+
+# TestDecimalMul
+drop table if exists t;
+create table t(a decimal(38, 17));
+insert into t select 0.5999991229316*0.918755041726043;
+select * from t;
+
+# TestDecimalDiv
+select cast(1 as decimal(60,30)) / cast(1 as decimal(60,30)) / cast(1 as decimal(60, 30));
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30));
+select cast(1 as decimal(60,30)) / cast(3 as decimal(60,30)) / cast(7 as decimal(60, 30)) / cast(13 as decimal(60, 30));
+
+# TestValuesFloat32
+drop table if exists t;
+create table t (i int key, j float);
+insert into t values (1, 0.01);
+select * from t;
+insert into t values (1, 0.02) on duplicate key update j = values (j);
+select * from t;
+
+# TestValuesEnum
+drop table if exists t;
+create table t (a bigint primary key, b enum('a','b','c'));
+insert into t values (1, "a");
+select * from t;
+insert into t values (1, "b") on duplicate key update b = values(b);
+select * from t;
+
+# TestRefineArgNullValues
+drop table if exists t;
+drop table if exists s;
+create table t(id int primary key, a int);
+create table s(a int);
+insert into s values(1),(2);
+select t.id = 1.234 from t right join s on t.a = s.a;
+
+# TestComplexShowVariables
+# This is an example SHOW VARIABLES from mysql-connector-java-5.1.34
+# It returns 19 rows in MySQL 5.7 (the language sysvar no longer exists in 5.6+)
+# and 16 rows in MySQL 8.0 (the aliases for tx_isolation is removed, along with query cache)
+# In the event that we hide noop sysvars in future, we must keep these variables.
+SHOW VARIABLES WHERE Variable_name ='language' OR Variable_name = 'net_write_timeout' OR Variable_name = 'interactive_timeout'
+OR Variable_name = 'wait_timeout' OR Variable_name = 'character_set_client' OR Variable_name = 'character_set_connection'
+OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR Variable_name = 'tx_isolation'
+OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
+OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
+OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
+OR Variable_name = 'license' OR Variable_name = 'init_connect';
+
+# TestFloat64Inf
+select '1e800' + 1e100;
+select '-1e800' - 1e100;
+
+# TestIdentity
+drop table if exists identity;
+create table identity (id int not null primary key auto_increment);
+SELECT @@identity;
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+INSERT INTO identity VALUES (NULL);
+SELECT @@identity, LAST_INSERT_ID();
+
+# TestLastInsertId
+drop table if exists lastinsertid;
+create table lastinsertid (id int not null primary key auto_increment);
+SELECT @@last_insert_id;
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+INSERT INTO lastinsertid VALUES (NULL);
+SELECT @@last_insert_id, LAST_INSERT_ID();
+
+# TestVirtualGeneratedColumnAndLimit
+drop table if exists t;
+create table t (a int, b int as (a + 1));
+insert into t(a) values (1);
+select /*+ LIMIT_TO_COP() */ b from t limit 1;
+select /*+ LIMIT_TO_COP() */ b from t order by b limit 1;
+
+# TestNegativeZeroForHashJoin
+drop table if exists t0, t1;
+CREATE TABLE t0(c0 float);
+CREATE TABLE t1(c0 float);
+INSERT INTO t1(c0) VALUES (0);
+INSERT INTO t0(c0) VALUES (0);
+SELECT t1.c0 FROM t1, t0 WHERE t0.c0=-t1.c0;
+
+# TestFuncCaseWithLeftJoin
+drop table if exists kankan1, kankan2;
+create table kankan1(id int, name text);
+insert into kankan1 values(1, 'a');
+insert into kankan1 values(2, 'a');
+create table kankan2(id int, h1 text);
+insert into kankan2 values(2, 'z');
+select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1' order by t1.id;
+
+# TestConvertToBit
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a varchar(2));
+insert t1 value ('10');
+insert t select a from t1;
+select a+0 from t;
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a binary(2));
+insert t1 value ('10');
+insert t select a from t1;
+select a+0 from t;
+drop table if exists t, t1;
+create table t (a bit(64));
+create table t1 (a datetime);
+insert t1 value ('09-01-01');
+insert t select a from t1;
+select a+0 from t;
+
+# TestUnknowHintIgnore
+drop table if exists t;
+create table t(a int);
+select /*+ unknown_hint(c1)*/ 1;
+show warnings;
+select 1 from /*+ test1() */ t;
+show warnings;
+
+# TestValuesInNonInsertStmt
+drop table if exists t;
+create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);
+insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");
+select values(a), values(b), values(c), values(d), values(e), values(f), values(g) from t;
+
+# TestJiraSetInnoDBDefaultRowFormat
+set global innodb_default_row_format = dynamic;
+set global innodb_default_row_format = 'dynamic';
+SHOW VARIABLES LIKE 'innodb_default_row_format';
+SHOW VARIABLES LIKE 'character_set_server';
+SHOW VARIABLES LIKE 'innodb_file_format';
+SHOW VARIABLES LIKE 'innodb_large_prefix';
+
+# TestIfNullParamMarker
+drop table if exists t;
+create table t (c1 varchar(100), c2 varchar(128));
+prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
+set @a='1',@b=repeat('x', 80);
+execute pr1 using @a,@b;
+
+# TestNullValueRange
+drop table if exists t;
+create table t(a int, b int, index(a));
+insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
+select * from t use index(a) where a is null order by b;
+select * from t use index(a) where a<=>null order by b;
+select * from t use index(a) where a<=>10 order by b;
+drop table if exists t1;
+create table t1(a int, b int, c int, unique key(a, b, c));
+insert into t1 values (1, null, 1), (1, null, 2), (1, null, 3), (1, null, 4);
+insert into t1 values (1, 1, 1), (1, 2, 2), (1, 3, 33), (1, 4, 44);
+select c from t1 where a=1 and b<=>null and c>2 order by c;
+select c from t1 where a=1 and b is null and c>2 order by c;
+select c from t1 where a=1 and b is not null and c>2 order by c;
+
+# TestPartitionPruningRelaxOP
+# Discovered while looking at issue 19941 (not completely related)
+# relaxOP relax the op > to >= and < to <=
+# Sometime we need to relax the condition, for example:
+# col < const => f(col) <= const
+# datetime < 2020-02-11 16:18:42 => to_days(datetime) <= to_days(2020-02-11)
+# We can't say:
+# datetime < 2020-02-11 16:18:42 => to_days(datetime) < to_days(2020-02-11)
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1 (d date NOT NULL) PARTITION BY RANGE (YEAR(d))
+ (PARTITION p2016 VALUES LESS THAN (2017), PARTITION p2017 VALUES LESS THAN (2018), PARTITION p2018 VALUES LESS THAN (2019),
+ PARTITION p2019 VALUES LESS THAN (2020), PARTITION pmax VALUES LESS THAN MAXVALUE);
+INSERT INTO t1 VALUES ('2016-01-01'), ('2016-06-01'), ('2016-09-01'), ('2017-01-01'),
+('2017-06-01'), ('2017-09-01'), ('2018-01-01'), ('2018-06-01'), ('2018-09-01'), ('2018-10-01'),
+('2018-11-01'), ('2018-12-01'), ('2018-12-31'), ('2019-01-01'), ('2019-06-01'), ('2019-09-01'),
+('2020-01-01'), ('2020-06-01'), ('2020-09-01');
+SELECT COUNT(*) FROM t1 WHERE d < '2018-01-01';
+SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01';
