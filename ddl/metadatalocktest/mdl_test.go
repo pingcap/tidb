@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/failpoint"
 	mysql "github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/server"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
@@ -1148,6 +1147,7 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec("create database " + dbName)
 	tk.MustExec("use " + dbName)
 	tk.MustExec(`set @@global.tidb_enable_metadata_lock = ON`)
+	defer tk.MustExec(`set @@global.tidb_enable_metadata_lock = DEFAULT`)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use " + dbName)
 	tk3 := testkit.NewTestKit(t, store)
@@ -1159,7 +1159,6 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`insert into t values (1, "1")`)
 	tk.MustExec(`insert into tp values (2, "2")`)
 	tk.MustExec(`analyze table t,tp`)
-	tk.MustQuery(`select * from information_schema.global_variables`).Check(testkit.Rows())
 	var wg sync.WaitGroup
 	wg.Add(1)
 	dumpChan := make(chan struct{})
@@ -1171,7 +1170,6 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec("BEGIN")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1 1"))
 	tk.MustQuery(`select * from tp`).Check(testkit.Rows("2 2"))
-	//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
 	alterChan := make(chan error)
 	go func() {
 		// WITH VALIDATION is the default
@@ -1193,6 +1191,8 @@ func TestExchangePartitionStates(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
+		// Sleep 50ms to wait load InfoSchema finish, issue #46815.
+		time.Sleep(50 * time.Millisecond)
 	}
 	waitFor("t", "write only", 4)
 	tk3.MustExec(`BEGIN`)
@@ -1205,7 +1205,6 @@ func TestExchangePartitionStates(t *testing.T) {
 	// MDL will block the alter to not continue until all clients
 	// are in StateWriteOnly, which tk is blocking until it commits
 	tk.MustExec(`COMMIT`)
-	//require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID"))
 	waitFor("t", "rollback done", 11)
 	// MDL will block the alter from finish, tk is in 'rollbacked' schema version
 	// but the alter is still waiting for tk3 to commit, before continuing
@@ -1260,10 +1259,8 @@ func TestExchangePartitionStates(t *testing.T) {
 }
 
 func TestExchangePartitionMultiTable(t *testing.T) {
-	logutil.BgLogger().Info("mdl related variable status before bootstrap", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
-	logutil.BgLogger().Info("mdl related variable status after bootstrap", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
 
 	dbName := "ExchangeMultiTable"
 	tk1.MustExec(`create schema ` + dbName)
@@ -1275,7 +1272,6 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	tk1.MustExec(`insert into t1 values (0)`)
 	tk1.MustExec(`insert into t2 values (3)`)
 	tk1.MustExec(`insert into tp values (6)`)
-	logutil.BgLogger().Info("mdl related variable status after inserting rows", zap.Bool("EnableMDL", variable.EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", variable.EnableConcurrentDDL.Load()))
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use ` + dbName)
@@ -1304,6 +1300,8 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
+		// Sleep 50ms to wait load InfoSchema finish, issue #46815.
+		time.Sleep(50 * time.Millisecond)
 	}
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -1319,7 +1317,6 @@ func TestExchangePartitionMultiTable(t *testing.T) {
 	tk3.MustExec(`insert into t1 values (1)`)
 	tk3.MustExec(`insert into t2 values (2)`)
 	tk3.MustExec(`insert into tp values (3)`)
-	//require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/exchangePartitionAutoID", `pause`))
 	go func() {
 		alterChan1 <- tk1.ExecToErr(`alter table tp exchange partition p0 with table t1`)
 	}()

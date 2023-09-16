@@ -13,7 +13,6 @@ go_test(
         "//ddl",
         "//errno",
         "//server",
-        "//sessionctx/variable",
         "//testkit",
         "//testkit/testsetup",
         "//util/logutil",
