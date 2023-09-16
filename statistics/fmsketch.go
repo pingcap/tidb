@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"hash"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -25,20 +26,24 @@ import (
 	"github.com/twmb/murmur3"
 )
 
+var murmur3Pool = sync.Pool{
+	New: func() any {
+		return murmur3.New64()
+	},
+}
+
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
-	hashFunc hash.Hash64
-	hashset  map[uint64]bool
-	mask     uint64
-	maxSize  int
+	hashset map[uint64]bool
+	mask    uint64
+	maxSize int
 }
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
 	return &FMSketch{
-		hashset:  make(map[uint64]bool),
-		maxSize:  maxSize,
-		hashFunc: murmur3.New64(),
+		hashset: make(map[uint64]bool),
+		maxSize: maxSize,
 	}
 }
 
@@ -52,10 +57,9 @@ func (s *FMSketch) Copy() *FMSketch {
 		hashset[key] = value
 	}
 	return &FMSketch{
-		hashset:  hashset,
-		mask:     s.mask,
-		maxSize:  s.maxSize,
-		hashFunc: murmur3.New64(),
+		hashset: hashset,
+		mask:    s.mask,
+		maxSize: s.maxSize,
 	}
 }
 
@@ -88,31 +92,36 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.hashFunc.Reset()
-	_, err = s.hashFunc.Write(bytes)
+	hashFunc := murmur3Pool.Get().(hash.Hash64)
+	hashFunc.Reset()
+	defer murmur3Pool.Put(hashFunc)
+	_, err = hashFunc.Write(bytes)
 	if err != nil {
+		murmur3Pool.Put(hashFunc)
 		return errors.Trace(err)
 	}
-	s.insertHashValue(s.hashFunc.Sum64())
+	s.insertHashValue(hashFunc.Sum64())
 	return nil
 }
 
 // InsertRowValue inserts multi-column values to the sketch.
 func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
 	b := make([]byte, 0, 8)
-	s.hashFunc.Reset()
+	hashFunc := murmur3Pool.Get().(hash.Hash64)
+	hashFunc.Reset()
+	defer murmur3Pool.Put(hashFunc)
 	for _, v := range values {
 		b = b[:0]
 		b, err := codec.EncodeValue(sc, b, v)
 		if err != nil {
 			return err
 		}
-		_, err = s.hashFunc.Write(b)
+		_, err = hashFunc.Write(b)
 		if err != nil {
 			return err
 		}
 	}
-	s.insertHashValue(s.hashFunc.Sum64())
+	s.insertHashValue(hashFunc.Sum64())
 	return nil
 }
 
