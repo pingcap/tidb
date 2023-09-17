@@ -2497,6 +2497,211 @@ func TestCastJSONTimeDuration(t *testing.T) {
 	))
 }
 
+func TestCompareBuiltin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// compare as JSON
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("CREATE TABLE t (pk int  NOT NULL PRIMARY KEY AUTO_INCREMENT, i INT, j JSON);")
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (0, NULL)`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (1, '{"a": 2}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (2, '[1,2]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (3, '{"a":"b", "c":"d","ab":"abc", "bc": ["x", "y"]}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (4, '["here", ["I", "am"], "!!!"]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (5, '"scalar string"')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (6, 'true')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (7, 'false')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (8, 'null')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (9, '-1')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (10, CAST(CAST(1 AS UNSIGNED) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (11, '32767')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (12, '32768')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (13, '-32768')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (14, '-32769')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (15, '2147483647')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (16, '2147483648')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (17, '-2147483648')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (18, '-2147483649')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (19, '18446744073709551615')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (20, '18446744073709551616')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (21, '3.14')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (22, '{}')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (23, '[]')`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (24, CAST(CAST('2015-01-15 23:24:25' AS DATETIME) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (25, CAST(CAST('23:24:25' AS TIME) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (26, CAST(CAST('2015-01-15' AS DATE) AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (27, CAST(TIMESTAMP('2015-01-15 23:24:25') AS JSON))`)
+	tk.MustExec(`INSERT INTO t(i, j) VALUES (28, CAST('[]' AS CHAR CHARACTER SET 'ascii'))`)
+
+	result := tk.MustQuery(`SELECT i,
+		(j = '"scalar string"') AS c1,
+		(j = 'scalar string') AS c2,
+		(j = CAST('"scalar string"' AS JSON)) AS c3,
+		(j = CAST(CAST(j AS CHAR CHARACTER SET 'utf8mb4') AS JSON)) AS c4,
+		(j = CAST(NULL AS JSON)) AS c5,
+		(j = NULL) AS c6,
+		(j <=> NULL) AS c7,
+		(j <=> CAST(NULL AS JSON)) AS c8,
+		(j IN (-1, 2, 32768, 3.14)) AS c9,
+		(j IN (CAST('[1, 2]' AS JSON), CAST('{}' AS JSON), CAST(3.14 AS JSON))) AS c10,
+		(j = (SELECT j FROM t WHERE j = CAST('null' AS JSON))) AS c11,
+		(j = (SELECT j FROM t WHERE j IS NULL)) AS c12,
+		(j = (SELECT j FROM t WHERE 1<>1)) AS c13,
+		(j = DATE('2015-01-15')) AS c14,
+		(j = TIME('23:24:25')) AS c15,
+		(j = TIMESTAMP('2015-01-15 23:24:25')) AS c16,
+		(j = CURRENT_TIMESTAMP) AS c17,
+		(JSON_EXTRACT(j, '$.a') = 2) AS c18
+		FROM t
+		ORDER BY i;`)
+	result.Check(testkit.Rows("0 <nil> <nil> <nil> <nil> <nil> <nil> 1 1 <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil> <nil>",
+		"1 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 1",
+		"2 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
+		"3 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 0",
+		"4 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"5 0 1 1 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"6 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"7 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"8 0 0 0 1 <nil> <nil> 0 0 0 0 1 <nil> <nil> 0 0 0 0 <nil>",
+		"9 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"10 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"11 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"12 0 0 0 1 <nil> <nil> 0 0 1 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"13 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"14 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"15 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"16 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"17 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"18 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"19 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"20 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"21 0 0 0 1 <nil> <nil> 0 0 1 1 0 <nil> <nil> 0 0 0 0 <nil>",
+		"22 0 0 0 1 <nil> <nil> 0 0 0 1 0 <nil> <nil> 0 0 0 0 <nil>",
+		"23 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>",
+		"24 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"25 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 1 0 0 <nil>",
+		"26 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 1 0 0 0 <nil>",
+		"27 0 0 0 0 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 1 0 <nil>",
+		"28 0 0 0 1 <nil> <nil> 0 0 0 0 0 <nil> <nil> 0 0 0 0 <nil>"))
+
+	// for coalesce
+	result = tk.MustQuery("select coalesce(NULL), coalesce(NULL, NULL), coalesce(NULL, NULL, NULL);")
+	result.Check(testkit.Rows("<nil> <nil> <nil>"))
+	tk.MustQuery(`select coalesce(cast(1 as json), cast(2 as json));`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select coalesce(NULL, cast(2 as json));`).Check(testkit.Rows(`2`))
+	tk.MustQuery(`select coalesce(cast(1 as json), NULL);`).Check(testkit.Rows(`1`))
+	tk.MustQuery(`select coalesce(NULL, NULL);`).Check(testkit.Rows(`<nil>`))
+
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t2(a int, b double, c datetime, d time, e char(20), f bit(10))")
+	tk.MustExec(`insert into t2 values(1, 1.1, "2017-08-01 12:01:01", "12:01:01", "abcdef", 0b10101)`)
+
+	result = tk.MustQuery("select coalesce(NULL, a), coalesce(NULL, b, a), coalesce(c, NULL, a, b), coalesce(d, NULL), coalesce(d, c), coalesce(NULL, NULL, e, 1), coalesce(f), coalesce(1, a, b, c, d, e, f) from t2")
+	// coalesce(col_bit) is not same with MySQL, because it's a bug of MySQL(https://bugs.mysql.com/bug.php?id=103289&thanks=4)
+	result.Check(testkit.Rows(fmt.Sprintf("1 1.1 2017-08-01 12:01:01 12:01:01 %s 12:01:01 abcdef \x00\x15 1", time.Now().In(tk.Session().GetSessionVars().Location()).Format(time.DateOnly))))
+
+	// nullif
+	result = tk.MustQuery(`SELECT NULLIF(NULL, 1), NULLIF(1, NULL), NULLIF(1, 1), NULLIF(NULL, NULL);`)
+	result.Check(testkit.Rows("<nil> 1 <nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1.0), NULLIF(1, "1.0");`)
+	result.Check(testkit.Rows("<nil> <nil>"))
+
+	result = tk.MustQuery(`SELECT NULLIF("abc", 1);`)
+	result.Check(testkit.Rows("abc"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1+2, 1);`)
+	result.Check(testkit.Rows("3"))
+
+	result = tk.MustQuery(`SELECT NULLIF(1, 1+2);`)
+	result.Check(testkit.Rows("1"))
+
+	result = tk.MustQuery(`SELECT NULLIF(2+3, 1+2);`)
+	result.Check(testkit.Rows("5"))
+
+	result = tk.MustQuery(`SELECT HEX(NULLIF("abc", 1));`)
+	result.Check(testkit.Rows("616263"))
+
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a date)")
+	result = tk.MustQuery("desc select a = a from t")
+	result.Check(testkit.Rows(
+		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
+		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
+		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	))
+
+	// for interval
+	result = tk.MustQuery(`select interval(null, 1, 2), interval(1, 2, 3), interval(2, 1, 3)`)
+	result.Check(testkit.Rows("-1 0 1"))
+	result = tk.MustQuery(`select interval(3, 1, 2), interval(0, "b", "1", "2"), interval("a", "b", "1", "2")`)
+	result.Check(testkit.Rows("2 1 1"))
+	result = tk.MustQuery(`select interval(23, 1, 23, 23, 23, 30, 44, 200), interval(23, 1.7, 15.3, 23.1, 30, 44, 200), interval(9007199254740992, 9007199254740993)`)
+	result.Check(testkit.Rows("4 2 0"))
+	result = tk.MustQuery(`select interval(cast(9223372036854775808 as unsigned), cast(9223372036854775809 as unsigned)), interval(9223372036854775807, cast(9223372036854775808 as unsigned)), interval(-9223372036854775807, cast(9223372036854775808 as unsigned))`)
+	result.Check(testkit.Rows("0 0 0"))
+	result = tk.MustQuery(`select interval(cast(9223372036854775806 as unsigned), 9223372036854775807), interval(cast(9223372036854775806 as unsigned), -9223372036854775807), interval("9007199254740991", "9007199254740992")`)
+	result.Check(testkit.Rows("0 1 0"))
+	result = tk.MustQuery(`select interval(9007199254740992, "9007199254740993"), interval("9007199254740992", 9007199254740993), interval("9007199254740992", "9007199254740993")`)
+	result.Check(testkit.Rows("1 1 1"))
+	result = tk.MustQuery(`select INTERVAL(100, NULL, NULL, NULL, NULL, NULL, 100);`)
+	result.Check(testkit.Rows("6"))
+	result = tk.MustQuery(`SELECT INTERVAL(0,(1*5)/2) + INTERVAL(5,4,3);`)
+	result.Check(testkit.Rows("2"))
+
+	// for greatest
+	result = tk.MustQuery(`select greatest(1, 2, 3), greatest("a", "b", "c"), greatest(1.1, 1.2, 1.3), greatest("123a", 1, 2)`)
+	result.Check(testkit.Rows("3 c 1.3 2"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	result = tk.MustQuery(`select greatest(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), greatest(cast("2017-01-01" as date), "123", null)`)
+	result.Check(testkit.Rows("234 <nil>"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
+	// for least
+	result = tk.MustQuery(`select least(1, 2, 3), least("a", "b", "c"), least(1.1, 1.2, 1.3), least("123a", 1, 2)`)
+	result.Check(testkit.Rows("1 a 1.1 1"))
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	result = tk.MustQuery(`select least(cast("2017-01-01" as datetime), "123", "234", cast("2018-01-01" as date)), least(cast("2017-01-01" as date), "123", null)`)
+	result.Check(testkit.Rows("123 <nil>"))
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Incorrect time value: '123'", "Warning|1292|Incorrect time value: '234'", "Warning|1292|Incorrect time value: '123'"))
+	tk.MustQuery(`select 1 < 17666000000000000000, 1 > 17666000000000000000, 1 = 17666000000000000000`).Check(testkit.Rows("1 0 0"))
+
+	tk.MustExec("drop table if exists t")
+
+	// insert value at utc timezone
+	tk.MustExec("set time_zone = '+00:00'")
+	tk.MustExec("create table t(a timestamp)")
+	tk.MustExec("insert into t value('1991-05-06 04:59:28')")
+	// check daylight saving time in Asia/Shanghai
+	tk.MustExec("set time_zone='Asia/Shanghai'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 13:59:28"))
+	// insert an nonexistent time
+	tk.MustExec("set time_zone = 'America/Los_Angeles'")
+	tk.MustExecToErr("insert into t value('2011-03-13 02:00:00')")
+	// reset timezone to a +8 offset
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1991-05-06 12:59:28"))
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a bigint unsigned)")
+	tk.MustExec("insert into t value(17666000000000000000)")
+	tk.MustQuery("select * from t where a = 17666000000000000000").Check(testkit.Rows("17666000000000000000"))
+
+	// test for compare row
+	result = tk.MustQuery(`select row(1,2,3)=row(1,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1,2,3)=row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1,2,3)`)
+	result.Check(testkit.Rows("0"))
+	result = tk.MustQuery(`select row(1,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("1"))
+	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
+	result.Check(testkit.Rows("0"))
+}
+
 func TestRegexpPushdown(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
