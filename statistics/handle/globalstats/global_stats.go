@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
@@ -110,16 +109,6 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(sc sessionctx.Cont
 	}
 
 	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
-	if sc.GetSessionVars().InRestrictedSQL {
-		// For AutoAnalyze and HandleDDLEvent(ActionDropTablePartition), we need to use @@global.tidb_skip_missing_partition_stats
-		val, err1 := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
-		if err1 != nil {
-			logutil.BgLogger().Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
-			err = err1
-			return
-		}
-		skipMissingPartitionStats = variable.TiDBOptOn(val)
-	}
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		partitionTable, ok := getTableByPhysicalIDFn(is, partitionID)
