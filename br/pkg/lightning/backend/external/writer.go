@@ -69,17 +69,17 @@ type WriterSummary struct {
 // OnCloseFunc is the callback function when a writer is closed.
 type OnCloseFunc func(summary *WriterSummary)
 
-// DummyOnCloseFunc is a dummy OnCloseFunc.
-func DummyOnCloseFunc(*WriterSummary) {}
+// dummyOnCloseFunc is a dummy OnCloseFunc.
+func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	memSizeLimit      uint64
-	writeBatchCount   uint64
-	propSizeDist      uint64
-	propKeysDist      uint64
-	onClose           OnCloseFunc
-	dupeDetectEnabled bool
+	memSizeLimit    uint64
+	writeBatchCount uint64
+	propSizeDist    uint64
+	propKeysDist    uint64
+	onClose         OnCloseFunc
+	keyDupeEncoding bool
 
 	bufferPool *membuf.Pool
 }
@@ -91,7 +91,7 @@ func NewWriterBuilder() *WriterBuilder {
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
-		onClose:         DummyOnCloseFunc,
+		onClose:         dummyOnCloseFunc,
 	}
 }
 
@@ -123,6 +123,9 @@ func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 
 // SetOnCloseFunc sets the callback function when a writer is closed.
 func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
+	if onClose == nil {
+		onClose = dummyOnCloseFunc
+	}
 	b.onClose = onClose
 	return b
 }
@@ -133,9 +136,9 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	return b
 }
 
-// EnableDuplicationDetection enables the duplication detection of the writer.
-func (b *WriterBuilder) EnableDuplicationDetection() *WriterBuilder {
-	b.dupeDetectEnabled = true
+// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
+func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
+	b.keyDupeEncoding = val
 	return b
 }
 
@@ -152,7 +155,7 @@ func (b *WriterBuilder) Build(
 	}
 	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.dupeDetectEnabled {
+	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
 	ret := &Writer{
@@ -185,10 +188,10 @@ func (b *WriterBuilder) Build(
 // every 500 files). It is used to estimate the data overlapping, and per-file
 // statistic information maybe too big to loaded into memory.
 type MultipleFilesStat struct {
-	MinKey            tidbkv.Key
-	MaxKey            tidbkv.Key
-	Filenames         [][2]string // [dataFile, statFile]
-	MaxOverlappingNum int
+	MinKey            tidbkv.Key  `json:"min-key"`
+	MaxKey            tidbkv.Key  `json:"max-key"`
+	Filenames         [][2]string `json:"filenames"` // [dataFile, statFile]
+	MaxOverlappingNum int64       `json:"max-overlapping-num"`
 }
 
 func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
@@ -214,6 +217,20 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 		points = append(points, Endpoint{Key: k, Tp: InclusiveEnd, Weight: 1})
 	}
 	m.MaxOverlappingNum = GetMaxOverlapping(points)
+}
+
+// GetMaxOverlappingTotal assume the most overlapping case from given stats and
+// returns the overlapping level.
+func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
+	points := make([]Endpoint, 0, len(stats)*2)
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: stat.MaxOverlappingNum})
+	}
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: stat.MaxOverlappingNum})
+	}
+
+	return GetMaxOverlapping(points)
 }
 
 // Writer is used to write data into external storage.
@@ -420,6 +437,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
+		_ = dataWriter.Close(ctx)
 		return "", "", nil, nil, err
 	}
 	return dataPath, statPath, dataWriter, statsWriter, nil

@@ -37,7 +37,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type readIndexStage struct {
+type readIndexExecutor struct {
 	d     *ddl
 	job   *model.Job
 	index *model.IndexInfo
@@ -58,10 +58,11 @@ type readIndexSummary struct {
 	totalSize uint64
 	dataFiles []string
 	statFiles []string
+	stats     []external.MultipleFilesStat
 	mu        sync.Mutex
 }
 
-func newReadIndexStage(
+func newReadIndexExecutor(
 	d *ddl,
 	job *model.Job,
 	index *model.IndexInfo,
@@ -70,8 +71,8 @@ func newReadIndexStage(
 	bc ingest.BackendCtx,
 	summary *execute.Summary,
 	cloudStorageURI string,
-) *readIndexStage {
-	return &readIndexStage{
+) *readIndexExecutor {
+	return &readIndexExecutor{
 		d:               d,
 		job:             job,
 		index:           index,
@@ -83,15 +84,16 @@ func newReadIndexStage(
 	}
 }
 
-func (*readIndexStage) Init(_ context.Context) error {
-	logutil.BgLogger().Info("read index stage init subtask exec env",
+func (*readIndexExecutor) Init(_ context.Context) error {
+	logutil.BgLogger().Info("read index executor init subtask exec env",
 		zap.String("category", "ddl"))
 	return nil
 }
 
-func (r *readIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	logutil.BgLogger().Info("read index stage run subtask",
-		zap.String("category", "ddl"))
+func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	logutil.BgLogger().Info("read index executor run subtask",
+		zap.String("category", "ddl"),
+		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
@@ -146,19 +148,16 @@ func (r *readIndexStage) RunSubtask(ctx context.Context, subtask *proto.Subtask)
 	return nil
 }
 
-func (r *readIndexStage) Cleanup(ctx context.Context) error {
-	logutil.Logger(ctx).Info("read index stage cleanup subtask exec env",
+func (*readIndexExecutor) Cleanup(ctx context.Context) error {
+	logutil.Logger(ctx).Info("read index executor cleanup subtask exec env",
 		zap.String("category", "ddl"))
-	if _, ok := r.ptbl.(table.PartitionedTable); ok {
-		ingest.LitBackCtxMgr.Unregister(r.job.ID)
-	}
 	return nil
 }
 
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
-func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
+func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
@@ -181,6 +180,7 @@ func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask)
 	subtaskMeta.TotalKVSize = s.totalSize
 	subtaskMeta.DataFiles = s.dataFiles
 	subtaskMeta.StatFiles = s.statFiles
+	subtaskMeta.MultipleFilesStats = s.stats
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("min", hex.EncodeToString(s.minKey)),
 		zap.String("max", hex.EncodeToString(s.maxKey)),
@@ -194,14 +194,13 @@ func (r *readIndexStage) OnFinished(ctx context.Context, subtask *proto.Subtask)
 	return nil
 }
 
-func (r *readIndexStage) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("read index stage rollback backfill add index task",
+func (r *readIndexExecutor) Rollback(ctx context.Context) error {
+	logutil.Logger(ctx).Info("read index executor rollback backfill add index task",
 		zap.String("category", "ddl"), zap.Int64("jobID", r.job.ID))
-	ingest.LitBackCtxMgr.Unregister(r.job.ID)
 	return nil
 }
 
-func (r *readIndexStage) getTableStartEndKey(sm *BackfillSubTaskMeta) (
+func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	start, end kv.Key, tbl table.PhysicalTable, err error) {
 	currentVer, err1 := getValidCurrentVersion(r.d.store)
 	if err1 != nil {
@@ -224,7 +223,7 @@ func (r *readIndexStage) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 	return start, end, tbl, nil
 }
 
-func (r *readIndexStage) buildLocalStorePipeline(
+func (r *readIndexExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
 	d *ddl,
 	sessCtx sessionctx.Context,
@@ -244,7 +243,7 @@ func (r *readIndexStage) buildLocalStorePipeline(
 		opCtx, d.store, d.sessPool, r.bc, ei, sessCtx, tbl, r.index, start, end, totalRowCount, counter)
 }
 
-func (r *readIndexStage) buildExternalStorePipeline(
+func (r *readIndexExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
 	d *ddl,
 	subtaskID int64,
@@ -264,6 +263,7 @@ func (r *readIndexStage) buildExternalStorePipeline(
 			s.maxKey = summary.Max.Clone()
 		}
 		s.totalSize += summary.TotalSize
+		s.stats = append(s.stats, summary.MultipleFilesStats...)
 		for _, f := range summary.MultipleFilesStats {
 			for _, filename := range f.Filenames {
 				s.dataFiles = append(s.dataFiles, filename[0])
@@ -272,7 +272,9 @@ func (r *readIndexStage) buildExternalStorePipeline(
 		}
 		s.mu.Unlock()
 	}
+	counter := metrics.BackfillTotalCounter.WithLabelValues(
+		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.index, start, end, totalRowCount, onClose)
+		tbl, r.index, start, end, totalRowCount, counter, onClose)
 }

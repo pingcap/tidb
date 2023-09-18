@@ -2628,3 +2628,34 @@ NULL	0
 0	0
 0	0
 1	1
+drop table if exists author_addresses, authors;
+CREATE TABLE author_addresses (
+id bigint(20) NOT NULL AUTO_INCREMENT,
+PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE authors (
+id bigint(20) NOT NULL AUTO_INCREMENT,
+name varchar(255) NOT NULL,
+author_address_id bigint(20) DEFAULT NULL,
+author_address_extra_id bigint(20) DEFAULT NULL,
+organization_id varchar(255) DEFAULT NULL,
+owned_essay_id varchar(255) DEFAULT NULL,
+PRIMARY KEY (id),
+KEY index_authors_on_author_address_id (author_address_id),
+KEY index_authors_on_author_address_extra_id (author_address_extra_id),
+CONSTRAINT fk_rails_94423a17a3 FOREIGN KEY (author_address_id) REFERENCES author_addresses (id) ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+SELECT fk.referenced_table_name AS 'to_table',
+fk.referenced_column_name AS 'primary_key',
+fk.column_name AS 'column',
+fk.constraint_name AS 'name',
+rc.update_rule AS 'on_update',
+rc.delete_rule AS 'on_delete'
+FROM information_schema.referential_constraints rc
+JOIN information_schema.key_column_usage fk
+USING (constraint_schema, constraint_name)
+WHERE fk.referenced_column_name IS NOT NULL
+AND fk.table_schema = database()
+AND fk.table_name = 'authors';
+to_table	primary_key	column	name	on_update	on_delete
+author_addresses	id	author_address_id	fk_rails_94423a17a3	CASCADE	RESTRICT

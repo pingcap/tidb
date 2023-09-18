@@ -29,7 +29,8 @@ import (
 	"go.uber.org/zap"
 )
 
-type mergeSortStage struct {
+type cloudImportExecutor struct {
+	job           *model.Job
 	jobID         int64
 	index         *model.IndexInfo
 	ptbl          table.PhysicalTable
@@ -37,14 +38,16 @@ type mergeSortStage struct {
 	cloudStoreURI string
 }
 
-func newMergeSortStage(
+func newCloudImportExecutor(
+	job *model.Job,
 	jobID int64,
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
 	bc ingest.BackendCtx,
 	cloudStoreURI string,
-) (*mergeSortStage, error) {
-	return &mergeSortStage{
+) (*cloudImportExecutor, error) {
+	return &cloudImportExecutor{
+		job:           job,
 		jobID:         jobID,
 		index:         index,
 		ptbl:          ptbl,
@@ -53,13 +56,13 @@ func newMergeSortStage(
 	}, nil
 }
 
-func (*mergeSortStage) Init(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort stage init subtask exec env")
+func (*cloudImportExecutor) Init(ctx context.Context) error {
+	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
 	return nil
 }
 
-func (m *mergeSortStage) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	logutil.Logger(ctx).Info("merge sort stage split subtask")
+func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask.Meta, sm)
@@ -94,18 +97,17 @@ func (m *mergeSortStage) RunSubtask(ctx context.Context, subtask *proto.Subtask)
 	return err
 }
 
-func (m *mergeSortStage) Cleanup(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort stage clean up subtask env")
-	ingest.LitBackCtxMgr.Unregister(m.jobID)
+func (*cloudImportExecutor) Cleanup(ctx context.Context) error {
+	logutil.Logger(ctx).Info("cloud import executor clean up subtask env")
 	return nil
 }
 
-func (*mergeSortStage) OnFinished(ctx context.Context, _ *proto.Subtask) error {
-	logutil.Logger(ctx).Info("merge sort stage finish subtask")
+func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
+	logutil.Logger(ctx).Info("cloud import executor finish subtask")
 	return nil
 }
 
-func (*mergeSortStage) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort stage rollback subtask")
+func (*cloudImportExecutor) Rollback(ctx context.Context) error {
+	logutil.Logger(ctx).Info("cloud import executor rollback subtask")
 	return nil
 }

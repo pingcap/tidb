@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statslock
+package lockstats
 
 import (
 	"strconv"
@@ -29,7 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestStatsLockAndUnlockTable(t *testing.T) {
+func TestLockAndUnlockTableStats(t *testing.T) {
 	_, tk, tbl := setupTestEnvironmentWithTableT(t)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
@@ -39,7 +39,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	}
 	tk.MustExec("lock stats t")
 
-	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 1)
 
@@ -47,6 +47,9 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 
 	tk.MustExec("analyze table test.t")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip analyze locked table: test.t",
+	))
 	tblStats1 := handle.GetTableStats(tbl)
 	require.Equal(t, tblStats, tblStats1)
 
@@ -55,7 +58,7 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	require.Equal(t, 1, len(lockedTables))
 
 	tk.MustExec("unlock stats t")
-	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
 
@@ -64,7 +67,38 @@ func TestStatsLockAndUnlockTable(t *testing.T) {
 	require.Equal(t, int64(2), tblStats2.RealtimeCount)
 }
 
-func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
+func TestLockAndUnlockPartitionedTableStats(t *testing.T) {
+	_, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
+
+	handle := domain.GetDomain(tk.Session()).StatsHandle()
+	tblStats := handle.GetTableStats(tbl)
+	for _, col := range tblStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	tk.MustExec("lock stats t")
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 3)
+
+	rows = tk.MustQuery("show stats_locked").Rows()
+	require.Len(t, rows, 3)
+
+	tk.MustExec("analyze table test.t")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip analyze locked tables: test.t partition (p0), test.t partition (p1)",
+	))
+
+	tk.MustExec("unlock stats t")
+	rows = tk.MustQuery(selectTableLockSQL).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, num, 0)
+
+	rows = tk.MustQuery("show stats_locked").Rows()
+	require.Len(t, rows, 0)
+}
+
+func TestLockTableAndUnlockTableStatsRepeatedly(t *testing.T) {
 	_, tk, tbl := setupTestEnvironmentWithTableT(t)
 
 	handle := domain.GetDomain(tk.Session()).StatsHandle()
@@ -74,7 +108,7 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 	}
 	tk.MustExec("lock stats t")
 
-	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 1)
 
@@ -99,7 +133,7 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
-	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
 
@@ -114,7 +148,7 @@ func TestStatsLockTableAndUnlockTableRepeatedly(t *testing.T) {
 	))
 }
 
-func TestStatsLockAndUnlockTables(t *testing.T) {
+func TestLockAndUnlockTablesStats(t *testing.T) {
 	restore := config.RestoreFunc()
 	defer restore()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -149,7 +183,7 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	}
 
 	tk.MustExec("lock stats t1, t2")
-	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 2)
 
@@ -160,6 +194,9 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	tk.MustExec("insert into t2(a, b) values(2,'b')")
 
 	tk.MustExec("analyze table test.t1, test.t2")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip analyze locked tables: test.t1, test.t2",
+	))
 	tbl1Stats1 := handle.GetTableStats(tbl1.Meta())
 	require.Equal(t, tbl1Stats, tbl1Stats1)
 	tbl2Stats1 := handle.GetTableStats(tbl2.Meta())
@@ -170,7 +207,7 @@ func TestStatsLockAndUnlockTables(t *testing.T) {
 	require.Equal(t, 2, len(lockedTables))
 
 	tk.MustExec("unlock stats test.t1, test.t2")
-	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
 
@@ -191,11 +228,11 @@ func TestLockAndUnlockTablePrivilege(t *testing.T) {
 	}
 	// With privilege.
 	tk.MustExec("lock stats t")
-	rows := tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ := strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 1)
 	tk.MustExec("unlock stats t")
-	rows = tk.MustQuery("select count(*) from mysql.stats_table_locked").Rows()
+	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, num, 0)
 
