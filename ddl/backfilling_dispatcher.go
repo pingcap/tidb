@@ -114,6 +114,10 @@ func (*backfillingDispatcherExt) GetNextStep(
 	case proto.StepInit:
 		return proto.StepOne
 	case proto.StepOne:
+		// when in tests
+		if taskHandle == nil {
+			return proto.StepThree
+		}
 		// if data files overlaps too much, we need a merge step.
 		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
 		if err != nil {

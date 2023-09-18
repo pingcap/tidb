@@ -50,6 +50,8 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tblInfo := tbl.Meta()
 
 	// 1.1 OnNextSubtasksBatch
+	gTask.Step = dsp.GetNextStep(nil, gTask)
+	require.Equal(t, proto.StepOne, gTask.Step)
 	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -62,18 +64,16 @@ func TestBackfillingDispatcher(t *testing.T) {
 	// 1.2 test partition table OnNextSubtasksBatch after StepInit finished.
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(nil, gTask)
-	require.Equal(t, proto.StepOne, gTask.Step)
-	// empty stepTwo
-	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
-	require.NoError(t, err)
-	require.Equal(t, 0, len(metas))
-	gTask.Step = dsp.GetNextStep(nil, gTask)
-	require.Equal(t, proto.StepTwo, gTask.Step)
+	require.Equal(t, proto.StepThree, gTask.Step)
+	// empty StepThree
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	gTask.Step = dsp.GetNextStep(nil, gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
+	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(metas))
 
 	// 1.3 test partition table OnErrStage.
 	errMeta, err := dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
