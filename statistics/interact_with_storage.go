@@ -46,17 +46,18 @@ import (
 type StatsReader struct {
 	ctx      sqlexec.RestrictedSQLExecutor
 	snapshot uint64
+	release  func() // a call back function to release all resources hold by this reader.
 }
 
 // GetStatsReader returns a StatsReader.
-func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader *StatsReader, err error) {
+func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor, releaseFunc func()) (reader *StatsReader, err error) {
 	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
 		}
 	})
 	if snapshot > 0 {
-		return &StatsReader{ctx: exec, snapshot: snapshot}, nil
+		return &StatsReader{ctx: exec, snapshot: snapshot, release: releaseFunc}, nil
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -69,7 +70,7 @@ func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader
 	if err != nil {
 		return nil, err
 	}
-	return &StatsReader{ctx: exec}, nil
+	return &StatsReader{ctx: exec, release: releaseFunc}, nil
 }
 
 // Read is a thin wrapper reading statistics from storage by sql command.
@@ -88,6 +89,12 @@ func (sr *StatsReader) IsHistory() bool {
 
 // Close closes the StatsReader.
 func (sr *StatsReader) Close() error {
+	defer func() {
+		if sr.release != nil {
+			sr.release()
+		}
+	}()
+
 	if sr.IsHistory() || sr.ctx == nil {
 		return nil
 	}

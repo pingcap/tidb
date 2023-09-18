@@ -1160,20 +1160,17 @@ func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, snapshot uint64) (
 }
 
 func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *statistics.StatsReader, err error) {
-	h.mu.Lock()
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("getGlobalStatsReader panic %v", r)
-		}
-		if err != nil {
-			h.mu.Unlock()
-		}
-	}()
-	return statistics.GetStatsReader(snapshot, h.mu.ctx.(sqlexec.RestrictedSQLExecutor))
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return statistics.GetStatsReader(snapshot, exec, func() {
+		h.pool.Put(se)
+	})
 }
 
 func (h *Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
-	defer h.mu.Unlock()
 	return reader.Close()
 }
 
