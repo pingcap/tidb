@@ -441,10 +441,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		if !ok {
 			return ok
 		}
-		if val != true {
-			return false
-		}
-		return true
+		return val
 	}, 10*time.Second, 500*time.Millisecond)
 
 	require.Eventually(t, func() bool {
@@ -454,17 +451,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 		if !ok {
 			return ok
 		}
-		if val != true {
+		if !val {
 			return false
 		}
 		val, ok = nodes[":4001"]
 		if !ok {
 			return ok
 		}
-		if val != true {
-			return false
-		}
-		return true
+		return val
 	}, 10*time.Second, 500*time.Millisecond)
 }
 
