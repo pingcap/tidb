@@ -155,25 +155,20 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		if len(args) == 0 {
 			panic("unexpected length 0 of args for casewhen")
 		}
-		fallthrough
-	default:
 		ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
 		if err != nil {
 			return err
 		}
 		resultFieldType.SetCollate(ec.Collation)
 		resultFieldType.SetCharset(ec.Charset)
-		resultFieldType.SetFlag(0)
 		for i := range args {
 			if !types.IsNonBinaryStr(args[i].GetType()) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
 		}
-		// Set retType to BINARY(0) if all arguments are of type NULL.
-		if resultFieldType.GetType() == mysql.TypeNull {
-			types.SetBinChsClnFlag(resultFieldType)
-		}
+	default:
+		panic("unexpected function: " + funcName)
 	}
 	return nil
 }
