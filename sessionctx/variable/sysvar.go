@@ -48,6 +48,7 @@ import (
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -1114,7 +1115,9 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableConcurrentDDL.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableMDL, Value: BoolToOnOff(DefTiDBEnableMDL), Type: TypeBool, SetGlobal: func(_ context.Context, vars *SessionVars, val string) error {
+		logutil.BgLogger().Info("mdl related variable status in setting status", zap.Bool("EnableMDL", EnableMDL.Load()), zap.Bool("EnableConcurrentDDL", EnableConcurrentDDL.Load()))
 		if EnableMDL.Load() != TiDBOptOn(val) {
+			logutil.BgLogger().Info("Switch EnableMDL", zap.Bool("val", TiDBOptOn(val)))
 			err := SwitchMDL(TiDBOptOn(val))
 			if err != nil {
 				return err

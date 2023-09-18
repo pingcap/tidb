@@ -42,6 +42,11 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	// PlanCacheKeyTestIssue46760 is only for test.
+	PlanCacheKeyTestIssue46760 struct{}
+)
+
 func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isGeneralPlanCache bool, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) error {
 	vars := sctx.GetSessionVars()
 	stmtAst := stmt.PreparedAst

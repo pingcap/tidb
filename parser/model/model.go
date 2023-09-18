@@ -1185,9 +1185,10 @@ func (p PartitionType) String() string {
 
 // ExchangePartitionInfo provides exchange partition info.
 type ExchangePartitionInfo struct {
-	ExchangePartitionFlag  bool  `json:"exchange_partition_flag"`
 	ExchangePartitionID    int64 `json:"exchange_partition_id"`
 	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
+	// Deprecated, not used
+	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }
 
 // PartitionInfo provides table partition info.
