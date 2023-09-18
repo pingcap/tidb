@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -290,20 +291,31 @@ func generateIngestTaskPlan(
 ) ([][]byte, error) {
 	// We dispatch dummy subtasks because the rest data in local engine will be imported
 	// in the initialization of subtask executor.
-	schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
-	if err != nil {
-		return nil, err
+	var ingestSubtaskCnt int
+	if intest.InTest && taskHandle == nil {
+		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ingestSubtaskCnt = len(serverNodes)
+	} else {
+		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
+		if err != nil {
+			return nil, err
+		}
+		h.previousSchedulerIDs = schedulerIDs
+		ingestSubtaskCnt = len(schedulerIDs)
 	}
-	subTaskMetas := make([][]byte, 0, len(schedulerIDs))
+
+	subTaskMetas := make([][]byte, 0, ingestSubtaskCnt)
 	dummyMeta := &BackfillSubTaskMeta{}
 	metaBytes, err := json.Marshal(dummyMeta)
 	if err != nil {
 		return nil, err
 	}
-	for range schedulerIDs {
+	for i := 0; i < ingestSubtaskCnt; i++ {
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
-	h.previousSchedulerIDs = schedulerIDs
 	return subTaskMetas, nil
 }
 
