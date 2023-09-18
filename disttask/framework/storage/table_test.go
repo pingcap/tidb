@@ -432,21 +432,12 @@ func TestDistFrameworkMeta(t *testing.T) {
 	storage.SetTaskManager(sm)
 	sm, err := storage.GetTaskManager()
 	require.NoError(t, err)
-
-	require.NoError(t, sm.StartManager(":4000", "background"))
 	require.NoError(t, sm.StartManager(":4001", ""))
 	require.NoError(t, sm.StartManager(":4002", "background"))
 	require.Eventually(t, func() bool {
 		nodes, err := sm.GetNodesByRole("background")
 		require.NoError(t, err)
-		val, ok := nodes[":4000"]
-		if !ok {
-			return ok
-		}
-		if val != true {
-			return false
-		}
-		val, ok = nodes[":4002"]
+		val, ok := nodes[":4002"]
 		if !ok {
 			return ok
 		}
@@ -459,7 +450,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.Eventually(t, func() bool {
 		nodes, err := sm.GetNodesByRole("")
 		require.NoError(t, err)
-		val, ok := nodes[":4001"]
+		val, ok := nodes[":4000"]
+		if !ok {
+			return ok
+		}
+		if val != true {
+			return false
+		}
+		val, ok = nodes[":4001"]
 		if !ok {
 			return ok
 		}
