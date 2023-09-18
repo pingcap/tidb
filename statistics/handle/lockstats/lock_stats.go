@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -45,10 +44,14 @@ var (
 // AddLockedTables add locked tables id to store.
 // - exec: sql executor.
 // - tidAndNames: table ids and names of which will be locked.
-// - pids: partition ids of which will be locked.
+// - pidAndNames: partition ids and names of which will be locked.
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
-func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tidAndNames map[int64]*ast.TableName, pids []int64) (string, error) {
+func AddLockedTables(
+	exec sqlexec.RestrictedSQLExecutor,
+	tidAndNames map[int64]string,
+	pidAndNames map[int64]string,
+) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
 	err := startTransaction(ctx, exec)
@@ -68,15 +71,22 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tidAndNames map[int64]*
 
 	skippedTables := make([]string, 0, len(tidAndNames))
 	tids := make([]int64, 0, len(tidAndNames))
-	tables := make([]*ast.TableName, 0, len(tidAndNames))
+	tables := make([]string, 0, len(tidAndNames))
 	for tid, tableName := range tidAndNames {
 		tids = append(tids, tid)
 		tables = append(tables, tableName)
 	}
+	pids := make([]int64, 0, len(pidAndNames))
+	partitions := make([]string, 0, len(pidAndNames))
+	for pid, partitionName := range pidAndNames {
+		pids = append(pids, pid)
+		partitions = append(partitions, partitionName)
+	}
 	statsLogger.Info("lock table",
 		zap.Int64s("tableIDs", tids),
-		zap.Strings("tableNames", tablesToStrings(tables...)),
+		zap.Strings("tableNames", tables),
 		zap.Int64s("partitionIDs", pids),
+		zap.Strings("partitionNames", partitions),
 	)
 
 	// Insert locked tables.
@@ -87,7 +97,7 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tidAndNames map[int64]*
 				return "", err
 			}
 		} else {
-			skippedTables = append(skippedTables, tablesToStrings(tables[i])[0])
+			skippedTables = append(skippedTables, tables[i])
 		}
 	}
 
@@ -106,14 +116,6 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tidAndNames map[int64]*
 	return msg, err
 }
 
-func tablesToStrings(tables ...*ast.TableName) []string {
-	tableNames := make([]string, 0, len(tables))
-	for _, table := range tables {
-		tableNames = append(tableNames, table.Schema.L+"."+table.Name.L)
-	}
-	return tableNames
-}
-
 // AddLockedPartitions add locked partitions id to store.
 // If the whole table is locked, then skip all partitions of the table.
 // - exec: sql executor.
@@ -124,7 +126,7 @@ func tablesToStrings(tables ...*ast.TableName) []string {
 func AddLockedPartitions(
 	exec sqlexec.RestrictedSQLExecutor,
 	tid int64,
-	tableName *ast.TableName,
+	tableName string,
 	pidNames map[int64]string,
 ) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -144,13 +146,17 @@ func AddLockedPartitions(
 		return "", err
 	}
 	pids := make([]int64, 0, len(pidNames))
-	for pid := range pidNames {
+	pNames := make([]string, 0, len(pidNames))
+	for pid, pName := range pidNames {
 		pids = append(pids, pid)
+		pNames = append(pNames, pName)
 	}
+
 	statsLogger.Info("lock partitions",
 		zap.Int64("tableID", tid),
-		zap.String("tableName", tablesToStrings(tableName)[0]),
+		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
+		zap.Strings("partitionNames", pNames),
 	)
 
 	// Check if whole table is locked.
@@ -158,7 +164,7 @@ func AddLockedPartitions(
 	// It is not necessary to lock partitions if whole table is locked.
 	checkedTables := GetLockedTables(lockedTables, tid)
 	if _, locked := checkedTables[tid]; locked {
-		return "skip locking partitions of locked table: " + tablesToStrings(tableName)[0], err
+		return "skip locking partitions of locked table: " + tableName, err
 	}
 
 	// Insert related partitions and warning already locked partitions.
@@ -170,8 +176,7 @@ func AddLockedPartitions(
 				return "", err
 			}
 		} else {
-			partition := generatePartitionFullName(tableName, pidNames[pid])
-			skippedPartitions = append(skippedPartitions, partition)
+			skippedPartitions = append(skippedPartitions, pidNames[pid])
 		}
 	}
 

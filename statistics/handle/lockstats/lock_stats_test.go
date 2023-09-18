@@ -19,8 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -162,16 +160,19 @@ func TestAddLockedTables(t *testing.T) {
 		"COMMIT",
 	)
 
-	tidsAndNames := map[int64]*ast.TableName{
-		1: {Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
-		2: {Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
-		3: {Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")},
+	tidsAndNames := map[int64]string{
+		1: "test.t1",
+		2: "test.t2",
+		3: "test.t3",
+	}
+	pidAndNames := map[int64]string{
+		4: "p1",
 	}
 
 	msg, err := AddLockedTables(
 		exec,
 		tidsAndNames,
-		[]int64{4},
+		pidAndNames,
 	)
 	require.NoError(t, err)
 	require.Equal(t, "skip locking locked tables: test.t1, other tables locked successfully", msg)

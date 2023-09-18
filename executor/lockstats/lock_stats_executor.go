@@ -16,6 +16,7 @@ package lockstats
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -51,12 +52,13 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	is := do.InfoSchema()
 
 	if e.onlyLockPartitions() {
-		tableName := e.Tables[0]
-		tid, pidNames, err := populatePartitionIDAndNames(tableName, tableName.PartitionNames, is)
+		table := e.Tables[0]
+		tid, pidNames, err := populatePartitionIDAndNames(table, table.PartitionNames, is)
 		if err != nil {
 			return err
 		}
 
+		tableName := fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L)
 		msg, err := h.LockPartitions(tid, tableName, pidNames)
 		if err != nil {
 			return err
@@ -65,12 +67,12 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	} else {
-		tidAndNames, pids, err := populateTableAndPartitionIDs(e.Tables, is)
+		tidAndNames, pidAndNames, err := populateTableAndPartitionIDs(e.Tables, is)
 		if err != nil {
 			return err
 		}
 
-		msg, err := h.LockTables(tidAndNames, pids)
+		msg, err := h.LockTables(tidAndNames, pidAndNames)
 		if err != nil {
 			return err
 		}
@@ -114,32 +116,32 @@ func populatePartitionIDAndNames(tableName *ast.TableName, partitionNames []mode
 		if err != nil {
 			return 0, nil, err
 		}
-		pidNames[pid] = partitionName.L
+		pidNames[pid] = fmt.Sprintf("%s.%s partition (%s)", tableName.Schema.L, tableName.Name.L, partitionName.L)
 	}
 
 	return tbl.Meta().ID, pidNames, nil
 }
 
 // populateTableAndPartitionIDs returns table IDs and partition IDs for the given table names.
-func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSchema) (map[int64]*ast.TableName, []int64, error) {
-	tidAndNames := make(map[int64]*ast.TableName, len(tables))
-	pids := make([]int64, 0)
+func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSchema) (map[int64]string, map[int64]string, error) {
+	tidAndNames := make(map[int64]string, len(tables))
+	pidAndNames := make(map[int64]string, len(tables))
 
 	for _, table := range tables {
 		tbl, err := is.TableByName(table.Schema, table.Name)
 		if err != nil {
 			return nil, nil, err
 		}
-		tidAndNames[tbl.Meta().ID] = table
+		tidAndNames[tbl.Meta().ID] = fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L)
 
 		pi := tbl.Meta().GetPartitionInfo()
 		if pi == nil {
 			continue
 		}
 		for _, p := range pi.Definitions {
-			pids = append(pids, p.ID)
+			pidAndNames[p.ID] = fmt.Sprintf("%s.%s partition (%s)", table.Schema.L, table.Name.L, p.Name.L)
 		}
 	}
 
-	return tidAndNames, pids, nil
+	return tidAndNames, pidAndNames, nil
 }
