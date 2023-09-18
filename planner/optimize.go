@@ -22,6 +22,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -43,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
@@ -102,7 +102,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667) != nil { // update the AST in the middle of the process
+	if testing.Testing() && ctx.Value(core.PlanCacheKeyTestIssue43667) != nil { // update the AST in the middle of the process
 		ctx.Value(core.PlanCacheKeyTestIssue43667).(func(stmt ast.StmtNode))(stmt)
 	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)

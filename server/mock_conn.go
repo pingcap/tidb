@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -90,10 +89,6 @@ func (mc *mockConn) GetOutput() *bytes.Buffer {
 
 // CreateMockServer creates a mock server.
 func CreateMockServer(t *testing.T, store kv.Storage) *Server {
-	if !RunInGoTest {
-		// If CreateMockServer is called in another package, RunInGoTest is not initialized.
-		RunInGoTest = intest.InTest
-	}
 	tidbdrv := NewTiDBDriver(store)
 	cfg := config.NewConfig()
 	cfg.Socket = ""

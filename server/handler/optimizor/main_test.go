@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit/testsetup"
@@ -32,7 +31,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	server.RunInGoTest = true
 	testsetup.SetupForCommonTest()
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true

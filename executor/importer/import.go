@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"testing"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -53,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/filter"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
@@ -909,7 +909,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
+	if testing.Testing() {
 		opt.NoCredentials = true
 	}
 	s, err := storage.New(ctx, b, opt)

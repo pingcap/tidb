@@ -10,7 +10,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/resourcemanager/util",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/intest",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_atomic//:atomic",
     ],
@@ -22,8 +21,5 @@ go_test(
     srcs = ["shard_pool_map_test.go"],
     embed = [":util"],
     flaky = True,
-    deps = [
-        "//util/intest",
-        "@com_github_stretchr_testify//require",
-    ],
+    deps = ["@com_github_stretchr_testify//require"],
 )

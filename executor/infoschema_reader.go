@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -66,7 +67,6 @@ import (
 	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -2103,7 +2103,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 			return nil, percentage, totalCnt, err
 		}
 		duration := time.Now().UTC().Sub(start)
-		if intest.InTest {
+		if testing.Testing() {
 			if val := ctx.Value(AnalyzeProgressTest); val != nil {
 				remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)
 				return &remainingDuration, percentage, totalCnt, nil
@@ -2140,7 +2140,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 }
 
 func calRemainInfoForAnalyzeStatus(ctx context.Context, totalCnt int64, processedRows int64, duration time.Duration) (time.Duration, float64) {
-	if intest.InTest {
+	if testing.Testing() {
 		if val := ctx.Value(AnalyzeProgressTest); val != nil {
 			totalCnt = 100 // But in final result, it is still 0.
 			processedRows = 10

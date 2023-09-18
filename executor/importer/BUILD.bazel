@@ -54,7 +54,6 @@ go_library(
         "//util/dbterror/exeerrors",
         "//util/etcd",
         "//util/filter",
-        "//util/intest",
         "//util/logutil",
         "//util/sqlexec",
         "//util/stringutil",

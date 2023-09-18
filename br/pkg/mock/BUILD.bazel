@@ -12,6 +12,7 @@ go_library(
     ],
     importpath = "github.com/pingcap/tidb/br/pkg/mock",
     visibility = ["//visibility:public"],
+    x_defs = {"testing.testBinary": "1"},
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/encode",

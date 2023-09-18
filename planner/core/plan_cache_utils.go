@@ -20,6 +20,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"testing"
 	"time"
 	"unsafe"
 
@@ -41,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
@@ -297,7 +297,7 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if stmtText == "" {
 		return nil, errors.New("no statement text")
 	}
-	if schemaVersion == 0 && !intest.InTest {
+	if schemaVersion == 0 && !testing.Testing() {
 		return nil, errors.New("Schema version uninitialized")
 	}
 	if stmtDB == "" {

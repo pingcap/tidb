@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testenv"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/assert"
@@ -58,7 +57,6 @@ type TestKit struct {
 
 // NewTestKit returns a new *TestKit.
 func NewTestKit(t testing.TB, store kv.Storage) *TestKit {
-	require.True(t, intest.InTest, "you should add --tags=intest when to test, see https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html for help")
 	testenv.SetGOMAXPROCSForTest()
 	tk := &TestKit{
 		require: require.New(t),

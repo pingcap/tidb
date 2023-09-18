@@ -26,6 +26,7 @@ import (
 	osuser "os/user"
 	"strconv"
 	"strings"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -50,7 +51,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -2939,14 +2939,14 @@ func doBootstrapSQLFile(s Session) error {
 	logutil.BgLogger().Info("executing -initialize-sql-file", zap.String("file", sqlFile))
 	b, err := os.ReadFile(sqlFile) //nolint:gosec
 	if err != nil {
-		if intest.InTest {
+		if testing.Testing() {
 			return err
 		}
 		logutil.BgLogger().Fatal("unable to read InitializeSQLFile", zap.Error(err))
 	}
 	stmts, err := s.Parse(ctx, string(b))
 	if err != nil {
-		if intest.InTest {
+		if testing.Testing() {
 			return err
 		}
 		logutil.BgLogger().Fatal("unable to parse InitializeSQLFile", zap.Error(err))
@@ -3011,11 +3011,11 @@ func doDMLWorks(s Session) {
 				vVal = variable.On
 			}
 		case variable.TiDBMemOOMAction:
-			if intest.InTest {
+			if testing.Testing() {
 				vVal = variable.OOMActionLog
 			}
 		case variable.TiDBEnableAutoAnalyze:
-			if intest.InTest {
+			if testing.Testing() {
 				vVal = variable.Off
 			}
 		// For the following sysvars, we change the default

@@ -84,7 +84,6 @@ func NewCluster() (*Cluster, error) {
 
 // Start runs a mock cluster.
 func (mock *Cluster) Start() error {
-	server.RunInGoTest = true
 	mock.TiDBDriver = server.NewTiDBDriver(mock.Storage)
 	cfg := config.NewConfig()
 	// let tidb random select a port

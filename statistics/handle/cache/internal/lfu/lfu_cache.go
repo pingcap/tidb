@@ -17,12 +17,12 @@ package lfu
 import (
 	"sync"
 	"sync/atomic"
+	"testing"
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
@@ -60,7 +60,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	if err != nil {
 		return nil, err
 	}
-	if intest.InTest && totalMemCost == 0 {
+	if testing.Testing() && totalMemCost == 0 {
 		// In test, we set the cost to 5MB to avoid using too many memory in the LFU's CM sketch.
 		cost = 5000000
 	}

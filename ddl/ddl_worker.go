@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -40,7 +41,6 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -845,7 +845,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		}
 
 		// In test and job is cancelling we can ignore the sleep
-		if !(intest.InTest && job.IsCancelling()) {
+		if !(testing.Testing() && job.IsCancelling()) {
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
 	}

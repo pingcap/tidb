@@ -18,7 +18,6 @@ go_library(
         "//sessionctx",
         "//util",
         "//util/disttask",
-        "//util/intest",
         "//util/logutil",
         "//util/syncutil",
         "@com_github_pingcap_errors//:errors",

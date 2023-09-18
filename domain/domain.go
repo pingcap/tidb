@@ -24,6 +24,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -77,7 +78,6 @@ import (
 	"github.com/pingcap/tidb/util/expensivequery"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/globalconn"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
@@ -106,7 +106,7 @@ var (
 )
 
 func init() {
-	if intest.InTest {
+	if testing.Testing() {
 		// In test we can set duration lower to make test faster.
 		mdlCheckLookDuration = 2 * time.Millisecond
 	}
@@ -998,7 +998,7 @@ func (do *Domain) Close() {
 		logutil.BgLogger().Info("stopping ttlJobManager")
 		ttlJobManager.Stop()
 		err := ttlJobManager.WaitStopped(context.Background(), func() time.Duration {
-			if intest.InTest {
+			if testing.Testing() {
 				return 10 * time.Second
 			}
 			return 30 * time.Second
@@ -1036,7 +1036,7 @@ func (do *Domain) Close() {
 	close(do.mdlCheckCh)
 
 	// close MockGlobalServerInfoManagerEntry in order to refresh mock server info.
-	if intest.InTest {
+	if testing.Testing() {
 		infosync.MockGlobalServerInfoManagerEntry.Close()
 	}
 	if handle := do.statsHandle.Load(); handle != nil {
@@ -1451,7 +1451,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 
 	taskManager := storage.NewTaskManager(ctx, do.sysSessionPool)
 	var serverID string
-	if intest.InTest {
+	if testing.Testing() {
 		do.InitInfo4Test()
 		serverID = disttaskutil.GenerateSubtaskExecID4Test(do.ddl.GetID())
 	} else {
