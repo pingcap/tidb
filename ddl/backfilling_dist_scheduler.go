@@ -47,6 +47,8 @@ type BackfillSubTaskMeta struct {
 
 	RangeSplitKeys        [][]byte `json:"range_split_keys"`
 	external.SortedKVMeta `json:",inline"`
+	// MultipleFilesStats is the output of subtask, it will be used by the next subtask.
+	MultipleFilesStats []external.MultipleFilesStat `json:"multiple_files_stats"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
@@ -78,6 +80,8 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case proto.StepTwo:
+		return newMergeSortExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+	case proto.StepThree:
 		if len(bgm.CloudStorageURI) > 0 {
 			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
@@ -142,7 +146,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 
 func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	switch task.Step {
-	case proto.StepOne, proto.StepTwo:
+	case proto.StepOne, proto.StepTwo, proto.StepThree:
 		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

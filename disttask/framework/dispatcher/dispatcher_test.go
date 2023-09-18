@@ -51,7 +51,7 @@ type testDispatcherExt struct{}
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ int64) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -69,7 +69,7 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*testDispatcherExt) GetNextStep(*proto.Task) int64 {
+func (*testDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) int64 {
 	return proto.StepDone
 }
 
@@ -78,7 +78,7 @@ type numberExampleDispatcherExt struct{}
 func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ int64) (metas [][]byte, err error) {
 	switch task.Step {
 	case proto.StepInit:
 		for i := 0; i < subtaskCnt; i++ {
@@ -107,7 +107,7 @@ func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*numberExampleDispatcherExt) GetNextStep(task *proto.Task) int64 {
+func (*numberExampleDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
