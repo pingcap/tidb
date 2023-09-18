@@ -179,11 +179,10 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, LEAD and LAG.
 func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Expression) (*types.FieldType, error) {
-	if len(args) == 0 {
+	argsNum := len(args)
+	if argsNum == 0 {
 		panic("unexpected length 0 of args")
 	}
-
-	argsNum := len(args)
 	nullFields := make([]*types.FieldType, 0, argsNum)
 	notNullFields := make([]*types.FieldType, 0, argsNum)
 	for i := range args {
@@ -205,23 +204,28 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 		resultFieldType.SetFlen(0)
 		resultFieldType.SetDecimal(0)
 		types.SetBinChsClnFlag(resultFieldType)
-	} else if len(nullFields) > 0 { // one of field is TypeNull
-		// If any of arg is NULL, result type need unset NotNullFlag.
-		*resultFieldType = *notNullFields[0]
-		tempFlag := resultFieldType.GetFlag()
-		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
-		resultFieldType.SetFlag(tempFlag)
-	} else { // all field isn't TypeNull
-		resultFieldType = types.AggFieldType(notNullFields)
-		var tempFlag uint
-		evalType := types.AggregateEvalType(notNullFields, &tempFlag)
-		resultFieldType.SetFlag(tempFlag)
-		setDecimalFromArgs(evalType, resultFieldType, notNullFields...)
-		err := setCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
-		if err != nil {
-			return nil, err
+	} else {
+		if len(notNullFields) == 1 {
+			*resultFieldType = *notNullFields[0]
+		} else {
+			resultFieldType = types.AggFieldType(notNullFields)
+			var tempFlag uint
+			evalType := types.AggregateEvalType(notNullFields, &tempFlag)
+			resultFieldType.SetFlag(tempFlag)
+			setDecimalFromArgs(evalType, resultFieldType, notNullFields...)
+			err := setCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
+			if err != nil {
+				return nil, err
+			}
+			setFlenFromArgs(evalType, resultFieldType, notNullFields...)
 		}
-		setFlenFromArgs(evalType, resultFieldType, notNullFields...)
+
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		if len(nullFields) > 0 {
+			tempFlag := resultFieldType.GetFlag()
+			types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+			resultFieldType.SetFlag(tempFlag)
+		}
 	}
 
 	// Fix decimal for int and string.
