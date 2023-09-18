@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/store/driver"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (

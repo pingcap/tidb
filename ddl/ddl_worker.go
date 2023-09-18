@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql"
@@ -51,7 +52,6 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (

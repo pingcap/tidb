@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
 

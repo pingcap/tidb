@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // HandleDDLEvent begins to process a ddl task.

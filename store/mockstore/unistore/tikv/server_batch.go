@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	// "github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type respIDPair struct {

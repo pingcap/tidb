@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/logutil/log"
-	pmodel "github.com/prometheus/common/model"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	pmodel "github.com/prometheus/common/model"
 )
 
 type slowQueryStats struct {

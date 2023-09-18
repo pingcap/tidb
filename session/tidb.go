@@ -43,9 +43,9 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type domainMap struct {

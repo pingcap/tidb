@@ -44,10 +44,10 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tipb/go-tipb"
 	"google.golang.org/grpc"
 )
 

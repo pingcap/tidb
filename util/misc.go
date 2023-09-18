@@ -46,9 +46,9 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	tlsutil "github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

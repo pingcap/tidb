@@ -38,14 +38,14 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/sqlexec"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	tablefilter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/pingcap/tidb/util/timeutil"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/maps"
 )
 

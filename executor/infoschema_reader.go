@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/util/keydecoder"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/pdapi"
@@ -83,7 +84,6 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type memtableRetriever struct {

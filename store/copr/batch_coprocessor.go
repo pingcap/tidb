@@ -41,14 +41,14 @@ import (
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/intest"
 	// "github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/tiflash"
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/twmb/murmur3"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 const fetchTopoMaxBackoff = 20000

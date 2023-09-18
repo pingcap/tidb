@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/pberror"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
-	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var _ tikvpb.TikvServer = new(Server)

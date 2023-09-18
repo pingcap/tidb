@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/errors"
 	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/etcd"
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // EtcdRegistry wraps the reactions with etcd

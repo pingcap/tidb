@@ -18,9 +18,9 @@ import (
 	"sync"
 
 	// "github.com/pingcap/log"
-	pb "github.com/pingcap/tipb/go-binlog"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	pb "github.com/pingcap/tipb/go-binlog"
 )
 
 const (

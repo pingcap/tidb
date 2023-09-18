@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/generic"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/syncutil"
 	"golang.org/x/sync/errgroup"
 )
 

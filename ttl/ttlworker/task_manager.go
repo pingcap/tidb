@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/multierr"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const setTTLTaskOwnerTemplate = `UPDATE mysql.tidb_ttl_task

@@ -42,10 +42,10 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // copReadBatchSize is the batch size of coprocessor read.

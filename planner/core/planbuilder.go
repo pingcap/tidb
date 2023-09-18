@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/ranger"
@@ -71,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type visitInfo struct {

@@ -37,10 +37,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/generatedexpr"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/zeropool"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // These are byte flags used for `HashCode()`.

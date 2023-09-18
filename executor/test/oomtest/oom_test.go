@@ -25,12 +25,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 func TestMain(m *testing.M) {

@@ -31,11 +31,11 @@ import (
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"go.opencensus.io/stats/view"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func TestHotRegion(t *testing.T) {

@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/util/cpuprofile"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/log"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 )
 
 const (

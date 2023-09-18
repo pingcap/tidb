@@ -33,10 +33,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/dbterror"
 	// "github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // Time format without fractional seconds precision.

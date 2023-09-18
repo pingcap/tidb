@@ -49,11 +49,11 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/pingcap/tidb/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // InitAndAddColumnToTable initializes the ColumnInfo in-place and adds it to the table.

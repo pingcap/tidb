@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/memory"
 	atomicutil "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Process global Observation indicators for memory limit.

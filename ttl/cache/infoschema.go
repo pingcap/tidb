@@ -57,7 +57,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 			}
 
 			logger := log.With(zap.String("schema", db.Name.L),
-					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))
+				zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))
 
 			if tblInfo.Partition == nil {
 				ttlTable, err := isc.newTable(db.Name, tblInfo, nil)

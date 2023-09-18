@@ -17,8 +17,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 const lengthLimit = 1048576

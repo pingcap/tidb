@@ -20,9 +20,9 @@ import (
 
 	"github.com/pingcap/errors"
 	// "github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 )
 

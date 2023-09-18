@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/metrics"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.

@@ -45,9 +45,9 @@ import (
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var _ exec.Executor = &AnalyzeExec{}

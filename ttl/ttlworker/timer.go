@@ -25,8 +25,8 @@ import (
 	timerapi "github.com/pingcap/tidb/timer/api"
 	timerrt "github.com/pingcap/tidb/timer/runtime"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/timeutil"
 )
 
 const (

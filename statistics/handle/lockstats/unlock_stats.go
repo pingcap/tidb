@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/statistics/handle/cache"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 const (

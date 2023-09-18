@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // This file contains the implementation of the physical Projection Operator:

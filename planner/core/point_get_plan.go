@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/size"
@@ -55,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // PointGetPlan is a fast plan for simple point get.

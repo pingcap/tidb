@@ -37,12 +37,12 @@ import (
 	"github.com/pingcap/tidb/util/etcd"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Attention:

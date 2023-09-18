@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
-	"go.uber.org/multierr"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"go.uber.org/multierr"
 )
 
 const (

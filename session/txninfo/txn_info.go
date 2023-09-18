@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TxnRunningState is the current state of a transaction

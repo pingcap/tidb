@@ -128,7 +128,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	
+
 	panic("TODO")
 	op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), nil)
 	// op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), s.logger)

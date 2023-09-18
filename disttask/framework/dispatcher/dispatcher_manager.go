@@ -27,8 +27,8 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/syncutil"
 )
 
 var (

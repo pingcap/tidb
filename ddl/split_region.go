@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
-	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 func splitPartitionTableRegion(ctx sessionctx.Context, store kv.SplittableStore, tbInfo *model.TableInfo, parts []model.PartitionDefinition, scatter bool) {

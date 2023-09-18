@@ -46,12 +46,12 @@ import (
 	"github.com/pingcap/tidb/util"
 	utilhint "github.com/pingcap/tidb/util/hint"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/set"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // OptimizeAstNode optimizes the query to a physical plan directly.

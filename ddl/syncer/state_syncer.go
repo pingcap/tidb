@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"go.etcd.io/etcd/api/v3/mvccpb"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

@@ -31,8 +31,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
 	"go.uber.org/zap/exp/zapslog"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 const (
@@ -113,7 +114,7 @@ const (
 )
 
 // SlowQueryLogger is used to log slow query, InitLogger will modify it according to config file.
-var SlowQueryLogger = log.L()
+var SlowQueryLogger = slog.Default()
 
 // InitLogger initializes a logger with cfg.
 func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
@@ -124,10 +125,14 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	}
 	log.ReplaceGlobals(gl, props)
 
-	XXX(cfg)
+	slogger, err := InitSlogger(&cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	slog.SetDefault(slogger)
 
 	// init dedicated logger for slow query log
-	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	SlowQueryLogger, err = newSlowQueryLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -137,23 +142,79 @@ func InitLogger(cfg *LogConfig, opts ...zap.Option) error {
 	return nil
 }
 
-func XXX(cfg *LogConfig) {
-	encoder, err := log.NewTextEncoder(&cfg.Config)
-	if err != nil {
-		panic(err)
+const (
+	defaultLogMaxSize = 300 // MB
+)
+
+// initFileLog initializes file based logging options.
+func initFileLog(cfg *log.FileLogConfig) (*lumberjack.Logger, error) {
+	if st, err := os.Stat(cfg.Filename); err == nil {
+		if st.IsDir() {
+			return nil, errors.New("can't use directory as log file name")
+		}
+	}
+	if cfg.MaxSize == 0 {
+		cfg.MaxSize = defaultLogMaxSize
 	}
 
-	stdOut, _, err := zap.Open([]string{"stdout"}...)
-	if err != nil {
-		panic(err)
-	}
-	output := stdOut
+	// use lumberjack to logrotate
+	return &lumberjack.Logger{
+		Filename:   cfg.Filename,
+		MaxSize:    cfg.MaxSize,
+		MaxBackups: cfg.MaxBackups,
+		MaxAge:     cfg.MaxDays,
+		LocalTime:  true,
+	}, nil
+}
 
+func InitSlogger(cfg *log.Config) (*slog.Logger, error) {
+	output, err := newWriteSyncer(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	encoder, err := log.NewTextEncoder(cfg)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	level := zap.NewAtomicLevel()
-	core := log.NewTextCore(encoder, output, level)
+	err = level.UnmarshalText([]byte(cfg.Level))
+	if err != nil {
+		return nil, err
+	}
+	core, err := log.NewTextCore(encoder, output, level), nil
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
 	handler := zapslog.NewHandler(core, nil)
-	logger := slog.New(handler)
-	slog.SetDefault(logger)
+	return slog.New(handler), nil
+}
+
+func newWriteSyncer(cfg *log.Config) (zapcore.WriteSyncer, error) {
+	var output zapcore.WriteSyncer
+	// var errOutput zapcore.WriteSyncer
+	if len(cfg.File.Filename) > 0 {
+		lg, err := initFileLog(&cfg.File)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		output = zapcore.AddSync(lg)
+	} else {
+		stdOut, _, err := zap.Open([]string{"stdout"}...)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		output = stdOut
+	}
+	// if len(cfg.ErrorOutputPath) > 0 {
+	// 	errOut, _, err := zap.Open([]string{cfg.ErrorOutputPath}...)
+	// 	if err != nil {
+	// 		return nil, nil, err
+	// 	}
+	// 	errOutput = errOut
+	// } else {
+	// 	errOutput = output
+	// }
+	return output, nil
 }
 
 func initGRPCLogger(gl *zap.Logger) {
@@ -179,20 +240,29 @@ func initGRPCLogger(gl *zap.Logger) {
 }
 
 // ReplaceLogger replace global logger instance with given log config.
-func ReplaceLogger(cfg *LogConfig, opts ...zap.Option) error {
-	opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
-	gl, props, err := log.InitLogger(&cfg.Config, opts...)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	log.ReplaceGlobals(gl, props)
+func ReplaceLogger(cfg *LogConfig, opts ...func(*slog.Logger) *slog.Logger) error {
+	// opts = append(opts, zap.AddStacktrace(zapcore.FatalLevel))
+	// gl, props, err := log.InitLogger(&cfg.Config, opts...)
+	// if err != nil {
+	// 	return errors.Trace(err)
+	// }
+	// log.ReplaceGlobals(gl, props)
 
 	cfgJSON, err := json.Marshal(&cfg.Config)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	SlowQueryLogger, _, err = newSlowQueryLogger(cfg)
+	slogger, err := InitSlogger(&cfg.Config)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, opt := range opts {
+		slogger = opt(slogger)
+	}
+	slog.SetDefault(slogger)
+
+	SlowQueryLogger, err = newSlowQueryLogger(cfg)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -316,8 +386,8 @@ func wrapTraceLogger(ctx context.Context, info *model.TraceInfo, logger *slog.Lo
 
 type extendHandler struct {
 	orig slog.Handler
-	tl *traceLog
-	tee slog.Handler
+	tl   *traceLog
+	tee  slog.Handler
 }
 
 func (h *extendHandler) Enabled(context.Context, slog.Level) bool {
@@ -337,7 +407,6 @@ func (h *extendHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 func (h *extendHandler) WithGroup(name string) slog.Handler {
 	return h.orig.WithGroup(name)
 }
-
 
 type traceLog struct {
 	ctx context.Context

@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func boolToInt64(v bool) int64 {

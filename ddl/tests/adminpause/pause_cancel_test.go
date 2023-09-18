@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // pauseAndCancelStmt pauses and cancel the `stmtCase`

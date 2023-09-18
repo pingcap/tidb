@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/store"
 	"github.com/pingcap/tidb/store/driver"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/tikv/client-go/v2/tikv"
 )
 
 var (

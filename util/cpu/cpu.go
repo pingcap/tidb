@@ -22,10 +22,10 @@ import (
 	"github.com/cloudfoundry/gosigar"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/cgroup"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 var cpuUsage atomic.Float64

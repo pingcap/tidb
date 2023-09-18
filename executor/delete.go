@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // DeleteExec represents a delete executor.

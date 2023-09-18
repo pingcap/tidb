@@ -72,6 +72,8 @@ import (
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -84,8 +86,6 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 var (

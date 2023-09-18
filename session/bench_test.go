@@ -35,9 +35,9 @@ import (
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
+	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 var smallCount = 100

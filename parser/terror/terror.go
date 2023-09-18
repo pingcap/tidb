@@ -23,8 +23,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ErrCode represents a specific error type in a error class.

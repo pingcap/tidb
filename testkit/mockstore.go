@@ -34,9 +34,9 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // WithTiKV flag is only used for debugging locally with real tikv cluster.

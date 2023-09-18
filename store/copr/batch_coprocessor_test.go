@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // StoreID: [1, storeCount]

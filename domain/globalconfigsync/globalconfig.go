@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/util/logutil/log"
-	pd "github.com/tikv/pd/client"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	pd "github.com/tikv/pd/client"
 )
 
 // GlobalConfigSyncer is used to sync pd global config.

@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/exp/maps"
 )
 

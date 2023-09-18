@@ -20,8 +20,8 @@ import (
 	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/resourcemanager/scheduler"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func (r *ResourceManager) schedule() {

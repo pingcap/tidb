@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Compiler compiles an ast.StmtNode to a physical plan.

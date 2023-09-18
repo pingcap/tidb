@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
@@ -60,7 +61,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	tikvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GCWorker periodically triggers GC process on tikv server.

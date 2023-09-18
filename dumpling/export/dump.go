@@ -37,9 +37,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	pd "github.com/tikv/pd/client"
 	gatomic "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/sync/errgroup"
 )
 

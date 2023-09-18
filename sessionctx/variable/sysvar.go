@@ -27,7 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
-	// "github.com/pingcap/tidb/keyspace"
+	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
@@ -44,6 +44,8 @@ import (
 	distroleutil "github.com/pingcap/tidb/util/distrole"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
@@ -57,8 +59,6 @@ import (
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -432,10 +432,10 @@ var defaultSysVars = []*SysVar{
 		cfg := config.GetGlobalConfig().Log.ToLogConfig()
 		cfg.Config.File.MaxDays = int(maxAge)
 
-		// err = logutil.ReplaceLogger(cfg, keyspace.WrapZapcoreWithKeyspace())
-		// if err != nil {
-		// 	return err
-		// }
+		err = logutil.ReplaceLogger(cfg, keyspace.WithKeyspace)
+		if err != nil {
+			return err
+		}
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return strconv.FormatInt(int64(GlobalLogMaxDays.Load()), 10), nil

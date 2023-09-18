@@ -22,9 +22,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tipb/go-binlog"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type binlogExecutor struct {

@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sqlexec"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

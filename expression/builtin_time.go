@@ -39,11 +39,11 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const ( // GET_FORMAT first argument.

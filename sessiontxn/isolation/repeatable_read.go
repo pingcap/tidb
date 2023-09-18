@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/util/logutil"
-	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 // PessimisticRRTxnContextProvider provides txn context for isolation level repeatable-read

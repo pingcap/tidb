@@ -16,6 +16,7 @@ package keyspace
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/config"
@@ -60,12 +61,10 @@ func IsKeyspaceNameEmpty(keyspaceName string) bool {
 }
 
 // WrapZapcoreWithKeyspace is used to wrap zapcore.Core.
-// func WrapZapcoreWithKeyspace() zap.Option {
-// 	return zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-// 		keyspaceName := GetKeyspaceNameBySettings()
-// 		if !IsKeyspaceNameEmpty(keyspaceName) {
-// 			core = core.With([]zap.Field{zap.String("keyspaceName", keyspaceName)})
-// 		}
-// 		return core
-// 	})
-// }
+func WithKeyspace(l *slog.Logger) *slog.Logger {
+	keyspaceName := GetKeyspaceNameBySettings()
+	if !IsKeyspaceNameEmpty(keyspaceName) {
+		return l.With("keyspaceName", keyspaceName)
+	}
+	return l
+}

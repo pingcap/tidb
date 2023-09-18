@@ -40,8 +40,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil/log"
-	atomicutil "go.uber.org/atomic"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	atomicutil "go.uber.org/atomic"
 )
 
 // TiFlashReplicaStatus records status for each TiFlash replica.

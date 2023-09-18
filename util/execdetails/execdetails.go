@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/influxdata/tdigest"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ExecDetails contains execution detail information.

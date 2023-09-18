@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/stretchr/testify/require"
 )
 
 // After add column finished, check the records in the table.

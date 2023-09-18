@@ -59,12 +59,12 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/sync/errgroup"
 )
 

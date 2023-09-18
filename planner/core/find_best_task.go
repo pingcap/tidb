@@ -40,9 +40,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

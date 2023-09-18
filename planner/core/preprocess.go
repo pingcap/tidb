@@ -47,8 +47,8 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/logutil/log"
-	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	utilparser "github.com/pingcap/tidb/util/parser"
 )
 
 // PreprocessOpt presents optional parameters to `Preprocess` method.

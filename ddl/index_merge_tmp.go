@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil/log"
-	kvutil "github.com/tikv/client-go/v2/util"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	kvutil "github.com/tikv/client-go/v2/util"
 )
 
 // IsEnableFastReorg check whether Fast Reorg is allowed.

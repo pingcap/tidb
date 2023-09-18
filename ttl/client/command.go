@@ -24,8 +24,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/logutil/log"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 const (

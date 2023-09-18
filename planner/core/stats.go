@@ -38,9 +38,9 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func (p *basePhysicalPlan) StatsCount() float64 {

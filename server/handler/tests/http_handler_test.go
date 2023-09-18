@@ -63,10 +63,10 @@ import (
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type basicHTTPHandlerTestSuite struct {

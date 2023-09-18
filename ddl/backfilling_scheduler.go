@@ -37,9 +37,9 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // backfillScheduler is used to manage the lifetime of backfill workers.

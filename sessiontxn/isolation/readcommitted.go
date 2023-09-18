@@ -29,9 +29,9 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	isolation_metrics "github.com/pingcap/tidb/sessiontxn/isolation/metrics"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type stmtState struct {

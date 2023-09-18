@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 )

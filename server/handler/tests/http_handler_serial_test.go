@@ -44,9 +44,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/deadlockhistory"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {

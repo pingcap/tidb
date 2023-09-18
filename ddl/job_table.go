@@ -43,8 +43,8 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil/log"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 var (

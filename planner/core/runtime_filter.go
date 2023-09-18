@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 // RuntimeFilterType "IN"

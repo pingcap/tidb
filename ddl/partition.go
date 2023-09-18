@@ -57,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/mock"
 	decoder "github.com/pingcap/tidb/util/rowDecoder"
@@ -65,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

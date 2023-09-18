@@ -30,9 +30,9 @@ import (
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tidb/util/tracing"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // ceTraceExpr appends an expression and related information into CE trace

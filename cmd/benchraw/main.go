@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/rawkv"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (

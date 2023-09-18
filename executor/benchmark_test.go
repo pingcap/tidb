@@ -43,10 +43,10 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 var (

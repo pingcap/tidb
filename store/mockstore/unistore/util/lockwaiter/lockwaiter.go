@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/kvproto/pkg/deadlock"
 	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // LockNoWait is used for pessimistic lock wait time

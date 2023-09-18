@@ -42,10 +42,10 @@ import (
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/ttlworker"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func sessionFactory(t *testing.T, store kv.Storage) func() session.Session {

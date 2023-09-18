@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 const (

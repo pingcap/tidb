@@ -37,11 +37,11 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

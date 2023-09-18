@@ -93,8 +93,9 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/consistency"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sem"
@@ -112,7 +113,6 @@ import (
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Session context, it is consistent with the lifecycle of a client connection.

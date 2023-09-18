@@ -34,9 +34,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // NewStatsCache creates a new StatsCacheWrapper.

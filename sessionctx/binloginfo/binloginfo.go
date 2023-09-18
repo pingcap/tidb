@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tipb/go-binlog"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tipb/go-binlog"
 	"google.golang.org/grpc"
 )
 

@@ -35,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/timeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const scanTaskNotificationType string = "scan"

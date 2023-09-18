@@ -35,8 +35,8 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/kverrors"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // Detector detects deadlock.

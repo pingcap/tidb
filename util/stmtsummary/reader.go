@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // stmtSummaryReader uses to read the statement summaries data and convert to []datum row.

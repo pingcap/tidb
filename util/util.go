@@ -28,8 +28,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser"
-	"go.uber.org/atomic"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"go.uber.org/atomic"
 )
 
 // SliceToMap converts slice to map

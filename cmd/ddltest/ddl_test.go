@@ -48,8 +48,8 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/stretchr/testify/require"
 )
 
 var (

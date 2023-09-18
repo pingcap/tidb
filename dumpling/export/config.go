@@ -21,12 +21,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/promutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

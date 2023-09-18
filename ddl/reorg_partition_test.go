@@ -32,9 +32,9 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/stretchr/testify/require"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type allTableData struct {

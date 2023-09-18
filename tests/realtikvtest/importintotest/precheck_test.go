@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/stretchr/testify/require"
 )
 
 func (s *mockGCSSuite) TestPreCheckTotalFileSize0() {

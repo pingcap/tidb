@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/texttree"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/texttree"
 )
 
 // FlatPhysicalPlan provides an easier structure to traverse a plan and collect needed information.

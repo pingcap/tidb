@@ -45,8 +45,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/prometheus/client_golang/prometheus"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/prometheus/client_golang/prometheus"
 	"golang.org/x/sync/errgroup"
 )
 

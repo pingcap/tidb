@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	plog "github.com/pingcap/log"
 	"github.com/pingcap/failpoint"
+	plog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"

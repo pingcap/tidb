@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/resourcemanager/poolmanager"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sasha-s/go-deadlock"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const waitInterval = 5 * time.Millisecond

@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/ranger"
@@ -47,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func (p *LogicalUnionScan) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {

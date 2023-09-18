@@ -18,8 +18,8 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/memory"
 )
 
 // maxSpillTimes indicates how many times the data can spill at most.

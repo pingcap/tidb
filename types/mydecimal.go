@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/mathutil"
 )
 
 // RoundMode is the type for round mode.

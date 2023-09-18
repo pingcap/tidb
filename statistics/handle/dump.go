@@ -33,9 +33,9 @@ import (
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // JSONTable is used for dumping statistics.

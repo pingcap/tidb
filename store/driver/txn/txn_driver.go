@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/store/driver/options"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/tracing"
 	tikverr "github.com/tikv/client-go/v2/error"
 	tikvstore "github.com/tikv/client-go/v2/kv"
@@ -39,7 +40,6 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 	"github.com/tikv/client-go/v2/txnkv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type tikvTxn struct {

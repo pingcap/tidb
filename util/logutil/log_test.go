@@ -19,16 +19,16 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"runtime"
 	"testing"
-	"log/slog"
 
 	"github.com/google/uuid"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/stretchr/testify/require"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 )
 

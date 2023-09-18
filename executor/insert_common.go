@@ -45,10 +45,10 @@ import (
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // InsertValues is the data to insert.

@@ -46,9 +46,9 @@ import (
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/pingcap/tidb/util/topsql"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // IsReadOnly check whether the ast.Node is a read only statement.

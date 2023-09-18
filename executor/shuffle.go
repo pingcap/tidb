@@ -29,8 +29,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/twmb/murmur3"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/twmb/murmur3"
 )
 
 // ShuffleExec is the executor to run other executors in a parallel manner.

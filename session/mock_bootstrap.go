@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/util/logutil/log"
-	atomicutil "go.uber.org/atomic"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	atomicutil "go.uber.org/atomic"
 )
 
 // WithMockUpgrade is a flag identify whether tests run with mock upgrading.

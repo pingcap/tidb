@@ -17,12 +17,12 @@
 package testsetup
 
 import (
-	// "fmt"
-	// "os"
+// "fmt"
+// "os"
 
-	// "github.com/pingcap/log"
-	// "github.com/pingcap/tidb/util/logutil/zap"
-	// "github.com/pingcap/tidb/util/logutil/zap/zapcore"
+// "github.com/pingcap/log"
+// "github.com/pingcap/tidb/util/logutil/zap"
+// "github.com/pingcap/tidb/util/logutil/zap/zapcore"
 )
 
 // SetupForCommonTest runs before all the tests.

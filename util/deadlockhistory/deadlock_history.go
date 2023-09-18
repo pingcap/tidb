@@ -23,9 +23,9 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

@@ -25,10 +25,10 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

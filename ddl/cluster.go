@@ -42,13 +42,13 @@ import (
 	"github.com/pingcap/tidb/util/filter"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
 	"go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var pdScheduleKey = []string{

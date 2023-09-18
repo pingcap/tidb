@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const gcLastTSVarName = "tidb_stats_gc_last_ts"

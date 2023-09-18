@@ -23,10 +23,10 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/credentials/insecure"

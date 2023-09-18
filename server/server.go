@@ -70,10 +70,10 @@ import (
 	"github.com/pingcap/tidb/util/fastrand"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sys/linux"
 	"github.com/pingcap/tidb/util/timeutil"
 	uatomic "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )
 

@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // InternalKey

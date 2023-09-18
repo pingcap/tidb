@@ -39,8 +39,8 @@ import (
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tipb/go-tipb"
 )
 
 var (

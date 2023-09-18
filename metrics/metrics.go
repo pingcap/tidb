@@ -19,10 +19,10 @@ import (
 
 	timermetrics "github.com/pingcap/tidb/timer/metrics"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 var (

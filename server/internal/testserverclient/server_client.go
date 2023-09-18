@@ -41,9 +41,9 @@ import (
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testenv"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 //revive:disable:exported

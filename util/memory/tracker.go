@@ -26,8 +26,8 @@ import (
 
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil/log"
-	atomicutil "go.uber.org/atomic"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	atomicutil "go.uber.org/atomic"
 )
 
 // TrackMemWhenExceeds is the threshold when memory usage needs to be tracked.

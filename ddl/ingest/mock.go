@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
 	// "github.com/pingcap/tidb/util/logutil"
-	clientv3 "go.etcd.io/etcd/client/v3"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 // MockBackendCtxMgr is a mock backend context manager.

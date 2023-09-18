@@ -25,8 +25,8 @@ import (
 
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"go.uber.org/atomic"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"go.uber.org/atomic"
 )
 
 // init initializes `locCache`.

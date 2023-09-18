@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	pwdValidator "github.com/pingcap/tidb/util/password-validation"
 	"github.com/pingcap/tidb/util/sem"
@@ -65,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tidb/util/tls"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const notSpecified = -1

@@ -43,10 +43,10 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // MVCCStore is a wrapper of badger.DB to provide MVCC functions.

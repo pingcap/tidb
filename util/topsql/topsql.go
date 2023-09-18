@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/reporter"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )
 

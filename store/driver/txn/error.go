@@ -36,8 +36,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
-	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 func genKeyExistsError(name string, value string, err error) error {

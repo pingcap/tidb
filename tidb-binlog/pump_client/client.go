@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/tidb/tidb-binlog/node"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/etcd"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	pb "github.com/pingcap/tipb/go-binlog"
 	pd "github.com/tikv/pd/client"
 	"go.etcd.io/etcd/api/v3/mvccpb"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

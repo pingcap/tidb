@@ -17,10 +17,10 @@ package memoryusagealarm
 import (
 	"cmp"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	rpprof "runtime/pprof"
-	"log/slog"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/memory"
 	// "go.uber.org/zap/zapcore"
 )
 

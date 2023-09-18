@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

@@ -68,6 +68,8 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/kvcache"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/metricsutil"
 	"github.com/pingcap/tidb/util/printer"
@@ -86,8 +88,6 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/automaxprocs/maxprocs"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/log"
 )
 
 // Flag Names

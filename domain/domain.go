@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/memoryusagealarm"
 	"github.com/pingcap/tidb/util/replayer"
@@ -92,11 +93,10 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
+	gzap "go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
 	"google.golang.org/grpc/keepalive"
-	gzap "go.uber.org/zap"
 )
 
 var (

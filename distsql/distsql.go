@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc/metadata"
 )
 

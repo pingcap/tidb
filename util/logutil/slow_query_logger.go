@@ -16,32 +16,35 @@ package logutil
 
 import (
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 	"go.uber.org/zap/buffer"
+	"go.uber.org/zap/exp/zapslog"
 	"go.uber.org/zap/zapcore"
 )
 
 var _pool = buffer.NewPool()
 
-func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error) {
+func newSlowQueryLogger(cfg *LogConfig) (*slog.Logger, error) {
 	// create the slow query logger
-	sqLogger, prop, err := log.InitLogger(newSlowQueryLogConfig(cfg))
+	cfg1 := newSlowQueryLogConfig(cfg)
+	output, err := newWriteSyncer(cfg1)
 	if err != nil {
-		return nil, nil, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-
+	level := zap.NewAtomicLevel()
+	err = level.UnmarshalText([]byte(cfg.Level))
+	if err != nil {
+		return nil, err
+	}
 	// replace 2018-12-19-unified-log-format text encoder with slow log encoder
-	newCore := log.NewTextCore(&slowLogEncoder{}, prop.Syncer, prop.Level)
-	sqLogger = sqLogger.WithOptions(zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-		return newCore
-	}))
-	prop.Core = newCore
-
-	return sqLogger, prop, nil
+	core := log.NewTextCore(&slowLogEncoder{}, output, level)
+	handler := zapslog.NewHandler(core, nil)
+	return slog.New(handler), nil
 }
 
 func newSlowQueryLogConfig(cfg *LogConfig) *log.Config {

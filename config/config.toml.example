@@ -160,7 +160,7 @@ slow-query-file = "tidb-slow.log"
 # File logging.
 [log.file]
 # Log file name.
-filename = ""
+filename = "tidb.log"
 
 # Max log file size in MB (upper limit to 4096MB).
 max-size = 300

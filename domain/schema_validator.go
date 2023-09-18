@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 type checkResult int

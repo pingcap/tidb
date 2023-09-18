@@ -41,9 +41,9 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sem"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // SkipWithGrant causes the server to start without using the privilege system at all.

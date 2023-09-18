@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"golang.org/x/exp/rand"
 )
 

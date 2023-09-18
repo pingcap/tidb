@@ -21,9 +21,9 @@ import (
 
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	reporter_metrics "github.com/pingcap/tidb/util/topsql/reporter/metrics"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // TopSQLPubSubService implements tipb.TopSQLPubSubServer.

@@ -25,8 +25,8 @@ import (
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/size"
 )
 
 // ImporterRangeConcurrencyForTest is only used for test.

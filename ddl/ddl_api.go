@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/util/domainutil"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/mock"
@@ -73,7 +74,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

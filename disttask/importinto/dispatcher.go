@@ -25,6 +25,7 @@ import (
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -37,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
@@ -285,7 +285,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHan
 // OnErrStage implements dispatcher.Extension interface.
 func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := log.L().With(
-	// logger := logutil.BgLogger().With(
+		// logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),

@@ -20,10 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/dumpling/cli"
 	"github.com/pingcap/tidb/dumpling/export"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/spf13/pflag"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func main() {

@@ -27,12 +27,12 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 const (

@@ -30,8 +30,8 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil/log"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // StatsHandler is the handler for dumping statistics.

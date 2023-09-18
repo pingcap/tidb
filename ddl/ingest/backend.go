@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	plog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	lightning "github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -28,14 +29,13 @@ import (
 	tikv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/table"
-	plog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // BackendCtx is the backend context for add index reorg task.

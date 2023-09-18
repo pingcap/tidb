@@ -26,9 +26,9 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/log"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 // GlobalMPPFailedStoreProber mpp failed store probe

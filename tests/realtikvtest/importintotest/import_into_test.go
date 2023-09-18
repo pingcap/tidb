@@ -44,13 +44,13 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/mock/gomock"
-	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
 func (s *mockGCSSuite) prepareAndUseDB(db string) {
