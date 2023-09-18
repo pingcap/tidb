@@ -106,7 +106,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return nil, nil
 		}
-		return generateIngestTaskPlan(ctx, taskHandle, gTask)
+		return generateIngestTaskPlan(ctx, h, taskHandle, gTask)
 	default:
 		return nil, nil
 	}
@@ -166,7 +166,7 @@ func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, tas
 	if err != nil {
 		return nil, err
 	}
-	if task.Step == proto.StepTwo {
+	if len(h.previousSchedulerIDs) > 0 {
 		// Only the nodes that executed step one can have step two.
 		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
 		for _, id := range h.previousSchedulerIDs {
@@ -284,6 +284,7 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 
 func generateIngestTaskPlan(
 	ctx context.Context,
+	h *backfillingDispatcherExt,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
 ) ([][]byte, error) {
@@ -302,6 +303,7 @@ func generateIngestTaskPlan(
 	for range schedulerIDs {
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
+	h.previousSchedulerIDs = schedulerIDs
 	return subTaskMetas, nil
 }
 
