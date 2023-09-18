@@ -156,9 +156,29 @@ func (d *BaseDispatcher) scheduleTask() {
 					}
 				}
 			})
+
+			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
+				if val.(bool) && d.Task.State == proto.TaskStateRunning {
+					err := d.taskMgr.PauseTask(d.Task.ID)
+					if err != nil {
+						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
+					}
+				}
+			})
+
 			switch d.Task.State {
 			case proto.TaskStateCancelling:
 				err = d.onCancelling()
+			case proto.TaskStatePausing:
+				err = d.onPausing()
+			case proto.TaskStatePaused:
+				err = d.onPaused()
+				// close the dispatcher.
+				if err == nil {
+					return
+				}
+			case proto.TaskStateResuming:
+				err = d.onResuming()
 			case proto.TaskStateReverting:
 				err = d.onReverting()
 			case proto.TaskStatePending:
@@ -191,6 +211,45 @@ func (d *BaseDispatcher) onCancelling() error {
 	logutil.Logger(d.logCtx).Info("on cancelling state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
 	errs := []error{errors.New("cancel")}
 	return d.onErrHandlingStage(errs)
+}
+
+// handle task in pausing state, cancel all running subtasks.
+func (d *BaseDispatcher) onPausing() error {
+	logutil.Logger(d.logCtx).Info("on pausing state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning)
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	if cnt == 0 {
+		logutil.Logger(d.logCtx).Info("all running tasks paused, update the task to paused state")
+		return d.updateTask(proto.TaskStatePaused, nil, RetrySQLTimes)
+	}
+	logutil.Logger(d.logCtx).Debug("on pausing state, this task keeps current state", zap.String("state", d.Task.State))
+	return nil
+}
+
+// handle task in paused state
+func (d *BaseDispatcher) onPaused() error {
+	logutil.Logger(d.logCtx).Info("on paused state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	return nil
+}
+
+// handle task in resuming state
+func (d *BaseDispatcher) onResuming() error {
+	logutil.Logger(d.logCtx).Info("on resuming state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStatePaused)
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	if cnt == 0 {
+		// Finish the resuming process.
+		logutil.Logger(d.logCtx).Info("all paused tasks finished, update the task to running state")
+		return d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
+	}
+
+	return d.taskMgr.ResumeAllSubtasks(d.Task.ID)
 }
 
 // handle task in reverting state, check all revert subtasks finished.
@@ -328,6 +387,7 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
 	})
+
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
 		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.Task, newSubTasks, prevState)
@@ -602,6 +662,7 @@ func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.C
 }
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
+// TODO: YWQ verify it's true.
 func VerifyTaskStateTransform(from, to string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {

@@ -106,18 +106,42 @@ func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concu
 
 // CancelGlobalTask cancels a global task.
 func CancelGlobalTask(taskKey string) error {
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := taskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
 		return err
 	}
-	if globalTask == nil {
+	if task == nil {
+		logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
+
 		return nil
 	}
-	return globalTaskManager.CancelGlobalTask(globalTask.ID)
+	return taskManager.CancelGlobalTask(task.ID)
+}
+
+// ResumeTask resumes a task.
+func ResumeTask(taskKey string) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	task, err := taskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return err
+	}
+	if task == nil {
+		logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
+		return nil
+	}
+	found, err := taskManager.ResumeTask(task.ID)
+	if !found {
+		logutil.BgLogger().Info("task not resumable", zap.String("taskKey", taskKey))
+		return nil
+	}
+	return err
 }
 
 // RunWithRetry runs a function with retry, when retry exceed max retry time, it
