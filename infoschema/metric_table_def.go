@@ -83,8 +83,8 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels: []string{"instance", "job"},
 	},
 	"tiflash_cpu_quota": {
-		PromQL:  "tiflash_system_current_metric_LogicalCPUCores{$LABEL_CONDITIONS}",
-		Labels:  []string{"instance"},
+		PromQL: "tiflash_system_current_metric_LogicalCPUCores{$LABEL_CONDITIONS}",
+		Labels: []string{"instance"},
 	},
 	"tiflash_resource_manager_resource_unit": {
 		PromQL: "sum(rate(tiflash_compute_request_unit[$RANGE_DURATION]))",

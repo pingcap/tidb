@@ -21,8 +21,6 @@ import (
 	"sort"
 	"time"
 
-	"go.uber.org/zap"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,9 +35,11 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
+	"go.uber.org/zap"
 )
 
 var (
@@ -265,7 +265,7 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 	} else if err2 != nil {
 		logutil.BgLogger().Error("get tiflash ru quota failed", zap.Error(err2))
 	}
-	req.AppendUint64(0, uint64(tidbQuota + tiflashQuota))
+	req.AppendUint64(0, uint64(tidbQuota+tiflashQuota))
 	return nil
 }
 
@@ -422,7 +422,7 @@ func (e *Executor) getTiFlashQuotas(ctx context.Context, exec sqlexec.Restricted
 		if !tiflashRUs.advance(maxTime) || !tiflashCPUs.advance(maxTime) {
 			continue
 		}
-		tiflashQuota := tiflashCPUs.getValue()/totalTiFlashLogicalCores
+		tiflashQuota := tiflashCPUs.getValue() / totalTiFlashLogicalCores
 		if tiflashQuota > valuableUsageThreshold {
 			quotas = append(quotas, tiflashRUs.getValue()/tiflashQuota)
 		} else if tiflashQuota < lowUsageThreshold {
