@@ -150,12 +150,11 @@ func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionSplitKeys int64, err error) {
 	tidbCfg := tidb.GetGlobalConfig()
-	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
 	tls, err := common.NewTLS(
 		tidbCfg.Security.ClusterSSLCA,
 		tidbCfg.Security.ClusterSSLCert,
 		tidbCfg.Security.ClusterSSLKey,
-		hostPort,
+		"",
 		nil, nil, nil,
 	)
 	if err != nil {

@@ -277,15 +277,7 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.
 func (m *SortedKVMeta) MergeSummary(summary *WriterSummary) {
-	m.MinKey = NotNilMin(m.MinKey, summary.Min)
-	m.MaxKey = NotNilMax(m.MaxKey, summary.Max)
-	m.TotalKVSize += summary.TotalSize
-	for _, f := range summary.MultipleFilesStats {
-		for _, filename := range f.Filenames {
-			m.DataFiles = append(m.DataFiles, filename[0])
-			m.StatFiles = append(m.StatFiles, filename[1])
-		}
-	}
+	m.Merge(NewSortedKVMeta(summary))
 }
 
 // NotNilMin returns the smallest of a and b, ignoring nil values.

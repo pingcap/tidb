@@ -1694,8 +1694,6 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	totalKVSize int64, totalKVCount int64) {
 	v, ok := local.externalEngine[engineUUID]
 	if !ok {
-		// we get it after import, but before clean up, so this should not happen
-		// todo: return error
 		return 0, 0
 	}
 	return v.KVStatistics()
