@@ -115,22 +115,25 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 // updateStatsVersion will set statistics version to the newest TS,
 // then tidb-server will reload automatic.
 func (h *Handle) updateStatsVersion() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
-	_, err := exec.ExecuteInternal(ctx, "begin")
+	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
 	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?", startTS); err != nil {
 		return err
 	}
@@ -250,10 +253,13 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 }
 
 func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -299,10 +305,15 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -310,11 +321,10 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
 	if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
 		return err
 	}
@@ -340,10 +350,15 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -351,11 +366,10 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
 	if _, err := exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
 		return err
 	}
@@ -371,11 +385,15 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
 
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -383,11 +401,13 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
+	sctx := se.(sessionctx.Context)
+
 	// First of all, we update the version.
 	_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", startTS, physicalID)
 	if err != nil {
@@ -395,7 +415,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	}
 	statsVer = startTS
 	// If we didn't update anything by last SQL, it means the stats of this table does not exist.
-	if h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
+	if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs sqlexec.RecordSet
 		rs, err = exec.ExecuteInternal(ctx, "select count from mysql.stats_meta where table_id = %?", physicalID)
@@ -411,7 +431,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 		count := req.GetRow(0).GetInt64(0)
 		for _, colInfo := range colInfos {
 			value := types.NewDatum(colInfo.GetOriginDefaultValue())
-			value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
+			value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx, &colInfo.FieldType)
 			if err != nil {
 				return
 			}
@@ -425,7 +445,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 					return err
 				}
-				value, err = value.ConvertTo(h.mu.ctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
+				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
 				if err != nil {
 					return
 				}
