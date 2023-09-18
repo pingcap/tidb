@@ -1266,9 +1266,11 @@ func TestDBAStmt(t *testing.T) {
 		// for lock stats
 		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
 		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
+		{"lock stats t partition (p0, p1)", true, "LOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// for unlock stats
 		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
 		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
+		{"unlock stats t partition (p0, p1)", true, "UNLOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
