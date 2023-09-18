@@ -1711,19 +1711,14 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, nil
 }
 
-func checkHistoricalStatsEnable(sctx sessionctx.Context) (enable bool, err error) {
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return variable.TiDBOptOn(val), nil
-}
-
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return checkHistoricalStatsEnable(h.mu.ctx)
+	if err := UpdateSCtxVarsForStats(h.mu.ctx); err != nil {
+		return false, err
+	}
+	return h.mu.ctx.GetSessionVars().EnableHistoricalStats, nil
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
