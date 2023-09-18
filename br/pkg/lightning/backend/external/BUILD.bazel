@@ -52,7 +52,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 32,
+    shard_count = 33,
     deps = [
         "//br/pkg/lightning/common",
         "//br/pkg/storage",
