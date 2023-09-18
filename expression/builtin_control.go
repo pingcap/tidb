@@ -76,6 +76,9 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 			}
 			maxArgFlen = maxlen(maxArgFlen, flen)
 		}
+		// For a decimal field, the `length` and `flen` are not the same.
+		// `length` only holds the binary data, while `flen` represents the number of digits required to display the field, including the negative sign.
+		// In the current implementation of TiDB, `flen` and `length` are treated as the same, so the `length` of a decimal may be inconsistent with that of MySQL.
 		resultFlen := maxArgFlen + resultFieldType.GetDecimal() + 1 // account for -1 len fields
 		resultFieldType.SetFlenUnderLimit(resultFlen)
 	} else if evalType == types.ETString {
