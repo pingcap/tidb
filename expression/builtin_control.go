@@ -83,6 +83,7 @@ func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, 
 		for i := range argTps {
 			argFlen := argTps[i].GetFlen()
 			if argFlen == types.UnspecifiedLength {
+				resultFieldType.SetFlen(types.UnspecifiedLength)
 				return
 			}
 			maxLen = maxlen(argFlen, maxLen)
