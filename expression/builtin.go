@@ -257,14 +257,12 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 		case types.ETString:
 			args[i] = WrapWithCastAsString(ctx, args[i])
 			args[i] = HandleBinaryLiteral(ctx, args[i], ec, funcName)
-		case types.ETDuration:
-			args[i] = WrapWithCastAsDuration(ctx, args[i])
 		case types.ETJson:
 			args[i] = WrapWithCastAsJSON(ctx, args[i])
 		// https://github.com/pingcap/tidb/issues/44196
-		// For decimal/datetime/timestamp types, it is necessary to ensure that decimal are consistent with the output type,
+		// For decimal/datetime/timestamp/duration types, it is necessary to ensure that decimal are consistent with the output type,
 		// so adding a cast function here.
-		case types.ETDecimal, types.ETDatetime, types.ETTimestamp:
+		case types.ETDecimal, types.ETDatetime, types.ETTimestamp, types.ETDuration:
 			if !args[i].GetType().Equal(argTps[i]) {
 				args[i] = BuildCastFunction(ctx, args[i], argTps[i])
 			}
