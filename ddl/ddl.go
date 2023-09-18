@@ -333,6 +333,7 @@ func (w *waitSchemaSyncedController) setAlreadyRunOnce(id int64) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if len(w.onceMap) > jobOnceCapacity {
+		// If the map is too large, we reset it. These jobs may need to check schema synced again, but it's ok.
 		w.onceMap = make(map[int64]struct{}, jobRecordCapacity)
 	}
 	w.onceMap[id] = struct{}{}
