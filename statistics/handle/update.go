@@ -752,16 +752,6 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	return s, e, err
 }
 
-func (h *Handle) getAnalyzeSnapshot() (bool, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	analyzeSnapshot, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
-	if err != nil {
-		return false, err
-	}
-	return variable.TiDBOptOn(analyzeSnapshot), nil
-}
-
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	defer func() {
@@ -785,12 +775,10 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
 		return false
 	}
-	pruneMode := h.CurrentPruneMode()
-	analyzeSnapshot, err := h.getAnalyzeSnapshot()
-	if err != nil {
-		logutil.BgLogger().Error("load tidb_enable_analyze_snapshot for auto analyze session failed", zap.String("category", "stats"), zap.Error(err))
-		return false
-	}
+	h.mu.Lock()
+	pruneMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
+	analyzeSnapshot := h.mu.ctx.GetSessionVars().EnableAnalyzeSnapshot
+	h.mu.Unlock()
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
