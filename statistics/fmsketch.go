@@ -61,15 +61,12 @@ func (s *FMSketch) Copy() *FMSketch {
 	if s == nil {
 		return nil
 	}
-	hashset := make(map[uint64]bool)
+	result := NewFMSketch(s.maxSize)
 	for key, value := range s.hashset {
-		hashset[key] = value
+		result.hashset[key] = value
 	}
-	return &FMSketch{
-		hashset: hashset,
-		mask:    s.mask,
-		maxSize: s.maxSize,
-	}
+	result.mask = s.mask
+	return result
 }
 
 // NDV returns the ndv of the sketch.
@@ -217,8 +214,8 @@ func (s *FMSketch) reset() {
 	s.maxSize = 0
 }
 
-// Destory resets the FMSketch and puts it back to the pool.
-func (s *FMSketch) Destory() {
+// Destroy resets the FMSketch and puts it back to the pool.
+func (s *FMSketch) Destroy() {
 	s.reset()
 	fmSketchPool.Put(s)
 }
