@@ -97,7 +97,6 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	defer murmur3Pool.Put(hashFunc)
 	_, err = hashFunc.Write(bytes)
 	if err != nil {
-		murmur3Pool.Put(hashFunc)
 		return errors.Trace(err)
 	}
 	s.insertHashValue(hashFunc.Sum64())
