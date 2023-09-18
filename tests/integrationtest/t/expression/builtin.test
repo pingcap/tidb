@@ -1355,3 +1355,29 @@ select name_const(concat('a', 'b'), 555) from t;
 -- error 1210
 select name_const(555) from t;
 select name_const("hello", 1);
+
+# TestTranslate
+drop table if exists t;
+create table if not exists `translate`(id int);
+create table t(str varchar(100), i int);
+insert into t set str='ABC', i=0;
+insert into t set str='AABC', i=1;
+insert into t set str='A.B.C', i=2;
+insert into t set str='aaaaabbbbb', i=3;
+insert into t set str='abc', i=4;
+insert into t set str='aaa', i=5;
+insert into t set str=NULL, i=6;
+set @@tidb_enable_vectorized_expression=true;
+select translate(str, 'AAa', 'Zz') from t;
+select translate(str, NULL, 'Zz') from t;
+select translate(str, 'AAa', NULL) from t;
+select translate(str, 'AAa', '') from t;
+select translate(str, '', 'Zzz') from t;
+set @@tidb_enable_vectorized_expression=false;
+select translate(str, 'AAa', 'Zz') from t;
+select translate(str, NULL, 'Zz') from t;
+select translate(str, 'AAa', NULL) from t;
+select translate(str, 'AAa', '') from t;
+select translate(str, '', 'Zzz') from t;
+select translate(i, '0123456', 'abcdefg') from t;
+set tidb_enable_vectorized_expression=default;
