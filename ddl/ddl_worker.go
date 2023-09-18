@@ -842,11 +842,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 			// which may act like a deadlock.
 			w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
 				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
-		}
 
-		// In test and job is cancelling we can ignore the sleep
-		if !(intest.InTest && job.IsCancelling()) {
-			time.Sleep(GetWaitTimeWhenErrorOccurred())
+			// In test and job is cancelling we can ignore the sleep
+			if !(intest.InTest && job.IsCancelling()) {
+				time.Sleep(GetWaitTimeWhenErrorOccurred())
+			}
 		}
 	}
 
