@@ -45,8 +45,8 @@ import (
 // 2. StatsReader is not thread-safe. Different goroutines cannot call (*StatsReader).Read concurrently.
 type StatsReader struct {
 	ctx      sqlexec.RestrictedSQLExecutor
-	snapshot uint64
 	release  func() // a call back function to release all resources hold by this reader.
+	snapshot uint64
 }
 
 // GetStatsReader returns a StatsReader.
