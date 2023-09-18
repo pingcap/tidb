@@ -3703,15 +3703,16 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:pvHtHnUDfqMAU3/F8JVpuuG86E/lemJWZq0iSCV3kKY=",
-        version = "v2.0.4-0.20230912041415-9c163cc8574b",
+        replace = "github.com/crazycs520/client-go/v2",
+        sum = "h1:zbycKME47JBATMFRkbdrpd7unIr7INra/S2db3NyKmc=",
+        version = "v2.0.0-alpha.0.20230918064014-a277415c5359",
     )
     go_repository(
         name = "com_github_tikv_pd_client",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sum = "h1:e4hLUKfgfPeJPZwOfU+/I/03G0sn6IZqVcbX/5o+hvM=",
-        version = "v0.0.0-20230904040343-947701a32c05",
+        sum = "h1:ckPpxKcl75mO2N6a4cJXiZH43hvcHPpqc9dh1TmH1nc=",
+        version = "v0.0.0-20221031025758-80f0d8ca4d07",
     )
     go_repository(
         name = "com_github_timakin_bodyclose",
