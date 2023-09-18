@@ -210,6 +210,7 @@ select least(c_dt, cast('1999-10-10 10:10:10.1234' as datetime)) from t1;
 set @@tidb_enable_vectorized_expression = default;
 
 # TestDatetimeOverflow
+drop table if exists t1;
 create table t1 (d date);
 set sql_mode='traditional';
 -- error 1441
