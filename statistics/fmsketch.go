@@ -165,10 +165,8 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	if protoSketch == nil {
 		return nil
 	}
-	sketch := &FMSketch{
-		hashset: make(map[uint64]bool, len(protoSketch.Hashset)),
-		mask:    protoSketch.Mask,
-	}
+	sketch := fmSketchPool.Get().(*FMSketch)
+	sketch.mask = protoSketch.Mask
 	for _, val := range protoSketch.Hashset {
 		sketch.hashset[val] = true
 	}
