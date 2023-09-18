@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
@@ -135,7 +137,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 
+		logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers>", zap.String("xzx", "xzx"))
 		w.workerSync.waitForRunningWorkers()
+		logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers<", zap.String("xzx", "xzx"))
 
 		if !hasError {
 			if w.spillHelper.isSpillTriggered() {
@@ -154,7 +158,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		// TODO Do we need to handle something when error happens?
 
+		logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers>", zap.String("xzx", "xzx"))
 		w.workerSync.waitForExitOfAliveWorkers()
+		logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers<", zap.String("xzx", "xzx"))
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -162,6 +168,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 		waitGroup.Done()
 	}()
+
+	logutil.BgLogger().Info("xzxdebug: partial worker begins to run", zap.String("xzx", "xzx"))
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
@@ -170,7 +178,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 
 		if !ok {
+			logutil.BgLogger().Info("xzxdebug: partial worker waitForSpillDoneBeforeWorkerExit>", zap.String("xzx", "xzx"))
 			w.waitForSpillDoneBeforeWorkerExit()
+			logutil.BgLogger().Info("xzxdebug: partial worker waitForSpillDoneBeforeWorkerExit<", zap.String("xzx", "xzx"))
 			return
 		}
 
@@ -347,7 +357,7 @@ func (p *partialWorkerSync) waitForRunningWorkers() {
 			p.partialWorkDoneNotifier <- struct{}{}
 		}
 	} else {
-		<-p.partialAndFinalNotifier
+		<-p.partialWorkDoneNotifier
 	}
 }
 

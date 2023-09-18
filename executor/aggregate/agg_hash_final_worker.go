@@ -276,10 +276,13 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		waitGroup.Done()
 	}()
 
+	logutil.BgLogger().Info("xzxdebug: final worker wait for notification>", zap.String("xzx", "xzx"))
 	// Wait for the finish of all partial workers
 	<-w.partialAndFinalNotifier
+	logutil.BgLogger().Info("xzxdebug: final worker wait for notification<", zap.String("xzx", "xzx"))
 
 	if w.spillHelper.isSpillTriggered() {
+		logutil.BgLogger().Info("xzxdebug: final worker starts to spill", zap.String("xzx", "xzx"))
 		for {
 			hasData, err := w.restoreOnePartition(ctx)
 			if err != nil {
@@ -293,6 +296,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 			w.mergeResultsAndSend(ctx)
 		}
 	} else {
+		logutil.BgLogger().Info("xzxdebug: final worker starts to merge", zap.String("xzx", "xzx"))
 		w.mergeResultsAndSend(ctx)
 	}
 }

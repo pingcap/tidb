@@ -34,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
 )
 
 // HashAggInput indicates the input of hash agg exec.
@@ -295,8 +297,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		totalPartialWorkerNum:   partialConcurrency,
 		runningPartialWorkerNum: partialConcurrency,
 		alivePartialWorkerNum:   partialConcurrency,
-		partialWorkDoneNotifier: make(chan struct{}),
-		partialAndFinalNotifier: make(chan struct{}),
+		partialWorkDoneNotifier: make(chan struct{}, partialConcurrency),
+		partialAndFinalNotifier: make(chan struct{}, finalConcurrency),
 	}
 
 	// Init partial workers.
@@ -349,17 +351,19 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	for i := 0; i < finalConcurrency; i++ {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
-			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
-			partialResultMap:     make(aggfuncs.AggPartialResultMapper),
-			groupSet:             groupSet,
-			inputCh:              e.partialOutputChs[i],
-			outputCh:             e.finalOutputCh,
-			finalResultHolderCh:  make(chan *chunk.Chunk, 1),
-			rowBuffer:            make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:           chunk.MutRowFromTypes(exec.RetTypes(e)),
-			groupKeys:            make([][]byte, 0, 8),
-			aggFuncsForRestoring: e.PartialAggFuncs,
-			restoredMemDelta:     0,
+			baseHashAggWorker:       newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
+			partialResultMap:        make(aggfuncs.AggPartialResultMapper),
+			groupSet:                groupSet,
+			inputCh:                 e.partialOutputChs[i],
+			outputCh:                e.finalOutputCh,
+			finalResultHolderCh:     make(chan *chunk.Chunk, 1),
+			rowBuffer:               make([]types.Datum, 0, e.Schema().Len()),
+			mutableRow:              chunk.MutRowFromTypes(exec.RetTypes(e)),
+			groupKeys:               make([][]byte, 0, 8),
+			aggFuncsForRestoring:    e.PartialAggFuncs,
+			restoredMemDelta:        0,
+			partialAndFinalNotifier: workerSync.partialAndFinalNotifier,
+			spillHelper:             e.spillHelper,
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<w.BInMap) + setSize)
@@ -513,6 +517,8 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 	if e.executed {
 		return nil
 	}
+
+	logutil.BgLogger().Info("xzxdebug: executos starts to run", zap.String("xzx", "xzx"))
 	for {
 		result, ok := <-e.finalOutputCh
 		if !ok {
