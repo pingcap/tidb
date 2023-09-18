@@ -22,17 +22,15 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/br/pkg/storage"
-
-	"github.com/pingcap/tidb/util/size"
-	"go.uber.org/zap"
-
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/size"
+	"go.uber.org/zap"
 )
 
 type mergeSortExecutor struct {
@@ -62,7 +60,7 @@ func newMergeSortExecutor(
 	}, nil
 }
 
-func (m *mergeSortExecutor) Init(ctx context.Context) error {
+func (*mergeSortExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("merge sort executor init subtask exec env")
 	return nil
 }
