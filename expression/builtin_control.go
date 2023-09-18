@@ -114,7 +114,7 @@ func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldTyp
 	}
 }
 
-func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
+func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) != 2 {
@@ -129,7 +129,6 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			}
 			resultFieldType.SetCollate(ec.Collation)
 			resultFieldType.SetCharset(ec.Charset)
-			resultFieldType.SetFlag(0)
 			if mysql.HasBinaryFlag(lhs.GetFlag()) || !types.IsNonBinaryStr(rhs) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
@@ -140,7 +139,6 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 			}
 			resultFieldType.SetCollate(ec.Collation)
 			resultFieldType.SetCharset(ec.Charset)
-			resultFieldType.SetFlag(0)
 			if mysql.HasBinaryFlag(rhs.GetFlag()) || !types.IsNonBinaryStr(lhs) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
@@ -149,7 +147,6 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		} else {
 			resultFieldType.SetCharset(mysql.DefaultCharset)
 			resultFieldType.SetCollate(mysql.DefaultCollationName)
-			resultFieldType.SetFlag(0)
 		}
 	case ast.Case:
 		if len(args) == 0 {
@@ -209,7 +206,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 			evalType := types.AggregateEvalType(notNullFields, &tempFlag)
 			resultFieldType.SetFlag(tempFlag)
 			setDecimalFromArgs(evalType, resultFieldType, notNullFields...)
-			err := setCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
+			err := addCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
 			if err != nil {
 				return nil, err
 			}
