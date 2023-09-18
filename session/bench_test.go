@@ -17,13 +17,14 @@ package session
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/pingcap/log"
+	plog "github.com/pingcap/log"
 	_ "github.com/pingcap/tidb/autoid_service"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
@@ -34,10 +35,11 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"go.uber.org/zap/zapcore"
 )
 
 var smallCount = 100
@@ -56,7 +58,7 @@ func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	log.SetLevel(zapcore.ErrorLevel)
+	plog.SetLevel(zapcore.ErrorLevel)
 	se, err := CreateSession4Test(store)
 	if err != nil {
 		log.Fatal(err.Error())
@@ -115,10 +117,10 @@ func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 	for count > 0 {
 		err := rs.Next(ctx, req)
 		if err != nil {
-			logutil.Logger(ctx).Fatal("read result failed", zap.Error(err))
+			slog.Log(ctx, log.LevelFatal, "read result failed", zap.Error(err))
 		}
 		if req.NumRows() == 0 {
-			logutil.Logger(ctx).Fatal(strconv.Itoa(count))
+			slog.Log(ctx, log.LevelFatal, strconv.Itoa(count))
 		}
 		count -= req.NumRows()
 	}

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -134,9 +134,9 @@ func TestAdjustDiskQuota(t *testing.T) {
 		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/common/GetStorageSize")
 	}()
 	d := t.TempDir()
-	require.Equal(t, int64(1638), adjustDiskQuota(0, d, log()))
-	require.Equal(t, int64(1), adjustDiskQuota(1, d, log()))
-	require.Equal(t, int64(1638), adjustDiskQuota(2000, d, log()))
+	require.Equal(t, int64(1638), adjustDiskQuota(0, d, log.L()))
+	require.Equal(t, int64(1), adjustDiskQuota(1, d, log.L()))
+	require.Equal(t, int64(1638), adjustDiskQuota(2000, d, log.L()))
 }
 
 func TestGetMsgFromBRError(t *testing.T) {

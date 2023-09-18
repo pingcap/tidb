@@ -41,7 +41,7 @@ import (
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/ttlworker"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"

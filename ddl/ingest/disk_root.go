@@ -26,7 +26,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	// "go.uber.org/zap"
 )
 
 // DiskRoot is used to track the disk usage for the lightning backfill process.

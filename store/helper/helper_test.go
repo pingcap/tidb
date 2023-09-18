@@ -26,11 +26,12 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
@@ -194,11 +195,11 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	resp.AsLeader[0] = &regionsStat
 	data, err := json.MarshalIndent(resp, "", "	")
 	if err != nil {
-		log.Panic("json marshal failed", zap.Error(err))
+		log.Fatal("json marshal failed", zap.Error(err))
 	}
 	_, err = w.Write(data)
 	if err != nil {
-		log.Panic("write http response failed", zap.Error(err))
+		log.Fatal("write http response failed", zap.Error(err))
 	}
 }
 
@@ -368,11 +369,11 @@ func mockTiKVRegionsInfoResponse(w http.ResponseWriter, _ *http.Request) {
 	resp := getMockTiKVRegionsInfo()
 	data, err := json.MarshalIndent(resp, "", "	")
 	if err != nil {
-		log.Panic("json marshal failed", zap.Error(err))
+		log.Fatal("json marshal failed", zap.Error(err))
 	}
 	_, err = w.Write(data)
 	if err != nil {
-		log.Panic("write http response failed", zap.Error(err))
+		log.Fatal("write http response failed", zap.Error(err))
 	}
 }
 
@@ -381,11 +382,11 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	startTs, err := time.Parse(time.RFC3339, "2019-04-23T19:30:30+08:00")
 	if err != nil {
-		log.Panic("mock tikv store api response failed", zap.Error(err))
+		log.Fatal("mock tikv store api response failed", zap.Error(err))
 	}
 	lastHeartbeatTs, err := time.Parse(time.RFC3339, "2019-04-23T19:31:30+08:00")
 	if err != nil {
-		log.Panic("mock tikv store api response failed", zap.Error(err))
+		log.Fatal("mock tikv store api response failed", zap.Error(err))
 	}
 	storesStat := helper.StoresStat{
 		Count: 1,
@@ -424,11 +425,11 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 	}
 	data, err := json.MarshalIndent(storesStat, "", "	")
 	if err != nil {
-		log.Panic("json marshal failed", zap.Error(err))
+		log.Fatal("json marshal failed", zap.Error(err))
 	}
 	_, err = w.Write(data)
 	if err != nil {
-		log.Panic("write http response failed", zap.Error(err))
+		log.Fatal("write http response failed", zap.Error(err))
 	}
 }
 

@@ -29,7 +29,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap/zapcore"
+	// "go.uber.org/zap/zapcore"
 )
 
 func TestFieldsFromTraceInfo(t *testing.T) {
@@ -185,14 +185,14 @@ func testZapLogger(ctx context.Context, t *testing.T, fileName, pattern string) 
 func TestSlowQueryLoggerCreation(t *testing.T) {
 	level := "Error"
 	conf := NewLogConfig(level, DefaultLogFormat, "", EmptyFileLogConfig, false)
-	_, prop, err := newSlowQueryLogger(conf)
+	l, err := newSlowQueryLogger(conf)
 	// assert after init slow query logger, the original conf is not changed
 	require.Equal(t, conf.Level, level)
 	require.NoError(t, err)
 	// slow query logger doesn't use the level of the global log config, and the
 	// level should be less than WarnLevel which is used by it to log slow query.
-	require.NotEqual(t, conf.Level, prop.Level.String())
-	require.True(t, prop.Level.Level() <= zapcore.WarnLevel)
+	// require.NotEqual(t, conf.Level, prop.Level.String())
+	require.True(t, l.Handler().Enabled(context.Background(), slog.LevelWarn))
 
 	level = "warn"
 	slowQueryFn := "slow-query.log"
@@ -222,11 +222,4 @@ func TestGlobalLoggerReplace(t *testing.T) {
 	require.NoError(t, err)
 	err = os.Remove(fileCfg.Filename)
 	require.NoError(t, err)
-}
-
-func TestXXX(t *testing.T) {
-	conf := NewLogConfig("INFO", DefaultLogFormat, "", NewFileLogConfig(0), false)
-	XXX(conf)
-	slog.Info("hello")
-	slog.Warn("world")
 }

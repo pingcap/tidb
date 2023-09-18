@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 	"google.golang.org/grpc"
 )

@@ -140,11 +140,19 @@ require (
 )
 
 require (
+	github.com/cznic/sortutil v0.0.0-20181122101858-f5f958428db8 // indirect
+	github.com/cznic/strutil v0.0.0-20181122101858-275e90344537 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect
 	go.uber.org/zap/exp v0.2.0 // indirect
 	k8s.io/utils v0.0.0-20230209194617-a36077c30491 // indirect
+	modernc.org/golex v1.1.0 // indirect
+	modernc.org/mathutil v1.6.0 // indirect
+	modernc.org/parser v1.1.0 // indirect
+	modernc.org/sortutil v1.2.0 // indirect
+	modernc.org/strutil v1.2.0 // indirect
+	modernc.org/y v1.1.0 // indirect
 )
 
 require (

@@ -23,12 +23,13 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/backoff"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -67,7 +68,7 @@ func TestRunWithRetry(t *testing.T) {
 
 	// retry count exceed
 	backoffer := backoff.NewExponential(100*time.Millisecond, 1, time.Second)
-	err := handle.RunWithRetry(ctx, 3, backoffer, log.L(),
+	err := handle.RunWithRetry(ctx, 3, backoffer, logutil.BgLogger(),
 		func(ctx context.Context) (bool, error) {
 			return true, errors.New("mock error")
 		},
@@ -79,7 +80,7 @@ func TestRunWithRetry(t *testing.T) {
 	go func() {
 		defer end.Store(true)
 		backoffer = backoff.NewExponential(100*time.Millisecond, 1, time.Second)
-		err = handle.RunWithRetry(ctx, math.MaxInt, backoffer, log.L(),
+		err = handle.RunWithRetry(ctx, math.MaxInt, backoffer, logutil.BgLogger(),
 			func(ctx context.Context) (bool, error) {
 				return false, errors.New("mock error")
 			},
@@ -96,7 +97,7 @@ func TestRunWithRetry(t *testing.T) {
 		defer end.Store(true)
 		backoffer = backoff.NewExponential(100*time.Millisecond, 1, time.Second)
 		var i int
-		err = handle.RunWithRetry(ctx, math.MaxInt, backoffer, log.L(),
+		err = handle.RunWithRetry(ctx, math.MaxInt, backoffer, logutil.BgLogger(),
 			func(ctx context.Context) (bool, error) {
 				if i == 0 {
 					i++
@@ -115,7 +116,7 @@ func TestRunWithRetry(t *testing.T) {
 	subctx, cancel := context.WithCancel(ctx)
 	cancel()
 	backoffer = backoff.NewExponential(100*time.Millisecond, 1, time.Second)
-	err = handle.RunWithRetry(subctx, math.MaxInt, backoffer, log.L(),
+	err = handle.RunWithRetry(subctx, math.MaxInt, backoffer, logutil.BgLogger(),
 		func(ctx context.Context) (bool, error) {
 			return true, errors.New("mock error")
 		},

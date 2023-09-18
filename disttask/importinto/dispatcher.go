@@ -43,7 +43,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/etcd"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -78,7 +78,7 @@ func (t *taskInfo) register(ctx context.Context) {
 	if time.Since(t.lastRegisterTime) < refreshTaskTTLInterval {
 		return
 	}
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := log.With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister == nil {
 		client, err := importer.GetEtcdClient()
 		if err != nil {
@@ -102,7 +102,7 @@ func (t *taskInfo) register(ctx context.Context) {
 }
 
 func (t *taskInfo) close(ctx context.Context) {
-	logger := logutil.BgLogger().With(zap.Int64("task-id", t.taskID))
+	logger := log.With(zap.Int64("task-id", t.taskID))
 	if t.taskRegister != nil {
 		timeoutCtx, cancel := context.WithTimeout(ctx, registerTimeout)
 		defer cancel()
@@ -621,7 +621,7 @@ func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
 	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
 	if err := updateMeta(gTask, taskMeta); err != nil {
 		// marshal failed, should not happen
-		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
+		log.Warn("failed to update task meta", zap.Error(err))
 	}
 }
 

@@ -51,7 +51,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -6528,7 +6528,7 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 				for j := range res[i] {
 					strs = append(strs, res[i][j].(string))
 				}
-				logutil.BgLogger().Info("ddl jobs", zap.Strings("jobs", strs))
+				log.Info("ddl jobs", zap.Strings("jobs", strs))
 			}
 			time.Sleep(10 * time.Millisecond)
 		}

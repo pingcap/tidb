@@ -26,8 +26,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/size"
-	"go.uber.org/zap"
+	// "go.uber.org/zap"
 )
 
 var (

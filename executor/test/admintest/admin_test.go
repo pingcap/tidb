@@ -17,6 +17,7 @@ package admintest
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math/rand"
 	"regexp"
 	"strconv"
@@ -39,11 +40,13 @@ import (
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/consistency"
-	"github.com/pingcap/tidb/util/logutil/zap"
+	// "github.com/pingcap/tidb/util/logutil/zap"
+	// "github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestAdminCheckIndexRange(t *testing.T) {
@@ -1622,7 +1625,7 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
-	log.Info("random generator", zap.Int64("seed", seed))
+	slog.Info("random generator", "seed", seed)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1754,7 +1757,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
-	log.Info("random generator", zap.Int64("seed", seed))
+	slog.Info("random generator", "seed", seed)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")

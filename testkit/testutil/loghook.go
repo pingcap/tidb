@@ -22,9 +22,9 @@ import (
 
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/logutil/zap"
-	"github.com/pingcap/tidb/util/logutil/zap/zapcore"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 type logEntry struct {

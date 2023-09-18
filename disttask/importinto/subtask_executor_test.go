@@ -21,13 +21,14 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -55,11 +56,11 @@ func TestChecksumTable(t *testing.T) {
 	gtk.MustExec("create database db")
 	gtk.MustExec("create table db.tb(id int)")
 	gtk.MustExec("insert into db.tb values(1)")
-	remoteChecksum, err := importinto.TestChecksumTable(ctx, mgr, taskMeta, log())
+	remoteChecksum, err := importinto.TestChecksumTable(ctx, mgr, taskMeta, log.L())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 	// again
-	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, log())
+	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, log.L())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 
@@ -67,7 +68,7 @@ func TestChecksumTable(t *testing.T) {
 	defer func() {
 		_ = failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/errWhenChecksum")
 	}()
-	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, log())
+	remoteChecksum, err = importinto.TestChecksumTable(ctx, mgr, taskMeta, log.L())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 }

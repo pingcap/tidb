@@ -16,12 +16,13 @@ package ingest
 
 import (
 	"context"
+	"log/slog"
 	"strconv"
 	"sync"
 	"sync/atomic"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -29,7 +30,8 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/tidb/util/logutil/zap"
+	// uzap "go.uber.org/zap"
 )
 
 // Engine is the interface for the engine that can be used to write key-value pairs.
@@ -144,11 +146,13 @@ func (ei *engineInfo) ImportAndClean() error {
 		zap.String("split region size", strconv.FormatInt(int64(config.SplitRegionSize), 10)))
 	err = closeEngine.Import(ei.ctx, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
-		logLevel := zap.ErrorLevel
+		// logLevel := uzap.ErrorLevel
+		logLevel := slog.LevelError
 		if common.ErrFoundDuplicateKeys.Equal(err) {
-			logLevel = zap.WarnLevel
+			// logLevel = uzap.WarnLevel
+			logLevel = slog.LevelWarn
 		}
-		/* logutil.Logger(ei.ctx) */ log.L().Log(logLevel, LitErrIngestDataErr, zap.Error(err),
+		logutil.Logger(ei.ctx).Log(ei.ctx, logLevel, LitErrIngestDataErr, zap.Error(err),
 			zap.Int64("job ID", ei.jobID), zap.Int64("index ID", ei.indexID))
 		return err
 	}

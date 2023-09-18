@@ -22,8 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func TestPrepareSortDir(t *testing.T) {

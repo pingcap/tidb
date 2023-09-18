@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/pingcap/tidb/util/topsql/collector"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
