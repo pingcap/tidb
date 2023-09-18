@@ -1170,7 +1170,7 @@ func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *statistics.Stats
 	})
 }
 
-func (_ *Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
+func (*Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
 	return reader.Close()
 }
 
