@@ -114,7 +114,8 @@ func populatePartitionIDAndNames(
 
 	pi := tbl.Meta().GetPartitionInfo()
 	if pi == nil {
-		return 0, nil, errors.Errorf("table %s is not a partition table", table.Name)
+		return 0, nil, errors.Errorf("table %s is not a partition table",
+			fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L))
 	}
 
 	pidNames := make(map[int64]string, len(partitionNames))
