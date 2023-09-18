@@ -202,12 +202,6 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 				allFms[i] = append(allFms[i], fms)
 			}
 		}
-		for _, col := range partitionStats.Columns {
-			col.FMSketch.Destroy()
-		}
-		for _, idx := range partitionStats.Indices {
-			idx.FMSketch.Destroy()
-		}
 	}
 
 	// After collect all the statistics from the partition-level stats,

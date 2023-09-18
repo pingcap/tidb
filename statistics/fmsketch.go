@@ -214,6 +214,9 @@ func (s *FMSketch) reset() {
 
 // Destroy resets the FMSketch and puts it back to the pool.
 func (s *FMSketch) Destroy() {
+	if s == nil {
+		return
+	}
 	s.reset()
 	fmSketchPool.Put(s)
 }
