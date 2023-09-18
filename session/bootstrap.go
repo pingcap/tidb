@@ -207,11 +207,12 @@ const (
 
 	// CreateStatsMetaTable stores the meta of table statistics.
 	CreateStatsMetaTable = `CREATE TABLE IF NOT EXISTS mysql.stats_meta (
-		version 		BIGINT(64) UNSIGNED NOT NULL,
-		table_id 		BIGINT(64) NOT NULL,
-		modify_count	BIGINT(64) NOT NULL DEFAULT 0,
-		count 			BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
-		snapshot        BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		version 		    BIGINT(64) UNSIGNED NOT NULL,
+		table_id 		    BIGINT(64) NOT NULL,
+		modify_count	    BIGINT(64) NOT NULL DEFAULT 0,
+		count 			    BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+		snapshot       	    BIGINT(64) UNSIGNED NOT NULL DEFAULT 0,
+	    scan_predicate_hash BIGINT(16) DEFAULT NULL,
 		INDEX idx_ver(version),
 		UNIQUE INDEX tbl(table_id)
 	);`
@@ -980,11 +981,15 @@ const (
 	version172 = 172
 	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
 	version173 = 173
+	version174 = 174
+	// version 175
+	//   add column `scan_predicate_hash` to `mysql.stats_meta`.
+	version175 = 175
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version173
+var currentBootstrapVersion int64 = version175
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1126,6 +1131,7 @@ var (
 		upgradeToVer171,
 		upgradeToVer172,
 		upgradeToVer173,
+		upgradeToVer175,
 	}
 )
 
@@ -2719,6 +2725,13 @@ func upgradeToVer173(s Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer175(s Session, ver int64) {
+	if ver >= version175 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN scan_predicate_hash BIGINT(16) DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s Session) {
