@@ -655,7 +655,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 		return 0, false
 	}
 	idx, match = slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
-		return bytes.Compare(a.Encoded, b)
+		return -bytes.Compare(a.Encoded, b)
 	})
 	return idx, match
 }
