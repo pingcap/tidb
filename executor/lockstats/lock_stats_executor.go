@@ -99,15 +99,22 @@ func (*LockExec) Open(context.Context) error {
 }
 
 // populatePartitionIDAndNames returns the table ID and partition IDs for the given table name and partition names.
-func populatePartitionIDAndNames(tableName *ast.TableName, partitionNames []model.CIStr, is infoschema.InfoSchema) (int64, map[int64]string, error) {
-	tbl, err := is.TableByName(tableName.Schema, tableName.Name)
+func populatePartitionIDAndNames(
+	table *ast.TableName,
+	partitionNames []model.CIStr,
+	is infoschema.InfoSchema,
+) (int64, map[int64]string, error) {
+	if len(partitionNames) == 0 {
+		return 0, nil, errors.New("partition list should not be empty")
+	}
+	tbl, err := is.TableByName(table.Schema, table.Name)
 	if err != nil {
 		return 0, nil, err
 	}
 
 	pi := tbl.Meta().GetPartitionInfo()
 	if pi == nil {
-		return 0, nil, errors.Errorf("table %s is not a partition table", tableName.Name)
+		return 0, nil, errors.Errorf("table %s is not a partition table", table.Name)
 	}
 
 	pidNames := make(map[int64]string, len(partitionNames))
@@ -116,14 +123,21 @@ func populatePartitionIDAndNames(tableName *ast.TableName, partitionNames []mode
 		if err != nil {
 			return 0, nil, err
 		}
-		pidNames[pid] = fmt.Sprintf("%s.%s partition (%s)", tableName.Schema.L, tableName.Name.L, partitionName.L)
+		pidNames[pid] = genFullPartitionName(table, partitionName.L)
 	}
 
 	return tbl.Meta().ID, pidNames, nil
 }
 
 // populateTableAndPartitionIDs returns table IDs and partition IDs for the given table names.
-func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSchema) (map[int64]string, map[int64]string, error) {
+func populateTableAndPartitionIDs(
+	tables []*ast.TableName,
+	is infoschema.InfoSchema,
+) (map[int64]string, map[int64]string, error) {
+	if len(tables) == 0 {
+		return nil, nil, errors.New("table list should not be empty")
+	}
+
 	tidAndNames := make(map[int64]string, len(tables))
 	pidAndNames := make(map[int64]string, len(tables))
 
@@ -139,9 +153,13 @@ func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSch
 			continue
 		}
 		for _, p := range pi.Definitions {
-			pidAndNames[p.ID] = fmt.Sprintf("%s.%s partition (%s)", table.Schema.L, table.Name.L, p.Name.L)
+			pidAndNames[p.ID] = genFullPartitionName(table, p.Name.L)
 		}
 	}
 
 	return tidAndNames, pidAndNames, nil
+}
+
+func genFullPartitionName(table *ast.TableName, partitionName string) string {
+	return fmt.Sprintf("%s.%s partition (%s)", table.Schema.L, table.Name.L, partitionName)
 }
