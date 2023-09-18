@@ -61,18 +61,18 @@ func TestBackfillingDispatcher(t *testing.T) {
 
 	// 1.2 test partition table OnNextSubtasksBatch after StepInit finished.
 	gTask.State = proto.TaskStateRunning
-	gTask.Step = dsp.GetNextStep(gTask)
+	gTask.Step = dsp.GetNextStep(nil, gTask)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	// empty stepTwo
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
-	gTask.Step = dsp.GetNextStep(gTask)
+	gTask.Step = dsp.GetNextStep(nil, gTask)
 	require.Equal(t, proto.StepTwo, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
-	gTask.Step = dsp.GetNextStep(gTask)
+	gTask.Step = dsp.GetNextStep(nil, gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
 
 	// 1.3 test partition table OnErrStage.
@@ -99,22 +99,22 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", ddl.BackfillTaskType)
 	// 2.2.1 stepInit
+	gTask.Step = dsp.GetNextStep(nil, gTask)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
-	gTask.Step = dsp.GetNextStep(dsp, gTask)
 	require.Equal(t, proto.StepOne, gTask.Step)
 	// 2.2.2 stepOne
 	gTask.State = proto.TaskStateRunning
+	gTask.Step = dsp.GetNextStep(nil, gTask)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
-	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepTwo, gTask.Step)
+	gTask.Step = dsp.GetNextStep(nil, gTask)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
-	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
 }
 
