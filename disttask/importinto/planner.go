@@ -223,18 +223,22 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 	return json.Marshal(postProcessStepMeta)
 }
 
-func buildController(p *LogicalPlan) (*importer.LoadDataController, error) {
+func buildControllerForPlan(p *LogicalPlan) (*importer.LoadDataController, error) {
+	return buildController(&p.Plan, p.Stmt)
+}
+
+func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataController, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
-	tbl, err := tables.TableFromMeta(idAlloc, p.Plan.TableInfo)
+	tbl, err := tables.TableFromMeta(idAlloc, plan.TableInfo)
 	if err != nil {
 		return nil, err
 	}
 
-	astArgs, err := importer.ASTArgsFromStmt(p.Stmt)
+	astArgs, err := importer.ASTArgsFromStmt(stmt)
 	if err != nil {
 		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(&p.Plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(plan, tbl, astArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -246,7 +250,7 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]*ImportSpec, er
 	if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
 	} else {
-		controller, err2 := buildController(p)
+		controller, err2 := buildControllerForPlan(p)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -277,7 +281,7 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]*ImportSpec, er
 
 func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*WriteIngestSpec, error) {
 	ctx := planCtx.Ctx
-	controller, err2 := buildController(p)
+	controller, err2 := buildControllerForPlan(p)
 	if err2 != nil {
 		return nil, err2
 	}

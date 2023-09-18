@@ -21,6 +21,7 @@ import (
 	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -66,8 +67,11 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
-	s.tk.MustExec("truncate table t")
 
+	// check all sorted data cleaned up
+	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
+	s.NoError(err)
+	s.Len(files, 0)
 	// check sensitive info is redacted
 	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID), "", true)
 	s.NoError(err)
@@ -78,10 +82,25 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	globalTaskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
-	s.NoError(err)
 	globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	s.NoError(err2)
 	taskMeta := importinto.TaskMeta{}
 	s.NoError(json.Unmarshal(globalTask.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageUri, taskMeta.Plan.CloudStorageURI)
+
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
+	s.tk.MustExec("truncate table t")
+	result = s.tk.MustQuery(importSQL + ", detached").Rows()
+	s.Len(result, 1)
+	jobID, err = strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
+	s.Eventually(func() bool {
+		globalTask, err2 = globalTaskManager.GetGlobalTaskByKey(importinto.TaskKey(int64(jobID)))
+		s.NoError(err2)
+		return globalTask.State == "failed"
+	}, 10*time.Second, 300*time.Millisecond)
+	// check all sorted data cleaned up
+	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
+	s.NoError(err)
+	s.Len(files, 0)
 }
