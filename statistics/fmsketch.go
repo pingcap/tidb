@@ -24,11 +24,21 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"golang.org/x/exp/maps"
 )
 
 var murmur3Pool = sync.Pool{
 	New: func() any {
 		return murmur3.New64()
+	},
+}
+
+var fmSketchPool = sync.Pool{
+	New: func() any {
+		return &FMSketch{
+			hashset: make(map[uint64]bool),
+			maxSize: 0,
+		}
 	},
 }
 
@@ -41,10 +51,9 @@ type FMSketch struct {
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
-	return &FMSketch{
-		hashset: make(map[uint64]bool),
-		maxSize: maxSize,
-	}
+	result := fmSketchPool.Get().(*FMSketch)
+	result.maxSize = maxSize
+	return result
 }
 
 // Copy makes a copy for current FMSketch.
@@ -200,4 +209,16 @@ func (s *FMSketch) MemoryUsage() (sum int64) {
 	// And for the variables hashset(map[uint64]bool), each element in map will consume 9 bytes(8[uint64] + 1[bool]).
 	sum = int64(16 + 9*len(s.hashset))
 	return
+}
+
+func (s *FMSketch) reset() {
+	maps.Clear(s.hashset)
+	s.mask = 0
+	s.maxSize = 0
+}
+
+// Destory resets the FMSketch and puts it back to the pool.
+func (s *FMSketch) Destory() {
+	s.reset()
+	fmSketchPool.Put(s)
 }
