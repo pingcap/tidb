@@ -324,7 +324,13 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 func (h *Handle) UpdateSessionVar() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	verInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	return UpdateSCtxVarsForStats(h.mu.ctx)
+}
+
+// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
+func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// analyzer version
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
@@ -332,8 +338,43 @@ func (h *Handle) UpdateSessionVar() error {
 	if err != nil {
 		return err
 	}
-	h.mu.ctx.GetSessionVars().AnalyzeVersion = int(ver)
-	return err
+	sctx.GetSessionVars().AnalyzeVersion = int(ver)
+
+	// enable historical stats
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
+
+	// partition mode
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
+
+	// enable analyze snapshot
+	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
+
+	// enable skip column types
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+
+	// skip missing partition stats
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
+	return nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -364,6 +405,9 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
 	isIndex int, histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+	if err := UpdateSCtxVarsForStats(sc); err != nil {
+		return nil, err
+	}
 	return h.globalstatushandler.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
@@ -1488,7 +1532,7 @@ func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
 func (h *Handle) RefreshVars() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.mu.ctx.RefreshVars(context.Background())
+	return UpdateSCtxVarsForStats(h.mu.ctx)
 }
 
 // CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
@@ -1691,19 +1735,14 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, nil
 }
 
-func checkHistoricalStatsEnable(sctx sessionctx.Context) (enable bool, err error) {
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return variable.TiDBOptOn(val), nil
-}
-
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return checkHistoricalStatsEnable(h.mu.ctx)
+	if err := UpdateSCtxVarsForStats(h.mu.ctx); err != nil {
+		return false, err
+	}
+	return h.mu.ctx.GetSessionVars().EnableHistoricalStats, nil
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

@@ -43,11 +43,10 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
-	historicalStatsEnabled, err := checkHistoricalStatsEnable(sctx)
-	if err != nil {
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
 	}
-	if !historicalStatsEnabled {
+	if !sctx.GetSessionVars().EnableHistoricalStats {
 		return nil
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)

@@ -3007,16 +3007,6 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	return false
 }
 
-// RefreshVars implements the sessionctx.Context interface.
-func (s *session) RefreshVars(_ context.Context) error {
-	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
-	if err != nil {
-		return err
-	}
-	s.sessionVars.PartitionPruneMode.Store(pruneMode)
-	return nil
-}
-
 // SetSessionStatesHandler implements the Session.SetSessionStatesHandler interface.
 func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler) {
 	s.sessionStatesHandlers[stateType] = handler

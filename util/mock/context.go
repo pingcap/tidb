@@ -283,11 +283,6 @@ func (c *Context) RefreshTxnCtx(ctx context.Context) error {
 	return errors.Trace(c.NewTxn(ctx))
 }
 
-// RefreshVars implements the sessionctx.Context interface.
-func (*Context) RefreshVars(_ context.Context) error {
-	return nil
-}
-
 // RollbackTxn indicates an expected call of RollbackTxn.
 func (c *Context) RollbackTxn(_ context.Context) {
 	defer c.sessionVars.SetInTxn(false)
