@@ -644,6 +644,13 @@ func TestInfoBuiltin(t *testing.T) {
 	// 2 * 2, error.
 	err = tk.ExecToErr(twoColumnQuery)
 	require.Error(t, err)
+
+	result = tk.MustQuery("select tidb_is_ddl_owner()")
+	var ret int64
+	if tk.Session().IsDDLOwner() {
+		ret = 1
+	}
+	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
 }
 
 func TestColumnInfoModified(t *testing.T) {
@@ -719,18 +726,6 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		})
 		require.Equal(t, fmt.Sprintf("%s", afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
 	}
-}
-
-func TestTiDBIsOwnerFunc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	result := tk.MustQuery("select tidb_is_ddl_owner()")
-	var ret int64
-	if tk.Session().IsDDLOwner() {
-		ret = 1
-	}
-	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
 }
 
 func TestTiDBDecodePlanFunc(t *testing.T) {
@@ -1528,19 +1523,6 @@ func TestEnumIndex(t *testing.T) {
 		testkit.Rows(" "))
 	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
 		testkit.Rows(" "))
-}
-
-// Previously global values were cached. This is incorrect.
-// See: https://github.com/pingcap/tidb/issues/24368
-func TestGlobalCacheCorrectness(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 0"))
-	tk.MustExec("SET GLOBAL max_connections=1234")
-	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 1234"))
-	// restore
-	tk.MustExec("SET GLOBAL max_connections=0")
 }
 
 func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
