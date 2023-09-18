@@ -314,3 +314,661 @@ COUNT(*)
 SELECT COUNT(*) FROM t1 WHERE d > '2018-01-01';
 COUNT(*)
 12
+drop table if exists t;
+create table t(a bigint, b bigint);
+insert into t values(1, 1);
+desc format='brief' select ifnull("aaaa", a) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		aaaa->Column#4
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select ifnull("aaaa", a) from t;
+ifnull("aaaa", a)
+aaaa
+drop table if exists t1;
+drop table if exists prefix;
+CREATE TABLE t1 (
+name varchar(12) DEFAULT NULL,
+KEY pname (name(12))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+insert into t1 values('借款策略集_网页');
+select * from t1 where name = '借款策略集_网页';
+name
+借款策略集_网页
+CREATE TABLE prefix (
+a int(11) NOT NULL,
+b varchar(55) DEFAULT NULL,
+c int(11) DEFAULT NULL,
+PRIMARY KEY (a),
+KEY prefix_index (b(2)),
+KEY prefix_complex (a,b(2))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+INSERT INTO prefix VALUES(0, 'b', 2), (1, 'bbb', 3), (2, 'bbc', 4), (3, 'bbb', 5), (4, 'abc', 6), (5, 'abc', 7), (6, 'abc', 7), (7, 'ÿÿ', 8), (8, 'ÿÿ0', 9), (9, 'ÿÿÿ', 10);
+select c, b from prefix where b > 'ÿ' and b < 'ÿÿc';
+c	b
+8	ÿÿ
+9	ÿÿ0
+select a, b from prefix where b LIKE 'ÿÿ%';
+a	b
+7	ÿÿ
+8	ÿÿ0
+9	ÿÿÿ
+drop table if exists t;
+create table t (a int, b varchar (20), c varchar (20));
+insert into t values
+(1,'key1-value1','insert_order1'),
+(1,'key1-value2','insert_order2'),
+(1,'key1-value3','insert_order3'),
+(1,'key1-value4','insert_order4'),
+(1,'key1-value5','insert_order5'),
+(1,'key1-value6','insert_order6'),
+(2,'key2-value1','insert_order1'),
+(2,'key2-value2','insert_order2'),
+(2,'key2-value3','insert_order3'),
+(2,'key2-value4','insert_order4'),
+(2,'key2-value5','insert_order5'),
+(2,'key2-value6','insert_order6'),
+(3,'key3-value1','insert_order1'),
+(3,'key3-value2','insert_order2'),
+(3,'key3-value3','insert_order3'),
+(3,'key3-value4','insert_order4'),
+(3,'key3-value5','insert_order5'),
+(3,'key3-value6','insert_order6');
+SET @LAST_VAL := NULL;
+SET @ROW_NUM := 0;
+select * from (
+SELECT
+a,
+@ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+@LAST_VAL := a AS LAST_VAL,
+b,
+c
+FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+) t2 where t2.ROW_NUM < 2;
+a	ROW_NUM	LAST_VAL	b	c
+1	1	1	key1-value1	insert_order1
+2	1	2	key2-value1	insert_order1
+3	1	3	key3-value1	insert_order1
+select * from (
+SELECT
+a,
+@ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
+@LAST_VAL := a AS LAST_VAL,
+b,
+c
+FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
+) t2;
+a	ROW_NUM	LAST_VAL	b	c
+1	1	1	key1-value1	insert_order1
+1	2	1	key1-value2	insert_order2
+1	3	1	key1-value3	insert_order3
+1	4	1	key1-value4	insert_order4
+1	5	1	key1-value5	insert_order5
+1	6	1	key1-value6	insert_order6
+2	1	2	key2-value1	insert_order1
+2	2	2	key2-value2	insert_order2
+2	3	2	key2-value3	insert_order3
+2	4	2	key2-value4	insert_order4
+2	5	2	key2-value5	insert_order5
+2	6	2	key2-value6	insert_order6
+3	1	3	key3-value1	insert_order1
+3	2	3	key3-value2	insert_order2
+3	3	3	key3-value3	insert_order3
+3	4	3	key3-value4	insert_order4
+3	5	3	key3-value5	insert_order5
+3	6	3	key3-value6	insert_order6
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(2),(3);
+with t1 as (select 36 as col from t1 where a=3) select * from t1;
+col
+36
+insert into t1 with t1 as (select 36 as col from t1) select * from t1;
+select * from t1;
+a
+2
+3
+36
+36
+with cte1(a) as (select 36) update t1 set a = 1 where a in (select a from cte1);
+
+select * from t1;
+a
+2
+3
+1
+1
+with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte, t1 set t1.a=1;
+
+select * from t1;
+a
+1
+1
+1
+1
+with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte set a=1;
+Error 1288: The target table cte of the UPDATE is not updatable
+with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) delete from cte;
+Error 1288: The target table cte of the DELETE is not updatable
+with cte(a) as (select a from t1) delete from cte;
+Error 1288: The target table cte of the DELETE is not updatable
+with cte(a) as (select a from t1) update cte set a=1;
+Error 1288: The target table cte of the UPDATE is not updatable
+drop table if exists t1;
+create table t1(a int, b int, primary key(a));
+insert into t1 values (1, 1),(2,1),(3,1);
+replace into t1 with recursive cte(a,b) as (select 1, 1 union select a + 1,b+1 from cte where a < 5) select * from cte;
+select * from t1;
+a	b
+1	1
+2	2
+3	3
+4	4
+5	5
+drop table if exists t;
+create table t(a int, b tinyint as(a+100) unique key);
+insert ignore into t values(200, default);
+update t set a=1 where a=200;
+admin check table t;
+
+delete from t;
+insert ignore into t values(200, default);
+admin check table t;
+
+insert ignore into t values(200, default) on duplicate key update a=100;
+admin check table t;
+
+delete from t;
+admin check table t;
+
+begin;
+insert ignore into t values(200, default);
+update t set a=1 where a=200;
+admin check table t;
+
+delete from t;
+insert ignore into t values(200, default);
+admin check table t;
+
+insert ignore into t values(200, default) on duplicate key update a=100;
+admin check table t;
+
+delete from t;
+admin check table t;
+
+commit;
+admin check table t;
+
+drop table if exists t;
+create table t (c_enum enum('c', 'b', 'a'));
+insert into t values ('a'), ('b'), ('c'), ('a'), ('b'), ('a');
+select c_enum from t order by c_enum;
+c_enum
+c
+b
+b
+a
+a
+a
+select c_enum from t order by c_enum desc;
+c_enum
+a
+a
+a
+b
+b
+c
+select c_enum from t order by if(c_enum>1, c_enum, c_enum);
+c_enum
+a
+a
+a
+b
+b
+c
+select c_enum from t where c_enum order by c_enum;
+c_enum
+c
+b
+b
+a
+a
+a
+select c_enum from t where c_enum > 'a' order by c_enum;
+c_enum
+c
+b
+b
+select c_enum from t where c_enum > 1 order by c_enum;
+c_enum
+b
+b
+a
+a
+a
+select c_enum from t where c_enum = 1 order by c_enum;
+c_enum
+c
+select c_enum from t where c_enum = 'a' order by c_enum;
+c_enum
+a
+a
+a
+select c_enum from t where c_enum + 1 order by c_enum;
+c_enum
+c
+b
+b
+a
+a
+a
+select c_enum from t where c_enum - 1 order by c_enum;
+c_enum
+b
+b
+a
+a
+a
+select c_enum+1 from t order by c_enum;
+c_enum+1
+2
+3
+3
+4
+4
+4
+select c_enum, c_enum=1 from t order by c_enum;
+c_enum	c_enum=1
+c	1
+b	0
+b	0
+a	0
+a	0
+a	0
+select c_enum, c_enum>1 from t order by c_enum;
+c_enum	c_enum>1
+c	0
+b	1
+b	1
+a	1
+a	1
+a	1
+select c_enum, c_enum>'a' from t order by c_enum;
+c_enum	c_enum>'a'
+c	1
+b	1
+b	1
+a	0
+a	0
+a	0
+select max(c_enum) from t;
+max(c_enum)
+c
+select min(c_enum) from t;
+min(c_enum)
+a
+select max(c_enum+1) from t;
+max(c_enum+1)
+4
+select min(c_enum+1) from t;
+min(c_enum+1)
+2
+select avg(c_enum) from t;
+avg(c_enum)
+2.3333333333333335
+select avg(distinct c_enum) from t;
+avg(distinct c_enum)
+2
+select distinct c_enum from t order by c_enum;
+c_enum
+c
+b
+a
+select c_enum from t group by c_enum order by c_enum;
+c_enum
+c
+b
+a
+drop table if exists t1;
+CREATE TABLE t1 (
+a char(3) NOT NULL default '',
+e enum('a','b','c','d','e') NOT NULL default 'a'
+);
+INSERT INTO t1 VALUES ('aaa','e');
+INSERT INTO t1 VALUES ('bbb','e');
+INSERT INTO t1 VALUES ('ccc','a');
+INSERT INTO t1 VALUES ('ddd','e');
+SELECT DISTINCT e AS c FROM t1 outr WHERE
+a <> SOME ( SELECT a FROM t1 WHERE e = outr.e);
+c
+e
+drop table t;
+create table t(e enum('c','b','a'));
+insert into t values(1),(2),(3);
+select e from t where e > 'b';
+e
+c
+select e from t where e > 2;
+e
+a
+alter table t add index idx(e);
+select e from t where e > 'b';
+e
+c
+select e from t where e > 2;
+e
+a
+drop table if exists tdm;
+create table tdm(id int, `c12` enum('a','b','c'), PRIMARY KEY (`id`));
+insert into tdm values (1, 'a');
+update tdm set c12 = 2 where id = 1;
+select * from tdm;
+id	c12
+1	b
+set @@sql_mode = '';
+update tdm set c12 = 0 where id = 1;
+select c12+0 from tdm;
+c12+0
+0
+update tdm set c12 = '0' where id = 1;
+select c12+0 from tdm;
+c12+0
+0
+drop table if exists t;
+create table t(a int);
+with cte1 as (select * from cte2), cte2 as (select 1) select * from cte1;
+Error 1146: Table 'expression__misc.cte2' doesn't exist
+with cte1 as (select * from cte2)  select * from (with cte2 as (select 2) select * from cte1 ) q;
+Error 1146: Table 'expression__misc.cte2' doesn't exist
+with recursive cte(n) as (select 1 union select sum(n) from cte group by n) select * from cte;
+Error 3575: Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
+with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;
+Error 3575: Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
+with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+with recursive cte(n) as (select 1 union select distinct  * from cte) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+with recursive cte(n) as (select 1 union (select * from cte limit 2)) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+with recursive cte(n) as (select 1 union select * from cte, cte c1) select * from cte;
+Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;
+Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+with recursive cte(n) as (select 1 union select * from cte where 1 in (select * from cte)) select * from cte;
+Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+with recursive cte(n) as (select 1 union select * from cte where exists (select * from cte)) select * from cte;
+Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+with recursive cte(n) as (select 1 union select * from cte where 1 >  (select * from cte)) select * from cte;
+Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+with recursive cte(n) as (select 1 union select (select * from cte) c1) select * from cte;
+Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+with recursive cte(n) as (select 1 union select * from t left join cte on t.a=cte.n) select * from cte;
+Error 3576: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints
+with recursive cte(n) as (select  1 intersect select 2 union select * from cte union select 1) select * from cte;
+Error 3574: Recursive Common Table Expression 'cte' should have one or more non-recursive query blocks followed by one or more recursive ones
+with recursive cte(n) as (select  * from cte union select * from cte) select * from cte;
+Error 3574: Recursive Common Table Expression 'cte' should have one or more non-recursive query blocks followed by one or more recursive ones
+with recursive cte(n) as (select 1 intersect select * from cte) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'INTERSECT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+with recursive cte(n) as (select 1 union select 1 intersect select * from cte) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'INTERSECT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+with recursive cte(n) as (select 1 except select * from cte) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'EXCEPT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+with recursive cte(n) as (select 1 union select 1 except select * from cte) select * from cte;
+Error 1235: This version of TiDB doesn't yet support 'EXCEPT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+drop table if exists t1, t2;
+create table t1(a int not null);
+create table t2(a int not null);
+insert into t1 values(1);
+insert into t2 values(1);
+select a, count(*) from t1 join t2 using (a) group by a;
+a	count(*)
+1	1
+select a, count(*) from t1 natural join t2 group by a;
+a	count(*)
+1	1
+select a, count(*) from t1 join t2 on t1.a=t2.a group by a;
+Error 1052: Column 'a' in field list is ambiguous
+select t1.a, t2.a from t1 join t2 using (a) group by t1.a;
+a	a
+1	1
+select t1.a, t2.a from t1 join t2 using(a) group by a;
+Error 1052: Column 'a' in group statement is ambiguous
+select t2.a from t1 join t2 using (a) group by t1.a;
+a
+1
+select t1.a from t1 join t2 using (a) group by t1.a;
+a
+1
+select t2.a from t1 join t2 using (a) group by t2.a;
+a
+1
+select count(*) from t1 join t2 using (a) group by t2.a;
+count(*)
+1
+select t2.a from t1 join t2 using (a) group by a;
+a
+1
+select t1.a from t1 join t2 using (a) group by a;
+a
+1
+select * from t1 join t2 using(a);
+a
+1
+select t1.a, t2.a from t1 join t2 using(a);
+a	a
+1	1
+select * from t1 natural join t2;
+a
+1
+select t1.a, t2.a from t1 natural join t2;
+a	a
+1	1
+drop table if exists e;
+create table e(e enum('c', 'b', 'a'));
+insert into e values ('a'),('b'),('a'),('b');
+select e from e where if(e>1, e, e);
+e
+a
+a
+b
+b
+select e from e where case e when 1 then e else e end;
+e
+a
+a
+b
+b
+select e from e where case 1 when e then e end;
+e
+select if(e>1,e,e)='a' from e;
+if(e>1,e,e)='a'
+0
+0
+1
+1
+select if(e>1,e,e)=1 from e;
+if(e>1,e,e)=1
+0
+0
+0
+0
+select if(e>2,e,e) and if(e<=2,e,e) from e;
+if(e>2,e,e) and if(e<=2,e,e)
+1
+1
+1
+1
+select if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e)) from e;
+if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e))
+0
+0
+1
+1
+select * from e where if(e>2,e,e) and if(e<=2,e,e);
+e
+a
+a
+b
+b
+select * from e where if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e));
+e
+a
+a
+drop table if exists t;
+create table t(a int,b enum("b","y","1"));
+insert into t values(0,"y"),(1,"b"),(null,null),(2,"1");
+SELECT count(*) FROM t where if(a,b ,null);
+count(*)
+2
+drop table if exists t;
+create table t(a int,b enum("b"),c enum("c"));
+insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);
+select a from t where if(a=1,b,c)="b";
+a
+1
+1
+select a from t where if(a=1,b,c)="c";
+a
+2
+2
+select a from t where if(a=1,b,c)=1;
+a
+1
+2
+1
+2
+select a from t where if(a=1,b,c);
+a
+1
+2
+1
+2
+drop table if exists e;
+create table e(e enum('c', 'b', 'a'));
+insert into e values(3);
+select elt(1,e) = 'a' from e;
+elt(1,e) = 'a'
+1
+select elt(1,e) = 3 from e;
+elt(1,e) = 3
+1
+select e from e where elt(1,e);
+e
+a
+drop table if exists s;
+create table s(s set('c', 'b', 'a'));
+insert into s values ('a'),('b'),('a'),('b');
+select s from s where if(s>1, s, s);
+s
+a
+b
+a
+b
+select s from s where case s when 1 then s else s end;
+s
+a
+b
+a
+b
+select s from s where case 1 when s then s end;
+s
+select if(s>1,s,s)='a' from s;
+if(s>1,s,s)='a'
+1
+0
+1
+0
+select if(s>1,s,s)=4 from s;
+if(s>1,s,s)=4
+1
+0
+1
+0
+drop table if exists s;
+create table s(s set('c', 'b', 'a'));
+insert into s values('a');
+select elt(1,s) = 'a' from s;
+elt(1,s) = 'a'
+1
+select elt(1,s) = 4 from s;
+elt(1,s) = 4
+1
+select s from s where elt(1,s);
+s
+a
+drop table if exists t;
+create table t(a int,b enum("b"),c enum("c"));
+insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);
+select if(A, null,b)=1 from t;
+if(A, null,b)=1
+NULL
+NULL
+NULL
+NULL
+select if(A, null,b)='a' from t;
+if(A, null,b)='a'
+NULL
+NULL
+NULL
+NULL
+drop table if exists t;
+create table t(a int,b set("b"),c set("c"));
+insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);
+select if(A, null,b)=1 from t;
+if(A, null,b)=1
+NULL
+NULL
+NULL
+NULL
+select if(A, null,b)='a' from t;
+if(A, null,b)='a'
+NULL
+NULL
+NULL
+NULL
+drop table if exists t;
+create table t(`a` enum('y','b','Abc','null','1','2','0')) CHARSET=binary;
+insert into t values("1");
+SELECT count(*) from t where (null like 'a') = (case when cast('2015' as real) <=> round("1200","1") then a end);
+count(*)
+0
+SELECT (null like 'a') = (case when cast('2015' as real) <=> round("1200","1") then a end) from t;
+(null like 'a') = (case when cast('2015' as real) <=> round("1200","1") then a end)
+NULL
+SELECT 5 = (case when 0 <=> 0 then a end) from t;
+5 = (case when 0 <=> 0 then a end)
+1
+SELECT '1' = (case when 0 <=> 0 then a end) from t;
+'1' = (case when 0 <=> 0 then a end)
+1
+SELECT 5 = (case when 0 <=> 1 then a end) from t;
+5 = (case when 0 <=> 1 then a end)
+NULL
+SELECT '1' = (case when 0 <=> 1 then a end) from t;
+'1' = (case when 0 <=> 1 then a end)
+NULL
+SELECT 5 = (case when 0 <=> 1 then a else a end) from t;
+5 = (case when 0 <=> 1 then a else a end)
+1
+SELECT '1' = (case when 0 <=> 1 then a else a end) from t;
+'1' = (case when 0 <=> 1 then a else a end)
+1
+drop table if exists t1, t2;
+create table t1 (a integer);
+insert into t1 values (0), (1), (2), (3);
+create table t2 (a integer, b integer);
+insert into t2 values (0,1), (1,1), (2,1), (3,1);
+select t1.* from t1 left join t2 on t2.a = t1.a where t1.a = ifnull(t2.b, 0);
+a
+1
+drop table if exists t1, t2;
+create table t1 (i1 integer, c1 char);
+insert into t1 values (2, 'a'), (1, 'b'), (3, 'c'), (0, null);
+create table t2 (i2 integer, c2 char, f2 float);
+insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null);
+select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2));
+i2	c2	f2
+1	NULL	0.1

@@ -229,7 +229,7 @@ drop table if exists t;
 create table t(a bigint, b bigint);
 insert into t values(1, 1);
 --enable_warnings
-desc select ifnull("aaaa", a) from t;
+desc format='brief' select ifnull("aaaa", a) from t;
 select ifnull("aaaa", a) from t;
 --disable_warnings
 
@@ -459,12 +459,16 @@ insert into t1 values(1);
 insert into t2 values(1);
 select a, count(*) from t1 join t2 using (a) group by a;
 select a, count(*) from t1 natural join t2 group by a;
+-- error 1052
 select a, count(*) from t1 join t2 on t1.a=t2.a group by a;
 select t1.a, t2.a from t1 join t2 using (a) group by t1.a;
+-- error 1052
 select t1.a, t2.a from t1 join t2 using(a) group by a;
 select t2.a from t1 join t2 using (a) group by t1.a;
 select t1.a from t1 join t2 using (a) group by t1.a;
 select t2.a from t1 join t2 using (a) group by t2.a;
+# The test below cannot pass now since we do not infer functional dependencies from filters as MySQL, hence would fail in only_full_group_by check.
+# tk.MustQuery("select t1.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
 select count(*) from t1 join t2 using (a) group by t2.a;
 select t2.a from t1 join t2 using (a) group by a;
 select t1.a from t1 join t2 using (a) group by a;
