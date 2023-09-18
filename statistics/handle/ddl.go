@@ -37,21 +37,30 @@ import (
 func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	switch t.Tp {
 	case model.ActionCreateTable, model.ActionTruncateTable:
-		ids := h.getInitStateTableIDs(t.TableInfo)
+		ids, err := h.getInitStateTableIDs(t.TableInfo)
+		if err != nil {
+			return err
+		}
 		for _, id := range ids {
 			if err := h.insertTableStats2KV(t.TableInfo, id); err != nil {
 				return err
 			}
 		}
 	case model.ActionDropTable:
-		ids := h.getInitStateTableIDs(t.TableInfo)
+		ids, err := h.getInitStateTableIDs(t.TableInfo)
+		if err != nil {
+			return err
+		}
 		for _, id := range ids {
 			if err := h.resetTableStats2KVForDrop(id); err != nil {
 				return err
 			}
 		}
 	case model.ActionAddColumn, model.ActionModifyColumn:
-		ids := h.getInitStateTableIDs(t.TableInfo)
+		ids, err := h.getInitStateTableIDs(t.TableInfo)
+		if err != nil {
+			return err
+		}
 		for _, id := range ids {
 			if err := h.insertColStats2KV(id, t.ColumnInfos); err != nil {
 				return err
@@ -64,8 +73,11 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			}
 		}
 	case model.ActionDropTablePartition:
-		pruneMode := h.CurrentPruneMode()
-		if pruneMode == variable.Dynamic && t.PartInfo != nil {
+		pruneMode, err := h.GetCurrentPruneMode()
+		if err != nil {
+			return err
+		}
+		if variable.PartitionPruneMode(pruneMode) == variable.Dynamic && t.PartInfo != nil {
 			if err := h.updateGlobalStats(t.TableInfo); err != nil {
 				return err
 			}
@@ -189,7 +201,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
 	}
 	// Generate the new column global-stats
-	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 0, nil, nil)
+	newColGlobalStats, err := h.mergePartitionStats2GlobalStats(opts, is, tblInfo, 0, nil, nil)
 	if err != nil {
 		return err
 	}
@@ -228,7 +240,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
-		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(h.mu.ctx, opts, is, tblInfo, 1, []int64{idx.ID}, nil)
+		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(opts, is, tblInfo, 1, []int64{idx.ID}, nil)
 		if err != nil {
 			return err
 		}
@@ -276,19 +288,23 @@ func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
 	return nil
 }
 
-func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64) {
+func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
-		return []int64{tblInfo.ID}
+		return []int64{tblInfo.ID}, nil
 	}
 	ids = make([]int64, 0, len(pi.Definitions)+1)
 	for _, def := range pi.Definitions {
 		ids = append(ids, def.ID)
 	}
-	if h.CurrentPruneMode() == variable.Dynamic {
+	pruneMode, err := h.GetCurrentPruneMode()
+	if err != nil {
+		return nil, err
+	}
+	if variable.PartitionPruneMode(pruneMode) == variable.Dynamic {
 		ids = append(ids, tblInfo.ID)
 	}
-	return ids
+	return ids, nil
 }
 
 // DDLEventCh returns ddl events channel in handle.

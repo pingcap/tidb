@@ -294,7 +294,9 @@ func TestTxnWithFailure(t *testing.T) {
 func TestUpdatePartition(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(string(dom.StatsHandle().CurrentPruneMode())))
+	pruneMode, err := dom.StatsHandle().GetCurrentPruneMode()
+	require.NoError(t, err)
+	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(pruneMode))
 	testKit.MustExec("use test")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
 		err := dom.StatsHandle().RefreshVars()
@@ -609,8 +611,6 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	is := do.InfoSchema()
-	err = h.UpdateSessionVar()
-	require.NoError(t, err)
 	require.NoError(t, h.Update(is))
 	// Auto analyze when global ver is 1.
 	h.HandleAutoAnalyze(is)
@@ -626,8 +626,6 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 		require.Equal(t, int64(1), idx.GetStatsVer())
 	}
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
-	err = h.UpdateSessionVar()
-	require.NoError(t, err)
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, h.Update(is))
