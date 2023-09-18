@@ -360,6 +360,20 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
+
+	// enable skip column types
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+
+	// skip missing partition stats
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
 	return nil
 }
 
@@ -391,6 +405,9 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
 	isIndex int, histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+	if err := UpdateSCtxVarsForStats(sc); err != nil {
+		return nil, err
+	}
 	return h.globalstatushandler.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
