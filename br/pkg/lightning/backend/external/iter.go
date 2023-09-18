@@ -69,13 +69,13 @@ func (h *mergeHeap[T]) Pop() interface{} {
 }
 
 type mergeIter[T heapElem, R sortedReader[T]] struct {
-	h                mergeHeap[T]
-	readers          []*R
-	curr             T
-	lastReaderIdx    int
-	err              error
-	checkHotPointMap map[int]int
-	checkHotPointCnt int
+	h               mergeHeap[T]
+	readers         []*R
+	curr            T
+	lastReaderIdx   int
+	err             error
+	hotspotMap      map[int]int
+	checkHotspotCnt int
 
 	logger *zap.Logger
 }
@@ -131,11 +131,11 @@ func newMergeIter[
 	}
 
 	i := &mergeIter[T, R]{
-		h:                make(mergeHeap[T], 0, len(readers)),
-		readers:          readers,
-		lastReaderIdx:    -1,
-		checkHotPointMap: make(map[int]int),
-		logger:           logger,
+		h:             make(mergeHeap[T], 0, len(readers)),
+		readers:       readers,
+		lastReaderIdx: -1,
+		hotspotMap:    make(map[int]int),
+		logger:        logger,
 	}
 	for j := range i.readers {
 		if i.readers[j] == nil {
@@ -202,17 +202,17 @@ func (i *mergeIter[T, R]) next() bool {
 	var zeroT T
 	i.curr = zeroT
 	if i.lastReaderIdx >= 0 {
-		i.checkHotPointMap[i.lastReaderIdx] = i.checkHotPointMap[i.lastReaderIdx] + 1
-		i.checkHotPointCnt++
+		i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
+		i.checkHotspotCnt++
 
 		checkPeriod := 1000
 		// check hot point every checkPeriod times
-		if i.checkHotPointCnt == checkPeriod {
-			for idx, cnt := range i.checkHotPointMap {
+		if i.checkHotspotCnt == checkPeriod {
+			for idx, cnt := range i.hotspotMap {
 				(*i.readers[idx]).setReadMode(cnt > (checkPeriod / 2))
 			}
-			i.checkHotPointCnt = 0
-			i.checkHotPointMap = make(map[int]int)
+			i.checkHotspotCnt = 0
+			i.hotspotMap = make(map[int]int)
 		}
 
 		rd := *i.readers[i.lastReaderIdx]
@@ -228,7 +228,7 @@ func (i *mergeIter[T, R]) next() bool {
 					zap.Error(closeErr))
 			}
 			i.readers[i.lastReaderIdx] = nil
-			delete(i.checkHotPointMap, i.lastReaderIdx)
+			delete(i.hotspotMap, i.lastReaderIdx)
 		default:
 			i.err = err
 			return false
