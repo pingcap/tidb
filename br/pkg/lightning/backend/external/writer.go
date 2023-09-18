@@ -38,6 +38,11 @@ import (
 
 var multiFileStatNum = 500
 
+const (
+	// DefaultMemSizeLimit is the default memory size limit for writer.
+	DefaultMemSizeLimit = 256 * size.MB
+)
+
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -93,7 +98,7 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    256 * size.MB,
+		memSizeLimit:    DefaultMemSizeLimit,
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,

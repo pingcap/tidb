@@ -25,15 +25,24 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
 	maxWaitDuration = 30 * time.Second
+
+	// We limit the memory usage of KV deliver to 1GB per concurrency, and data
+	// KV deliver has external.DefaultMemSizeLimit, the rest of memory is for
+	// all index KV deliver.
+	// Note: this size the memory taken by KV, not the size of taken by golang,
+	// each KV has additional 24*2 bytes overhead for golang slice.
+	indexKVTotalBufSize = size.GB - external.DefaultMemSizeLimit
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -143,12 +152,13 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker
 	if op.tableImporter.IsGlobalSort() {
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
+		indexMemorySizeLimit := getWriterMemorySizeLimit(op.tableImporter.Plan)
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) *external.Writer {
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
-				})
+				}).SetMemorySizeLimit(indexMemorySizeLimit)
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -206,4 +216,37 @@ func (w *chunkWorker) Close() {
 
 func subtaskPrefix(taskID, subtaskID int64) string {
 	return path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
+}
+
+func getWriterMemorySizeLimit(plan *importer.Plan) uint64 {
+	// min(external.DefaultMemSizeLimit, indexKVTotalBufSize / num-of-index-that-gen-kv)
+	cnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
+	limit := indexKVTotalBufSize
+	if cnt > 0 {
+		limit = limit / uint64(cnt)
+	}
+	if limit > external.DefaultMemSizeLimit {
+		limit = external.DefaultMemSizeLimit
+	}
+	return limit
+}
+
+func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
+	var count int
+	var nonClusteredPK bool
+	for _, idxInfo := range tblInfo.Indices {
+		// all public non-primary index generates index KVs
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		if idxInfo.Primary && !tblInfo.HasClusteredIndex() {
+			nonClusteredPK = true
+			continue
+		}
+		count++
+	}
+	if nonClusteredPK {
+		count++
+	}
+	return count
 }
