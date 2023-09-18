@@ -65,15 +65,15 @@ func TestBackfillingDispatcher(t *testing.T) {
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(nil, gTask)
 	require.Equal(t, proto.StepThree, gTask.Step)
-	// empty StepThree
+	// for partition table, we will not generate subtask for StepThree.
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(metas))
+	require.Len(t, metas, 0)
 	gTask.Step = dsp.GetNextStep(nil, gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(metas))
+	require.Len(t, metas, 0)
 
 	// 1.3 test partition table OnErrStage.
 	errMeta, err := dsp.OnErrStage(context.Background(), nil, gTask, []error{errors.New("mockErr")})
@@ -107,15 +107,15 @@ func TestBackfillingDispatcher(t *testing.T) {
 	// 2.2.2 stepOne
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(nil, gTask)
+	require.Equal(t, proto.StepThree, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
-	require.Equal(t, proto.StepTwo, gTask.Step)
 	gTask.Step = dsp.GetNextStep(nil, gTask)
+	require.Equal(t, proto.StepDone, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
-	require.Equal(t, proto.StepDone, gTask.Step)
 }
 
 func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) *proto.Task {

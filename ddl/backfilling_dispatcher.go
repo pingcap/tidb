@@ -84,12 +84,13 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 	}()
 
+	tblInfo, err := getTblInfo(h.d, job)
+	if err != nil {
+		return nil, err
+	}
+
 	switch step {
 	case proto.StepOne:
-		tblInfo, err := getTblInfo(h.d, job)
-		if err != nil {
-			return nil, err
-		}
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
@@ -99,6 +100,9 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 	case proto.StepThree:
 		if useExtStore {
 			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
+		}
+		if tblInfo.Partition != nil {
+			return nil, nil
 		}
 		return generateIngestTaskPlan(ctx)
 	default:
