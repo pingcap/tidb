@@ -18,7 +18,9 @@ import (
 	"context"
 	"path"
 	"strconv"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/disttask/operator"
@@ -28,6 +30,10 @@ import (
 	tidbutil "github.com/pingcap/tidb/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+)
+
+const (
+	maxWaitDuration = 30 * time.Second
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -137,6 +143,8 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, workerID int
 		op:  op,
 	}
 	if op.tableImporter.IsGlobalSort() {
+		// in case on network partition, 2 nodes might run the same subtask.
+		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) *external.Writer {
 			builder := external.NewWriterBuilder().
@@ -144,7 +152,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, workerID int
 					op.sharedVars.mergeIndexSummary(indexID, summary)
 				})
 			prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
-			writerID := path.Join("index", strconv.Itoa(int(indexID)), strconv.Itoa(int(workerID)))
+			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 			return writer
 		}
@@ -153,7 +161,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, workerID int
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
 		prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
-		writerID := path.Join("data", strconv.Itoa(int(workerID)))
+		writerID := path.Join("data", workerUUID)
 		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
 
@@ -178,7 +186,9 @@ func (w *chunkWorker) Close() {
 	closeCtx := w.ctx
 	if closeCtx.Err() != nil {
 		// in case of context canceled, we need to create a new context to close writers.
-		closeCtx = context.Background()
+		newCtx, cancel := context.WithTimeout(context.Background(), maxWaitDuration)
+		closeCtx = newCtx
+		defer cancel()
 	}
 	if w.dataWriter != nil {
 		// Note: we cannot ignore close error as we're writing to S3 or GCS.
