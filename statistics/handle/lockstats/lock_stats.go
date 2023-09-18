@@ -91,13 +91,13 @@ func AddLockedTables(
 
 	// Insert locked tables.
 	checkedTables := GetLockedTables(lockedTables, tids...)
-	for i, tid := range tids {
+	for _, tid := range tids {
 		if _, ok := checkedTables[tid]; !ok {
 			if err := insertIntoStatsTableLocked(ctx, exec, tid); err != nil {
 				return "", err
 			}
 		} else {
-			skippedTables = append(skippedTables, tables[i])
+			skippedTables = append(skippedTables, tidAndNames[tid])
 		}
 	}
 

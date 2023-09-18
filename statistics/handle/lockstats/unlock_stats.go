@@ -79,9 +79,9 @@ func RemoveLockedTables(
 	)
 
 	checkedTables := GetLockedTables(lockedTables, tids...)
-	for i, tid := range tids {
+	for _, tid := range tids {
 		if _, ok := checkedTables[tid]; !ok {
-			skippedTables = append(skippedTables, tables[i])
+			skippedTables = append(skippedTables, tidAndNames[tid])
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, tid); err != nil {
