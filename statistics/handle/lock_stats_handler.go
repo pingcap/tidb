@@ -22,11 +22,11 @@ import (
 )
 
 // LockTables add locked tables id to store.
-// - tids: table ids of which will be locked.
+// - tidAndNames: table ids and names of which will be locked.
 // - pids: partition ids of which will be locked.
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) LockTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func (h *Handle) LockTables(tidAndNames map[int64]*ast.TableName, pids []int64) (string, error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return "", errors.Trace(err)
@@ -35,7 +35,7 @@ func (h *Handle) LockTables(tids []int64, pids []int64, tables []*ast.TableName)
 
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 
-	return lockstats.AddLockedTables(exec, tids, pids, tables)
+	return lockstats.AddLockedTables(exec, tidAndNames, pids)
 }
 
 // LockPartitions add locked partitions id to store.
@@ -61,11 +61,11 @@ func (h *Handle) LockPartitions(
 }
 
 // RemoveLockedTables remove tables from table locked records.
-// - tids: table ids of which will be unlocked.
+// - tidAndNames:  table ids and names of which will be unlocked.
 // - pids: partition ids of which will be unlocked.
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func (h *Handle) RemoveLockedTables(tidAndNames map[int64]*ast.TableName, pids []int64) (string, error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return "", errors.Trace(err)
@@ -73,7 +73,7 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 	defer h.pool.Put(se)
 
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return lockstats.RemoveLockedTables(exec, tids, pids, tables)
+	return lockstats.RemoveLockedTables(exec, tidAndNames, pids)
 }
 
 // RemoveLockedPartitions remove partitions from table locked records.

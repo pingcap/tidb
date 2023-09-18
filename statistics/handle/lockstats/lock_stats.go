@@ -44,11 +44,11 @@ var (
 
 // AddLockedTables add locked tables id to store.
 // - exec: sql executor.
-// - tids: table ids of which will be locked.
+// - tidAndNames: table ids and names of which will be locked.
 // - pids: partition ids of which will be locked.
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
-func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tidAndNames map[int64]*ast.TableName, pids []int64) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
 	err := startTransaction(ctx, exec)
@@ -66,8 +66,18 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 		return "", err
 	}
 
-	skippedTables := make([]string, 0, len(tables))
-	statsLogger.Info("lock table", zap.Int64s("tableIDs", tids))
+	skippedTables := make([]string, 0, len(tidAndNames))
+	tids := make([]int64, 0, len(tidAndNames))
+	tables := make([]*ast.TableName, 0, len(tidAndNames))
+	for tid, tableName := range tidAndNames {
+		tids = append(tids, tid)
+		tables = append(tables, tableName)
+	}
+	statsLogger.Info("lock table",
+		zap.Int64s("tableIDs", tids),
+		zap.Strings("tableNames", tablesToStrings(tables...)),
+		zap.Int64s("partitionIDs", pids),
+	)
 
 	// Insert locked tables.
 	checkedTables := GetLockedTables(lockedTables, tids...)
@@ -77,7 +87,7 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 				return "", err
 			}
 		} else {
-			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
+			skippedTables = append(skippedTables, tablesToStrings(tables[i])[0])
 		}
 	}
 
@@ -94,6 +104,14 @@ func AddLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []in
 	msg := generateSkippedMessage(tids, skippedTables, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
+}
+
+func tablesToStrings(tables ...*ast.TableName) []string {
+	tableNames := make([]string, 0, len(tables))
+	for _, table := range tables {
+		tableNames = append(tableNames, table.Schema.L+"."+table.Name.L)
+	}
+	return tableNames
 }
 
 // AddLockedPartitions add locked partitions id to store.
@@ -129,14 +147,18 @@ func AddLockedPartitions(
 	for pid := range pidNames {
 		pids = append(pids, pid)
 	}
-	statsLogger.Info("lock partitions", zap.Int64("tableID", tid), zap.Int64s("partitionIDs", pids))
+	statsLogger.Info("lock partitions",
+		zap.Int64("tableID", tid),
+		zap.String("tableName", tablesToStrings(tableName)[0]),
+		zap.Int64s("partitionIDs", pids),
+	)
 
 	// Check if whole table is locked.
 	// Then we can skip locking partitions.
 	// It is not necessary to lock partitions if whole table is locked.
 	checkedTables := GetLockedTables(lockedTables, tid)
 	if _, locked := checkedTables[tid]; locked {
-		return "skip locking partitions of locked table: " + tableName.Schema.L + "." + tableName.Name.L, err
+		return "skip locking partitions of locked table: " + tablesToStrings(tableName)[0], err
 	}
 
 	// Insert related partitions and warning already locked partitions.

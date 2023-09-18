@@ -162,14 +162,16 @@ func TestAddLockedTables(t *testing.T) {
 		"COMMIT",
 	)
 
+	tidsAndNames := map[int64]*ast.TableName{
+		1: {Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
+		2: {Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
+		3: {Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")},
+	}
+
 	msg, err := AddLockedTables(
 		exec,
-		[]int64{1, 2, 3},
+		tidsAndNames,
 		[]int64{4},
-		[]*ast.TableName{
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}},
 	)
 	require.NoError(t, err)
 	require.Equal(t, "skip locking locked tables: test.t1, other tables locked successfully", msg)

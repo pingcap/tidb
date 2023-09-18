@@ -34,11 +34,11 @@ const (
 
 // RemoveLockedTables remove tables from table locked records.
 // - exec: sql executor.
-// - tids: table ids of which will be unlocked.
+// - tidAndNames: table ids and names of which will be unlocked.
 // - pids: partition ids of which will be unlocked.
 // - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
-func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tidAndNames map[int64]*ast.TableName, pids []int64) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
 	err := startTransaction(ctx, exec)
@@ -55,14 +55,24 @@ func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids [
 	if err != nil {
 		return "", err
 	}
-	skippedTables := make([]string, 0, len(tables))
+	skippedTables := make([]string, 0, len(tidAndNames))
+	tids := make([]int64, 0, len(tidAndNames))
+	tables := make([]*ast.TableName, 0, len(tidAndNames))
+	for tid, tableName := range tidAndNames {
+		tids = append(tids, tid)
+		tables = append(tables, tableName)
+	}
 
-	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
+	statsLogger.Info("unlock table",
+		zap.Int64s("tableIDs", tids),
+		zap.Strings("tableNames", tablesToStrings(tables...)),
+		zap.Int64s("partitionIDs", pids),
+	)
 
 	checkedTables := GetLockedTables(lockedTables, tids...)
 	for i, tid := range tids {
 		if _, ok := checkedTables[tid]; !ok {
-			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
+			skippedTables = append(skippedTables, tablesToStrings(tables[i])[0])
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, tid); err != nil {
@@ -119,14 +129,18 @@ func RemoveLockedPartitions(
 	for pid := range pidNames {
 		pids = append(pids, pid)
 	}
-	statsLogger.Info("unlock partitions", zap.Int64("tableID", tid), zap.Int64s("partitionIDs", pids))
+	statsLogger.Info("unlock partitions",
+		zap.Int64("tableID", tid),
+		zap.String("tableName", tablesToStrings(tableName)[0]),
+		zap.Int64s("partitionIDs", pids),
+	)
 
 	// Check if whole table is locked.
 	// Then we can not unlock any partitions of the table.
 	// It is invalid to unlock partitions if whole table is locked.
 	checkedTables := GetLockedTables(lockedTables, tid)
 	if _, locked := checkedTables[tid]; locked {
-		return "skip unlocking partitions of locked table: " + tableName.Schema.L + "." + tableName.Name.L, err
+		return "skip unlocking partitions of locked table: " + tablesToStrings(tableName)[0], err
 	}
 
 	// Delete related partitions and warning already unlocked partitions.

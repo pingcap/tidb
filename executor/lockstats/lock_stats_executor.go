@@ -65,12 +65,12 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	} else {
-		tids, pids, err := populateTableAndPartitionIDs(e.Tables, is)
+		tidAndNames, pids, err := populateTableAndPartitionIDs(e.Tables, is)
 		if err != nil {
 			return err
 		}
 
-		msg, err := h.LockTables(tids, pids, e.Tables)
+		msg, err := h.LockTables(tidAndNames, pids)
 		if err != nil {
 			return err
 		}
@@ -121,8 +121,8 @@ func populatePartitionIDAndNames(tableName *ast.TableName, partitionNames []mode
 }
 
 // populateTableAndPartitionIDs returns table IDs and partition IDs for the given table names.
-func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSchema) ([]int64, []int64, error) {
-	tids := make([]int64, 0, len(tables))
+func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSchema) (map[int64]*ast.TableName, []int64, error) {
+	tidAndNames := make(map[int64]*ast.TableName, len(tables))
 	pids := make([]int64, 0)
 
 	for _, table := range tables {
@@ -130,7 +130,7 @@ func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSch
 		if err != nil {
 			return nil, nil, err
 		}
-		tids = append(tids, tbl.Meta().ID)
+		tidAndNames[tbl.Meta().ID] = table
 
 		pi := tbl.Meta().GetPartitionInfo()
 		if pi == nil {
@@ -141,5 +141,5 @@ func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSch
 		}
 	}
 
-	return tids, pids, nil
+	return tidAndNames, pids, nil
 }
