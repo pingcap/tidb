@@ -1266,7 +1266,11 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// ndv = ratio * left.ndv + max((1-ratio) * left.ndv, right.ndv)
 		ratio := calcFraction4Datums(left.lower, left.upper, right.lower)
 		res.NDV = int64(ratio*float64(left.NDV) + math.Max((1-ratio)*float64(left.NDV), float64(right.NDV)))
-		res.lower = left.lower.Clone()
+		if res.lower != nil {
+			left.lower.CopyTryNoAlloc(res.lower)
+		} else {
+			res.lower = left.lower.Clone()
+		}
 		return &res, nil
 	}
 	// ____right___|
@@ -1355,7 +1359,9 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 			if err != nil {
 				return nil, err
 			}
+			reuse := right
 			right = *tmp
+			releasebucket4MergingForRecycle(&reuse)
 		}
 	}
 	res.NDV = right.NDV + right.disjointNDV
