@@ -324,7 +324,13 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 func (h *Handle) UpdateSessionVar() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	verInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	return UpdateSCtxVarsForStats(h.mu.ctx)
+}
+
+// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
+func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// analyzer version
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
@@ -332,8 +338,22 @@ func (h *Handle) UpdateSessionVar() error {
 	if err != nil {
 		return err
 	}
-	h.mu.ctx.GetSessionVars().AnalyzeVersion = int(ver)
-	return err
+	sctx.GetSessionVars().AnalyzeVersion = int(ver)
+
+	// historical stats switch
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
+
+	// partition mode
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
+	return nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -1488,7 +1508,7 @@ func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
 func (h *Handle) RefreshVars() error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.mu.ctx.RefreshVars(context.Background())
+	return UpdateSCtxVarsForStats(h.mu.ctx)
 }
 
 // CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
