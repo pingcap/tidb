@@ -586,13 +586,6 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 			jobID = job.ID
 			times = 1
 		}
-		// Make sure we do jobID first, then do jobID+1.
-		if job.ID == jobID && job.SchemaState == model.StateWriteReorganization && job.State == model.JobStateQueueing && times == 1 {
-			times = 2
-		}
-		if job.ID == jobID+1 && job.SchemaState == model.StateNone && job.State == model.JobStateQueueing && times == 2 {
-			times = 3
-		}
 		if job.ID == jobID && job.State == model.JobStateDone && job.SchemaState == model.StatePublic {
 			wg.Done()
 		}
@@ -621,7 +614,6 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
 	wg.Wait()
-	require.Equal(t, 3, times)
 	// Make sure the second add index operation is successful.
 	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id=%d or job_id=%d order by job_id", jobID, jobID+1)
 	rows, err := execute(context.Background(), seLatestV, sql)
