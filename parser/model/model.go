@@ -919,6 +919,8 @@ func NewExtraPartitionIDColInfo() *ColumnInfo {
 	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
 }
 
@@ -932,6 +934,8 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
 }
 

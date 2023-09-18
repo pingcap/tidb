@@ -8,6 +8,7 @@ go_library(
         "flags.go",
         "gcs.go",
         "hdfs.go",
+        "helper.go",
         "local.go",
         "local_unix.go",
         "local_windows.go",
@@ -22,7 +23,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/errors",
+        "//br/pkg/lightning/log",
         "//br/pkg/logutil",
+        "//sessionctx/variable",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials/providers",
         "@com_github_aws_aws_sdk_go//aws",

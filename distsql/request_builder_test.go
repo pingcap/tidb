@@ -603,26 +603,26 @@ func TestRequestBuilder8(t *testing.T) {
 	require.Equal(t, expect, actual)
 }
 
-func TestRequestBuilderTidbKvReadTimeout(t *testing.T) {
+func TestRequestBuilderTiKVClientReadTimeout(t *testing.T) {
 	sv := variable.NewSessionVars(nil)
-	sv.TidbKvReadTimeout = 100
+	sv.TiKVClientReadTimeout = 100
 	actual, err := (&RequestBuilder{}).
 		SetFromSessionVars(sv).
 		Build()
 	require.NoError(t, err)
 	expect := &kv.Request{
-		Tp:                0,
-		StartTs:           0x0,
-		Data:              []uint8(nil),
-		KeyRanges:         kv.NewNonParitionedKeyRanges(nil),
-		Concurrency:       variable.DefDistSQLScanConcurrency,
-		IsolationLevel:    0,
-		Priority:          0,
-		MemTracker:        (*memory.Tracker)(nil),
-		SchemaVar:         0,
-		ReadReplicaScope:  kv.GlobalReplicaScope,
-		TidbKvReadTimeout: 100,
-		ResourceGroupName: resourcegroup.DefaultResourceGroupName,
+		Tp:                    0,
+		StartTs:               0x0,
+		Data:                  []uint8(nil),
+		KeyRanges:             kv.NewNonParitionedKeyRanges(nil),
+		Concurrency:           variable.DefDistSQLScanConcurrency,
+		IsolationLevel:        0,
+		Priority:              0,
+		MemTracker:            (*memory.Tracker)(nil),
+		SchemaVar:             0,
+		ReadReplicaScope:      kv.GlobalReplicaScope,
+		TiKVClientReadTimeout: 100,
+		ResourceGroupName:     resourcegroup.DefaultResourceGroupName,
 	}
 	expect.Paging.MinPagingSize = paging.MinPagingSize
 	expect.Paging.MaxPagingSize = paging.MaxPagingSize

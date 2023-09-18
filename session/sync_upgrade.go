@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/owner"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -120,12 +119,12 @@ func IsUpgradingClusterState(s sessionctx.Context) (bool, error) {
 	return stateInfo.State == syncer.StateUpgrading, nil
 }
 
-func checkOrSyncUpgrade(s Session, ver int64) {
-	if ver < SupportUpgradeHTTPOpVer {
-		terror.MustNil(SyncUpgradeState(s, time.Duration(internalSQLTimeout)*time.Second))
-		return
+func printClusterState(s Session, ver int64) {
+	// After SupportUpgradeHTTPOpVer version, the upgrade by paused user DDL can be notified through the HTTP API.
+	// We check the global state see if we are upgrading by paused the user DDL.
+	if ver >= SupportUpgradeHTTPOpVer {
+		isUpgradingClusterStateWithRetry(s, ver, currentBootstrapVersion, time.Duration(internalSQLTimeout)*time.Second)
 	}
-	isUpgradingClusterStateWithRetry(s, ver, currentBootstrapVersion, time.Duration(internalSQLTimeout)*time.Second)
 }
 
 func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64, timeout time.Duration) {
@@ -135,19 +134,17 @@ func isUpgradingClusterStateWithRetry(s sessionctx.Context, oldVer, newVer int64
 	for i := 0; ; i++ {
 		isUpgrading, err := IsUpgradingClusterState(s)
 		if err == nil {
-			if isUpgrading {
-				break
-			}
-			logger.Fatal("global state isn't upgrading, please send a request to start the upgrade first", zap.Error(err))
+			logger.Info("get global state", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer), zap.Bool("is upgrading state", isUpgrading))
+			return
 		}
 
 		if time.Since(now) >= timeout {
-			logger.Fatal("get global state failed", zap.Error(err))
+			logger.Error("get global state failed", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer), zap.Error(err))
+			return
 		}
-		if i%10 == 0 {
-			logger.Warn("get global state failed", zap.Error(err))
+		if i%25 == 0 {
+			logger.Warn("get global state failed", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer), zap.Error(err))
 		}
 		time.Sleep(interval)
 	}
-	logger.Info("global state is upgrading", zap.Int64("old version", oldVer), zap.Int64("latest version", newVer))
 }

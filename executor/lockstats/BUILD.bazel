@@ -13,6 +13,8 @@ go_library(
         "//executor/internal/exec",
         "//infoschema",
         "//parser/ast",
+        "//parser/model",
+        "//table/tables",
         "//util/chunk",
         "@com_github_pingcap_errors//:errors",
     ],

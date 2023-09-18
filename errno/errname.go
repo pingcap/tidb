@@ -666,7 +666,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrMessageAndStatement:                                   mysql.Message("%s Statement: %s", nil),
 	ErrInsideTransactionPreventsSwitchBinlogFormat:           mysql.Message("Cannot modify @@session.binlogFormat inside a transaction", nil),
 	ErrPathLength:                                            mysql.Message("The path specified for %.64s is too long.", nil),
-	ErrWarnDeprecatedSyntaxNoReplacement:                     mysql.Message("'%s' is deprecated and will be removed in a future release.", nil),
+	ErrWarnDeprecatedSyntaxNoReplacement:                     mysql.Message("%s is deprecated and will be removed in a future release.%s", nil),
 	ErrWrongNativeTableStructure:                             mysql.Message("Native table '%-.64s'.'%-.64s' has the wrong structure", nil),
 	ErrWrongPerfSchemaUsage:                                  mysql.Message("Invalid performanceSchema usage.", nil),
 	ErrWarnISSkippedTable:                                    mysql.Message("Table '%s'.'%s' was skipped since its definition is being modified by concurrent DDL statement", nil),
