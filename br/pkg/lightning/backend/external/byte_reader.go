@@ -63,14 +63,25 @@ func openStoreReaderAndSeek(
 	return storageReader, nil
 }
 
-// newByteReader wraps readNBytes functionality to storageReader. It will not
-// close storageReader when meet error.
-func newByteReader(ctx context.Context, storageReader storage.ExternalFileReader, bufSize int, st storage.ExternalStorage, name string, defaultUseConcurrency bool) (*byteReader, error) {
+// newByteReader wraps readNBytes functionality to storageReader.
+func newByteReader(
+	ctx context.Context,
+	storageReader storage.ExternalFileReader,
+	bufSize int,
+	st storage.ExternalStorage,
+	name string,
+	defaultUseConcurrency bool,
+) (r *byteReader, err error) {
+	defer func() {
+		if err != nil && r != nil {
+			_ = r.Close()
+		}
+	}()
 	conReader, err := newSingeFileReader(ctx, st, name, 8, ConcurrentReaderBufferSize)
 	if err != nil {
 		return nil, err
 	}
-	r := &byteReader{
+	r = &byteReader{
 		ctx:           ctx,
 		storageReader: storageReader,
 		buf:           make([]byte, bufSize),
@@ -178,6 +189,7 @@ func (r *byteReader) reload() error {
 	to := r.useConcurrentReader.Load()
 	now := r.useConcurrentReaderCurrent.Load()
 	if to != now {
+		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", to))
 		if to {
 			err := r.switchToConcurrentReaderImpl()
 			if err != nil {

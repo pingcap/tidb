@@ -16,13 +16,17 @@ package external
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"testing"
+	"time"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"golang.org/x/exp/rand"
 )
 
 type trackOpenMemStorage struct {
@@ -314,6 +318,10 @@ func (p kvReaderPointerProxy) next() (*kvPair, error) {
 	return &kvPair{key: k, value: v}, nil
 }
 
+func (p kvReaderPointerProxy) setReadMode(useConcurrency bool) {
+	p.r.byteReader.switchReaderMode(useConcurrency)
+}
+
 func (p kvReaderPointerProxy) close() error {
 	return p.r.Close()
 }
@@ -336,4 +344,74 @@ func BenchmarkPointerT(b *testing.B) {
 			_ = e
 		}
 	}
+}
+
+func TestMergeIterSwitchMode(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+
+	testMergeIterSwitchMode(t, func(key []byte, i int) []byte {
+		_, err := rand.Read(key)
+		require.NoError(t, err)
+		return key
+	})
+	testMergeIterSwitchMode(t, func(key []byte, i int) []byte {
+		_, err := rand.Read(key)
+		require.NoError(t, err)
+		binary.BigEndian.PutUint64(key, uint64(i))
+		return key
+	})
+	testMergeIterSwitchMode(t, func(key []byte, i int) []byte {
+		_, err := rand.Read(key)
+		require.NoError(t, err)
+		if (i/100000)%2 == 0 {
+			binary.BigEndian.PutUint64(key, uint64(i)<<40)
+		}
+		return key
+	})
+}
+
+func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
+	st, clean := NewS3WithBucketAndPrefix(t, "test", "prefix/")
+	defer clean()
+
+	// Prepare
+	writer := NewWriterBuilder().
+		SetPropKeysDistance(100).
+		SetMemorySizeLimit(512*1024).
+		Build(st, "testprefix", "0")
+
+	ConcurrentReaderBufferSize = 4 * 1024
+
+	kvCount := 500000
+	keySize := 100
+	valueSize := 10
+	kvs := make([]common.KvPair, 1)
+	kvs[0] = common.KvPair{
+		Key: make([]byte, keySize),
+		Val: make([]byte, valueSize),
+	}
+	for i := 0; i < kvCount; i++ {
+		kvs[0].Key = f(kvs[0].Key, i)
+		_, err := rand.Read(kvs[0].Val[0:])
+		require.NoError(t, err)
+		err = writer.WriteRow(context.Background(), kvs[0].Key, kvs[0].Val, nil)
+		require.NoError(t, err)
+	}
+	err := writer.Close(context.Background())
+	require.NoError(t, err)
+
+	dataNames, _, err := GetAllFileNames(context.Background(), st, "")
+	require.NoError(t, err)
+
+	offsets := make([]uint64, len(dataNames))
+
+	iter, err := NewMergeKVIter(context.Background(), dataNames, offsets, st, 2048)
+	require.NoError(t, err)
+
+	for iter.Next() {
+	}
+	err = iter.Close()
+	require.NoError(t, err)
 }
