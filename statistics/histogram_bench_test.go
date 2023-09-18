@@ -29,7 +29,7 @@ import (
 const (
 	histogramLen    = 100
 	popedTopNLen    = 100
-	expBucketNumber = 100
+	expBucketNumber = 500
 )
 
 func genBucket4TestData(length int) []*bucket4Test {

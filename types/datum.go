@@ -101,6 +101,10 @@ func (d *Datum) Copy(dst *Datum) {
 	}
 }
 
+func (d *Datum) realloc(dst *Datum) {
+	dst.b = make([]byte, len(d.b))
+}
+
 // CopyTryNoAlloc deep copies a Datum into destination without allocation.
 func (d *Datum) CopyTryNoAlloc(dst *Datum) {
 	dst.k = d.k
@@ -109,8 +113,11 @@ func (d *Datum) CopyTryNoAlloc(dst *Datum) {
 	dst.i = d.i
 	dst.collation = d.collation
 	if d.b != nil {
-		if len(d.b) != cap(dst.b) {
-			dst.b = make([]byte, len(d.b))
+		// Ensure that destination has enough capacity
+		if cap(dst.b) < len(d.b) {
+			d.realloc(dst)
+		} else {
+			dst.b = dst.b[:len(d.b)]
 		}
 		copy(dst.b, d.b)
 	}
