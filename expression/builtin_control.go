@@ -162,7 +162,7 @@ func setCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		resultFieldType.SetCollate(ec.Collation)
 		resultFieldType.SetCharset(ec.Charset)
 		for i := range args {
-			if !types.IsNonBinaryStr(args[i].GetType()) {
+			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
 				resultFieldType.AddFlag(mysql.BinaryFlag)
 				break
 			}
