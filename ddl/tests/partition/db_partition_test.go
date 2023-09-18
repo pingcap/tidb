@@ -2373,6 +2373,44 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	require.Equal(t, 2, cnt)
 }
 
+func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tt := external.GetTableByName(t, tk, "test", "test_global")
+	pid := tt.Meta().Partition.Definitions[1].ID
+
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (21, 21, 21), (29, 29, 29)`)
+
+	tk.MustExec("alter table test_global drop partition p1, p2;")
+	result := tk.MustQuery("select * from test_global;")
+	result.Sort().Check(testkit.Rows("21 21 21", "29 29 29"))
+
+	tt = external.GetTableByName(t, tk, "test", "test_global")
+	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 2, cnt)
+
+	idxInfo = tt.Meta().FindIndexByName("idx_c")
+	require.NotNil(t, idxInfo)
+	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 2, cnt)
+}
+
 func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {

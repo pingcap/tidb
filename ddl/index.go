@@ -2206,8 +2206,9 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 			if i == len(partitionIDs)-1 {
 				return true, nil
 			}
+			pid = partitionIDs[i+1]
+			break
 		}
-		pid = partitionIDs[i+1]
 	}
 
 	currentVer, err := getValidCurrentVersion(reorg.d.store)
