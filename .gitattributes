@@ -4,8 +4,7 @@
 # Declare files that will always have LF line endings on checkout.
 *.y text eol=lf
 
-tests/integrationtest/r/* diff
-tests/integrationtest/r/*/* diff
+*.result diff
 
 util/collate/unicode_0*_ci.go linguist-generated=true
 util/collate/ucadata/unicode_*_data.go linguist-generated=true
