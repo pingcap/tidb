@@ -6793,6 +6793,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	}
 
 	desc := orderByItems[0].Desc
+	var funcName string
 	if boundClause.Unit != ast.TimeUnitInvalid {
 		// TODO: Perhaps we don't need to transcode this back to generic string
 		unitVal := boundClause.Unit.String()
@@ -6804,35 +6805,38 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		// When the order is asc:
 		//   `+` for following, and `-` for the preceding
 		// When the order is desc, `+` becomes `-` and vice-versa.
-		funcName := ast.DateAdd
+		funcName = ast.DateAdd
 		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
+
 		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
-		bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
-		return bound, nil
-	}
-	// When the order is asc:
-	//   `+` for following, and `-` for the preceding
-	// When the order is desc, `+` becomes `-` and vice-versa.
-	funcName := ast.Plus
-	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
-		funcName = ast.Minus
-	}
-	bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
-	if err != nil {
-		return nil, err
+	} else {
+		// When the order is asc:
+		//   `+` for following, and `-` for the preceding
+		// When the order is desc, `+` becomes `-` and vice-versa.
+		funcName = ast.Plus
+		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
+			funcName = ast.Minus
+		}
+
+		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	cmpDataType := expression.GetAccurateCmpType(orderByItems[0].Col, bound.CalcFuncs[0])
-
 	switch cmpDataType {
 	case types.ETInt:
 		bound.CmpFuncs[0] = expression.CompareInt
 		bound.CmpDataType = tipb.RangeCmpDataType_Int
+	case types.ETDatetime, types.ETTimestamp:
+		bound.CmpFuncs[0] = expression.CompareTime
+		bound.CmpDataType = tipb.RangeCmpDataType_DateTime
 	case types.ETReal:
 		bound.CmpFuncs[0] = expression.CompareReal
 		bound.CmpDataType = tipb.RangeCmpDataType_Float
