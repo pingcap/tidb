@@ -22,6 +22,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -290,6 +291,20 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*Write
 	if err != nil {
 		return nil, err
 	}
+	failpoint.Inject("mockWriteIngestSpecs", func() {
+		failpoint.Return([]*WriteIngestSpec{
+			{
+				WriteIngestStepMeta: &WriteIngestStepMeta{
+					KVGroup: dataKVGroup,
+				},
+			},
+			{
+				WriteIngestStepMeta: &WriteIngestStepMeta{
+					KVGroup: "1",
+				},
+			},
+		}, nil)
+	})
 	specs := make([]*WriteIngestSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)

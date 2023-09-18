@@ -122,7 +122,7 @@ func (t *taskInfo) close(ctx context.Context) {
 
 // ImportDispatcherExt is an extension of ImportDispatcher, exported for test.
 type ImportDispatcherExt struct {
-	globalSort bool
+	GlobalSort bool
 	mu         sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
@@ -237,7 +237,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
 		jobStep := importer.JobStepImporting
-		if dsp.globalSort {
+		if dsp.GlobalSort {
 			jobStep = importer.JobStepGlobalSorting
 		}
 		if err = startJob(ctx, logger, taskHandle, taskMeta, jobStep); err != nil {
@@ -262,14 +262,11 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error after StepImport"))
 		})
-		if err := updateResult(taskHandle, gTask, taskMeta); err != nil {
+		// we need get metas where checksum is stored.
+		if err := updateResult(taskHandle, gTask, taskMeta, dsp.GlobalSort); err != nil {
 			return nil, err
 		}
-		// we need get metas where checksum is stored.
-		step := StepImport
-		if dsp.globalSort {
-			step = StepEncodeAndSort
-		}
+		step := getStepOfEncode(dsp.GlobalSort)
 		previousSubtaskMetas, err = taskHandle.GetPreviousSubtaskMetas(gTask.ID, step)
 		if err != nil {
 			return nil, err
@@ -365,7 +362,7 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 func (dsp *ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
 	switch task.Step {
 	case proto.StepInit:
-		if dsp.globalSort {
+		if dsp.GlobalSort {
 			return StepEncodeAndSort
 		}
 		return StepImport
@@ -437,7 +434,7 @@ func (dsp *importDispatcher) Init() (err error) {
 	}
 
 	dsp.BaseDispatcher.Extension = &ImportDispatcherExt{
-		globalSort: taskMeta.Plan.CloudStorageURI != "",
+		GlobalSort: taskMeta.Plan.CloudStorageURI != "",
 	}
 	return dsp.BaseDispatcher.Init()
 }
@@ -537,9 +534,17 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 	return chunkMap
 }
 
+func getStepOfEncode(globalSort bool) int64 {
+	if globalSort {
+		return StepEncodeAndSort
+	}
+	return StepImport
+}
+
 // we will update taskMeta in place and make gTask.Meta point to the new taskMeta.
-func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
-	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
+func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
+	stepOfEncode := getStepOfEncode(globalSort)
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, stepOfEncode)
 	if err != nil {
 		return err
 	}
@@ -561,7 +566,36 @@ func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *Tas
 		}
 	}
 	taskMeta.Result.ColSizeMap = columnSizeMap
+
+	if globalSort {
+		taskMeta.Result.LoadedRowCnt, err = getLoadedRowCountOnGlobalSort(handle, gTask)
+		if err != nil {
+			return err
+		}
+	}
+
 	return updateMeta(gTask, taskMeta)
+}
+
+func getLoadedRowCountOnGlobalSort(handle dispatcher.TaskHandle, gTask *proto.Task) (uint64, error) {
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, StepWriteAndIngest)
+	if err != nil {
+		return 0, err
+	}
+
+	subtaskMetas := make([]*WriteIngestStepMeta, 0, len(metas))
+	for _, bs := range metas {
+		var subtaskMeta WriteIngestStepMeta
+		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
+			return 0, err
+		}
+		subtaskMetas = append(subtaskMetas, &subtaskMeta)
+	}
+	var loadedRowCount uint64
+	for _, subtaskMeta := range subtaskMetas {
+		loadedRowCount += subtaskMeta.Result.LoadedRowCnt
+	}
+	return loadedRowCount, nil
 }
 
 func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.TaskHandle, taskMeta *TaskMeta, jobStep string) error {

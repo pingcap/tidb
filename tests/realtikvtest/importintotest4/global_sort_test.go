@@ -15,11 +15,31 @@
 package importintotest
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
+	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/disttask/importinto"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/stretchr/testify/require"
 )
+
+func urlEqual(t *testing.T, expected, actual string) {
+	urlExpected, err := url.Parse(expected)
+	require.NoError(t, err)
+	urlGot, err := url.Parse(actual)
+	require.NoError(t, err)
+	// order of query parameters might change
+	require.Equal(t, urlExpected.Query(), urlGot.Query())
+	urlExpected.RawQuery, urlGot.RawQuery = "", ""
+	require.Equal(t, urlExpected.String(), urlGot.String())
+}
 
 func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.server.CreateObject(fakestorage.Object{
@@ -34,15 +54,34 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.prepareAndUseDB("gsort_basic")
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
-	sortStorageUri := fmt.Sprintf("gs://sorted/import?endpoint=%s", gcsEndpoint)
+	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
+	sortStorageUri := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s'`, gcsEndpoint, sortStorageUri)
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
-	//jobID, err := strconv.Atoi(result[0][0].(string))
+	jobID, err := strconv.Atoi(result[0][0].(string))
+	s.NoError(err)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
 	s.tk.MustExec("truncate table t")
+
+	// check sensitive info is redacted
+	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID), "", true)
+	s.NoError(err)
+	redactedSortStorageUri := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
+	urlEqual(s.T(), redactedSortStorageUri, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
+	// TODO: enable it when external engine fixed statistics.
+	//s.Equal(6, jobInfo.Summary.ImportedRows)
+	globalTaskManager, err := storage.GetTaskManager()
+	s.NoError(err)
+	taskKey := importinto.TaskKey(int64(jobID))
+	s.NoError(err)
+	globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	s.NoError(err2)
+	taskMeta := importinto.TaskMeta{}
+	s.NoError(json.Unmarshal(globalTask.Meta, &taskMeta))
+	urlEqual(s.T(), redactedSortStorageUri, taskMeta.Plan.CloudStorageURI)
 }
