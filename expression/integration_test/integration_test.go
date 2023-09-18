@@ -490,37 +490,6 @@ func TestEncryptionBuiltin(t *testing.T) {
 	tk.MustQuery("SELECT VALIDATE_PASSWORD_STRENGTH(CAST(0xd2 AS BINARY(10)))").Check(testkit.Rows("50"))
 }
 
-func TestDatetimeOverflow(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t1 (d date)")
-	tk.MustExec("set sql_mode='traditional'")
-	overflowSQLs := []string{
-		"insert into t1 (d) select date_add('2000-01-01',interval 8000 year)",
-		"insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR)",
-		"insert into t1 (d) select date_add('9999-12-31',interval 1 year)",
-		"insert into t1 (d) select date_add('9999-12-31',interval 1 day)",
-	}
-
-	for _, sql := range overflowSQLs {
-		tk.MustGetErrMsg(sql, "[types:1441]Datetime function: datetime field overflow")
-	}
-
-	tk.MustExec("set sql_mode=''")
-	for _, sql := range overflowSQLs {
-		tk.MustExec(sql)
-	}
-
-	rows := make([]string, 0, len(overflowSQLs))
-	for range overflowSQLs {
-		rows = append(rows, "<nil>")
-	}
-	tk.MustQuery("select * from t1").Check(testkit.Rows(rows...))
-}
-
 func TestInfoBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -675,6 +644,13 @@ func TestInfoBuiltin(t *testing.T) {
 	// 2 * 2, error.
 	err = tk.ExecToErr(twoColumnQuery)
 	require.Error(t, err)
+
+	result = tk.MustQuery("select tidb_is_ddl_owner()")
+	var ret int64
+	if tk.Session().IsDDLOwner() {
+		ret = 1
+	}
+	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
 }
 
 func TestColumnInfoModified(t *testing.T) {
@@ -690,66 +666,6 @@ func TestColumnInfoModified(t *testing.T) {
 	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
 	col := table.FindCol(tbl.Cols(), "col1")
 	require.Equal(t, mysql.TypeLong, col.GetType())
-}
-
-func TestIssues(t *testing.T) {
-	// for issue #4954
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);")
-	tk.MustExec("INSERT INTO t VALUES ('oe');")
-	tk.MustExec("INSERT INTO t VALUES (0xf6);")
-	r := tk.MustQuery(`SELECT * FROM t WHERE a= 'oe';`)
-	r.Check(testkit.Rows("oe"))
-	r = tk.MustQuery(`SELECT HEX(a) FROM t WHERE a= 0xf6;`)
-	r.Check(testkit.Rows("F6"))
-
-	// for issue #4006
-	tk.MustExec(`drop table if exists tb`)
-	tk.MustExec("create table tb(id int auto_increment primary key, v varchar(32));")
-	tk.MustExec("insert into tb(v) (select v from tb);")
-	r = tk.MustQuery(`SELECT * FROM tb;`)
-	r.Check(testkit.Rows())
-	tk.MustExec(`insert into tb(v) values('hello');`)
-	tk.MustExec("insert into tb(v) (select v from tb);")
-	r = tk.MustQuery(`SELECT * FROM tb;`)
-	r.Check(testkit.Rows("1 hello", "2 hello"))
-
-	// for issue #5111
-	tk.MustExec(`drop table if exists t`)
-	tk.MustExec("create table t(c varchar(32));")
-	tk.MustExec("insert into t values('1e649'),('-1e649');")
-	r = tk.MustQuery(`SELECT * FROM t where c < 1;`)
-	r.Check(testkit.Rows("-1e649"))
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
-		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
-		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
-	r = tk.MustQuery(`SELECT * FROM t where c > 1;`)
-	r.Check(testkit.Rows("1e649"))
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|",
-		"Warning|1292|Truncated incorrect DOUBLE value: '1e649'",
-		"Warning|1292|Truncated incorrect DOUBLE value: '-1e649'"))
-
-	// for issue #5293
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert t values (1)")
-	tk.MustQuery("select * from t where cast(a as binary)").Check(testkit.Rows("1"))
-
-	// for issue #16351
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t2(a int, b varchar(20))")
-	tk.MustExec(`insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000")`)
-	tk.MustQuery(`select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10`).Check(testkit.Rows(
-		"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"))
-
-	// for issue #23479
-	tk.MustQuery("select b'10000000' DIV 10").Check(testkit.Rows("12"))
-	tk.MustQuery("select cast(b'10000000' as unsigned) / 10").Check(testkit.Rows("12.8000"))
-	tk.MustQuery("select b'10000000' / 10").Check(testkit.Rows("12.8000"))
 }
 
 func TestFilterExtractFromDNF(t *testing.T) {
@@ -810,18 +726,6 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		})
 		require.Equal(t, fmt.Sprintf("%s", afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
 	}
-}
-
-func TestTiDBIsOwnerFunc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	result := tk.MustQuery("select tidb_is_ddl_owner()")
-	var ret int64
-	if tk.Session().IsDDLOwner() {
-		ret = 1
-	}
-	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
 }
 
 func TestTiDBDecodePlanFunc(t *testing.T) {
@@ -1019,113 +923,6 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tk.MustQuery(sql).Check(testkit.Rows(rs))
 }
 
-func TestPrefixIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t1 (
-  			name varchar(12) DEFAULT NULL,
-  			KEY pname (name(12))
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`)
-
-	tk.MustExec("insert into t1 values('借款策略集_网页');")
-	res := tk.MustQuery("select * from t1 where name = '借款策略集_网页';")
-	res.Check(testkit.Rows("借款策略集_网页"))
-
-	tk.MustExec(`CREATE TABLE prefix (
-		a int(11) NOT NULL,
-		b varchar(55) DEFAULT NULL,
-		c int(11) DEFAULT NULL,
-		PRIMARY KEY (a),
-		KEY prefix_index (b(2)),
-		KEY prefix_complex (a,b(2))
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
-
-	tk.MustExec("INSERT INTO prefix VALUES(0, 'b', 2), (1, 'bbb', 3), (2, 'bbc', 4), (3, 'bbb', 5), (4, 'abc', 6), (5, 'abc', 7), (6, 'abc', 7), (7, 'ÿÿ', 8), (8, 'ÿÿ0', 9), (9, 'ÿÿÿ', 10);")
-	res = tk.MustQuery("select c, b from prefix where b > 'ÿ' and b < 'ÿÿc'")
-	res.Check(testkit.Rows("8 ÿÿ", "9 ÿÿ0"))
-
-	res = tk.MustQuery("select a, b from prefix where b LIKE 'ÿÿ%'")
-	res.Check(testkit.Rows("7 ÿÿ", "8 ÿÿ0", "9 ÿÿÿ"))
-}
-
-func TestUserVarMockWindFunc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t (a int, b varchar (20), c varchar (20));`)
-	tk.MustExec(`insert into t values
-					(1,'key1-value1','insert_order1'),
-    				(1,'key1-value2','insert_order2'),
-    				(1,'key1-value3','insert_order3'),
-    				(1,'key1-value4','insert_order4'),
-    				(1,'key1-value5','insert_order5'),
-    				(1,'key1-value6','insert_order6'),
-    				(2,'key2-value1','insert_order1'),
-    				(2,'key2-value2','insert_order2'),
-    				(2,'key2-value3','insert_order3'),
-    				(2,'key2-value4','insert_order4'),
-    				(2,'key2-value5','insert_order5'),
-    				(2,'key2-value6','insert_order6'),
-    				(3,'key3-value1','insert_order1'),
-    				(3,'key3-value2','insert_order2'),
-    				(3,'key3-value3','insert_order3'),
-    				(3,'key3-value4','insert_order4'),
-    				(3,'key3-value5','insert_order5'),
-    				(3,'key3-value6','insert_order6');
-					`)
-	tk.MustExec(`SET @LAST_VAL := NULL;`)
-	tk.MustExec(`SET @ROW_NUM := 0;`)
-
-	tk.MustQuery(`select * from (
-					SELECT a,
-    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
-    				       @LAST_VAL := a AS LAST_VAL,
-    				       b,
-    				       c
-    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
-				) t2
-				where t2.ROW_NUM < 2;
-				`).Check(testkit.Rows(
-		`1 1 1 key1-value1 insert_order1`,
-		`2 1 2 key2-value1 insert_order1`,
-		`3 1 3 key3-value1 insert_order1`,
-	))
-
-	tk.MustQuery(`select * from (
-					SELECT a,
-    				       @ROW_NUM := IF(a = @LAST_VAL, @ROW_NUM + 1, 1) AS ROW_NUM,
-    				       @LAST_VAL := a AS LAST_VAL,
-    				       b,
-    				       c
-    				FROM (select * from t where a in (1, 2, 3) ORDER BY a, c) t1
-				) t2;
-				`).Check(testkit.Rows(
-		`1 1 1 key1-value1 insert_order1`,
-		`1 2 1 key1-value2 insert_order2`,
-		`1 3 1 key1-value3 insert_order3`,
-		`1 4 1 key1-value4 insert_order4`,
-		`1 5 1 key1-value5 insert_order5`,
-		`1 6 1 key1-value6 insert_order6`,
-		`2 1 2 key2-value1 insert_order1`,
-		`2 2 2 key2-value2 insert_order2`,
-		`2 3 2 key2-value3 insert_order3`,
-		`2 4 2 key2-value4 insert_order4`,
-		`2 5 2 key2-value5 insert_order5`,
-		`2 6 2 key2-value6 insert_order6`,
-		`3 1 3 key3-value1 insert_order1`,
-		`3 2 3 key3-value2 insert_order2`,
-		`3 3 3 key3-value3 insert_order3`,
-		`3 4 3 key3-value4 insert_order4`,
-		`3 5 3 key3-value5 insert_order5`,
-		`3 6 3 key3-value6 insert_order6`,
-	))
-}
-
 func TestIssue9710(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1155,50 +952,6 @@ func TestIssue9710(t *testing.T) {
 		require.Equal(t, rs.Rows()[0][2], rs.Rows()[0][3]) // unix_timestamp() will truncate the result
 		break
 	}
-}
-
-func TestExprPushdown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, col1 varchar(10), col2 varchar(10), col3 int, col4 int, col5 int, index key1" +
-		" (col1, col2, col3, col4), index key2 (col4, col3, col2, col1))")
-	tk.MustExec("insert into t values(1,'211111','311',4,5,6),(2,'311111','411',5,6,7),(3,'411111','511',6,7,8)," +
-		"(4,'511111','611',7,8,9),(5,'611111','711',8,9,10)")
-
-	// case 1, index scan without double read, some filters can not be pushed to cop task
-	rows := tk.MustQuery("explain format = 'brief' select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
-	tk.MustQuery("select col2, col1 from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("511 411111"))
-	tk.MustQuery("select count(col2) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
-
-	// case 2, index scan without double read, none of the filters can be pushed to cop task
-	rows = tk.MustQuery("explain format = 'brief' select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[0][4]))
-	tk.MustQuery("select col1, col2 from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("411111 511"))
-	tk.MustQuery("select count(col1) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
-
-	// case 3, index scan with double read, some filters can not be pushed to cop task
-	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\")", fmt.Sprintf("%v", rows[1][4]))
-	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[3][2]))
-	require.Equal(t, "like(test.t.col2, \"5%\", 92)", fmt.Sprintf("%v", rows[3][4]))
-	tk.MustQuery("select id from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(id) from t use index(key1) where col2 like '5%' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
-
-	// case 4, index scan with double read, none of the filters can be pushed to cop task
-	rows = tk.MustQuery("explain format = 'brief' select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Rows()
-	require.Equal(t, "root", fmt.Sprintf("%v", rows[1][2]))
-	require.Equal(t, "eq(from_base64(to_base64(substr(test.t.col1, 1, 1))), \"4\"), eq(from_base64(to_base64(substr(test.t.col2, 1, 1))), \"5\")", fmt.Sprintf("%v", rows[1][4]))
-	tk.MustQuery("select id from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(id) from t use index(key2) where from_base64(to_base64(substr(col2, 1, 1))) = '5' and from_base64(to_base64(substr(col1, 1, 1))) = '4'").Check(testkit.Rows("1"))
 }
 
 func TestShardIndexOnTiFlash(t *testing.T) {
@@ -1367,34 +1120,6 @@ func TestDecodetoChunkReuse(t *testing.T) {
 	rs.Close()
 }
 
-func TestCTEWithDML(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(a int);")
-	tk.MustExec("insert into t1 values(2),(3);")
-	tk.MustQuery("with t1 as (select 36 as col from t1 where a=3) select * from t1;").Check(testkit.Rows("36"))
-	tk.MustExec("insert into t1 with t1 as (select 36 as col from t1) select * from t1;")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3", "36", "36"))
-	tk.MustExec("with cte1(a) as (select 36) update t1 set a = 1 where a in (select a from cte1);")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3", "1", "1"))
-	tk.MustExec("with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte, t1 set t1.a=1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "1", "1", "1"))
-
-	tk.MustGetErrCode("with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte set a=1", mysql.ErrNonUpdatableTable)
-	tk.MustGetErrCode("with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) delete from cte", mysql.ErrNonUpdatableTable)
-	tk.MustGetErrCode("with cte(a) as (select a from t1) delete from cte", mysql.ErrNonUpdatableTable)
-	tk.MustGetErrCode("with cte(a) as (select a from t1) update cte set a=1", mysql.ErrNonUpdatableTable)
-
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1(a int, b int, primary key(a));")
-	tk.MustExec("insert into t1 values (1, 1),(2,1),(3,1);")
-	tk.MustExec("replace into t1 with recursive cte(a,b) as (select 1, 1 union select a + 1,b+1 from cte where a < 5) select * from cte;")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5"))
-}
-
 func TestIssue16697(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1415,39 +1140,6 @@ func TestIssue16697(t *testing.T) {
 			require.NotContains(t, line, "GB")
 		}
 	}
-}
-
-func TestIndexedVirtualGeneratedColumnTruncate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t(a int, b tinyint as(a+100) unique key)")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("update t set a=1 where a=200")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("admin check table t")
-	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("admin check table t")
-
-	tk.MustExec("begin")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("update t set a=1 where a=200")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("insert ignore into t values(200, default)")
-	tk.MustExec("admin check table t")
-	tk.MustExec("insert ignore into t values(200, default) on duplicate key update a=100")
-	tk.MustExec("admin check table t")
-	tk.MustExec("delete from t")
-	tk.MustExec("admin check table t")
-	tk.MustExec("commit")
-	tk.MustExec("admin check table t")
 }
 
 func TestIssue19892(t *testing.T) {
@@ -1728,109 +1420,6 @@ func TestDatetimeUserVariable(t *testing.T) {
 	require.NotEqual(t, "", tk.MustQuery("select @p").Rows()[0][0])
 }
 
-func TestEnumPushDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c_enum enum('c', 'b', 'a'))")
-	tk.MustExec("insert into t values ('a'), ('b'), ('c'), ('a'), ('b'), ('a')")
-
-	// test order by
-	tk.MustQuery("select c_enum from t order by c_enum").
-		Check(testkit.Rows("c", "b", "b", "a", "a", "a"))
-	tk.MustQuery("select c_enum from t order by c_enum desc").
-		Check(testkit.Rows("a", "a", "a", "b", "b", "c"))
-	tk.MustQuery("select c_enum from t order by if(c_enum>1, c_enum, c_enum)").
-		Check(testkit.Rows("a", "a", "a", "b", "b", "c"))
-
-	// test selection
-	tk.MustQuery("select c_enum from t where c_enum order by c_enum").
-		Check(testkit.Rows("c", "b", "b", "a", "a", "a"))
-	tk.MustQuery("select c_enum from t where c_enum > 'a' order by c_enum").
-		Check(testkit.Rows("c", "b", "b"))
-	tk.MustQuery("select c_enum from t where c_enum > 1 order by c_enum").
-		Check(testkit.Rows("b", "b", "a", "a", "a"))
-	tk.MustQuery("select c_enum from t where c_enum = 1 order by c_enum").
-		Check(testkit.Rows("c"))
-	tk.MustQuery("select c_enum from t where c_enum = 'a' order by c_enum").
-		Check(testkit.Rows("a", "a", "a"))
-	tk.MustQuery("select c_enum from t where c_enum + 1 order by c_enum").
-		Check(testkit.Rows("c", "b", "b", "a", "a", "a"))
-	tk.MustQuery("select c_enum from t where c_enum - 1 order by c_enum").
-		Check(testkit.Rows("b", "b", "a", "a", "a"))
-
-	// test projection
-	tk.MustQuery("select c_enum+1 from t order by c_enum").
-		Check(testkit.Rows("2", "3", "3", "4", "4", "4"))
-	tk.MustQuery("select c_enum, c_enum=1 from t order by c_enum").
-		Check(testkit.Rows("c 1", "b 0", "b 0", "a 0", "a 0", "a 0"))
-	tk.MustQuery("select c_enum, c_enum>1 from t order by c_enum").
-		Check(testkit.Rows("c 0", "b 1", "b 1", "a 1", "a 1", "a 1"))
-	tk.MustQuery("select c_enum, c_enum>'a' from t order by c_enum").
-		Check(testkit.Rows("c 1", "b 1", "b 1", "a 0", "a 0", "a 0"))
-
-	// test aggregate
-	tk.MustQuery("select max(c_enum) from t").
-		Check(testkit.Rows("c"))
-	tk.MustQuery("select min(c_enum) from t").
-		Check(testkit.Rows("a"))
-	tk.MustQuery("select max(c_enum+1) from t").
-		Check(testkit.Rows("4"))
-	tk.MustQuery("select min(c_enum+1) from t").
-		Check(testkit.Rows("2"))
-	tk.MustQuery("select avg(c_enum) from t").
-		Check(testkit.Rows("2.3333333333333335"))
-	tk.MustQuery("select avg(distinct c_enum) from t").
-		Check(testkit.Rows("2"))
-	tk.MustQuery("select distinct c_enum from t order by c_enum").
-		Check(testkit.Rows("c", "b", "a"))
-	tk.MustQuery("select c_enum from t group by c_enum order by c_enum").
-		Check(testkit.Rows("c", "b", "a"))
-
-	// test correlated
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec(`CREATE TABLE t1 (
-		a char(3) NOT NULL default '',
-		e enum('a','b','c','d','e') NOT NULL default 'a'
-	)`)
-	tk.MustExec("INSERT INTO t1 VALUES ('aaa','e')")
-	tk.MustExec("INSERT INTO t1 VALUES ('bbb','e')")
-	tk.MustExec("INSERT INTO t1 VALUES ('ccc','a')")
-	tk.MustExec("INSERT INTO t1 VALUES ('ddd','e')")
-	tk.MustQuery(`SELECT DISTINCT e AS c FROM t1 outr WHERE
-	a <> SOME ( SELECT a FROM t1 WHERE e = outr.e)`).
-		Check(testkit.Rows("e"))
-
-	// no index
-	tk.MustExec("drop table t")
-	tk.MustExec("create table t(e enum('c','b','a'))")
-	tk.MustExec("insert into t values(1),(2),(3)")
-	tk.MustQuery("select e from t where e > 'b'").
-		Check(testkit.Rows("c"))
-	tk.MustQuery("select e from t where e > 2").
-		Check(testkit.Rows("a"))
-
-	// enable index
-	tk.MustExec("alter table t add index idx(e)")
-	tk.MustQuery("select e from t where e > 'b'").
-		Check(testkit.Rows("c"))
-	tk.MustQuery("select e from t where e > 2").
-		Check(testkit.Rows("a"))
-
-	tk.MustExec("drop table if exists tdm")
-	tk.MustExec("create table tdm(id int, `c12` enum('a','b','c'), PRIMARY KEY (`id`));")
-	tk.MustExec("insert into tdm values (1, 'a');")
-	tk.MustExec("update tdm set c12 = 2 where id = 1;")
-	tk.MustQuery("select * from tdm").Check(testkit.Rows("1 b"))
-	tk.MustExec("set @@sql_mode = '';")
-	tk.MustExec("update tdm set c12 = 0 where id = 1;")
-	tk.MustQuery("select c12+0 from tdm").Check(testkit.Rows("0"))
-	tk.MustExec("update tdm set c12 = '0' where id = 1;")
-	tk.MustQuery("select c12+0 from tdm").Check(testkit.Rows("0"))
-}
-
 func TestSecurityEnhancedMode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1841,49 +1430,6 @@ func TestSecurityEnhancedMode(t *testing.T) {
 	// When SEM is enabled these features are restricted to all users
 	// regardless of what privileges they have available.
 	tk.MustGetErrMsg("SELECT 1 INTO OUTFILE '/tmp/aaaa'", "[planner:8132]Feature 'SELECT INTO' is not supported when security enhanced mode is enabled")
-}
-
-func TestCTEInvalidUsage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
-	// A CTE can refer to CTEs defined earlier in the same WITH clause, but not those defined later.
-	tk.MustGetErrCode("with cte1 as (select * from cte2), cte2 as (select 1) select * from cte1;", errno.ErrNoSuchTable)
-	// A CTE in a given query block can refer to CTEs defined in query blocks at a more outer level, but not CTEs defined in query blocks at a more inner level.
-	// MySQL allows this statement, and it should be a bug of MySQL. PostgreSQL also reports an error.
-	tk.MustGetErrCode("with cte1 as (select * from cte2)  select * from (with cte2 as (select 2) select * from cte1 ) q;", errno.ErrNoSuchTable)
-	// Aggregation function is not allowed in the recursive part.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select sum(n) from cte group by n) select * from cte;", errno.ErrCTERecursiveForbidsAggregation)
-	// Window function is not allowed in the recursive part.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;", errno.ErrCTERecursiveForbidsAggregation)
-	// Group by is not allowed in the recursive part.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;", errno.ErrNotSupportedYet)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;", errno.ErrNotSupportedYet)
-	// Distinct is not allowed in the recursive part.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select distinct  * from cte) select * from cte;", errno.ErrNotSupportedYet)
-	// Limit is not allowed in the recursive part.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union (select * from cte limit 2)) select * from cte;", errno.ErrNotSupportedYet)
-	// The recursive SELECT part must reference the CTE only once and only in its FROM clause, not in any subquery.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte, cte c1) select * from cte;", errno.ErrInvalidRequiresSingleReference)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;", errno.ErrInvalidRequiresSingleReference)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte where 1 in (select * from cte)) select * from cte;", errno.ErrInvalidRequiresSingleReference)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte where exists (select * from cte)) select * from cte;", errno.ErrInvalidRequiresSingleReference)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from cte where 1 >  (select * from cte)) select * from cte;", errno.ErrInvalidRequiresSingleReference)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select (select * from cte) c1) select * from cte;", errno.ErrInvalidRequiresSingleReference)
-	// The recursive part can reference tables other than the CTE and join them with the CTE. If used in a join like this, the CTE must not be on the right side of a LEFT JOIN.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select * from t left join cte on t.a=cte.n) select * from cte;", errno.ErrCTERecursiveForbiddenJoinOrder)
-	// Recursive part containing non-recursive query is not allowed.
-	tk.MustGetErrCode("with recursive cte(n) as (select  1 intersect select 2 union select * from cte union select 1) select * from cte;", errno.ErrCTERecursiveRequiresNonRecursiveFirst)
-	tk.MustGetErrCode("with recursive cte(n) as (select  * from cte union select * from cte) select * from cte;", errno.ErrCTERecursiveRequiresNonRecursiveFirst)
-	// Invalid use of intersect/except.
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 intersect select * from cte) select * from cte;", errno.ErrNotSupportedYet)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select 1 intersect select * from cte) select * from cte;", errno.ErrNotSupportedYet)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 except select * from cte) select * from cte;", errno.ErrNotSupportedYet)
-	tk.MustGetErrCode("with recursive cte(n) as (select 1 union select 1 except select * from cte) select * from cte;", errno.ErrNotSupportedYet)
 }
 
 func TestEnumIndex(t *testing.T) {
@@ -1977,149 +1523,6 @@ func TestEnumIndex(t *testing.T) {
 		testkit.Rows(" "))
 	tk.MustQuery("select /*+ inl_hash_join(t1,t2) */ * from t t1 join t t2 on t1.e=t2.e;").Check(
 		testkit.Rows(" "))
-}
-
-// Previously global values were cached. This is incorrect.
-// See: https://github.com/pingcap/tidb/issues/24368
-func TestGlobalCacheCorrectness(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 0"))
-	tk.MustExec("SET GLOBAL max_connections=1234")
-	tk.MustQuery("SHOW VARIABLES LIKE 'max_connections'").Check(testkit.Rows("max_connections 1234"))
-	// restore
-	tk.MustExec("SET GLOBAL max_connections=0")
-}
-
-func TestRedundantColumnResolve(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int not null)")
-	tk.MustExec("create table t2(a int not null)")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("insert into t2 values(1)")
-	tk.MustQuery("select a, count(*) from t1 join t2 using (a) group by a").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select a, count(*) from t1 natural join t2 group by a").Check(testkit.Rows("1 1"))
-	err := tk.ExecToErr("select a, count(*) from t1 join t2 on t1.a=t2.a group by a")
-	require.Error(t, err, "[planner:1052]Column 'a' in field list is ambiguous")
-	tk.MustQuery("select t1.a, t2.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1 1"))
-	err = tk.ExecToErr("select t1.a, t2.a from t1 join t2 using(a) group by a")
-	require.Error(t, err, "[planner:1052]Column 'a' in group statement is ambiguous")
-	tk.MustQuery("select t2.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1"))
-	tk.MustQuery("select t1.a from t1 join t2 using (a) group by t1.a").Check(testkit.Rows("1"))
-	tk.MustQuery("select t2.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
-	// The test below cannot pass now since we do not infer functional dependencies from filters as MySQL, hence would fail in only_full_group_by check.
-	// tk.MustQuery("select t1.a from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
-	tk.MustQuery("select count(*) from t1 join t2 using (a) group by t2.a").Check(testkit.Rows("1"))
-	tk.MustQuery("select t2.a from t1 join t2 using (a) group by a").Check(testkit.Rows("1"))
-	tk.MustQuery("select t1.a from t1 join t2 using (a) group by a").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from t1 join t2 using(a)").Check(testkit.Rows("1"))
-	tk.MustQuery("select t1.a, t2.a from t1 join t2 using(a)").Check(testkit.Rows("1 1"))
-	tk.MustQuery("select * from t1 natural join t2").Check(testkit.Rows("1"))
-	tk.MustQuery("select t1.a, t2.a from t1 natural join t2").Check(testkit.Rows("1 1"))
-}
-
-func TestControlFunctionWithEnumOrSet(t *testing.T) {
-	// issue 23114
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists e;")
-	tk.MustExec("create table e(e enum('c', 'b', 'a'));")
-	tk.MustExec("insert into e values ('a'),('b'),('a'),('b');")
-	tk.MustQuery("select e from e where if(e>1, e, e);").Sort().Check(
-		testkit.Rows("a", "a", "b", "b"))
-	tk.MustQuery("select e from e where case e when 1 then e else e end;").Sort().Check(
-		testkit.Rows("a", "a", "b", "b"))
-	tk.MustQuery("select e from e where case 1 when e then e end;").Check(testkit.Rows())
-
-	tk.MustQuery("select if(e>1,e,e)='a' from e").Sort().Check(
-		testkit.Rows("0", "0", "1", "1"))
-	tk.MustQuery("select if(e>1,e,e)=1 from e").Sort().Check(
-		testkit.Rows("0", "0", "0", "0"))
-	// if and if
-	tk.MustQuery("select if(e>2,e,e) and if(e<=2,e,e) from e;").Sort().Check(
-		testkit.Rows("1", "1", "1", "1"))
-	tk.MustQuery("select if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e)) from e;").Sort().Check(
-		testkit.Rows("0", "0", "1", "1"))
-	tk.MustQuery("select * from e where if(e>2,e,e) and if(e<=2,e,e);").Sort().Check(
-		testkit.Rows("a", "a", "b", "b"))
-	tk.MustQuery("select * from e where if(e>2,e,e) and (if(e<3,0,e) or if(e>=2,0,e));").Sort().Check(
-		testkit.Rows("a", "a"))
-
-	// issue 24494
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int,b enum(\"b\",\"y\",\"1\"));")
-	tk.MustExec("insert into t values(0,\"y\"),(1,\"b\"),(null,null),(2,\"1\");")
-	tk.MustQuery("SELECT count(*) FROM t where if(a,b ,null);").Check(testkit.Rows("2"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int,b enum(\"b\"),c enum(\"c\"));")
-	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
-	tk.MustQuery("select a from t where if(a=1,b,c)=\"b\";").Check(testkit.Rows("1", "1"))
-	tk.MustQuery("select a from t where if(a=1,b,c)=\"c\";").Check(testkit.Rows("2", "2"))
-	tk.MustQuery("select a from t where if(a=1,b,c)=1;").Sort().Check(testkit.Rows("1", "1", "2", "2"))
-	tk.MustQuery("select a from t where if(a=1,b,c);").Sort().Check(testkit.Rows("1", "1", "2", "2"))
-
-	tk.MustExec("drop table if exists e;")
-	tk.MustExec("create table e(e enum('c', 'b', 'a'));")
-	tk.MustExec("insert into e values(3)")
-	tk.MustQuery("select elt(1,e) = 'a' from e").Check(testkit.Rows("1"))
-	tk.MustQuery("select elt(1,e) = 3 from e").Check(testkit.Rows("1"))
-	tk.MustQuery("select e from e where elt(1,e)").Check(testkit.Rows("a"))
-
-	// test set type
-	tk.MustExec("drop table if exists s;")
-	tk.MustExec("create table s(s set('c', 'b', 'a'));")
-	tk.MustExec("insert into s values ('a'),('b'),('a'),('b');")
-	tk.MustQuery("select s from s where if(s>1, s, s);").Sort().Check(
-		testkit.Rows("a", "a", "b", "b"))
-	tk.MustQuery("select s from s where case s when 1 then s else s end;").Sort().Check(
-		testkit.Rows("a", "a", "b", "b"))
-	tk.MustQuery("select s from s where case 1 when s then s end;").Check(testkit.Rows())
-
-	tk.MustQuery("select if(s>1,s,s)='a' from s").Sort().Check(
-		testkit.Rows("0", "0", "1", "1"))
-	tk.MustQuery("select if(s>1,s,s)=4 from s").Sort().Check(
-		testkit.Rows("0", "0", "1", "1"))
-
-	tk.MustExec("drop table if exists s;")
-	tk.MustExec("create table s(s set('c', 'b', 'a'));")
-	tk.MustExec("insert into s values('a')")
-	tk.MustQuery("select elt(1,s) = 'a' from s").Check(testkit.Rows("1"))
-	tk.MustQuery("select elt(1,s) = 4 from s").Check(testkit.Rows("1"))
-	tk.MustQuery("select s from s where elt(1,s)").Check(testkit.Rows("a"))
-
-	// issue 24543
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int,b enum(\"b\"),c enum(\"c\"));")
-	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
-	tk.MustQuery("select if(A, null,b)=1 from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
-	tk.MustQuery("select if(A, null,b)='a' from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int,b set(\"b\"),c set(\"c\"));")
-	tk.MustExec("insert into t values(1,1,1),(2,1,1),(1,1,1),(2,1,1);")
-	tk.MustQuery("select if(A, null,b)=1 from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
-	tk.MustQuery("select if(A, null,b)='a' from t;").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>"))
-
-	// issue 29357
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(`a` enum('y','b','Abc','null','1','2','0')) CHARSET=binary;")
-	tk.MustExec("insert into t values(\"1\");")
-	tk.MustQuery("SELECT count(*) from t where (null like 'a') = (case when cast('2015' as real) <=> round(\"1200\",\"1\") then a end);\n").Check(testkit.Rows("0"))
-	tk.MustQuery("SELECT (null like 'a') = (case when cast('2015' as real) <=> round(\"1200\",\"1\") then a end) from t;\n").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT 5 = (case when 0 <=> 0 then a end) from t;").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT '1' = (case when 0 <=> 0 then a end) from t;").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT 5 = (case when 0 <=> 1 then a end) from t;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT '1' = (case when 0 <=> 1 then a end) from t;").Check(testkit.Rows("<nil>"))
-	tk.MustQuery("SELECT 5 = (case when 0 <=> 1 then a else a end) from t;").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT '1' = (case when 0 <=> 1 then a else a end) from t;").Check(testkit.Rows("1"))
 }
 
 func TestBuiltinFuncJSONMergePatch_InColumn(t *testing.T) {
@@ -2363,62 +1766,6 @@ func TestPrimaryKeyRequiredSysvar(t *testing.T) {
 	if res != nil {
 		require.NoError(t, res.Close())
 	}
-}
-
-func TestTranslate(t *testing.T) {
-	cases := []string{"'ABC'", "'AABC'", "'A.B.C'", "'aaaaabbbbb'", "'abc'", "'aaa'", "NULL"}
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	// Non-reserved keyword
-	tk.MustExec("create table if not exists `translate`(id int)")
-	tk.MustExec("create table t(str varchar(100), i int)")
-	for i, str := range cases {
-		stmt := fmt.Sprintf("insert into t set str=%s, i=%d", str, i)
-		tk.MustExec(stmt)
-	}
-	// Open vectorized expression
-	tk.MustExec("set @@tidb_enable_vectorized_expression=true")
-	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows("ZBC", "ZZBC", "Z.B.C", "bbbbb", "bc", "", "<nil>"))
-	// Null
-	tk.MustQuery("select translate(str, NULL, 'Zz') from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
-	tk.MustQuery("select translate(str, 'AAa', NULL) from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
-	// Empty string
-	tk.MustQuery("select translate(str, 'AAa', '') from t").Check(testkit.Rows("BC", "BC", ".B.C", "bbbbb", "bc", "", "<nil>"))
-	tk.MustQuery("select translate(str, '', 'Zzz') from t").Check(testkit.Rows("ABC", "AABC", "A.B.C", "aaaaabbbbb", "abc", "aaa", "<nil>"))
-	// Close vectorized expression
-	tk.MustExec("set @@tidb_enable_vectorized_expression=false")
-	tk.MustQuery("select translate(str, 'AAa', 'Zz') from t").Check(testkit.Rows("ZBC", "ZZBC", "Z.B.C", "bbbbb", "bc", "", "<nil>"))
-	// Null
-	tk.MustQuery("select translate(str, NULL, 'Zz') from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
-	tk.MustQuery("select translate(str, 'AAa', NULL) from t").Check(testkit.Rows("<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>", "<nil>"))
-	// Empty string
-	tk.MustQuery("select translate(str, 'AAa', '') from t").Check(testkit.Rows("BC", "BC", ".B.C", "bbbbb", "bc", "", "<nil>"))
-	tk.MustQuery("select translate(str, '', 'Zzz') from t").Check(testkit.Rows("ABC", "AABC", "A.B.C", "aaaaabbbbb", "abc", "aaa", "<nil>"))
-	// Convert from int
-	tk.MustQuery("select translate(i, '0123456', 'abcdefg') from t").Check(testkit.Rows("a", "b", "c", "d", "e", "f", "g"))
-}
-
-func TestConstPropNullFunctions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (a integer)")
-	tk.MustExec("insert into t1 values (0), (1), (2), (3)")
-	tk.MustExec("create table t2 (a integer, b integer)")
-	tk.MustExec("insert into t2 values (0,1), (1,1), (2,1), (3,1)")
-	tk.MustQuery("select t1.* from t1 left join t2 on t2.a = t1.a where t1.a = ifnull(t2.b, 0)").Check(testkit.Rows("1"))
-
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (i1 integer, c1 char)")
-	tk.MustExec("insert into t1 values (2, 'a'), (1, 'b'), (3, 'c'), (0, null);")
-	tk.MustExec("create table t2 (i2 integer, c2 char, f2 float)")
-	tk.MustExec("insert into t2 values (0, 'c', null), (1, null, 0.1), (3, 'b', 0.01), (2, 'q', 0.12), (null, 'a', -0.1), (null, null, null)")
-	tk.MustQuery("select * from t2 where t2.i2=((select count(1) from t1 where t1.i1=t2.i2))").Check(testkit.Rows("1 <nil> 0.1"))
 }
 
 func TestTimestamp(t *testing.T) {
@@ -2700,47 +2047,4 @@ func TestCompareBuiltin(t *testing.T) {
 	result.Check(testkit.Rows("1"))
 	result = tk.MustQuery(`select row(1+3,2,3)<>row(1+3,2,3)`)
 	result.Check(testkit.Rows("0"))
-}
-
-func TestRegexpPushdown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists reg")
-	tk.MustExec("create table reg(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=utf8mb4 collate=utf8mb4_general_ci;")
-
-	tk.MustQuery("explain select a from reg where regexp_like(a, b);").Check(testkit.Rows(
-		"Projection_4 8000.00 root  test.reg.a",
-		"└─TableReader_7 8000.00 root  data:Selection_6",
-		"  └─Selection_6 8000.00 cop[tikv]  regexp_like(test.reg.a, test.reg.b)",
-		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
-
-	tk.MustQuery("explain select a from reg where regexp_instr(a, b);").Check(testkit.Rows(
-		"Projection_4 8000.00 root  test.reg.a",
-		"└─TableReader_7 8000.00 root  data:Selection_6",
-		"  └─Selection_6 8000.00 cop[tikv]  regexp_instr(test.reg.a, test.reg.b)",
-		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
-
-	tk.MustQuery("explain select a from reg where regexp_substr(a, b);").Check(testkit.Rows(
-		"Projection_4 8000.00 root  test.reg.a",
-		"└─TableReader_7 8000.00 root  data:Selection_6",
-		"  └─Selection_6 8000.00 cop[tikv]  regexp_substr(test.reg.a, test.reg.b)",
-		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
-
-	tk.MustQuery("explain select a from reg where regexp_replace(a, b, rep);").Check(testkit.Rows(
-		"Projection_4 8000.00 root  test.reg.a",
-		"└─TableReader_7 8000.00 root  data:Selection_6",
-		"  └─Selection_6 8000.00 cop[tikv]  regexp_replace(test.reg.a, test.reg.b, test.reg.rep)",
-		"    └─TableFullScan_5 10000.00 cop[tikv] table:reg keep order:false, stats:pseudo"))
-
-	tk.MustExec("drop table if exists regbin")
-	tk.MustExec("create table regbin(a varchar(20) null,b varchar(20) null,rep varchar(20) null) charset=binary collate=binary;")
-
-	tk.MustQuery("explain select a from regbin where regexp_like(a, b);").Check(testkit.Rows(
-		"Projection_4 8000.00 root  test.regbin.a",
-		"└─Selection_5 8000.00 root  regexp_like(test.regbin.a, test.regbin.b)",
-		"  └─TableReader_7 10000.00 root  data:TableFullScan_6",
-		"    └─TableFullScan_6 10000.00 cop[tikv] table:regbin keep order:false, stats:pseudo"))
 }

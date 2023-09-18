@@ -1798,3 +1798,46 @@ USING (constraint_schema, constraint_name)
 WHERE fk.referenced_column_name IS NOT NULL
   AND fk.table_schema = database()
   AND fk.table_name = 'authors';
+
+# TestIssue4954
+drop table if exists t;
+CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);
+INSERT INTO t VALUES ('oe');
+INSERT INTO t VALUES (0xf6);
+SELECT * FROM t WHERE a= 'oe';
+SELECT HEX(a) FROM t WHERE a= 0xf6;
+
+# TestIssue4006
+drop table if exists tb;
+create table tb(id int auto_increment primary key, v varchar(32));
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+insert into tb(v) values('hello');
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+
+# TestIssue5111
+drop table if exists t;
+create table t(c varchar(32));
+insert into t values('1e649'),('-1e649');
+--enable_warnings
+SELECT * FROM t where c < 1;
+SELECT * FROM t where c > 1;
+--disable_warnings
+
+# TestIssue5293
+drop table if exists t;
+create table t(a int);
+insert t values (1);
+select * from t where cast(a as binary);
+
+# TestIssue16351
+drop table if exists t2;
+create table t2(a int, b varchar(20));
+insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000");
+select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10;
+
+# TestIssue23479
+select b'10000000' DIV 10;
+select cast(b'10000000' as unsigned) / 10;
+select b'10000000' / 10;
