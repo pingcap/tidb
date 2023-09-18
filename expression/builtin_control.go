@@ -227,23 +227,24 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Exp
 			types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
 			resultFieldType.SetFlag(tempFlag)
 		}
-	}
 
-	// Fix decimal for int and string.
-	resultEvalType := resultFieldType.EvalType()
-	if resultEvalType == types.ETInt {
-		resultFieldType.SetDecimal(0)
-		if resultFieldType.GetType() == mysql.TypeEnum || resultFieldType.GetType() == mysql.TypeSet {
-			resultFieldType.SetType(mysql.TypeLonglong)
-		}
-	} else if resultEvalType == types.ETString {
-		if len(notNullFields) > 0 {
+		resultEvalType := resultFieldType.EvalType()
+		// fix decimal for int and string.
+		if resultEvalType == types.ETInt {
+			resultFieldType.SetDecimal(0)
+		} else if resultEvalType == types.ETString {
 			resultFieldType.SetDecimal(types.UnspecifiedLength)
 		}
+		// fix type for enum and set
 		if resultFieldType.GetType() == mysql.TypeEnum || resultFieldType.GetType() == mysql.TypeSet {
-			resultFieldType.SetType(mysql.TypeVarchar)
+			switch resultEvalType {
+			case types.ETInt:
+				resultFieldType.SetType(mysql.TypeLonglong)
+			case types.ETString:
+				resultFieldType.SetType(mysql.TypeVarchar)
+			}
 		}
-	} else if resultFieldType.GetType() == mysql.TypeDatetime {
+		// fix flen for datetime
 		types.TryToFixFlenOfDatetime(resultFieldType)
 	}
 	return resultFieldType, nil
@@ -294,14 +295,6 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	fieldTp.SetCharset(bf.tp.GetCharset())
 	fieldTp.SetCollate(bf.tp.GetCollate())
 	bf.tp = fieldTp
-	if fieldTp.GetType() == mysql.TypeEnum || fieldTp.GetType() == mysql.TypeSet {
-		switch tp {
-		case types.ETInt:
-			fieldTp.SetType(mysql.TypeLonglong)
-		case types.ETString:
-			fieldTp.SetType(mysql.TypeVarchar)
-		}
-	}
 
 	switch tp {
 	case types.ETInt:
