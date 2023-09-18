@@ -50,10 +50,11 @@ const (
 // DO NOT change the value of the constants, will break backward compatibility.
 // successfully task MUST go from StepInit to business steps, then StepDone.
 const (
-	StepInit int64 = -1
-	StepDone int64 = -2
-	StepOne  int64 = 1
-	StepTwo  int64 = 2
+	StepInit  int64 = -1
+	StepDone  int64 = -2
+	StepOne   int64 = 1
+	StepTwo   int64 = 2
+	StepThree int64 = 3
 )
 
 // TaskIDLabelName is the label name of task id.

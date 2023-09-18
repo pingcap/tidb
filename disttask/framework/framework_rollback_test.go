@@ -41,7 +41,7 @@ var rollbackCnt atomic.Int32
 func (*rollbackDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		dsp.cnt = 3
 		return [][]byte{
@@ -65,7 +65,7 @@ func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *rollbackDispatcherExt) GetNextStep(task *proto.Task) int64 {
+func (dsp *rollbackDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne

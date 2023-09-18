@@ -40,7 +40,7 @@ var (
 func (*planErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (p *planErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		if p.callTime == 0 {
 			p.callTime++
@@ -78,7 +78,7 @@ func (*planErrDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (p *planErrDispatcherExt) GetNextStep(task *proto.Task) int64 {
+func (p *planErrDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
@@ -96,7 +96,7 @@ type planNotRetryableErrDispatcherExt struct {
 func (*planNotRetryableErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planNotRetryableErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (p *planNotRetryableErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ int64) (metas [][]byte, err error) {
 	return nil, errors.New("not retryable err")
 }
 
@@ -112,7 +112,7 @@ func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-func (p *planNotRetryableErrDispatcherExt) GetNextStep(task *proto.Task) int64 {
+func (p *planNotRetryableErrDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) int64 {
 	return proto.StepDone
 }
 

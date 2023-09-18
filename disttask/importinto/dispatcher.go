@@ -192,7 +192,12 @@ func (dsp *ImportDispatcherExt) unregisterTask(ctx context.Context, task *proto.
 }
 
 // OnNextSubtasksBatch generate batch of next stage's plan.
-func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHandle dispatcher.TaskHandle, gTask *proto.Task) (
+func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
+	ctx context.Context,
+	taskHandle dispatcher.TaskHandle,
+	gTask *proto.Task,
+	_ int64,
+) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
@@ -268,7 +273,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHan
 	if err != nil {
 		return nil, err
 	}
-	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, dsp.GetNextStep(gTask))
+	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, dsp.GetNextStep(taskHandle, gTask))
 	if err != nil {
 		return nil, err
 	}
@@ -335,7 +340,7 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 }
 
 // GetNextStep implements dispatcher.Extension interface.
-func (*ImportDispatcherExt) GetNextStep(task *proto.Task) int64 {
+func (*ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
 	switch task.Step {
 	case proto.StepInit:
 		return StepImport
