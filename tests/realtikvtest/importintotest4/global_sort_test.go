@@ -56,9 +56,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
-	sortStorageUri := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
-		with __max_engine_size = '1', cloud_storage_uri='%s'`, gcsEndpoint, sortStorageUri)
+		with __max_engine_size = '1', cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
@@ -75,8 +75,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	// check sensitive info is redacted
 	jobInfo, err := importer.GetJob(context.Background(), s.tk.Session(), int64(jobID), "", true)
 	s.NoError(err)
-	redactedSortStorageUri := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
-	urlEqual(s.T(), redactedSortStorageUri, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
+	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
+	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
 	// TODO: enable it when external engine fixed statistics.
 	//s.Equal(6, jobInfo.Summary.ImportedRows)
 	globalTaskManager, err := storage.GetTaskManager()
@@ -86,7 +86,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.NoError(err2)
 	taskMeta := importinto.TaskMeta{}
 	s.NoError(json.Unmarshal(globalTask.Meta, &taskMeta))
-	urlEqual(s.T(), redactedSortStorageUri, taskMeta.Plan.CloudStorageURI)
+	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
 	s.tk.MustExec("truncate table t")
