@@ -93,6 +93,8 @@ func (sr *StatsReader) Close() error {
 		if sr.release != nil {
 			sr.release()
 		}
+		sr.release = nil
+		sr.ctx = nil
 	}()
 
 	if sr.IsHistory() || sr.ctx == nil {
