@@ -90,6 +90,8 @@ type ImportStepMeta struct {
 }
 
 const (
+	// dataKVGroup is the group name of the sorted kv for data.
+	// index kv will be stored in a group named as index-id.
 	dataKVGroup = "data"
 )
 

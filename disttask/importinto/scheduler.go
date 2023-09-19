@@ -356,17 +356,19 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 }
 
 func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
-	logger := e.logger.With(zap.Int64("subtask-id", subtask.ID))
-	task := log.BeginTask(logger, "run subtask")
-	defer func() {
-		task.End(zapcore.ErrorLevel, err)
-	}()
-
 	sm := &WriteIngestStepMeta{}
 	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	logger := e.logger.With(zap.Int64("subtask-id", subtask.ID),
+		zap.String("kv-group", sm.KVGroup))
+	task := log.BeginTask(logger, "run subtask")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
+
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
