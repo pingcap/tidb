@@ -2054,6 +2054,7 @@ func (fb *FrameBound) Clone() *FrameBound {
 	return cloned
 }
 
+// InitCompareCols will init CompareCols
 func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
 	if len(fb.CalcFuncs) > 0 {
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
