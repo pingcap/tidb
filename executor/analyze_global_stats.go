@@ -130,12 +130,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 		}
 
 		for _, value := range tableAllPartitionStats {
-			for _, col := range value.Columns {
-				col.FMSketch.DestroyAndPutToPool()
-			}
-			for _, idx := range value.Indices {
-				idx.FMSketch.DestroyAndPutToPool()
-			}
+			value.ReleaseAndPutToPool()
 		}
 	}
 
