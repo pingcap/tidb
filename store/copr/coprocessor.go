@@ -272,6 +272,8 @@ type copTask struct {
 
 	// timeout value for one kv readonly request
 	tikvClientReadTimeout uint64
+	// firstReadType is used to indicate the type of first read when retrying.
+	firstReadType string
 }
 
 type batchedCopTask struct {
@@ -1022,13 +1024,17 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
-		RequestSource:  task.requestSource.GetRequestSource(),
 	})
+	req.InputRequestSource = task.requestSource.GetRequestSource()
+	if task.firstReadType != "" {
+		req.ReadType = task.firstReadType
+		req.IsRetryRequest = true
+	}
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
 	timeout := tikv.ReadTimeoutMedium
-	if task.tikvClientReadTimeout> 0 {
+	if task.tikvClientReadTimeout > 0 {
 		timeout = time.Duration(task.tikvClientReadTimeout) * time.Millisecond
 	}
 	req.StoreTp = getEndPointType(task.storeType)
@@ -1073,12 +1079,19 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		tidbmetrics.DistSQLCoprRespBodySize.WithLabelValues(storeAddr).Observe(float64(len(copResp.Data)))
 	}
 
+	var remains []*copTask
 	if worker.req.Paging.Enable {
-		return worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+		remains, err = worker.handleCopPagingResult(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, costTime)
+	} else {
+		// Handles the response for non-paging copTask.
+		remains, err = worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
 	}
-
-	// Handles the response for non-paging copTask.
-	return worker.handleCopResponse(bo, rpcCtx, &copResponse{pbResp: copResp}, cacheKey, cacheValue, task, ch, nil, costTime)
+	if req.ReadType != "" {
+		for _, remain := range remains {
+			remain.firstReadType = req.ReadType
+		}
+	}
+	return remains, err
 }
 
 const (
