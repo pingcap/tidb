@@ -69,7 +69,8 @@ var _ operator.Operator = (*encodeAndSortOperator)(nil)
 var _ operator.WithSource[*importStepMinimalTask] = (*encodeAndSortOperator)(nil)
 var _ operator.WithSink[workerpool.None] = (*encodeAndSortOperator)(nil)
 
-func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor, sharedVars *SharedVars, subtaskID int64) *encodeAndSortOperator {
+func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
+	sharedVars *SharedVars, subtaskID int64, indexMemorySizeLimit uint64) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
@@ -86,7 +87,7 @@ func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
 		util.ImportInto,
 		int(executor.taskMeta.Plan.ThreadCnt),
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op)
+			return newChunkWorker(ctx, op, indexMemorySizeLimit)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -144,7 +145,7 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker {
+func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemorySizeLimit uint64) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -152,7 +153,6 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker
 	if op.tableImporter.IsGlobalSort() {
 		// in case on network partition, 2 nodes might run the same subtask.
 		workerUUID := uuid.New().String()
-		indexMemorySizeLimit := getWriterMemorySizeLimit(op.tableImporter.Plan)
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) *external.Writer {
 			builder := external.NewWriterBuilder().

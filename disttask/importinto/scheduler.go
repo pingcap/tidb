@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -49,6 +50,8 @@ type importStepExecutor struct {
 	tableImporter *importer.TableImporter
 	sharedVars    sync.Map
 	logger        *zap.Logger
+
+	indexMemorySizeLimit uint64
 
 	importCtx    context.Context
 	importCancel context.CancelFunc
@@ -99,6 +102,9 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 			s.tableImporter.CheckDiskQuota(s.importCtx)
 		}()
 	}
+	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
+	s.logger.Info("index writer memory size limit",
+		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
 	return nil
 }
 
@@ -141,7 +147,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID)
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, s.indexMemorySizeLimit)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
