@@ -37,13 +37,16 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
 type backfillingDispatcherExt struct {
-	d *ddl
+	d                    *ddl
+	previousSchedulerIDs []string
 }
 
 var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
@@ -104,7 +107,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return nil, nil
 		}
-		return generateIngestTaskPlan(ctx)
+		return generateIngestTaskPlan(ctx, h, taskHandle, gTask)
 	default:
 		return nil, nil
 	}
@@ -159,8 +162,22 @@ func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (*backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes(ctx)
+func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(h.previousSchedulerIDs) > 0 {
+		// Only the nodes that executed step one can have step two.
+		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
+		for _, id := range h.previousSchedulerIDs {
+			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
+				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
+			}
+		}
+		return involvedServerInfos, nil
+	}
+	return serverInfos, nil
 }
 
 // IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
@@ -266,20 +283,37 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 	return subTaskMetas, nil
 }
 
-func generateIngestTaskPlan(ctx context.Context) ([][]byte, error) {
+func generateIngestTaskPlan(
+	ctx context.Context,
+	h *backfillingDispatcherExt,
+	taskHandle dispatcher.TaskHandle,
+	gTask *proto.Task,
+) ([][]byte, error) {
 	// We dispatch dummy subtasks because the rest data in local engine will be imported
 	// in the initialization of subtask executor.
-	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-	if err != nil {
-		return nil, err
+	var ingestSubtaskCnt int
+	if intest.InTest && taskHandle == nil {
+		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ingestSubtaskCnt = len(serverNodes)
+	} else {
+		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
+		if err != nil {
+			return nil, err
+		}
+		h.previousSchedulerIDs = schedulerIDs
+		ingestSubtaskCnt = len(schedulerIDs)
 	}
-	subTaskMetas := make([][]byte, 0, len(serverNodes))
+
+	subTaskMetas := make([][]byte, 0, ingestSubtaskCnt)
 	dummyMeta := &BackfillSubTaskMeta{}
 	metaBytes, err := json.Marshal(dummyMeta)
 	if err != nil {
 		return nil, err
 	}
-	for range serverNodes {
+	for i := 0; i < ingestSubtaskCnt; i++ {
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
