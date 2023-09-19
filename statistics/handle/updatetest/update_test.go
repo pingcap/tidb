@@ -1002,6 +1002,28 @@ func TestMergeTopN(t *testing.T) {
 	}
 }
 
+func TestStatsVariables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	//is := dom.InfoSchema()
+	h := dom.StatsHandle()
+	pruneMode, err := h.GetCurrentPruneMode()
+	require.NoError(t, err)
+	require.Equal(t, string(variable.Dynamic), pruneMode)
+	analyzeVer, err := h.GetCurrentAnalyzeVersion()
+	require.NoError(t, err)
+	require.Equal(t, 2, analyzeVer)
+
+	tk.MustExec(`set global tidb_analyze_version=1`)
+	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
+	pruneMode, err = h.GetCurrentPruneMode()
+	require.NoError(t, err)
+	require.Equal(t, string(variable.Static), pruneMode)
+	analyzeVer, err = h.GetCurrentAnalyzeVersion()
+	require.NoError(t, err)
+	require.Equal(t, 1, analyzeVer)
+}
+
 func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
