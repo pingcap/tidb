@@ -488,7 +488,7 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions(cloudStorageURI string) {
+func (p *Plan) initDefaultOptions() {
 	threadCnt := runtime.GOMAXPROCS(0)
 	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
 		threadCnt = val.(int)
@@ -503,19 +503,14 @@ func (p *Plan) initDefaultOptions(cloudStorageURI string) {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
-	p.CloudStorageURI = cloudStorageURI
+	p.CloudStorageURI = variable.CloudStorageURI.Load()
 
 	v := "utf8mb4"
 	p.Charset = &v
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	cloudStorageURI, err1 := seCtx.GetSessionVars().GlobalVarsAccessor.
-		GetGlobalSysVar(variable.TiDBCloudStorageURI)
-	if err1 != nil {
-		return errors.Trace(err1)
-	}
-	p.initDefaultOptions(cloudStorageURI)
+	p.initDefaultOptions()
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {

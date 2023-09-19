@@ -41,7 +41,11 @@ import (
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(1)"))
-	plan.initDefaultOptions("s3://bucket/path")
+	variable.CloudStorageURI.Store("s3://bucket/path")
+	t.Cleanup(func() {
+		variable.CloudStorageURI.Store("")
+	})
+	plan.initDefaultOptions()
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
 	require.Equal(t, int64(1), plan.ThreadCnt)
@@ -55,7 +59,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(10)"))
-	plan.initDefaultOptions("")
+	plan.initDefaultOptions()
 	require.Equal(t, int64(5), plan.ThreadCnt)
 }
 
@@ -121,7 +125,10 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Empty(t, plan.CloudStorageURI, sql)
 
 	// set cloud storage uri
-	require.NoError(t, ctx.SetGlobalSysVar(ctx, variable.TiDBCloudStorageURI, "s3://bucket/path"))
+	variable.CloudStorageURI.Store("s3://bucket/path")
+	t.Cleanup(func() {
+		variable.CloudStorageURI.Store("")
+	})
 	plan = &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
