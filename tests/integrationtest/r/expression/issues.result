@@ -2685,9 +2685,15 @@ insert into t values('1e649'),('-1e649');
 SELECT * FROM t where c < 1;
 c
 -1e649
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '-1e649'
+Warning	1292	Truncated incorrect DOUBLE value: '1e649'
 SELECT * FROM t where c > 1;
 c
 1e649
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '-1e649'
+Warning	1292	Truncated incorrect DOUBLE value: '1e649'
 drop table if exists t;
 create table t(a int);
 insert t values (1);
