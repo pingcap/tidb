@@ -93,6 +93,12 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
+	externalCache := false
+	if allPartitionStats == nil {
+		allPartitionStats = make(map[int64]*statistics.Table)
+	} else {
+		externalCache = true
+	}
 	if len(histIDs) == 0 {
 		for _, col := range globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
@@ -133,12 +139,10 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		if allPartitionStats != nil {
-			partitionStats, ok = allPartitionStats[partitionID]
-		}
 
-		// If preload partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats.
-		if allPartitionStats == nil || partitionStats == nil || !ok {
+		partitionStats, ok = allPartitionStats[partitionID]
+		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
+		if !ok {
 			var err1 error
 			partitionStats, err1 = loadTablePartitionStatsFn(tableInfo, &def)
 			if err1 != nil {
@@ -148,9 +152,6 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 				}
 				err = err1
 				return
-			}
-			if allPartitionStats == nil {
-				allPartitionStats = make(map[int64]*statistics.Table)
 			}
 			allPartitionStats[partitionID] = partitionStats
 		}
@@ -249,6 +250,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 		globalStats.Fms[i] = allFms[i][0].Copy()
 		for j := 1; j < len(allFms[i]); j++ {
 			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			allFms[i][j].DestroyAndPutToPool()
 		}
 
 		// Update the global NDV.
@@ -256,9 +258,14 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 		if globalStatsNDV > globalStats.Count {
 			globalStatsNDV = globalStats.Count
 		}
+		globalStats.Fms[i].DestroyAndPutToPool()
 		globalStats.Hg[i].NDV = globalStatsNDV
 	}
-
+	if !externalCache {
+		for _, value := range allPartitionStats {
+			value.ReleaseAndPutToPool()
+		}
+	}
 	return
 }
 
