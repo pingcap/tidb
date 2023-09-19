@@ -4962,6 +4962,8 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 				exec.orderByCols = orderByCols
 				exec.expectedCmpResult = cmpResult
 				exec.isRangeFrame = true
+				exec.start.InitCompareCols(b.ctx, exec.orderByCols)
+				exec.end.InitCompareCols(b.ctx, exec.orderByCols)
 			}
 		}
 		return exec
@@ -4984,7 +4986,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
 			cmpResult = 1
 		}
-		processor = &rangeFrameWindowProcessor{
+		tmpProcessor := &rangeFrameWindowProcessor{
 			windowFuncs:       windowFuncs,
 			partialResults:    partialResults,
 			start:             v.Frame.Start,
@@ -4992,6 +4994,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 			orderByCols:       orderByCols,
 			expectedCmpResult: cmpResult,
 		}
+
+		tmpProcessor.start.InitCompareCols(b.ctx, orderByCols)
+		tmpProcessor.end.InitCompareCols(b.ctx, orderByCols)
+
+		processor = tmpProcessor
 	}
 	return &WindowExec{BaseExecutor: base,
 		processor:      processor,
