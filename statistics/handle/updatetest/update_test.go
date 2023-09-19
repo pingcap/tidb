@@ -1006,7 +1006,6 @@ func TestMergeTopN(t *testing.T) {
 func TestStatsVariables(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	//is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	sctx := tk.Session().(sessionctx.Context)
 
