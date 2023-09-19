@@ -2755,6 +2755,18 @@ func TestIssue46159(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range"))
 }
 
+func TestIssue47008(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@time_zone='UTC';`)
+	tk.MustExec(`set @@collation_connection='utf8_general_ci';`)
+	tk.MustExec(`prepare s from 'select DATE_FORMAT("2020-01-01","%W") = "wednesday"';`)
+	tk.MustQuery(`execute s;`).Check(testkit.Rows(`1`))
+	tk.MustExec(`set @@collation_connection='utf8_bin';`)
+	tk.MustQuery(`execute s;`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`0`))
+}
+
 func TestBuiltinFuncFlen(t *testing.T) {
 	// same as TestIssue45378 and TestIssue45253
 	store := testkit.CreateMockStore(t)
