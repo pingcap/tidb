@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "lockstats",
@@ -17,5 +17,19 @@ go_library(
         "//table/tables",
         "//util/chunk",
         "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "lockstats_test",
+    timeout = "short",
+    srcs = ["lock_stats_executor_test.go"],
+    embed = [":lockstats"],
+    flaky = True,
+    deps = [
+        "//infoschema",
+        "//parser/ast",
+        "//parser/model",
+        "@com_github_stretchr_testify//require",
     ],
 )

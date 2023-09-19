@@ -16,11 +16,9 @@ package lockstats
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -34,11 +32,14 @@ const (
 
 // RemoveLockedTables remove tables from table locked records.
 // - exec: sql executor.
-// - tids: table ids of which will be unlocked.
-// - pids: partition ids of which will be unlocked.
-// - tables: table names of which will be unlocked.
+// - tidAndNames: table ids and names of which will be unlocked.
+// - pidAndNames: partition ids and names of which will be unlocked.
 // Return the message of skipped tables and error.
-func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func RemoveLockedTables(
+	exec sqlexec.RestrictedSQLExecutor,
+	tidAndNames map[int64]string,
+	pidAndNames map[int64]string,
+) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
 	err := startTransaction(ctx, exec)
@@ -55,14 +56,31 @@ func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids [
 	if err != nil {
 		return "", err
 	}
-	skippedTables := make([]string, 0, len(tables))
+	skippedTables := make([]string, 0, len(tidAndNames))
+	tids := make([]int64, 0, len(tidAndNames))
+	tables := make([]string, 0, len(tidAndNames))
+	for tid, tableName := range tidAndNames {
+		tids = append(tids, tid)
+		tables = append(tables, tableName)
+	}
+	pids := make([]int64, 0, len(pidAndNames))
+	partitions := make([]string, 0, len(pidAndNames))
+	for pid, partitionName := range pidAndNames {
+		pids = append(pids, pid)
+		partitions = append(partitions, partitionName)
+	}
 
-	statsLogger.Info("unlock table", zap.Int64s("tableIDs", tids))
+	statsLogger.Info("unlock table",
+		zap.Int64s("tableIDs", tids),
+		zap.Strings("tableNames", tables),
+		zap.Int64s("partitionIDs", pids),
+		zap.Strings("partitionNames", partitions),
+	)
 
 	checkedTables := GetLockedTables(lockedTables, tids...)
-	for i, tid := range tids {
+	for _, tid := range tids {
 		if _, ok := checkedTables[tid]; !ok {
-			skippedTables = append(skippedTables, tables[i].Schema.L+"."+tables[i].Name.L)
+			skippedTables = append(skippedTables, tidAndNames[tid])
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, tid); err != nil {
@@ -81,7 +99,7 @@ func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids [
 		}
 	}
 
-	msg := generateSkippedMessage(tids, skippedTables, unlockAction, unlockedStatus)
+	msg := generateStableSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
@@ -95,7 +113,7 @@ func RemoveLockedTables(exec sqlexec.RestrictedSQLExecutor, tids []int64, pids [
 func RemoveLockedPartitions(
 	exec sqlexec.RestrictedSQLExecutor,
 	tid int64,
-	tableName *ast.TableName,
+	tableName string,
 	pidNames map[int64]string,
 ) (string, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -119,14 +137,18 @@ func RemoveLockedPartitions(
 	for pid := range pidNames {
 		pids = append(pids, pid)
 	}
-	statsLogger.Info("unlock partitions", zap.Int64("tableID", tid), zap.Int64s("partitionIDs", pids))
+	statsLogger.Info("unlock partitions",
+		zap.Int64("tableID", tid),
+		zap.String("tableName", tableName),
+		zap.Int64s("partitionIDs", pids),
+	)
 
 	// Check if whole table is locked.
 	// Then we can not unlock any partitions of the table.
 	// It is invalid to unlock partitions if whole table is locked.
 	checkedTables := GetLockedTables(lockedTables, tid)
 	if _, locked := checkedTables[tid]; locked {
-		return "skip unlocking partitions of locked table: " + tableName.Schema.L + "." + tableName.Name.L, err
+		return "skip unlocking partitions of locked table: " + tableName, err
 	}
 
 	// Delete related partitions and warning already unlocked partitions.
@@ -134,8 +156,7 @@ func RemoveLockedPartitions(
 	lockedPartitions := GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
 		if _, ok := lockedPartitions[pid]; !ok {
-			partition := generatePartitionFullName(tableName, pidNames[pid])
-			skippedPartitions = append(skippedPartitions, partition)
+			skippedPartitions = append(skippedPartitions, pidNames[pid])
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, pid); err != nil {
@@ -143,7 +164,7 @@ func RemoveLockedPartitions(
 		}
 	}
 
-	msg := generateSkippedMessage(pids, skippedPartitions, unlockAction, unlockedStatus)
+	msg := generateStableSkippedPartitionsMessage(pids, tableName, skippedPartitions, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
@@ -190,8 +211,4 @@ func getStatsDeltaFromTableLocked(ctx context.Context, tableID int64, exec sqlex
 	modifyCount = rows[0].GetInt64(1)
 	version = rows[0].GetUint64(2)
 	return count, modifyCount, version, nil
-}
-
-func generatePartitionFullName(tableName *ast.TableName, partitionName string) string {
-	return fmt.Sprintf("%s.%s partition (%s)", tableName.Schema.L, tableName.Name.L, partitionName)
 }

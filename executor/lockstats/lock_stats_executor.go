@@ -16,6 +16,7 @@ package lockstats
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -51,12 +52,13 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 	is := do.InfoSchema()
 
 	if e.onlyLockPartitions() {
-		tableName := e.Tables[0]
-		tid, pidNames, err := populatePartitionIDAndNames(tableName, tableName.PartitionNames, is)
+		table := e.Tables[0]
+		tid, pidNames, err := populatePartitionIDAndNames(table, table.PartitionNames, is)
 		if err != nil {
 			return err
 		}
 
+		tableName := fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L)
 		msg, err := h.LockPartitions(tid, tableName, pidNames)
 		if err != nil {
 			return err
@@ -65,12 +67,12 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	} else {
-		tids, pids, err := populateTableAndPartitionIDs(e.Tables, is)
+		tidAndNames, pidAndNames, err := populateTableAndPartitionIDs(e.Tables, is)
 		if err != nil {
 			return err
 		}
 
-		msg, err := h.LockTables(tids, pids, e.Tables)
+		msg, err := h.LockTables(tidAndNames, pidAndNames)
 		if err != nil {
 			return err
 		}
@@ -97,15 +99,23 @@ func (*LockExec) Open(context.Context) error {
 }
 
 // populatePartitionIDAndNames returns the table ID and partition IDs for the given table name and partition names.
-func populatePartitionIDAndNames(tableName *ast.TableName, partitionNames []model.CIStr, is infoschema.InfoSchema) (int64, map[int64]string, error) {
-	tbl, err := is.TableByName(tableName.Schema, tableName.Name)
+func populatePartitionIDAndNames(
+	table *ast.TableName,
+	partitionNames []model.CIStr,
+	is infoschema.InfoSchema,
+) (int64, map[int64]string, error) {
+	if len(partitionNames) == 0 {
+		return 0, nil, errors.New("partition list should not be empty")
+	}
+	tbl, err := is.TableByName(table.Schema, table.Name)
 	if err != nil {
 		return 0, nil, err
 	}
 
 	pi := tbl.Meta().GetPartitionInfo()
 	if pi == nil {
-		return 0, nil, errors.Errorf("table %s is not a partition table", tableName.Name)
+		return 0, nil, errors.Errorf("table %s is not a partition table",
+			fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L))
 	}
 
 	pidNames := make(map[int64]string, len(partitionNames))
@@ -121,25 +131,36 @@ func populatePartitionIDAndNames(tableName *ast.TableName, partitionNames []mode
 }
 
 // populateTableAndPartitionIDs returns table IDs and partition IDs for the given table names.
-func populateTableAndPartitionIDs(tables []*ast.TableName, is infoschema.InfoSchema) ([]int64, []int64, error) {
-	tids := make([]int64, 0, len(tables))
-	pids := make([]int64, 0)
+func populateTableAndPartitionIDs(
+	tables []*ast.TableName,
+	is infoschema.InfoSchema,
+) (map[int64]string, map[int64]string, error) {
+	if len(tables) == 0 {
+		return nil, nil, errors.New("table list should not be empty")
+	}
+
+	tidAndNames := make(map[int64]string, len(tables))
+	pidAndNames := make(map[int64]string, len(tables))
 
 	for _, table := range tables {
 		tbl, err := is.TableByName(table.Schema, table.Name)
 		if err != nil {
 			return nil, nil, err
 		}
-		tids = append(tids, tbl.Meta().ID)
+		tidAndNames[tbl.Meta().ID] = fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L)
 
 		pi := tbl.Meta().GetPartitionInfo()
 		if pi == nil {
 			continue
 		}
 		for _, p := range pi.Definitions {
-			pids = append(pids, p.ID)
+			pidAndNames[p.ID] = genFullPartitionName(table, p.Name.L)
 		}
 	}
 
-	return tids, pids, nil
+	return tidAndNames, pidAndNames, nil
+}
+
+func genFullPartitionName(table *ast.TableName, partitionName string) string {
+	return fmt.Sprintf("%s.%s partition (%s)", table.Schema.L, table.Name.L, partitionName)
 }
