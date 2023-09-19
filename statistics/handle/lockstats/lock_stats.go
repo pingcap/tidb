@@ -223,7 +223,7 @@ func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skipp
 				msg = fmt.Sprintf("skip %s %s partitions of table %s: %s", action, status, tableName, partitions)
 			}
 		} else {
-			msg = fmt.Sprintf("skip %s %s partitions of table %s: %s", action, status, tableName, partitions)
+			msg = fmt.Sprintf("skip %s %s partition of table %s: %s", action, status, tableName, partitions)
 		}
 		return msg
 	}
