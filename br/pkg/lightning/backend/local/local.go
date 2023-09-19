@@ -1272,6 +1272,7 @@ func (local *Backend) generateJobForRange(
 			log.ShortError(err), zap.Int("region_len", len(regions)),
 			logutil.Key("startKey", startKey),
 			logutil.Key("endKey", endKey))
+		panic(err)
 		return nil, err
 	}
 

@@ -93,6 +93,8 @@ func PaginateScanRegion(
 			hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 	}
 
+	return nil, nil
+
 	var (
 		lastRegions []*RegionInfo
 		err         error
