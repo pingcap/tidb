@@ -81,8 +81,9 @@ select timestampadd(second, 9.9999e2, a) from t;
 select timestampadd(second, 1, '2021-08-20 00:00:01.0001');
 select timestampadd(minute, 1.5, '2021-08-20 00:00:00');
 select timestampadd(minute, 1.5, '2021-08-20 00:00:00.0001');
+--enable_warnings
 SELECT timestampadd(year,1.212208e+308,'1995-01-05 06:32:20.859724') as result;
-show warnings;
+--disable_warnings
 
 # TestDatetimeMicrosecond
 # for int

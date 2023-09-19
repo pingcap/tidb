@@ -817,16 +817,16 @@ a	A
 select /*+ inl_hash_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
 b	b
 a	A
-show warnings;
 Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_HASH_JOIN(t2) */ is inapplicable
 select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
 b	b
 a	A
 select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
 b	b
 a	A
-show warnings;
 Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t2) */ is inapplicable
 drop table if exists a, b;
 create table a(i int, k varbinary(40), v int, primary key(i, k) clustered);
 create table b(i int, k varchar(40), v int, primary key(i, k) clustered);

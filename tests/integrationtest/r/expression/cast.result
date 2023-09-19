@@ -1,28 +1,28 @@
 select cast('' as signed);
 cast('' as signed)
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: ''
 select cast('12345abcde' as signed);
 cast('12345abcde' as signed)
 12345
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '12345abcde'
 select cast('123e456' as signed);
 cast('123e456' as signed)
 123
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '123e456'
 select cast('-12345abcde' as signed);
 cast('-12345abcde' as signed)
 -12345
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '-12345abcde'
 select cast('-123e456' as signed);
 cast('-123e456' as signed)
 -123
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '-123e456'
 select coercibility(binary('a'));
 coercibility(binary('a'))
 2

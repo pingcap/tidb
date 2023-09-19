@@ -55,8 +55,8 @@ Error 1292: Incorrect time value: '20171231235959.999999'
 select ADDDATE('2008-01-34', -1);
 ADDDATE('2008-01-34', -1)
 NULL
-Show warnings;
 Level	Code	Message
+Warning	1292	Incorrect datetime value: '2008-01-34'
 set sql_mode='';
 drop table if exists t;
 create table t1(a decimal(10,5), b decimal(10,1));
@@ -237,12 +237,12 @@ create table t(a int);
 select /*+ unknown_hint(c1)*/ 1;
 1
 1
-show warnings;
 Level	Code	Message
+Warning	1064	Optimizer hint syntax error at line 1 column 23 near "unknown_hint(c1)*/" 
 select 1 from /*+ test1() */ t;
 1
-show warnings;
 Level	Code	Message
+Warning	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use [parser:8066]Optimizer hint can only be followed by certain keywords like SELECT, INSERT, etc.
 drop table if exists t;
 create table t(a bigint, b double, c decimal, d varchar(20), e datetime, f time, g json);
 insert into t values(1, 1.1, 2.2, "abc", "2018-10-24", NOW(), "12");

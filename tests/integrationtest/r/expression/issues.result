@@ -50,16 +50,18 @@ t	CREATE TABLE `t` (
 drop table if exists t;
 create table t(a tinyint, b bit(63));
 insert ignore into t values(599999999, -1);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'a' at row 1
+Warning	1406	Data too long for column 'b' at row 1
 select * from t;
 a	b
 127	ÿÿÿÿÿÿÿ
 drop table if exists t;
 create table t(b bit(16));
 insert ignore into t values(0x3635313836),(0x333830);
-show warnings;
 Level	Code	Message
+Warning	1406	Data too long for column 'b' at row 1
+Warning	1406	Data too long for column 'b' at row 2
 select * from t;
 b
 ÿÿ
@@ -93,8 +95,8 @@ drop table if exists t;
 create table t (id int NOT NULL DEFAULT 8);
 SET sql_mode = '';
 insert into t values (1), (NULL), (2);
-show warnings;
 Level	Code	Message
+Warning	1048	Column 'id' cannot be null
 select * from t;
 id
 1
@@ -203,8 +205,8 @@ insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.123400
 SELECT FROM_UNIXTIME(tchar) from ft;
 FROM_UNIXTIME(tchar)
 1973-11-30 08:38:10.123400
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect DECIMAL value: '123467890.1234000000000000000000100111111111'
 truncate table ft;
 insert into ft values(1234567890,123467890.1234,123467890.1234,'11111123467890.1234');
 SELECT FROM_UNIXTIME(tchar) from ft;
@@ -278,36 +280,36 @@ min	max
 drop table if exists t_tiny, t_small, t_medium, t_int, t_big;
 create table t_tiny (c0 TINYINT UNSIGNED);
 INSERT IGNORE INTO t_tiny(c0) VALUES (1E9);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_tiny;
 c0
 255
 create table t_small (c0 SMALLINT UNSIGNED);
 INSERT IGNORE INTO t_small(c0) VALUES (1E9);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_small;
 c0
 65535
 create table t_medium (c0 MEDIUMINT UNSIGNED);
 INSERT IGNORE INTO t_medium(c0) VALUES (1E9);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_medium;
 c0
 16777215
 create table t_int (c0 INT UNSIGNED);
 INSERT IGNORE INTO t_int(c0) VALUES (1E20);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_int;
 c0
 4294967295
 create table t_big (c0 BIGINT UNSIGNED);
 INSERT IGNORE INTO t_big(c0) VALUES (1E20);
-show warnings;
 Level	Code	Message
+Warning	1264	Out of range value for column 'c0' at row 1
 select * from t_big;
 c0
 18446744073709551615
@@ -1357,8 +1359,8 @@ insert into t12205 values('-1038024704','-527892480');
 select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205;
 SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) )	`col_varchar_64` & `col_varchar_64_key`
 838:59:59	18446744072635875328
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect time value: '18446744072635875000'
 drop table if exists t;
 create table t(1e int);
 insert into t values (1);
@@ -1400,8 +1402,8 @@ insert into t12206 values(73,0,0000);
 SELECT TIME_FORMAT( `col_tinyint_unsigned`, ( IFNULL( `col_double_unsigned`, `col_year_key` ) ) ) AS field1 FROM `t12206`;
 field1
 NULL
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect time value: '73'
 drop table if exists t12209;
 create table t12209(a bigint(20));
 insert into t12209 values(1);
@@ -1743,8 +1745,8 @@ a
 a
 b
 INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));
-show warnings;
 Level	Code	Message
+Warning	1301	Result of repeat() was larger than max_allowed_packet (67108864) - truncated
 select a from t1 order by a;
 a
 NULL
@@ -1959,11 +1961,10 @@ create table t (c int primary key, c2 enum('a', 'b'));
 set session sql_mode = '';
 insert into t values(4, 'a');
 insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2);
-show warnings;
 Level	Code	Message
+Warning	1265	Data truncated for column 'c2' at row 1
+Warning	1265	Data truncated for column 'c2' at row 1
 insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2);
-show warnings;
-Level	Code	Message
 set @@sql_mode=default;
 drop table if exists t0, t1;
 CREATE TABLE t0(c0 BOOL, c1 INT);
@@ -2242,23 +2243,21 @@ coercibility(lag(b, 1, 'B') over w)
 SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;
 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2008-09-16 22:23:50'
+Warning	1292	Truncated incorrect DOUBLE value: 'lvuleck'
 SELECT 'aa' BETWEEN 'bb' AND 0;
 'aa' BETWEEN 'bb' AND 0
 1
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: 'aa'
+Warning	1292	Truncated incorrect DOUBLE value: 'bb'
 select 1 between 0 and b'110';
 1 between 0 and b'110'
 1
-show warnings;
-Level	Code	Message
 select 'b' between 'a' and b'110';
 'b' between 'a' and b'110'
 0
-show warnings;
-Level	Code	Message
 drop table if exists t;
 create table t(a set('a', 'b', 'c'));
 alter table t change a a set('a', 'b', 'c', 'c');
@@ -2686,9 +2685,15 @@ insert into t values('1e649'),('-1e649');
 SELECT * FROM t where c < 1;
 c
 -1e649
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '-1e649'
+Warning	1292	Truncated incorrect DOUBLE value: '1e649'
 SELECT * FROM t where c > 1;
 c
 1e649
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '-1e649'
+Warning	1292	Truncated incorrect DOUBLE value: '1e649'
 drop table if exists t;
 create table t(a int);
 insert t values (1);
