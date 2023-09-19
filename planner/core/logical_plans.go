@@ -2054,6 +2054,20 @@ func (fb *FrameBound) Clone() *FrameBound {
 	return cloned
 }
 
+func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
+	if len(fb.CalcFuncs) > 0 {
+		fb.CompareCols = make([]expression.Expression, len(orderByCols))
+		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
+			fb.CompareCols[0], _ = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+		} else {
+			for i, col := range orderByCols {
+				fb.CompareCols[i] = col
+			}
+		}
+	}
+	return nil
+}
+
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
 	logicalSchemaProducer
