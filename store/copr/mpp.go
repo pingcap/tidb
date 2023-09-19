@@ -110,7 +110,6 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		MppVersion:             req.MppVersion.ToInt64(),
 		ResourceGroupName:      req.ResourceGroupName,
 	}
-	logutil.BgLogger().Info("gjt debug", zap.Any("ResourceGroupName", req.ResourceGroupName))
 
 	mppReq := &mpp.DispatchTaskRequest{
 		Meta:        taskMeta,

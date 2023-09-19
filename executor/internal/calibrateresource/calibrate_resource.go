@@ -397,7 +397,6 @@ func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedS
 	return e.setupQuotas(tiflashQuotas, tiflashLowCount)
 }
 
-
 func (e *Executor) getTiFlashQuotas(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime string, endTime string) ([]float64, int, error) {
 	lowCount := 0
 	quotas := make([]float64, 0)
