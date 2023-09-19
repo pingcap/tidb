@@ -56,6 +56,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/forceMergeSort", `return("data")`)
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)

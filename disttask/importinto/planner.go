@@ -283,6 +283,16 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]planner.Pipelin
 	return importSpecs, nil
 }
 
+func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
+	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
+		in := val.(string)
+		if in == kvGroup || in == "*" {
+			failpoint.Return(false)
+		}
+	})
+	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+}
+
 func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
 	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
@@ -292,7 +302,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 	}
 	for kvGroup, kvMeta := range kvMetas {
 		length := len(kvMeta.DataFiles)
-		if external.GetMaxOverlappingTotal(kvMeta.MultipleFilesStats) <= external.MergeSortOverlapThreshold {
+		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
 				zap.Int64("task-id", planCtx.TaskID),
 				zap.String("kv-group", kvGroup))
@@ -443,6 +453,7 @@ func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.So
 		meta, ok := result[stepMeta.KVGroup]
 		if !ok {
 			result[stepMeta.KVGroup] = &stepMeta.SortedKVMeta
+			continue
 		}
 		meta.Merge(&stepMeta.SortedKVMeta)
 	}
@@ -461,7 +472,7 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.So
 	for kvGroup, kvMeta := range kvMetasOfEncodeStep {
 		// only part of kv files are merge sorted. we need to merge kv metas that
 		// are not merged into the kvMetasOfMergeSort.
-		if external.GetMaxOverlappingTotal(kvMeta.MultipleFilesStats) <= external.MergeSortOverlapThreshold {
+		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
 			if _, ok := kvMetasOfMergeSort[kvGroup]; !ok {
 				kvMetasOfMergeSort[kvGroup] = kvMeta
 			} else {
