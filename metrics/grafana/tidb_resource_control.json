@@ -133,6 +133,15 @@
           "intervalFactor": 2,
           "legendFormat": "total",
           "refId": "B"
+        },
+        {
+          "exemplar": true,
+          "expr": "sum(resource_manager_resource_unit_read_request_unit_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"tiflash\"}) by (name)",
+          "hide": true,
+          "interval": "",
+          "intervalFactor": 2,
+          "legendFormat": "tiflash-{{name}}",
+          "refId": "C"
         }
       ],
       "thresholds": [],
