@@ -800,6 +800,11 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	// datumMap is used to store the mapping from the string type to datum type.
 	// The datum is used to find the value in the histogram.
 	datumMap := NewDatumMapCache()
+	encodedValSet := make(map[int]map[hack.MutableString]struct{})
+
+	// 1、 all get topn from the partition-level topNs.
+	//     and build index which is encodeValSet and histogram.
+	// 2、 all get topn to check set. if not exists, check histogram.
 	for i, topN := range topNs {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -807,40 +812,37 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 		if topN.TotalCount() == 0 {
 			continue
 		}
+		encodedValSet[i] = make(map[hack.MutableString]struct{})
 		for _, val := range topN.TopN {
 			encodedVal := hack.String(val.Encoded)
-			_, exists := counter[encodedVal]
 			counter[encodedVal] += float64(val.Count)
-			if exists {
-				// We have already calculated the encodedVal from the histogram, so just continue to next topN value.
+			encodedValSet[i][encodedVal] = struct{}{}
+			_, exists := datumMap.Get(encodedVal)
+			if !exists {
+				_, err := datumMap.Put(val, encodedVal, hists[0].Tp.GetType(), isIndex, loc)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+			}
+		}
+	}
+	for encodedVal := range counter {
+		for j := 0; j < partNum; j++ {
+			if atomic.LoadUint32(killed) == 1 {
+				return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+			}
+			_, ok := encodedValSet[j][encodedVal]
+			if ok {
 				continue
 			}
-			// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
-			// 1. Check the topN first.
-			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
-			for j := 0; j < partNum; j++ {
-				if atomic.LoadUint32(killed) == 1 {
-					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
-				}
-				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
-					continue
-				}
-				// Get the encodedVal from the hists[j]
-				datum, exists := datumMap.Get(encodedVal)
-				if !exists {
-					d, err := datumMap.Put(val, encodedVal, hists[0].Tp.GetType(), isIndex, loc)
-					if err != nil {
-						return nil, nil, nil, err
-					}
-					datum = d
-				}
-				// Get the row count which the value is equal to the encodedVal from histogram.
-				count, _ := hists[j].EqualRowCount(nil, datum, isIndex)
-				if count != 0 {
-					counter[encodedVal] += count
-					// Remove the value corresponding to encodedVal from the histogram.
-					hists[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
-				}
+			// Get the encodedVal from the hists[j]
+			datum, _ := datumMap.Get(encodedVal)
+			// Get the row count which the value is equal to the encodedVal from histogram.
+			count, _ := hists[j].EqualRowCount(nil, datum, isIndex)
+			if count != 0 {
+				counter[encodedVal] += count
+				// Remove the value corresponding to encodedVal from the histogram.
+				hists[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
 			}
 		}
 	}
