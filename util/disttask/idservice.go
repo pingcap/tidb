@@ -32,13 +32,18 @@ func GenerateExecID(ip string, port uint) string {
 
 // MatchServerInfo will check if the schedulerID matched in all serverInfos.
 func MatchServerInfo(serverInfos []*infosync.ServerInfo, schedulerID string) bool {
-	for _, serverInfo := range serverInfos {
+	return FindServerInfo(serverInfos, schedulerID) >= 0
+}
+
+// FindServerInfo will find the schedulerID in all serverInfos.
+func FindServerInfo(serverInfos []*infosync.ServerInfo, schedulerID string) int {
+	for i, serverInfo := range serverInfos {
 		serverID := GenerateExecID(serverInfo.IP, serverInfo.Port)
 		if serverID == schedulerID {
-			return true
+			return i
 		}
 	}
-	return false
+	return -1
 }
 
 // GenerateSubtaskExecID generates the subTask execID.

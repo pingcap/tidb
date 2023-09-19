@@ -57,6 +57,8 @@ var (
 // TaskHandle provides the interface for operations needed by Dispatcher.
 // Then we can use dispatcher's function in Dispatcher interface.
 type TaskHandle interface {
+	// GetPreviousSchedulerIDs gets previous scheduler IDs.
+	GetPreviousSchedulerIDs(_ context.Context, taskID int64, step int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
@@ -589,6 +591,11 @@ func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step int64) ([][]
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
+}
+
+// GetPreviousSchedulerIDs gets scheduler IDs that run previous step.
+func (d *BaseDispatcher) GetPreviousSchedulerIDs(_ context.Context, taskID int64, step int64) ([]string, error) {
+	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(taskID, step)
 }
 
 // WithNewSession executes the function with a new session.
