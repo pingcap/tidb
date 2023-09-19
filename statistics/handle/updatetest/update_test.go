@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/cardinality"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
@@ -299,7 +300,6 @@ func TestUpdatePartition(t *testing.T) {
 	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(pruneMode))
 	testKit.MustExec("use test")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
-		err := dom.StatsHandle().RefreshVars()
 		require.NoError(t, err)
 		testKit.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
@@ -481,7 +481,6 @@ func TestAutoUpdatePartition(t *testing.T) {
 		tableInfo := tbl.Meta()
 		pi := tableInfo.GetPartitionInfo()
 		h := do.StatsHandle()
-		require.NoError(t, h.RefreshVars())
 
 		require.NoError(t, h.Update(is))
 		stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
@@ -1004,6 +1003,47 @@ func TestMergeTopN(t *testing.T) {
 	}
 }
 
+func TestStatsVariables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+	sctx := tk.Session().(sessionctx.Context)
+
+	pruneMode, err := h.GetCurrentPruneMode()
+	require.NoError(t, err)
+	require.Equal(t, string(variable.Dynamic), pruneMode)
+	analyzeVer, err := h.GetCurrentAnalyzeVersion()
+	require.NoError(t, err)
+	require.Equal(t, 2, analyzeVer)
+	err = handle.UpdateSCtxVarsForStats(sctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
+	require.Equal(t, string(variable.Dynamic), sctx.GetSessionVars().PartitionPruneMode.Load())
+	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
+	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
+
+	tk.MustExec(`set global tidb_analyze_version=1`)
+	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
+	tk.MustExec(`set global tidb_enable_historical_stats=0`)
+	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
+	tk.MustExec(`set global tidb_skip_missing_partition_stats=0`)
+
+	pruneMode, err = h.GetCurrentPruneMode()
+	require.NoError(t, err)
+	require.Equal(t, string(variable.Static), pruneMode)
+	analyzeVer, err = h.GetCurrentAnalyzeVersion()
+	require.NoError(t, err)
+	require.Equal(t, 1, analyzeVer)
+	err = handle.UpdateSCtxVarsForStats(sctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, false, sctx.GetSessionVars().EnableHistoricalStats)
+	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
+	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
+	require.Equal(t, false, sctx.GetSessionVars().SkipMissingPartitionStats)
+}
+
 func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1020,7 +1060,6 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		do := dom
 		is := do.InfoSchema()
 		h := do.StatsHandle()
-		require.NoError(t, h.RefreshVars())
 		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 
 		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")

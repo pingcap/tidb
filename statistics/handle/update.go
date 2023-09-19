@@ -888,7 +888,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			return false
 		}
 		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
-		tableStatsVer, err := h.getCurrentAnalyzeVersion()
+		tableStatsVer, err := h.GetCurrentAnalyzeVersion()
 		if err != nil {
 			logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
 			return false
@@ -906,7 +906,7 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 				return false
 			}
 			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
-			tableStatsVer, err := h.getCurrentAnalyzeVersion()
+			tableStatsVer, err := h.GetCurrentAnalyzeVersion()
 			if err != nil {
 				logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
 				return false
@@ -919,7 +919,8 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	return false
 }
 
-func (h *Handle) getCurrentAnalyzeVersion() (int, error) {
+// GetCurrentAnalyzeVersion returns the current analyze version.
+func (h *Handle) GetCurrentAnalyzeVersion() (int, error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return 0, err
@@ -932,7 +933,7 @@ func (h *Handle) getCurrentAnalyzeVersion() (int, error) {
 	return sctx.GetSessionVars().AnalyzeVersion, nil
 }
 
-// GetCurrentPruneMode returns the current latest partitioning talbe prune mode.
+// GetCurrentPruneMode returns the current latest partitioning table prune mode.
 func (h *Handle) GetCurrentPruneMode() (string, error) {
 	se, err := h.pool.Get()
 	if err != nil {
@@ -947,7 +948,7 @@ func (h *Handle) GetCurrentPruneMode() (string, error) {
 }
 
 func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition, db string, ratio float64, analyzeSnapshot bool) bool {
-	tableStatsVer, err := h.getCurrentAnalyzeVersion()
+	tableStatsVer, err := h.GetCurrentAnalyzeVersion()
 	if err != nil {
 		logutil.BgLogger().Info("fail to get analyze version", zap.String("category", "stats"),
 			zap.String("table", tblInfo.Name.String()),

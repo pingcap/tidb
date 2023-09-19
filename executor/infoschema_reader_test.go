@@ -433,7 +433,6 @@ func TestPartitionsTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	testkit.WithPruneMode(tk, variable.Static, func() {
-		require.NoError(t, h.RefreshVars())
 		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
 		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
