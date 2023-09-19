@@ -131,11 +131,15 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, analyzeSnapshot bool, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	pruneMode, err := h.GetCurrentPruneMode()
+	if err != nil {
+		return nil, nil, err
+	}
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		optFuncs := []sqlexec.OptionFuncAlias{
 			execOptionForAnalyze[statsVer],
 			sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
-			sqlexec.GetPartitionPruneModeOption(string(h.CurrentPruneMode())),
+			sqlexec.GetPartitionPruneModeOption(pruneMode),
 			sqlexec.ExecOptionUseCurSession,
 			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
 		}
@@ -320,13 +324,6 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
-// UpdateSessionVar updates the necessary session variables for the stats reader.
-func (h *Handle) UpdateSessionVar() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return UpdateSCtxVarsForStats(h.mu.ctx)
-}
-
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	// analyzer version
@@ -401,10 +398,16 @@ func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDe
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
-	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
-	isIndex int, histIDs []int64,
+func (h *Handle) mergePartitionStats2GlobalStats(opts map[ast.AnalyzeOptionType]uint64,
+	is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer h.pool.Put(se)
+	sc := se.(sessionctx.Context)
+
 	if err := UpdateSCtxVarsForStats(sc); err != nil {
 		return nil, err
 	}
@@ -1157,20 +1160,17 @@ func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, snapshot uint64) (
 }
 
 func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *statistics.StatsReader, err error) {
-	h.mu.Lock()
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("getGlobalStatsReader panic %v", r)
-		}
-		if err != nil {
-			h.mu.Unlock()
-		}
-	}()
-	return statistics.GetStatsReader(snapshot, h.mu.ctx.(sqlexec.RestrictedSQLExecutor))
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return statistics.GetStatsReader(snapshot, exec, func() {
+		h.pool.Put(se)
+	})
 }
 
-func (h *Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
-	defer h.mu.Unlock()
+func (*Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
 	return reader.Close()
 }
 
@@ -1423,9 +1423,16 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 		item.ScalarVals = 0
 		return item
 	}
-	h.mu.Lock()
-	sc := h.mu.ctx.GetSessionVars().StmtCtx
-	h.mu.Unlock()
+
+	se, seErr := h.pool.Get()
+	if seErr != nil {
+		logutil.BgLogger().Error("fail to get session", zap.String("category", "stats"), zap.Error(seErr))
+		return nil
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	sc := sctx.GetSessionVars().StmtCtx
+
 	var err error
 	samplesX, err = statistics.SortSampleItems(sc, samplesX)
 	if err != nil {
@@ -1521,11 +1528,6 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		statsVer = version
 	}
 	return nil
-}
-
-// CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
-func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
-	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
 }
 
 // RefreshVars uses to pull PartitionPruneMethod vars from kv storage.
@@ -1737,12 +1739,16 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := UpdateSCtxVarsForStats(h.mu.ctx); err != nil {
+	se, err := h.pool.Get()
+	if err != nil {
 		return false, err
 	}
-	return h.mu.ctx.GetSessionVars().EnableHistoricalStats, nil
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		return false, err
+	}
+	return sctx.GetSessionVars().EnableHistoricalStats, nil
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

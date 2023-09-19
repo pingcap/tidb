@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
@@ -443,11 +444,14 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	defer func() {
 		h.tableDelta.merge(deltaMap)
 	}()
-	is := func() infoschema.InfoSchema {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		return h.mu.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	}()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	currentTime := time.Now()
 	for id, item := range deltaMap {
 		if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
@@ -486,10 +490,15 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 	if delta.Count == 0 {
 		return true, nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return false, err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+	sctx := se.(sessionctx.Context)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -498,11 +507,10 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		err = finishTransaction(ctx, exec, err)
 	}()
 
-	txn, err := h.mu.ctx.Txn(true)
+	statsVersion, err = getSessionTxnStartTS(se)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	statsVersion = txn.StartTS()
 
 	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
 	// Check if the table and its partitions are locked.
@@ -535,12 +543,12 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			physicalTableID, tableOrPartitionLocked); err != nil {
 			return
 		}
-		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
 		if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
 			return
 		}
-		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 	} else {
 		// This is a non-partitioned table.
 		// Check if it's locked.
@@ -552,7 +560,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			physicalTableID, isTableLocked); err != nil {
 			return
 		}
-		affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
+		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 	}
 
 	updated = affectedRows > 0
@@ -759,11 +767,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
-	err := h.UpdateSessionVar()
-	if err != nil {
-		logutil.BgLogger().Error("update analyze version for auto analyze session failed", zap.String("category", "stats"), zap.Error(err))
-		return false
-	}
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
@@ -775,10 +778,20 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
 		return false
 	}
-	h.mu.Lock()
-	pruneMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
-	analyzeSnapshot := h.mu.ctx.GetSessionVars().EnableAnalyzeSnapshot
-	h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		logutil.BgLogger().Error("get session from session pool failed", zap.String("category", "stats"), zap.Error(err))
+		return false
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		logutil.BgLogger().Error("update session variables for stats failed", zap.String("category", "stats"), zap.Error(err))
+		return false
+	}
+	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
@@ -875,7 +888,11 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			return false
 		}
 		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
-		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+		tableStatsVer, err := h.getCurrentAnalyzeVersion()
+		if err != nil {
+			logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
+			return false
+		}
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
 		return true
@@ -889,7 +906,11 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 				return false
 			}
 			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
-			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+			tableStatsVer, err := h.getCurrentAnalyzeVersion()
+			if err != nil {
+				logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
+				return false
+			}
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sqlWithIdx, paramsWithIdx...)
 			return true
@@ -898,10 +919,41 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	return false
 }
 
+func (h *Handle) getCurrentAnalyzeVersion() (int, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return 0, err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		return 0, err
+	}
+	return sctx.GetSessionVars().AnalyzeVersion, nil
+}
+
+// GetCurrentPruneMode returns the current latest partitioning talbe prune mode.
+func (h *Handle) GetCurrentPruneMode() (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		return "", err
+	}
+	return sctx.GetSessionVars().PartitionPruneMode.Load(), nil
+}
+
 func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition, db string, ratio float64, analyzeSnapshot bool) bool {
-	h.mu.RLock()
-	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
-	h.mu.RUnlock()
+	tableStatsVer, err := h.getCurrentAnalyzeVersion()
+	if err != nil {
+		logutil.BgLogger().Info("fail to get analyze version", zap.String("category", "stats"),
+			zap.String("table", tblInfo.Name.String()),
+			zap.Error(err))
+		return false
+	}
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	partitionNames := make([]interface{}, 0, len(partitionDefs))
 	for _, def := range partitionDefs {
