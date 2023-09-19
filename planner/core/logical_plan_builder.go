@@ -6360,10 +6360,6 @@ func (b *PlanBuilder) buildByItemsForWindow(
 func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
 	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
-	bound.CompareCols = make([]expression.Expression, len(orderByItems))
-	for i, item := range orderByItems {
-		bound.CompareCols[i] = item.Col
-	}
 	if bound.UnBounded {
 		return bound, nil
 	}
@@ -6444,13 +6440,6 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
 	if err != nil {
 		return nil, err
-	}
-
-	if bound.CalcFuncs[0].GetType().EvalType() != col.GetType().EvalType() {
-		bound.CompareCols[0], err = expression.NewFunctionBase(b.ctx, ast.Cast, bound.CalcFuncs[0].GetType(), col)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
