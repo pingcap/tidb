@@ -5356,5 +5356,4 @@ func TestIssue46298(t *testing.T) {
 	tk.MustQuery("select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9 following) as a from test.first_range;")
 	tk.MustExec(`set @@tidb_enable_pipelined_window_function=0`)
 	tk.MustQuery("select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9 following) as a from test.first_range;")
-
 }
