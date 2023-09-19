@@ -505,7 +505,7 @@ func (t *Table) IsOutdated() bool {
 	return false
 }
 
-// ReleaseAndPutToPool releases data strucutres of Table and put itself back to pool.
+// ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
 func (t *Table) ReleaseAndPutToPool() {
 	for _, col := range t.Columns {
 		col.FMSketch.DestroyAndPutToPool()
