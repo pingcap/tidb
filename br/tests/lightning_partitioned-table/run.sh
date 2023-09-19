@@ -25,8 +25,6 @@ for BACKEND in tidb local; do
 
     run_sql 'DROP DATABASE IF EXISTS partitioned;'
 
-    # DEFAULT List partitioning needs to be enabled for defaultlist table
-    run_sql 'set @@global.tidb_enable_default_list_partition=1;'
     run_lightning --backend $BACKEND
 
     run_sql 'SELECT count(1), sum(a) FROM partitioned.a;'

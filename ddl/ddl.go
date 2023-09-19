@@ -19,9 +19,11 @@
 package ddl
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -41,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -62,13 +65,11 @@ import (
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -153,6 +154,7 @@ const (
 	OnExistReplace
 
 	jobRecordCapacity = 16
+	jobOnceCapacity   = 1000
 )
 
 var (
@@ -288,14 +290,14 @@ type waitSchemaSyncedController struct {
 	mu  sync.RWMutex
 	job map[int64]struct{}
 
-	// true if this node is elected to the DDL owner, we should wait 2 * lease before it runs the first DDL job.
-	once *atomicutil.Bool
+	// Use to check if the DDL job is the first run on this owner.
+	onceMap map[int64]struct{}
 }
 
 func newWaitSchemaSyncedController() *waitSchemaSyncedController {
 	return &waitSchemaSyncedController{
-		job:  make(map[int64]struct{}, jobRecordCapacity),
-		once: atomicutil.NewBool(true),
+		job:     make(map[int64]struct{}, jobRecordCapacity),
+		onceMap: make(map[int64]struct{}, jobOnceCapacity),
 	}
 }
 
@@ -316,6 +318,25 @@ func (w *waitSchemaSyncedController) synced(job *model.Job) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	delete(w.job, job.ID)
+}
+
+// maybeAlreadyRunOnce returns true means that the job may be the first run on this owner.
+// Returns false means that the job must not be the first run on this owner.
+func (w *waitSchemaSyncedController) maybeAlreadyRunOnce(id int64) bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	_, ok := w.onceMap[id]
+	return ok
+}
+
+func (w *waitSchemaSyncedController) setAlreadyRunOnce(id int64) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.onceMap) > jobOnceCapacity {
+		// If the map is too large, we reset it. These jobs may need to check schema synced again, but it's ok.
+		w.onceMap = make(map[int64]struct{}, jobRecordCapacity)
+	}
+	w.onceMap[id] = struct{}{}
 }
 
 // ddlCtx is the context when we use worker to handle DDL jobs.
@@ -464,13 +485,19 @@ func (dc *ddlCtx) removeJobCtx(job *model.Job) {
 	delete(dc.jobCtx.jobCtxMap, job.ID)
 }
 
-func (dc *ddlCtx) jobContext(jobID int64) *JobContext {
+func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobContext {
 	dc.jobCtx.RLock()
 	defer dc.jobCtx.RUnlock()
+	var ctx *JobContext
 	if jobContext, exists := dc.jobCtx.jobCtxMap[jobID]; exists {
-		return jobContext
+		ctx = jobContext
+	} else {
+		ctx = NewJobContext()
 	}
-	return NewJobContext()
+	if reorgMeta != nil && len(ctx.resourceGroupName) == 0 {
+		ctx.resourceGroupName = reorgMeta.ResourceGroupName
+	}
+	return ctx
 }
 
 func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
@@ -488,20 +515,6 @@ func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
 		runningJobIDs = append(runningJobIDs, id)
 	}
 	return runningJobIDs
-}
-
-func (dc *ddlCtx) setBackfillCtxJobContext(jobID int64, jobQuery string, jobType model.ActionType) (*JobContext, bool) {
-	dc.backfillCtx.Lock()
-	defer dc.backfillCtx.Unlock()
-
-	jobCtx, existent := dc.backfillCtx.jobCtxMap[jobID]
-	if !existent {
-		dc.setDDLLabelForTopSQL(jobID, jobQuery)
-		dc.setDDLSourceForDiagnosis(jobID, jobType)
-		jobCtx = dc.jobContext(jobID)
-		dc.backfillCtx.jobCtxMap[jobID] = jobCtx
-	}
-	return jobCtx, existent
 }
 
 type reorgContexts struct {
@@ -679,26 +692,21 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType("backfill")
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepOne,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
-		})
+	scheduler.RegisterTaskType(BackfillTaskType,
+		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
+			return newBackfillDistScheduler(ctx, id, task, taskTable, d)
+		}, scheduler.WithSummary,
+	)
 
-	scheduler.RegisterSchedulerConstructor("backfill", proto.StepTwo,
-		func(_ int64, taskMeta []byte, step int64) (scheduler.Scheduler, error) {
-			return NewBackfillSchedulerHandle(taskMeta, d, step == proto.StepTwo)
-		})
-
-	dispatcher.RegisterTaskFlowHandle(BackfillTaskType, NewLitBackfillFlowHandle(d))
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepOne,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
-	scheduler.RegisterSubtaskExectorConstructor(BackfillTaskType, proto.StepTwo,
-		func(proto.MinimalTask, int64) (scheduler.SubtaskExecutor, error) {
-			return &scheduler.EmptyExecutor{}, nil
-		})
+	backFillDsp, err := NewBackfillingDispatcherExt(d)
+	if err != nil {
+		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
+	} else {
+		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
+			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
+			})
+	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
@@ -746,7 +754,7 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 		}
 	}
 	// reorg worker count at least 1 at most 10.
-	reorgCnt := mathutil.Min(mathutil.Max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
+	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
@@ -983,7 +991,9 @@ func getIntervalFromPolicy(policy []time.Duration, i int) (time.Duration, bool) 
 func getJobCheckInterval(job *model.Job, i int) (time.Duration, bool) {
 	switch job.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey, model.ActionModifyColumn,
-		model.ActionReorganizePartition:
+		model.ActionReorganizePartition,
+		model.ActionRemovePartitioning,
+		model.ActionAlterTablePartitioning:
 		return getIntervalFromPolicy(slowDDLIntervalPolicy, i)
 	case model.ActionCreateTable, model.ActionCreateSchema:
 		return getIntervalFromPolicy(fastDDLIntervalPolicy, i)
@@ -1037,6 +1047,10 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
 // - other: found in history DDL job and return that job error
 func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
+	job.TraceInfo = &model.TraceInfo{
+		ConnectionID: ctx.GetSessionVars().ConnectionID,
+		SessionAlias: ctx.GetSessionVars().SessionAlias,
+	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.
 		// Instead, we merge all the jobs into one pending job.
@@ -1776,8 +1790,8 @@ func GetAllHistoryDDLJobs(m *meta.Meta) ([]*model.Job, error) {
 		}
 	}
 	// sort job.
-	slices.SortFunc(allJobs, func(i, j *model.Job) bool {
-		return i.ID < j.ID
+	slices.SortFunc(allJobs, func(i, j *model.Job) int {
+		return cmp.Compare(i.ID, j.ID)
 	})
 	return allJobs, nil
 }

@@ -1058,6 +1058,7 @@ AAAAAAAAAAAA5gm5Mg==
 
 		{"select `t`.`1a`.1 from t;", true, "SELECT `t`.`1a`.`1` FROM `t`"},
 		{"select * from 1db.1table;", true, "SELECT * FROM `1db`.`1table`"},
+		{"select * from t where t. status = 1;", true, "SELECT * FROM `t` WHERE `t`.`status`=1"},
 
 		// for show placement
 		{"SHOW PLACEMENT", true, "SHOW PLACEMENT"},
@@ -1265,9 +1266,11 @@ func TestDBAStmt(t *testing.T) {
 		// for lock stats
 		{"lock stats test.t", true, "LOCK STATS `test`.`t`"},
 		{"lock stats t, t2", true, "LOCK STATS `t`, `t2`"},
+		{"lock stats t partition (p0, p1)", true, "LOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// for unlock stats
 		{"unlock stats test.t", true, "UNLOCK STATS `test`.`t`"},
 		{"unlock stats t, t2", true, "UNLOCK STATS `t`, `t2`"},
+		{"unlock stats t partition (p0, p1)", true, "UNLOCK STATS `t` PARTITION(`p0`, `p1`)"},
 		// set
 		// user defined
 		{"SET @ = 1", true, "SET @``=1"},
@@ -2709,6 +2712,9 @@ func TestDDL(t *testing.T) {
 		{`alter table m add partition (partition p1 values less than (200) learner_constraints="ww");`, false, ""},
 		{`alter table m add partition (partition p1 values less than (200) placement policy="ww");`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
 		{`alter table m add partition (partition p1 values less than (200) /*T![placement] placement policy="ww" */);`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200) PLACEMENT POLICY = `ww`)"},
+		{`alter table m add column a int, add partition (partition p1 values less than (200))`, true, "ALTER TABLE `m` ADD COLUMN `a` INT, ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200))"},
+		// TODO: Do not allow this order!
+		{`alter table m add partition (partition p1 values less than (200)), add column a int`, true, "ALTER TABLE `m` ADD PARTITION (PARTITION `p1` VALUES LESS THAN (200)), ADD COLUMN `a` INT"},
 		// for check clause
 		{"create table t (c1 bool, c2 bool, check (c1 in (0, 1)) not enforced, check (c2 in (0, 1)))", true, "CREATE TABLE `t` (`c1` TINYINT(1),`c2` TINYINT(1),CHECK(`c1` IN (0,1)) NOT ENFORCED,CHECK(`c2` IN (0,1)) ENFORCED)"},
 		{"CREATE TABLE Customer (SD integer CHECK (SD > 0), First_Name varchar(30));", true, "CREATE TABLE `Customer` (`SD` INT CHECK(`SD`>0) ENFORCED,`First_Name` VARCHAR(30))"},
@@ -2743,7 +2749,12 @@ func TestDDL(t *testing.T) {
 		{"drop schema xxx", true, "DROP DATABASE `xxx`"},
 		{"drop schema if exists xxx", true, "DROP DATABASE IF EXISTS `xxx`"},
 		{"drop schema if not exists xxx", false, ""},
-		{"drop table", false, "DROP TABLE"},
+		{"drop table", false, ""},
+		{"drop table if exists t'xyz", false, ""},
+		{"drop table if exists t'", false, ""},
+		{"drop table if exists t`", false, ""},
+		{`drop table if exists t'`, false, ""},
+		{`drop table if exists t"`, false, ""},
 		{"drop table xxx", true, "DROP TABLE `xxx`"},
 		{"drop table xxx, yyy", true, "DROP TABLE `xxx`, `yyy`"},
 		{"drop tables xxx", true, "DROP TABLE `xxx`"},
@@ -3166,11 +3177,15 @@ func TestDDL(t *testing.T) {
 		{"alter table t analyze partition a index b with 4 buckets", true, "ANALYZE TABLE `t` PARTITION `a` INDEX `b` WITH 4 BUCKETS"},
 
 		{"alter table t partition by hash(a)", true, "ALTER TABLE `t` PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"alter table t add column a int partition by hash(a)", true, "ALTER TABLE `t` ADD COLUMN `a` INT PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t partition by range(a)", false, ""},
 		{"alter table t partition by range(a) (partition x values less than (75))", true, "ALTER TABLE `t` PARTITION BY RANGE (`a`) (PARTITION `x` VALUES LESS THAN (75))"},
+		{"alter table t add column a int, partition by range(a) (partition x values less than (75))", false, ""},
 		{"alter table t comment 'cmt' partition by hash(a)", true, "ALTER TABLE `t` COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t enable keys, comment = 'cmt' partition by hash(a)", true, "ALTER TABLE `t` ENABLE KEYS, COMMENT = 'cmt' PARTITION BY HASH (`a`) PARTITIONS 1"},
 		{"alter table t enable keys, comment = 'cmt', partition by hash(a)", false, ""},
+		{"alter table t partition by hash(a) enable keys", false, ""},
+		{"alter table t partition by hash(a), enable keys", false, ""},
 
 		// Test keyword `FIELDS`
 		{"alter table t partition by range FIELDS(a) (partition x values less than maxvalue)", true, "ALTER TABLE `t` PARTITION BY RANGE COLUMNS (`a`) (PARTITION `x` VALUES LESS THAN (MAXVALUE))"},
@@ -3385,6 +3400,12 @@ func TestDDL(t *testing.T) {
 		{"alter table t remove partitioning", true, "ALTER TABLE `t` REMOVE PARTITIONING"},
 		{"alter table db.ident remove partitioning", true, "ALTER TABLE `db`.`ident` REMOVE PARTITIONING"},
 		{"alter table t lock = default remove partitioning", true, "ALTER TABLE `t` LOCK = DEFAULT REMOVE PARTITIONING"},
+		{"alter table t add column a int remove partitioning", true, "ALTER TABLE `t` ADD COLUMN `a` INT REMOVE PARTITIONING"},
+		{"alter table t add column a int, add index (c) remove partitioning", true, "ALTER TABLE `t` ADD COLUMN `a` INT, ADD INDEX(`c`) REMOVE PARTITIONING"},
+		{"alter table t add column a int, remove partitioning", false, ""},
+		{"alter table t add column a int, add index (c), remove partitioning", false, ""},
+		{"alter table t remove partitioning add column a int", false, ""},
+		{"alter table t remove partitioning, add column a int", false, ""},
 
 		// for references without IndexColNameList
 		{"alter table t add column a double (4,2) zerofill references b match full on update set null first", true, "ALTER TABLE `t` ADD COLUMN `a` DOUBLE(4,2) UNSIGNED ZEROFILL REFERENCES `b` MATCH FULL ON UPDATE SET NULL FIRST"},
@@ -4978,6 +4999,7 @@ func TestSubquery(t *testing.T) {
 		{"select exists((select 1));", true, "SELECT EXISTS (SELECT 1)"},
 		{"select * from ((SELECT 1 a,3 b) UNION (SELECT 2,1) ORDER BY (SELECT 2)) t order by a,b", true, "SELECT * FROM ((SELECT 1 AS `a`,3 AS `b`) UNION (SELECT 2,1) ORDER BY (SELECT 2)) AS `t` ORDER BY `a`,`b`"},
 		{"select (select * from t1 where a != t.a union all (select * from t2 where a != t.a) order by a limit 1) from t1 t", true, "SELECT (SELECT * FROM `t1` WHERE `a`!=`t`.`a` UNION ALL (SELECT * FROM `t2` WHERE `a`!=`t`.`a`) ORDER BY `a` LIMIT 1) FROM `t1` AS `t`"},
+		{"(WITH v0 AS (SELECT TRUE) (SELECT 'abc' EXCEPT (SELECT TRUE)))", true, "WITH `v0` AS (SELECT TRUE) (SELECT _UTF8MB4'abc' EXCEPT (SELECT TRUE))"},
 	}
 	RunTest(t, table, false)
 
@@ -6289,6 +6311,7 @@ func TestWindowFunctions(t *testing.T) {
 
 		// For TSO functions
 		{`select tidb_parse_tso(1)`, true, "SELECT TIDB_PARSE_TSO(1)"},
+		{`select tidb_parse_tso_logical(1)`, true, "SELECT TIDB_PARSE_TSO_LOGICAL(1)"},
 		{`select tidb_bounded_staleness('2015-09-21 00:07:01', NOW())`, true, "SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', NOW())"},
 		{`select tidb_bounded_staleness(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())`, true, "SELECT TIDB_BOUNDED_STALENESS(DATE_SUB(NOW(), INTERVAL 3 SECOND), NOW())"},
 		{`select tidb_bounded_staleness('2015-09-21 00:07:01', '2021-04-27 11:26:13')`, true, "SELECT TIDB_BOUNDED_STALENESS(_UTF8MB4'2015-09-21 00:07:01', _UTF8MB4'2021-04-27 11:26:13')"},
@@ -7389,6 +7412,18 @@ func TestTTLTableOption(t *testing.T) {
 	RunTest(t, table, false)
 }
 
+func TestIssue45898(t *testing.T) {
+	p := parser.New()
+	p.ParseSQL("a.")
+	stmts, _, err := p.ParseSQL("select count(1) from t")
+	require.NoError(t, err)
+	var sb strings.Builder
+	restoreCtx := NewRestoreCtx(DefaultRestoreFlags, &sb)
+	sb.Reset()
+	stmts[0].Restore(restoreCtx)
+	require.Equal(t, "SELECT COUNT(1) FROM `t`", sb.String())
+}
+
 func TestMultiStmt(t *testing.T) {
 	p := parser.New()
 	stmts, _, err := p.Parse("SELECT 'foo'; SELECT 'foo;bar','baz'; select 'foo' , 'bar' , 'baz' ;select 1", "", "")
@@ -7405,4 +7440,28 @@ func TestMultiStmt(t *testing.T) {
 	require.Equal(t, "'bar'", stmt3.Fields.Fields[1].Text())
 	require.Equal(t, "'baz'", stmt3.Fields.Fields[2].Text())
 	require.Equal(t, "1", stmt4.Fields.Fields[0].Text())
+}
+
+// https://dev.mysql.com/doc/refman/8.1/en/other-vendor-data-types.html
+func TestCompatTypes(t *testing.T) {
+	table := []testCase{
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 BOOL)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT(1))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 BOOLEAN)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT(1))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 CHARACTER VARYING(0))`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` VARCHAR(0))"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FIXED)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FLOAT4)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` FLOAT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 FLOAT8)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DOUBLE)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT1)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` TINYINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT2)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` SMALLINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT3)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT4)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` INT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 INT8)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` BIGINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG VARBINARY)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMBLOB)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG VARCHAR)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 LONG)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMTEXT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 MIDDLEINT)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` MEDIUMINT)"},
+		{`CREATE TABLE t(id INT PRIMARY KEY, c1 NUMERIC)`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY,`c1` DECIMAL)"},
+	}
+
+	RunTest(t, table, false)
 }

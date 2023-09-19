@@ -72,6 +72,10 @@ func (rs *RetryState) ExponentialBackoff() time.Duration {
 	return backoff
 }
 
+func (rs *RetryState) GiveUp() {
+	rs.retryTimes = rs.maxRetry
+}
+
 // InitialRetryState make the initial state for retrying.
 func InitialRetryState(maxRetryTimes int, initialBackoff, maxBackoff time.Duration) RetryState {
 	return RetryState{

@@ -7,10 +7,14 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"go.uber.org/zap"
 )
 
 // Permission represents the permission we need to check in create storage.
@@ -27,6 +31,8 @@ const (
 	GetObject Permission = "GetObject"
 	// PutObject represents PutObject permission
 	PutObject Permission = "PutObject"
+
+	DefaultRequestConcurrency uint = 128
 )
 
 // WalkOption is the option of storage.WalkDir.
@@ -80,6 +86,10 @@ type Writer interface {
 	Close(ctx context.Context) error
 }
 
+type WriterOption struct {
+	Concurrency int
+}
+
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
 	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
@@ -103,8 +113,8 @@ type ExternalStorage interface {
 	// URI returns the base path as a URI
 	URI() string
 
-	// Create opens a file writer by path. path is relative path to storage base path
-	Create(ctx context.Context, path string) (ExternalFileWriter, error)
+	// Create opens a file writer by path. path is relative path to storage base path. Currently only s3 implemented WriterOption
+	Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
 }
@@ -134,7 +144,9 @@ type ExternalStorageOptions struct {
 	NoCredentials bool
 
 	// HTTPClient to use. The created storage may ignore this field if it is not
-	// directly using HTTP (e.g. the local storage).
+	// directly using HTTP (e.g. the local storage) or use self-design HTTP client
+	// with credential (e.g. the gcs).
+	// NOTICE: the HTTPClient is only used by s3 storage and azure blob storage.
 	HTTPClient *http.Client
 
 	// CheckPermissions check the given permission in New() function.
@@ -187,10 +199,64 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.Gcs == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "GCS config not found")
 		}
+		// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
+		// Issue: https: //github.com/pingcap/tidb/issues/47022
+		opts.HTTPClient = nil
 		return NewGCSStorage(ctx, backend.Gcs, opts)
 	case *backuppb.StorageBackend_AzureBlobStorage:
 		return newAzureBlobStorage(ctx, backend.AzureBlobStorage, opts)
 	default:
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "storage %T is not supported yet", backend)
 	}
+}
+
+// Different from `http.DefaultTransport`, set the `MaxIdleConns` and `MaxIdleConnsPerHost`
+// to the actual request concurrency to reuse tcp connection as much as possible.
+func GetDefaultHttpClient(concurrency uint) *http.Client {
+	transport, _ := CloneDefaultHttpTransport()
+	transport.MaxIdleConns = int(concurrency)
+	transport.MaxIdleConnsPerHost = int(concurrency)
+	return &http.Client{
+		Transport: transport,
+	}
+}
+
+func CloneDefaultHttpTransport() (*http.Transport, bool) {
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	return transport.Clone(), ok
+}
+
+// GetMaxOffset returns the max offset of the file.
+func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n int64, err error) {
+	s3storage, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.New("only support s3 storage")
+	}
+	output, err := s3storage.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
+		Bucket: aws.String(s3storage.options.Bucket),
+		Key:    aws.String(s3storage.options.Prefix + name),
+	})
+	if err != nil {
+		return 0, err
+	}
+	return *output.ContentLength, nil
+}
+
+// ReadDataInRange reads data from storage in range [start, start+len(p)).
+func ReadDataInRange(ctx context.Context, storage ExternalStorage, name string, start int64, p []byte) (n int, err error) {
+	s3storage, ok := storage.(*S3Storage)
+	if !ok {
+		return 0, errors.New("only support s3 storage")
+	}
+	rd, _, err := s3storage.open(ctx, name, start, start+int64(len(p)))
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		err := rd.Close()
+		if err != nil {
+			log.FromContext(ctx).Warn("failed to close reader", zap.Error(err))
+		}
+	}()
+	return io.ReadFull(rd, p)
 }

@@ -236,7 +236,8 @@ func (ts *TiDBStatement) GetRowContainer() *chunk.RowContainer {
 }
 
 // OpenCtx implements IDriver.
-func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, dbname string, tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
+func (qd *TiDBDriver) OpenCtx(connID uint64, capability uint32, collation uint8, _ string,
+	tlsState *tls.ConnectionState, extensions *extension.SessionExtensions) (*TiDBContext, error) {
 	se, err := session.CreateSession(qd.store)
 	if err != nil {
 		return nil, err
@@ -367,7 +368,7 @@ func (tc *TiDBContext) GetStmtStats() *stmtstats.StatementStats {
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
-func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (tc *TiDBContext) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	sessionVars := tc.Session.GetSessionVars()
 	sessionStates.PreparedStmts = make(map[uint32]*sessionstates.PreparedStmtInfo, len(sessionVars.PreparedStmts))
 	for preparedID, preparedObj := range sessionVars.PreparedStmts {
@@ -407,7 +408,7 @@ func (tc *TiDBContext) EncodeSessionStates(ctx context.Context, sctx sessionctx.
 }
 
 // DecodeSessionStates implements SessionStatesHandler.DecodeSessionStates interface.
-func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, sctx sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
+func (tc *TiDBContext) DecodeSessionStates(ctx context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
 	if len(sessionStates.PreparedStmts) == 0 {
 		return nil
 	}

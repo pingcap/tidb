@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/generic"
 	"github.com/pingcap/tidb/util/logutil"
+	kvutil "github.com/tikv/client-go/v2/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -34,7 +35,7 @@ import (
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
 	CheckAvailable() (bool, error)
-	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error)
+	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 }
@@ -86,7 +87,7 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register creates a new backend and registers it to the backend context.
-func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client) (BackendCtx, error) {
+func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -99,7 +100,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 			logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
 		}
-		bd, err := createLocalBackend(ctx, cfg)
+		bd, err := createLocalBackend(ctx, cfg, resourceGroupName)
 		if err != nil {
 			logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
@@ -118,7 +119,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 	return bc, nil
 }
 
-func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error) {
+func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName string) (*local.Backend, error) {
 	tls, err := cfg.Lightning.ToTLS()
 	if err != nil {
 		logutil.Logger(ctx).Error(LitErrCreateBackendFail, zap.Error(err))
@@ -133,7 +134,7 @@ func createLocalBackend(ctx context.Context, cfg *Config) (*local.Backend, error
 	if cfg.IsRaftKV2 {
 		raftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
-	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, "", raftKV2SwitchModeDuration)
+	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, resourceGroupName, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
@@ -159,7 +160,7 @@ func newBackendContext(ctx context.Context, jobID int64, be *local.Backend, cfg 
 
 // Unregister removes a backend context from the backend context manager.
 func (m *litBackendCtxMgr) Unregister(jobID int64) {
-	bc, exist := m.SyncMap.Load(jobID)
+	bc, exist := m.SyncMap.Delete(jobID)
 	if !exist {
 		return
 	}
@@ -169,7 +170,6 @@ func (m *litBackendCtxMgr) Unregister(jobID int64) {
 		bc.checkpointMgr.Close()
 	}
 	m.memRoot.Release(StructSizeBackendCtx)
-	m.Delete(jobID)
 	m.memRoot.ReleaseWithTag(EncodeBackendTag(jobID))
 	logutil.Logger(bc.ctx).Info(LitInfoCloseBackend, zap.Int64("job ID", jobID),
 		zap.Int64("current memory usage", m.memRoot.CurrentUsage()),

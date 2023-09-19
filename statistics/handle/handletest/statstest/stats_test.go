@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
@@ -173,6 +174,7 @@ func testInitStatsMemTrace(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	h.Clear()
+	require.Equal(t, h.GetMemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(is))
 
 	var memCostTot int64
@@ -186,15 +188,21 @@ func testInitStatsMemTrace(t *testing.T) {
 	require.Equal(t, h.GetMemConsumed(), memCostTot)
 }
 
-func TestInitStatsMemTrace(t *testing.T) {
+func TestInitStatsMemTraceWithLite(t *testing.T) {
+	testInitStatsMemTraceFunc(t, true)
+}
+
+func TestInitStatsMemTraceWithoutLite(t *testing.T) {
+	testInitStatsMemTraceFunc(t, false)
+}
+
+func testInitStatsMemTraceFunc(t *testing.T, liteInitStats bool) {
 	originValue := config.GetGlobalConfig().Performance.LiteInitStats
 	defer func() {
 		config.GetGlobalConfig().Performance.LiteInitStats = originValue
 	}()
-	for _, v := range []bool{false, true} {
-		config.GetGlobalConfig().Performance.LiteInitStats = v
-		testInitStatsMemTrace(t)
-	}
+	config.GetGlobalConfig().Performance.LiteInitStats = liteInitStats
+	testInitStatsMemTrace(t)
 }
 
 func TestInitStats(t *testing.T) {
@@ -261,7 +269,7 @@ func TestInitStatsVer2(t *testing.T) {
 	require.Equal(t, uint8(0x33), cols[2].LastAnalyzePos.GetBytes()[0])
 	require.Equal(t, uint8(0x33), cols[3].LastAnalyzePos.GetBytes()[0])
 	h.Clear()
-	require.NoError(t, h.Update(is))
+	require.NoError(t, h.InitStats(is))
 	table1 := h.GetTableStats(tbl.Meta())
 	internal.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
@@ -329,9 +337,9 @@ func TestLoadStats(t *testing.T) {
 	require.Nil(t, cms)
 
 	// Column stats are loaded after they are needed.
-	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), colAID)
+	_, err = cardinality.ColumnEqualRowCount(testKit.Session(), stat, types.NewIntDatum(1), colAID)
 	require.NoError(t, err)
-	_, err = stat.ColumnEqualRowCount(testKit.Session(), types.NewIntDatum(1), colCID)
+	_, err = cardinality.ColumnEqualRowCount(testKit.Session(), stat, types.NewIntDatum(1), colCID)
 	require.NoError(t, err)
 	require.NoError(t, h.LoadNeededHistograms())
 	stat = h.GetTableStats(tableInfo)

@@ -45,18 +45,19 @@ import (
 // 2. StatsReader is not thread-safe. Different goroutines cannot call (*StatsReader).Read concurrently.
 type StatsReader struct {
 	ctx      sqlexec.RestrictedSQLExecutor
+	release  func() // a call back function to release all resources hold by this reader.
 	snapshot uint64
 }
 
 // GetStatsReader returns a StatsReader.
-func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader *StatsReader, err error) {
+func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor, releaseFunc func()) (reader *StatsReader, err error) {
 	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
 		}
 	})
 	if snapshot > 0 {
-		return &StatsReader{ctx: exec, snapshot: snapshot}, nil
+		return &StatsReader{ctx: exec, snapshot: snapshot, release: releaseFunc}, nil
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -69,7 +70,7 @@ func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor) (reader
 	if err != nil {
 		return nil, err
 	}
-	return &StatsReader{ctx: exec}, nil
+	return &StatsReader{ctx: exec, release: releaseFunc}, nil
 }
 
 // Read is a thin wrapper reading statistics from storage by sql command.
@@ -88,6 +89,14 @@ func (sr *StatsReader) IsHistory() bool {
 
 // Close closes the StatsReader.
 func (sr *StatsReader) Close() error {
+	defer func() {
+		if sr.release != nil {
+			sr.release()
+		}
+		sr.release = nil
+		sr.ctx = nil
+	}()
+
 	if sr.IsHistory() || sr.ctx == nil {
 		return nil
 	}
@@ -227,12 +236,9 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 	nullCount := row.GetInt64(5)
 	statsVer := row.GetInt64(7)
 	idx := table.Indices[histID]
-	errorRate := ErrorRate{}
 	flag := row.GetInt64(8)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-	if (!IsAnalyzed(flag) || reader.IsHistory()) && idx != nil {
-		errorRate = idx.ErrorRate
-	}
+
 	for _, idxInfo := range tableInfo.Indices {
 		if histID != idxInfo.ID {
 			continue
@@ -249,7 +255,6 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 		if notNeedLoad {
 			idx = &Index{
 				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, types.NewFieldType(mysql.TypeBlob), 0, 0),
-				ErrorRate:  errorRate,
 				StatsVer:   statsVer,
 				Info:       idxInfo,
 				Flag:       flag,
@@ -285,7 +290,6 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, tab
 				TopN:       topN,
 				FMSketch:   fmSketch,
 				Info:       idxInfo,
-				ErrorRate:  errorRate,
 				StatsVer:   statsVer,
 				Flag:       flag,
 				PhysicalID: table.PhysicalID,
@@ -315,11 +319,8 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 	correlation := row.GetFloat64(9)
 	lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
 	col := table.Columns[histID]
-	errorRate := ErrorRate{}
 	flag := row.GetInt64(8)
-	if (!IsAnalyzed(flag) || reader.IsHistory()) && col != nil {
-		errorRate = col.ErrorRate
-	}
+
 	for _, colInfo := range tableInfo.Columns {
 		if histID != colInfo.ID {
 			continue
@@ -350,7 +351,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				PhysicalID: table.PhysicalID,
 				Histogram:  *NewHistogram(histID, distinct, nullCount, histVer, &colInfo.FieldType, 0, totColSize),
 				Info:       colInfo,
-				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,
@@ -387,7 +387,6 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *Table, ta
 				CMSketch:   cms,
 				TopN:       topN,
 				FMSketch:   fmSketch,
-				ErrorRate:  errorRate,
 				IsHandle:   tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 				Flag:       flag,
 				StatsVer:   statsVer,

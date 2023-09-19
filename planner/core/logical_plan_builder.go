@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -154,6 +153,15 @@ const (
 	HintSemiJoinRewrite = "semi_join_rewrite"
 	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
 	HintNoDecorrelate = "no_decorrelate"
+
+	// HintMemoryQuota sets the memory limit for a query
+	HintMemoryQuota = "memory_quota"
+	// HintUseToja is a hint to optimize `in (select ...)` subquery into `join`
+	HintUseToja = "use_toja"
+	// HintNoIndexMerge is a hint to disable index merge
+	HintNoIndexMerge = "no_index_merge"
+	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
+	HintMaxExecutionTime = "max_execution_time"
 )
 
 const (
@@ -272,7 +280,6 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		distinctGbyColNames: distinctGbyColNames,
 		// for resolving grouping function args.
 		distinctGbyExprs: distinctGbyExprs,
-		gbyExprsRefPos:   gbyExprsRefPos,
 
 		// fill the gen col names when building level projections.
 	}.Init(b.ctx, b.getSelectOffset())
@@ -297,6 +304,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 	expandSchema.Append(gid)
 	expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gid.OrigName)
 	names = append(names, buildExpandFieldName(gid, nil, "gid_"))
+	expand.GIDName = names[len(names)-1]
 	if hasDuplicateGroupingSet {
 		// the last two col of the schema should be gid & gpos
 		gpos := &expression.Column{
@@ -308,6 +316,7 @@ func (b *PlanBuilder) buildExpand(p LogicalPlan, gbyItems []expression.Expressio
 		expandSchema.Append(gpos)
 		expand.ExtraGroupingColNames = append(expand.ExtraGroupingColNames, gpos.OrigName)
 		names = append(names, buildExpandFieldName(gpos, nil, "gpos_"))
+		expand.GPosName = names[len(names)-1]
 	}
 	expand.SetChildren(proj)
 	expand.SetSchema(expandSchema)
@@ -511,6 +520,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 		case *ast.SelectStmt:
 			ci := b.prepareCTECheckForSubQuery()
 			defer resetCTECheckForSubQuery(ci)
+			b.optFlag = b.optFlag | flagConstantPropagation
 			p, err = b.buildSelect(ctx, v)
 		case *ast.SetOprStmt:
 			ci := b.prepareCTECheckForSubQuery()
@@ -535,8 +545,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
-		if !isTableName && b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load() != nil {
-			plannerSelectBlockAsName := *(b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load())
+		if plannerSelectBlockAsName := *(b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()); len(plannerSelectBlockAsName) > 0 && !isTableName {
 			plannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
@@ -702,7 +711,8 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
-			if name.TblName.L != firstName.TblName.L || name.DBName.L != firstName.DBName.L {
+			if name.TblName.L != firstName.TblName.L ||
+				(name.DBName.L != "" && firstName.DBName.L != "" && name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
 				return nil
 			}
 		}
@@ -1677,6 +1687,16 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 		projExprs = append(projExprs, gCol)
 		projNames = append(projNames, b.currentBlockExpand.distinctGbyColNames[idx])
 	}
+	// project GID.
+	projSchema.Append(b.currentBlockExpand.GID)
+	projExprs = append(projExprs, b.currentBlockExpand.GID)
+	projNames = append(projNames, b.currentBlockExpand.GIDName)
+	// project GPos if any.
+	if b.currentBlockExpand.GPos != nil {
+		projSchema.Append(b.currentBlockExpand.GPos)
+		projExprs = append(projExprs, b.currentBlockExpand.GPos)
+		projNames = append(projNames, b.currentBlockExpand.GPosName)
+	}
 	return projSchema, projNames, projExprs
 }
 
@@ -1749,7 +1769,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		schema.Append(col)
 		newNames = append(newNames, name)
 	}
-	// implicitly project expand grouping set cols, if not used later, prune it out in logical column pruner.
+	// implicitly project expand grouping set cols, if not used later, it will being pruned out in logical column pruner.
 	schema, newNames, proj.Exprs = b.implicitProjectGroupingSetCols(schema, newNames, proj.Exprs)
 
 	proj.SetSchema(schema)
@@ -2680,7 +2700,7 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 	case *ast.WindowFuncExpr:
 		a.inWindowFunc = false
 		if a.curClause == havingClause {
-			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.F))
+			a.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.Name))
 			return node, false
 		}
 		if a.curClause == orderByClause {
@@ -3541,6 +3561,13 @@ func checkExprInGroupByOrIsSingleValue(
 ) {
 	if _, ok := expr.(*ast.AggregateFuncExpr); ok {
 		return
+	}
+	if f, ok := expr.(*ast.FuncCallExpr); ok {
+		if f.FnName.L == ast.Grouping {
+			// just skip grouping function check here, because later in building plan phase, we
+			// will do the grouping function valid check.
+			return
+		}
 	}
 	if _, ok := expr.(*ast.ColumnNameExpr); !ok {
 		for _, gbyExpr := range gbyExprs {
@@ -4437,6 +4464,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		for _, tName := range l.Tables {
+			// CTE has no *model.TableInfo, we need to skip it.
+			if tName.TableInfo == nil {
+				continue
+			}
 			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
 		}
 		p, err = b.buildSelectLock(p, l)
@@ -4662,6 +4693,7 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 // 1. tidb-server started and statistics handle has not been initialized.
 // 2. table row count from statistics is zero.
 // 3. statistics is outdated.
+// Note: please also update getLatestVersionFromStatsTable() when logic in this function changes.
 func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	statsHandle := domain.GetDomain(ctx).StatsHandle()
 	var usePartitionStats, countIs0, pseudoStatsForUninitialized, pseudoStatsForOutdated bool
@@ -4684,21 +4716,45 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tblInfo)
+		return statistics.PseudoTable(tblInfo, false)
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo)
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+	}
+
+	allowPseudoTblTriggerLoading := false
+	// In OptObjectiveDeterminate mode, we need to ignore the real-time stats.
+	// To achieve this, we copy the statsTbl and reset the real-time stats fields (set ModifyCount to 0 and set
+	// RealtimeCount to the row count from the ANALYZE, which is fetched from loaded stats in GetAnalyzeRowCount()).
+	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+		analyzeCount := max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+		// If the two fields are already the values we want, we don't need to modify it, and also we don't need to copy.
+		if statsTbl.RealtimeCount != analyzeCount || statsTbl.ModifyCount != 0 {
+			// Here is a case that we need specially care about:
+			// The original stats table from the stats cache is not a pseudo table, but the analyze row count is 0 (probably
+			// because of no col/idx stats are loaded), which will makes it a pseudo table according to the rule 2 below.
+			// Normally, a pseudo table won't trigger stats loading since we assume it means "no stats available", but
+			// in such case, we need it able to trigger stats loading.
+			// That's why we use the special allowPseudoTblTriggerLoading flag here.
+			if !statsTbl.Pseudo && statsTbl.RealtimeCount > 0 && analyzeCount == 0 {
+				allowPseudoTblTriggerLoading = true
+			}
+			// Copy it so we can modify the ModifyCount and the RealtimeCount safely.
+			statsTbl = statsTbl.ShallowCopy()
+			statsTbl.RealtimeCount = analyzeCount
+			statsTbl.ModifyCount = 0
+		}
 	}
 
 	// 2. table row count from statistics is zero.
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
-		return statistics.PseudoTable(tblInfo)
+		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading)
 	}
 
 	// 3. statistics is uninitialized or outdated.
@@ -4716,6 +4772,44 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	return statsTbl
+}
+
+// getLatestVersionFromStatsTable gets statistics information for a table specified by "tableID", and get the max
+// LastUpdateVersion among all Columns and Indices in it.
+// Its overall logic is quite similar to getStatsTable(). During plan cache matching, only the latest version is needed.
+// In such case, compared to getStatsTable(), this function can save some copies, memory allocations and unnecessary
+// checks. Also, this function won't trigger metrics changes.
+func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) (version uint64) {
+	statsHandle := domain.GetDomain(ctx).StatsHandle()
+	// 1. tidb-server started and statistics handle has not been initialized. Pseudo stats table.
+	if statsHandle == nil {
+		return 0
+	}
+
+	var statsTbl *statistics.Table
+	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+		statsTbl = statsHandle.GetTableStats(tblInfo)
+	} else {
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
+	}
+
+	// 2. Table row count from statistics is zero. Pseudo stats table.
+	realtimeRowCount := statsTbl.RealtimeCount
+	if ctx.GetSessionVars().GetOptObjective() == variable.OptObjectiveDeterminate {
+		realtimeRowCount = max(int64(statsTbl.GetAnalyzeRowCount()), 0)
+	}
+	if realtimeRowCount == 0 {
+		return 0
+	}
+
+	// 3. Not pseudo stats table. Return the max LastUpdateVersion among all Columns and Indices
+	for _, col := range statsTbl.Columns {
+		version = max(version, col.LastUpdateVersion)
+	}
+	for _, idx := range statsTbl.Indices {
+		version = max(version, idx.LastUpdateVersion)
+	}
+	return version
 }
 
 func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName *model.CIStr) (LogicalPlan, error) {
@@ -6753,7 +6847,7 @@ func (b *PlanBuilder) buildWindowFunctionFrame(ctx context.Context, spec *ast.Wi
 func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, windowFuncExprs []*ast.WindowFuncExpr, windowAggMap map[*ast.AggregateFuncExpr]int) error {
 	checker := &expression.ParamMarkerInPrepareChecker{}
 	for _, windowFuncExpr := range windowFuncExprs {
-		if strings.ToLower(windowFuncExpr.F) == ast.AggFuncGroupConcat {
+		if strings.ToLower(windowFuncExpr.Name) == ast.AggFuncGroupConcat {
 			return ErrNotSupportedYet.GenWithStackByArgs("group_concat as window function")
 		}
 		args, err := b.buildArgs4WindowFunc(ctx, p, windowFuncExpr.Args, windowAggMap)
@@ -6764,12 +6858,12 @@ func (b *PlanBuilder) checkWindowFuncArgs(ctx context.Context, p LogicalPlan, wi
 		for _, expr := range windowFuncExpr.Args {
 			expr.Accept(checker)
 		}
-		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.F, args, checker.InPrepareStmt)
+		desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFuncExpr.Name, args, checker.InPrepareStmt)
 		if err != nil {
 			return err
 		}
 		if desc == nil {
-			return ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFuncExpr.F))
+			return ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFuncExpr.Name))
 		}
 	}
 	return nil
@@ -6880,12 +6974,12 @@ func (b *PlanBuilder) buildWindowFunctions(ctx context.Context, p LogicalPlan, g
 			for _, expr := range windowFunc.Args {
 				expr.Accept(checker)
 			}
-			desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.F, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
+			desc, err := aggregation.NewWindowFuncDesc(b.ctx, windowFunc.Name, args[preArgs:preArgs+len(windowFunc.Args)], checker.InPrepareStmt)
 			if err != nil {
 				return nil, nil, err
 			}
 			if desc == nil {
-				return nil, nil, ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.F))
+				return nil, nil, ErrWrongArguments.GenWithStackByArgs(strings.ToLower(windowFunc.Name))
 			}
 			preArgs += len(windowFunc.Args)
 			desc.WrapCastForAggArgs(b.ctx)
@@ -7101,7 +7195,7 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 					return nil, nil, err
 				}
 			}
-			spec, _ = b.handleDefaultFrame(spec, windowFunc.F)
+			spec, _ = b.handleDefaultFrame(spec, windowFunc.Name)
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)
 			continue
@@ -7112,7 +7206,7 @@ func (b *PlanBuilder) groupWindowFuncs(windowFuncs []*ast.WindowFuncExpr) (map[*
 		if !ok {
 			return nil, nil, ErrWindowNoSuchWindow.GenWithStackByArgs(windowFunc.Spec.Name.O)
 		}
-		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.F)
+		newSpec, updated := b.handleDefaultFrame(spec, windowFunc.Name)
 		if !updated {
 			groupedWindow[spec] = append(groupedWindow[spec], windowFunc)
 			orderedSpec = appendIfAbsentWindowSpec(orderedSpec, spec)

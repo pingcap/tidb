@@ -22,19 +22,19 @@ import (
 )
 
 // DispatcherForTest exports for testing.
-type DispatcherForTest interface {
-	GetRunningGTaskCnt() int
-	DelRunningGTask(globalTaskID int64)
+type DispatcherManagerForTest interface {
+	GetRunningTaskCnt() int
+	DelRunningTask(globalTaskID int64)
 }
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
-func (d *dispatcher) GetRunningGTaskCnt() int {
-	return d.getRunningGTaskCnt()
+func (dm *Manager) GetRunningTaskCnt() int {
+	return dm.getRunningTaskCnt()
 }
 
 // DelRunningGTask implements Dispatcher.DelRunningGTask interface.
-func (d *dispatcher) DelRunningGTask(globalTaskID int64) {
-	d.delRunningGTask(globalTaskID)
+func (dm *Manager) DelRunningTask(globalTaskID int64) {
+	dm.delRunningTask(globalTaskID)
 }
 
 func TestMain(m *testing.M) {
@@ -43,7 +43,7 @@ func TestMain(m *testing.M) {
 	// Make test more fast.
 	checkTaskRunningInterval = checkTaskRunningInterval / 10
 	checkTaskFinishedInterval = checkTaskFinishedInterval / 10
-	retrySQLInterval = retrySQLInterval / 20
+	RetrySQLInterval = RetrySQLInterval / 20
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

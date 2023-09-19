@@ -1,4 +1,4 @@
-// Copyright 2023-2023 PingCAP Xingchen (Beijing) Technology Co., Ltd.
+// Copyright 2023-2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,7 +30,7 @@ import (
 )
 
 func TestCreateTableWithCheckConstraints(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -133,7 +133,7 @@ func TestCreateTableWithCheckConstraints(t *testing.T) {
 }
 
 func TestAlterTableAddCheckConstraints(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -190,7 +190,7 @@ func TestAlterTableAddCheckConstraints(t *testing.T) {
 }
 
 func TestAlterTableDropCheckConstraints(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -269,7 +269,7 @@ func TestAlterTableDropCheckConstraints(t *testing.T) {
 }
 
 func TestAlterTableAlterCheckConstraints(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -341,7 +341,7 @@ func TestAlterTableAlterCheckConstraints(t *testing.T) {
 }
 
 func TestDropColumnWithCheckConstraints(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -356,7 +356,7 @@ func TestDropColumnWithCheckConstraints(t *testing.T) {
 }
 
 func TestCheckConstraintsNotEnforcedWorks(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -373,7 +373,7 @@ func TestCheckConstraintsNotEnforcedWorks(t *testing.T) {
 }
 
 func TestUnsupportedCheckConstraintsExprWhenCreateTable(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -431,7 +431,7 @@ func TestUnsupportedCheckConstraintsExprWhenCreateTable(t *testing.T) {
 }
 
 func TestUnsupportedCheckConstraintsExprWhenAlterTable(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -490,7 +490,7 @@ func TestUnsupportedCheckConstraintsExprWhenAlterTable(t *testing.T) {
 }
 
 func TestNameInCreateTableLike(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -519,7 +519,7 @@ func TestNameInCreateTableLike(t *testing.T) {
 }
 
 func TestInsertUpdateIgnoreWarningMessage(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -536,7 +536,7 @@ func TestInsertUpdateIgnoreWarningMessage(t *testing.T) {
 }
 
 func TestCheckConstraintForeignKey(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
@@ -556,7 +556,7 @@ func TestCheckConstraintForeignKey(t *testing.T) {
 }
 
 func TestCheckConstrainNonBoolExpr(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -593,7 +593,7 @@ func TestCheckConstrainNonBoolExpr(t *testing.T) {
 }
 
 func TestAlterAddCheckConstrainColumnBadErr(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -603,7 +603,7 @@ func TestAlterAddCheckConstrainColumnBadErr(t *testing.T) {
 }
 
 func TestCheckConstraintBoolExpr(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -614,7 +614,7 @@ func TestCheckConstraintBoolExpr(t *testing.T) {
 }
 
 func TestCheckConstraintNameMaxLength(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -643,7 +643,7 @@ func TestCheckConstraintNameMaxLength(t *testing.T) {
 }
 
 func TestCheckConstraintNameCaseAndAccentSensitivity(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -655,7 +655,7 @@ func TestCheckConstraintNameCaseAndAccentSensitivity(t *testing.T) {
 }
 
 func TestCheckConstraintEvaluated(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t, s")
@@ -791,7 +791,7 @@ func TestCheckConstraintOnDuplicateKeyUpdate(t *testing.T) {
 }
 
 func TestCheckConstraintOnInsert(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_insert_check_constraint;")
 	tk.MustExec("CREATE DATABASE test_insert_check_constraint;")
@@ -817,7 +817,7 @@ func TestCheckConstraintOnInsert(t *testing.T) {
 }
 
 func TestCheckConstraintOnUpdate(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_update_check_constraint;")
 	tk.MustExec("CREATE DATABASE test_update_check_constraint;")
@@ -839,7 +839,7 @@ func TestCheckConstraintOnUpdate(t *testing.T) {
 }
 
 func TestCheckConstraintOnUpdateWithPartition(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("DROP DATABASE IF EXISTS test_update_check_constraint_hash;")
 	tk.MustExec("CREATE DATABASE test_update_check_constraint_hash;")

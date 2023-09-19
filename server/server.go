@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/planner/core"
@@ -134,6 +135,43 @@ type Server struct {
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
 	printMDLLogTime     time.Time
+}
+
+// NewTestServer creates a new Server for test.
+func NewTestServer(cfg *config.Config) *Server {
+	return &Server{
+		cfg: cfg,
+	}
+}
+
+// Socket returns the server's socket file.
+func (s *Server) Socket() net.Listener {
+	return s.socket
+}
+
+// Listener returns the server's listener.
+func (s *Server) Listener() net.Listener {
+	return s.listener
+}
+
+// ListenAddr returns the server's listener's network address.
+func (s *Server) ListenAddr() net.Addr {
+	return s.listener.Addr()
+}
+
+// StatusListenerAddr returns the server's status listener's network address.
+func (s *Server) StatusListenerAddr() net.Addr {
+	return s.statusListener.Addr()
+}
+
+// BitwiseXorCapability gets the capability of the server.
+func (s *Server) BitwiseXorCapability(capability uint32) {
+	s.capability ^= capability
+}
+
+// BitwiseOrAssignCapability adds the capability to the server.
+func (s *Server) BitwiseOrAssignCapability(capability uint32) {
+	s.capability |= capability
 }
 
 // GetStatusServerAddr gets statusServer address for MppCoordinatorManager usage
@@ -479,7 +517,7 @@ func (s *Server) startNetworkListener(listener net.Listener, isUnixSocket bool, 
 	}
 }
 
-func (s *Server) checkAuditPlugin(clientConn *clientConn) error {
+func (*Server) checkAuditPlugin(clientConn *clientConn) error {
 	return plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 		authPlugin := plugin.DeclareAuditManifest(p.Manifest)
 		if authPlugin.OnConnectionEvent == nil {
@@ -797,11 +835,19 @@ func (s *Server) GetProcessInfo(id uint64) (*util.ProcessInfo, bool) {
 }
 
 // GetConAttrs returns the connection attributes
-func (s *Server) GetConAttrs() map[uint64]map[string]string {
+func (s *Server) GetConAttrs(user *auth.UserIdentity) map[uint64]map[string]string {
 	s.rwlock.RLock()
 	defer s.rwlock.RUnlock()
 	rs := make(map[uint64]map[string]string)
 	for _, client := range s.clients {
+		if user != nil {
+			if user.Username != client.user {
+				continue
+			}
+			if user.Hostname != client.peerHost {
+				continue
+			}
+		}
 		if pi := client.ctx.ShowProcess(); pi != nil {
 			rs[pi.ID] = client.attrs
 		}
@@ -835,7 +881,8 @@ func (s *Server) UpdateTLSConfig(cfg *tls.Config) {
 	atomic.StorePointer(&s.tlsConfig, unsafe.Pointer(cfg))
 }
 
-func (s *Server) getTLSConfig() *tls.Config {
+// GetTLSConfig implements the SessionManager interface.
+func (s *Server) GetTLSConfig() *tls.Config {
 	return (*tls.Config)(atomic.LoadPointer(&s.tlsConfig))
 }
 

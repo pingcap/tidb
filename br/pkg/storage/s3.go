@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	alicred "github.com/aliyun/alibaba-cloud-sdk-go/sdk/auth/credentials"
@@ -36,6 +37,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var hardcodedS3ChunkSize = 5 * 1024 * 1024
+
 const (
 	s3EndpointOption     = "s3.endpoint"
 	s3RegionOption       = "s3.region"
@@ -56,9 +59,7 @@ const (
 	// the maximum number of byte to read for seek.
 	maxSkipOffsetByRead = 1 << 16 // 64KB
 
-	// TODO make this configurable, 5 mb is a good minimum size but on low latency/high bandwidth network you can go a lot bigger
-	hardcodedS3ChunkSize = 5 * 1024 * 1024
-	defaultRegion        = "us-east-1"
+	defaultRegion = "us-east-1"
 	// to check the cloud type by endpoint tag.
 	domainAliyun = "aliyuncs.com"
 )
@@ -68,6 +69,9 @@ var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
 	ListObjects:   listObjects,
 	GetObject:     getObject,
 }
+
+// WriteBufferSize is the size of the buffer used for writing. (64K may be a better choice)
+var WriteBufferSize = 5 * 1024 * 1024
 
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
@@ -912,13 +916,61 @@ func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalF
 	}, nil
 }
 
-// Create creates multi upload request.
-func (rs *S3Storage) Create(ctx context.Context, name string) (ExternalFileWriter, error) {
-	uploader, err := rs.CreateUploader(ctx, name)
+type s3ObjectWriter struct {
+	wd  *io.PipeWriter
+	wg  *sync.WaitGroup
+	err error
+}
+
+// Write implement the io.Writer interface.
+func (s *s3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
+	return s.wd.Write(p)
+}
+
+// Close implement the io.Closer interface.
+func (s *s3ObjectWriter) Close(_ context.Context) error {
+	err := s.wd.Close()
 	if err != nil {
-		return nil, err
+		return err
 	}
-	uploaderWriter := newBufferedWriter(uploader, hardcodedS3ChunkSize, NoCompression)
+	s.wg.Wait()
+	return s.err
+}
+
+// Create creates multi upload request.
+func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (ExternalFileWriter, error) {
+	var uploader ExternalFileWriter
+	var err error
+	if option == nil || option.Concurrency <= 1 {
+		uploader, err = rs.CreateUploader(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
+			u.Concurrency = option.Concurrency
+			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
+		})
+		rd, wd := io.Pipe()
+		upParams := &s3manager.UploadInput{
+			Bucket: aws.String(rs.options.Bucket),
+			Key:    aws.String(rs.options.Prefix + name),
+			Body:   rd,
+		}
+		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
+		s3Writer.wg.Add(1)
+		go func() {
+			_, err := up.UploadWithContext(ctx, upParams)
+			err1 := rd.Close()
+			if err != nil {
+				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err), zap.Error(err1))
+			}
+			s3Writer.err = err
+			s3Writer.wg.Done()
+		}()
+		uploader = s3Writer
+	}
+	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
 	return uploaderWriter, nil
 }
 
@@ -961,6 +1013,10 @@ func isConnectionResetError(err error) bool {
 	return strings.Contains(err.Error(), "read: connection reset")
 }
 
+func isConnectionRefusedError(err error) bool {
+	return strings.Contains(err.Error(), "connection refused")
+}
+
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	// for unit test
 	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
@@ -971,6 +1027,9 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	})
 	if isConnectionResetError(r.Error) {
 		return true
+	}
+	if isConnectionRefusedError(r.Error) {
+		return false
 	}
 	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
 		// fast fail for unreachable linklocal address in EC2 containers.

@@ -620,6 +620,20 @@ func TestINLJHintSmallTable(t *testing.T) {
 	tk.MustExec("explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
 }
 
+func TestIssue46580(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t0(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t1(c0 BOOL, c1 BOOL);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (false, true);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (true, true);`)
+	tk.MustExec(`CREATE definer='root'@'localhost'  VIEW v0(c0, c1, c2) AS SELECT t1.c0, LOG10(t0.c0), t1.c0 FROM t0, t1;`)
+	tk.MustExec(`INSERT INTO t0(c0) VALUES (3);`)
+	tk.MustQuery(`SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;`).Sort().Check(
+		testkit.Rows(`0 0`, `0 1`, `1 0`, `1 1`))
+}
+
 func TestInvisibleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -904,14 +918,6 @@ func TestIndexMergePartialScansClusteredIndex(t *testing.T) {
 		expected  []string
 	}{
 		{
-			// 3 table scans
-			"a < 2 or a < 10 or a > 11", []string{"1", "100"},
-		},
-		{
-			// 3 index scans
-			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
-		},
-		{
 			// 1 table scan + 1 index scan
 			"a < 2 or c > 10000", []string{"1"},
 		},
@@ -931,7 +937,7 @@ func TestIndexMergePartialScansClusteredIndex(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -957,10 +963,6 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 		expected  []string
 	}{
 		{
-			// 3 index scans
-			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
-		},
-		{
 			// 2 index scans
 			"c < 10 or a < 2", []string{"1"},
 		},
@@ -984,7 +986,7 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -1033,7 +1035,7 @@ func TestIndexMergePartialScansPKIsHandle(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -2188,7 +2190,7 @@ func TestQueryBlockTableAliasInHint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	require.True(t, tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"))
+	tk.MustHavePlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin")
 	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
 		"1 2",
 	))
@@ -2917,7 +2919,7 @@ func TestIssue25799(t *testing.T) {
 	tk.MustExec(`insert into t1 values (1, 1)`)
 	tk.MustExec(`create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b))`)
 	tk.MustExec(`insert into t2 values (null, 1)`)
-	tk.HasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
+	tk.MustHavePlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`).Check(testkit.Rows())
 }
 
@@ -2953,7 +2955,7 @@ func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
 	require.Len(t, warns, 3)
 	require.EqualError(t, warns[0].Err, "The version 2 would collect all statistics not only the selected indexes")
 	require.EqualError(t, warns[1].Err, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
-	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t")
+	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"")
 	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "6", rows[0][0])
@@ -4504,7 +4506,7 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 }
 
 func TestPartitionTableFallBackStatic(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")

@@ -15,7 +15,9 @@
 package infoschema
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 
@@ -27,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/mock"
-	"golang.org/x/exp/slices"
 )
 
 // InfoSchema is the interface used to retrieve the schema information.
@@ -143,8 +144,8 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
-			return i.Meta().ID < j.Meta().ID
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
+			return cmp.Compare(i.Meta().ID, j.Meta().ID)
 		})
 	}
 	return result
@@ -171,8 +172,8 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) bool {
-			return i.Meta().ID < j.Meta().ID
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
+			return cmp.Compare(i.Meta().ID, j.Meta().ID)
 		})
 	}
 	result.schemaMetaVersion = schemaVer
@@ -378,6 +379,8 @@ func init() {
 		for i, c := range tableInfo.Columns {
 			c.ID = int64(i) + 1
 		}
+		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
+		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
 	infoSchemaDB := &model.DBInfo{
 		ID:      dbID,

@@ -728,6 +728,8 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinJSONValidStringSig{base}
 	case tipb.ScalarFuncSig_JsonValidOthersSig:
 		f = &builtinJSONValidOthersSig{base}
+	case tipb.ScalarFuncSig_JsonMemberOfSig:
+		f = &builtinJSONMemberOfSig{base}
 	case tipb.ScalarFuncSig_DateFormatSig:
 		f = &builtinDateFormatSig{base}
 	// case tipb.ScalarFuncSig_DateLiteral:
@@ -1084,7 +1086,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 		f = &builtinInternalFromBinarySig{base}
 
 	default:
-		e = errFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
+		e = ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", sigCode)
 		return nil, e
 	}
 	f.setPbCode(sigCode)

@@ -307,7 +307,7 @@ func TestTikvRegionStatus(t *testing.T) {
 	))
 
 	tk.MustExec("drop table if exists test_t2")
-	tk.MustExec(`CREATE TABLE test_t2 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL) 
+	tk.MustExec(`CREATE TABLE test_t2 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)
 		PARTITION BY RANGE (c) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (MAXVALUE))`)
@@ -373,7 +373,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 53
+	result := 54
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

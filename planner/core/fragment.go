@@ -15,7 +15,9 @@
 package core
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -37,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/util/tiflashcompute"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 )
 
 // Fragment is cut from the whole pushed-down plan by network communication.
@@ -598,8 +599,8 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *PhysicalTableScan, splitedRanges []*ranger.Range, partitions []table.PhysicalTable) (*kv.MPPBuildTasksRequest, []int64, error) {
-	slices.SortFunc(partitions, func(i, j table.PhysicalTable) bool {
-		return i.GetPhysicalID() < j.GetPhysicalID()
+	slices.SortFunc(partitions, func(i, j table.PhysicalTable) int {
+		return cmp.Compare(i.GetPhysicalID(), j.GetPhysicalID())
 	})
 	partitionIDAndRanges := make([]kv.PartitionIDAndRanges, len(partitions))
 	allPartitionsIDs := make([]int64, len(partitions))
@@ -607,7 +608,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 	for i, p := range partitions {
 		pid := p.GetPhysicalID()
 		meta := p.Meta()
-		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges, nil)
+		kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{pid}, meta != nil && ts.Table.IsCommonHandle, splitedRanges)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -619,7 +620,7 @@ func (e *mppTaskGenerator) constructMPPBuildTaskReqForPartitionedTable(ts *Physi
 }
 
 func (e *mppTaskGenerator) constructMPPBuildTaskForNonPartitionTable(tid int64, isCommonHandle bool, splitedRanges []*ranger.Range) (*kv.MPPBuildTasksRequest, error) {
-	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tid}, isCommonHandle, splitedRanges, nil)
+	kvRanges, err := distsql.TableHandleRangesToKVRanges(e.ctx.GetSessionVars().StmtCtx, []int64{tid}, isCommonHandle, splitedRanges)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -21,110 +21,10 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
-
-func TestNewHistogramBySelectivity(t *testing.T) {
-	coll := &HistColl{
-		RealtimeCount: 330,
-		Columns:       make(map[int64]*Column),
-		Indices:       make(map[int64]*Index),
-	}
-	ctx := mock.NewContext()
-	sc := ctx.GetSessionVars().StmtCtx
-	intCol := &Column{}
-	intCol.Histogram = *NewHistogram(1, 30, 30, 0, types.NewFieldType(mysql.TypeLonglong), chunk.InitialCapacity, 0)
-	intCol.IsHandle = true
-	intCol.StatsLoadedStatus = NewStatsFullLoadStatus()
-	for i := 0; i < 10; i++ {
-		intCol.Bounds.AppendInt64(0, int64(i*3))
-		intCol.Bounds.AppendInt64(0, int64(i*3+2))
-		intCol.Buckets = append(intCol.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
-	}
-	coll.Columns[1] = intCol
-	node := &StatsNode{ID: 1, Tp: PkType, Selectivity: 0.56}
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums(2), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(5), HighVal: types.MakeDatums(6), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(8), HighVal: types.MakeDatums(10), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(13), HighVal: types.MakeDatums(13), Collators: collate.GetBinaryCollatorSlice(1)})
-	node.Ranges = append(node.Ranges, &ranger.Range{LowVal: types.MakeDatums(25), HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)})
-	intColResult := `column:1 ndv:16 totColSize:0
-num: 30 lower_bound: 0 upper_bound: 2 repeats: 10 ndv: 0
-num: 11 lower_bound: 6 upper_bound: 8 repeats: 0 ndv: 0
-num: 30 lower_bound: 9 upper_bound: 11 repeats: 0 ndv: 0
-num: 1 lower_bound: 12 upper_bound: 14 repeats: 0 ndv: 0
-num: 30 lower_bound: 27 upper_bound: 29 repeats: 0 ndv: 0`
-
-	stringCol := &Column{}
-	stringCol.StatsLoadedStatus = NewStatsFullLoadStatus()
-	stringCol.Histogram = *NewHistogram(2, 15, 30, 0, types.NewFieldType(mysql.TypeString), chunk.InitialCapacity, 0)
-	stringCol.Bounds.AppendString(0, "a")
-	stringCol.Bounds.AppendString(0, "aaaabbbb")
-	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 60})
-	stringCol.Bounds.AppendString(0, "bbbb")
-	stringCol.Bounds.AppendString(0, "fdsfdsfds")
-	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 120})
-	stringCol.Bounds.AppendString(0, "kkkkk")
-	stringCol.Bounds.AppendString(0, "ooooo")
-	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 180})
-	stringCol.Bounds.AppendString(0, "oooooo")
-	stringCol.Bounds.AppendString(0, "sssss")
-	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 240})
-	stringCol.Bounds.AppendString(0, "ssssssu")
-	stringCol.Bounds.AppendString(0, "yyyyy")
-	stringCol.Buckets = append(stringCol.Buckets, Bucket{Repeat: 10, Count: 300})
-	stringCol.PreCalculateScalar()
-	coll.Columns[2] = stringCol
-	node2 := &StatsNode{ID: 2, Tp: ColType, Selectivity: 0.6}
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums(nil), HighVal: types.MakeDatums(nil), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: []types.Datum{types.MinNotNullDatum()}, HighVal: types.MakeDatums("aaa"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("aaaaaaaaaaa"), HighVal: types.MakeDatums("aaaaaaaaaaaaaa"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("bbb"), HighVal: types.MakeDatums("cccc"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ddd"), HighVal: types.MakeDatums("fff"), Collators: collate.GetBinaryCollatorSlice(1)})
-	node2.Ranges = append(node2.Ranges, &ranger.Range{LowVal: types.MakeDatums("ggg"), HighVal: []types.Datum{types.MaxValueDatum()}, Collators: collate.GetBinaryCollatorSlice(1)})
-	stringColResult := `column:2 ndv:9 totColSize:0
-num: 60 lower_bound: a upper_bound: aaaabbbb repeats: 0 ndv: 0
-num: 52 lower_bound: bbbb upper_bound: fdsfdsfds repeats: 0 ndv: 0
-num: 54 lower_bound: kkkkk upper_bound: ooooo repeats: 0 ndv: 0
-num: 60 lower_bound: oooooo upper_bound: sssss repeats: 0 ndv: 0
-num: 60 lower_bound: ssssssu upper_bound: yyyyy repeats: 0 ndv: 0`
-
-	newColl := coll.NewHistCollBySelectivity(ctx, []*StatsNode{node, node2})
-	require.Equal(t, intColResult, newColl.Columns[1].String())
-	require.Equal(t, stringColResult, newColl.Columns[2].String())
-
-	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
-	coll.Indices[0] = idx
-	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
-	for i := 0; i < 5; i++ {
-		low, err1 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3)))
-		require.NoError(t, err1)
-		high, err2 := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(i*3+2)))
-		require.NoError(t, err2)
-		idx.Bounds.AppendBytes(0, low)
-		idx.Bounds.AppendBytes(0, high)
-		idx.Buckets = append(idx.Buckets, Bucket{Repeat: 10, Count: int64(30*i + 30)})
-	}
-	idx.PreCalculateScalar()
-	node3 := &StatsNode{ID: 0, Tp: IndexType, Selectivity: 0.47}
-	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(2), HighVal: types.MakeDatums(3), Collators: collate.GetBinaryCollatorSlice(1)})
-	node3.Ranges = append(node3.Ranges, &ranger.Range{LowVal: types.MakeDatums(10), HighVal: types.MakeDatums(13), Collators: collate.GetBinaryCollatorSlice(1)})
-
-	idxResult := `index:0 ndv:7
-num: 30 lower_bound: 0 upper_bound: 2 repeats: 10 ndv: 0
-num: 30 lower_bound: 3 upper_bound: 5 repeats: 10 ndv: 0
-num: 30 lower_bound: 9 upper_bound: 11 repeats: 10 ndv: 0
-num: 30 lower_bound: 12 upper_bound: 14 repeats: 10 ndv: 0`
-
-	newColl = coll.NewHistCollBySelectivity(ctx, []*StatsNode{node3})
-	require.Equal(t, idxResult, newColl.Indices[0].String())
-}
 
 func TestTruncateHistogram(t *testing.T) {
 	hist := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeLonglong), 1, 0)
@@ -488,4 +388,147 @@ func TestIndexQueryBytes(t *testing.T) {
 	require.Equal(t, idx.QueryBytes(nil, low), uint64(1))
 	// Repeat
 	require.Equal(t, idx.QueryBytes(nil, high), uint64(10))
+}
+
+type histogramInputAndOutput struct {
+	inputHist       *Histogram
+	inputHistToStr  string
+	outputHistToStr string
+}
+
+func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
+	// 1. prepare expected input and output histograms (in string)
+	testData := []*histogramInputAndOutput{
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 2",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 34567 upper_bound: 5 repeats: 0 ndv: 0",
+			outputHistToStr: "index:0 ndv:6",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 876 upper_bound: 876 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 990 upper_bound: 990 repeats: 0 ndv: 0",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 111 upper_bound: 111 repeats: 10 ndv: 1\n" +
+				"num: 12 lower_bound: 123 upper_bound: 34567 repeats: 4 ndv: 20\n" +
+				"num: 10 lower_bound: 5 upper_bound: 990 repeats: 6 ndv: 2",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 111 upper_bound: 111 repeats: 10 ndv: 0\n" +
+				"num: 12 lower_bound: 123 upper_bound: 34567 repeats: 4 ndv: 0\n" +
+				"num: 10 lower_bound: 5 upper_bound: 990 repeats: 6 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 5 upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 876 upper_bound: 876 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 2\n" +
+				"num: 10 lower_bound: 95 upper_bound: 95 repeats: 3 ndv: 2",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 95 upper_bound: 95 repeats: 3 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 5 upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 876 upper_bound: 876 repeats: 3 ndv: 2\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 95 upper_bound: 95 repeats: 0 ndv: 0",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 876 upper_bound: 876 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 0",
+		},
+	}
+	// 2. prepare the actual Histogram input
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	val0, err := codec.EncodeKey(sc, nil, types.NewIntDatum(111))
+	require.NoError(t, err)
+	val1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(123))
+	require.NoError(t, err)
+	val2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(34567))
+	require.NoError(t, err)
+	val3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
+	require.NoError(t, err)
+	val4, err := codec.EncodeKey(sc, nil, types.NewIntDatum(876))
+	require.NoError(t, err)
+	val5, err := codec.EncodeKey(sc, nil, types.NewIntDatum(990))
+	require.NoError(t, err)
+	val6, err := codec.EncodeKey(sc, nil, types.NewIntDatum(95))
+	require.NoError(t, err)
+	val0Bytes := types.NewBytesDatum(val0)
+	val1Bytes := types.NewBytesDatum(val1)
+	val2Bytes := types.NewBytesDatum(val2)
+	val3Bytes := types.NewBytesDatum(val3)
+	val4Bytes := types.NewBytesDatum(val4)
+	val5Bytes := types.NewBytesDatum(val5)
+	val6Bytes := types.NewBytesDatum(val6)
+	hist0 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist0.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist0.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist0.AppendBucketWithNDV(&val2Bytes, &val3Bytes, 10, 3, 2)
+	testData[0].inputHist = hist0
+	hist1 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist1.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist1.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist1.AppendBucketWithNDV(&val2Bytes, &val3Bytes, 0, 0, 0)
+	testData[1].inputHist = hist1
+	hist2 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist2.AppendBucketWithNDV(&val2Bytes, &val3Bytes, 10, 3, 2)
+	hist2.AppendBucketWithNDV(&val4Bytes, &val4Bytes, 10, 0, 0)
+	hist2.AppendBucketWithNDV(&val5Bytes, &val5Bytes, 10, 0, 0)
+	testData[2].inputHist = hist2
+	hist3 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist3.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 10, 10, 1)
+	hist3.AppendBucketWithNDV(&val1Bytes, &val2Bytes, 22, 4, 20)
+	hist3.AppendBucketWithNDV(&val3Bytes, &val5Bytes, 32, 6, 2)
+	testData[3].inputHist = hist3
+	hist4 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist4.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist4.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist4.AppendBucketWithNDV(&val2Bytes, &val2Bytes, 10, 3, 2)
+	hist4.AppendBucketWithNDV(&val3Bytes, &val3Bytes, 10, 0, 0)
+	hist4.AppendBucketWithNDV(&val4Bytes, &val4Bytes, 10, 0, 0)
+	hist4.AppendBucketWithNDV(&val5Bytes, &val5Bytes, 20, 3, 2)
+	hist4.AppendBucketWithNDV(&val6Bytes, &val6Bytes, 30, 3, 2)
+	testData[4].inputHist = hist4
+	hist5 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist5.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist5.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist5.AppendBucketWithNDV(&val2Bytes, &val2Bytes, 10, 3, 2)
+	hist5.AppendBucketWithNDV(&val3Bytes, &val3Bytes, 10, 0, 0)
+	hist5.AppendBucketWithNDV(&val4Bytes, &val4Bytes, 20, 3, 2)
+	hist5.AppendBucketWithNDV(&val5Bytes, &val5Bytes, 30, 3, 2)
+	hist5.AppendBucketWithNDV(&val6Bytes, &val6Bytes, 30, 0, 0)
+	testData[5].inputHist = hist5
+
+	// 3. the actual test
+	for i, test := range testData {
+		require.Equal(t, test.inputHistToStr, test.inputHist.ToString(1))
+		test.inputHist.StandardizeForV2AnalyzeIndex()
+		require.Equal(t, test.outputHistToStr, test.inputHist.ToString(1),
+			fmt.Sprintf("testData[%d].inputHist:%s", i, test.inputHistToStr))
+	}
 }

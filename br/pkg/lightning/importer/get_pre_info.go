@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/mock"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -123,12 +124,14 @@ type TargetInfoGetterImpl struct {
 	db      *sql.DB
 	tls     *common.TLS
 	backend backend.TargetInfoGetter
+	pdCli   pd.Client
 }
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
 func NewTargetInfoGetterImpl(
 	cfg *config.Config,
 	targetDB *sql.DB,
+	pdCli pd.Client,
 ) (*TargetInfoGetterImpl, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
@@ -139,7 +142,10 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, cfg.TiDB.PdAddr)
+		if pdCli == nil {
+			return nil, common.ErrUnknown.GenWithStack("pd client is required when using local backend")
+		}
+		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
@@ -148,6 +154,7 @@ func NewTargetInfoGetterImpl(
 		tls:     tls,
 		db:      targetDB,
 		backend: backendTargetInfoGetter,
+		pdCli:   pdCli,
 	}, nil
 }
 
@@ -229,7 +236,7 @@ func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Contex
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
 	result := new(pdtypes.ReplicationConfig)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdReplicate, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdReplicate, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -240,7 +247,7 @@ func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtyp
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
 	result := new(pdtypes.StoresInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdStores, result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdStores, result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -251,7 +258,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.Sto
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
 	result := new(pdtypes.RegionsInfo)
-	if err := g.tls.WithHost(g.cfg.TiDB.PdAddr).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -461,7 +468,7 @@ func (p *PreImportInfoGetterImpl) ReadFirstNRowsByTableName(ctx context.Context,
 // ReadFirstNRowsByFileMeta reads the first N rows of an data file.
 // It implements the PreImportInfoGetter interface.
 func (p *PreImportInfoGetterImpl) ReadFirstNRowsByFileMeta(ctx context.Context, dataFileMeta mydump.SourceFileMeta, n int) ([]string, [][]types.Datum, error) {
-	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &dataFileMeta, p.srcStorage, storage.DecompressConfig{})
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -610,7 +617,7 @@ func (p *PreImportInfoGetterImpl) sampleDataFromTable(
 		return resultIndexRatio, isRowOrdered, nil
 	}
 	sampleFile := tableMeta.DataFiles[0].FileMeta
-	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage)
+	reader, err := mydump.OpenReader(ctx, &sampleFile, p.srcStorage, storage.DecompressConfig{})
 	if err != nil {
 		return 0.0, false, errors.Trace(err)
 	}

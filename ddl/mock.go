@@ -32,6 +32,11 @@ import (
 	atomicutil "go.uber.org/atomic"
 )
 
+// SetBatchInsertDeleteRangeSize sets the batch insert/delete range size in the test
+func SetBatchInsertDeleteRangeSize(i int) {
+	batchInsertDeleteRangeSize = i
+}
+
 var _ syncer.SchemaSyncer = &MockSchemaSyncer{}
 
 const mockCheckVersInterval = 2 * time.Millisecond
@@ -143,11 +148,14 @@ func NewMockStateSyncer() syncer.StateSyncer {
 	return &MockStateSyncer{}
 }
 
+// clusterState mocks cluster state.
+// We move it from MockStateSyncer to here. Because we want to make it unaffected by ddl close.
+var clusterState *atomicutil.Pointer[syncer.StateInfo]
+
 // MockStateSyncer is a mock state syncer, it is exported for testing.
 type MockStateSyncer struct {
-	clusterState *atomicutil.Pointer[syncer.StateInfo]
-	globalVerCh  chan clientv3.WatchResponse
-	mockSession  chan struct{}
+	globalVerCh chan clientv3.WatchResponse
+	mockSession chan struct{}
 }
 
 // Init implements StateSyncer.Init interface.
@@ -155,7 +163,9 @@ func (s *MockStateSyncer) Init(context.Context) error {
 	s.globalVerCh = make(chan clientv3.WatchResponse, 1)
 	s.mockSession = make(chan struct{}, 1)
 	state := syncer.NewStateInfo(syncer.StateNormalRunning)
-	s.clusterState = atomicutil.NewPointer(state)
+	if clusterState == nil {
+		clusterState = atomicutil.NewPointer(state)
+	}
 	return nil
 }
 
@@ -163,23 +173,23 @@ func (s *MockStateSyncer) Init(context.Context) error {
 func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
 	failpoint.Inject("mockUpgradingState", func(val failpoint.Value) {
 		if val.(bool) {
-			s.clusterState.Store(stateInfo)
+			clusterState.Store(stateInfo)
 			failpoint.Return(nil)
 		}
 	})
 	s.globalVerCh <- clientv3.WatchResponse{}
-	s.clusterState.Store(stateInfo)
+	clusterState.Store(stateInfo)
 	return nil
 }
 
 // GetGlobalState implements StateSyncer.GetGlobalState interface.
-func (s *MockStateSyncer) GetGlobalState(context.Context) (*syncer.StateInfo, error) {
-	return s.clusterState.Load(), nil
+func (*MockStateSyncer) GetGlobalState(context.Context) (*syncer.StateInfo, error) {
+	return clusterState.Load(), nil
 }
 
 // IsUpgradingState implements StateSyncer.IsUpgradingState interface.
-func (s *MockStateSyncer) IsUpgradingState() bool {
-	return s.clusterState.Load().State == syncer.StateUpgrading
+func (*MockStateSyncer) IsUpgradingState() bool {
+	return clusterState.Load().State == syncer.StateUpgrading
 }
 
 // WatchChan implements StateSyncer.WatchChan interface.

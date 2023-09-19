@@ -17,13 +17,13 @@ FROM hub.pingcap.net/jenkins/centos7_jenkins
 USER root
 WORKDIR /root
 
-ENV GOLANG_VERSION 1.20.6
+ENV GOLANG_VERSION 1.21.1
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-amd64.tar.gz
-ENV GOLANG_DOWNLOAD_SHA256 b945ae2bb5db01a0fb4786afde64e6fbab50b67f6fa0eb6cfa4924f16a7ff1eb
+ENV GOLANG_DOWNLOAD_SHA256 b3075ae1ce5dab85f89bc7905d1632de23ca196bd8336afd93fa97434cfa55ae
 ENV GOPATH /go
 ENV GOROOT /usr/local/go
 ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
-ADD https://github.com/bazelbuild/bazel/releases/download/6.2.1/bazel-6.2.1-linux-x86_64 /usr/bin/bazel
+ADD https://github.com/bazelbuild/bazel/releases/download/6.3.2/bazel-6.3.2-linux-x86_64 /usr/bin/bazel
 ADD https://uploader.codecov.io/latest/linux/codecov /usr/bin/codecov
 RUN curl https://setup.ius.io | sh || true && \
     chmod u+x /usr/bin/bazel && yum update -y && \

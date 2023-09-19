@@ -1613,8 +1613,7 @@ func TestAlterColumn(t *testing.T) {
 	colC = tblInfo.Columns[2]
 	hasNoDefault = mysql.HasNoDefaultValueFlag(colC.GetFlag())
 	require.False(t, hasNoDefault)
-	// TODO: After fix issue 2606.
-	// tk.MustExec( "alter table test_alter_column alter column d set default null")
+	tk.MustExec("alter table test_alter_column alter column d set default null")
 	tk.MustExec("alter table test_alter_column alter column a drop default")
 	tk.MustGetErrCode("insert into test_alter_column set b = 'd', c = 'dd'", errno.ErrNoDefaultForField)
 	tk.MustQuery("select a from test_alter_column").Check(testkit.Rows("111", "222", "222", "123"))
@@ -4407,4 +4406,57 @@ func TestReorganizePartitionWarning(t *testing.T) {
 	tk.MustExec("create table t (id bigint, b varchar(20), index idxb(b)) partition by range(id) (partition p0 values less than (20), partition p1 values less than (100));")
 	tk.MustExec("alter table t reorganize partition p0 into (partition p01 values less than (10), partition p02 values less than (20));")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+}
+
+func TestDefaultCollationForUTF8MB4(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set @@session.default_collation_for_utf8mb4='utf8mb4_general_ci';")
+	tk.MustExec("drop table if exists t1, t2, t3, t4")
+	tk.MustExec("create table t1 (b char(1) default null)")
+	tk.MustQuery("show create table t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
+		"  `b` char(1) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("create table t4 (b char(1) default null) engine=InnoDB default charset=utf8mb4")
+	tk.MustQuery("show create table t4").Check(testkit.Rows("t4 CREATE TABLE `t4` (\n" +
+		"  `b` char(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	// test alter table ... character set
+	tk.MustExec("create table t2 (b char(1) default null) engine=InnoDB default charset=utf8mb4 COLLATE utf8mb4_0900_ai_ci")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `b` char(1) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
+	tk.MustExec("alter table t2 default character set utf8mb4;")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `b` char(1) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	tk.MustExec("alter table t2 add column c char(1);")
+	tk.MustQuery("show create table t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n" +
+		"  `b` char(1) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL,\n" +
+		"  `c` char(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+	// test alter table ... convert to character set
+	tk.MustExec("create table t3 (b char(1) default null) engine=InnoDB default charset=utf8mb4 COLLATE utf8mb4_0900_ai_ci")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `b` char(1) COLLATE utf8mb4_0900_ai_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci"))
+	tk.MustExec("alter table t3 convert to character set utf8mb4;")
+	tk.MustQuery("show create table t3").Check(testkit.Rows("t3 CREATE TABLE `t3` (\n" +
+		"  `b` char(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"))
+
+	// test database character set
+	tk.MustExec("drop database if exists dbx;")
+	tk.MustExec("drop database if exists dby;")
+	tk.MustExec("create database dbx DEFAULT CHARSET=utf8mb4;")
+	tk.MustQuery("show create database dbx").Check(testkit.Rows(
+		"dbx CREATE DATABASE `dbx` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */"))
+	tk.MustExec("create database dby DEFAULT CHARSET=utf8mb4 COLLATE utf8mb4_0900_ai_ci;")
+	tk.MustQuery("show create database dby").Check(testkit.Rows(
+		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci */"))
+	tk.MustExec("ALTER DATABASE dby CHARACTER SET = 'utf8mb4'")
+	tk.MustQuery("show create database dby").Check(testkit.Rows(
+		"dby CREATE DATABASE `dby` /*!40100 DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci */"))
 }

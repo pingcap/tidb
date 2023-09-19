@@ -39,6 +39,7 @@ import (
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
+		// The table is read-only. Please do not modify it.
 		table, ok := h.getTableByPhysicalID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
@@ -92,7 +93,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (*cache.StatsCache, err
 func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
-		table, ok := cache.GetFromInternal(tblID)
+		table, ok := cache.Get(tblID)
 		if !ok {
 			continue
 		}
@@ -163,7 +164,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
-		table, ok := cache.GetFromInternal(tblID)
+		table, ok := cache.Get(tblID)
+		table = table.Copy()
 		if !ok {
 			continue
 		}
@@ -278,10 +280,11 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *cache.Stat
 func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.GetFromInternal(row.GetInt64(0))
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
+		table = table.Copy()
 		idx, ok := table.Indices[row.GetInt64(1)]
 		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
@@ -325,7 +328,7 @@ func (h *Handle) initStatsTopN(cache *cache.StatsCache) error {
 
 func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.GetFromInternal(row.GetInt64(0))
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -376,10 +379,11 @@ func (h *Handle) initStatsFMSketch(cache *cache.StatsCache) error {
 func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.GetFromInternal(tableID)
+		table, ok := cache.Get(tableID)
 		if !ok {
 			continue
 		}
+		table = table.Copy()
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
 		if isIndex > 0 {

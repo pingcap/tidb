@@ -136,9 +136,9 @@ func (h *BindHandle) Reset(ctx sessionctx.Context) {
 func (h *BindHandle) Update(fullLoad bool) (err error) {
 	h.bindInfo.Lock()
 	lastUpdateTime := h.bindInfo.lastUpdateTime
-	updateTime := lastUpdateTime.String()
-	if fullLoad {
-		updateTime = "0000-00-00 00:00:00"
+	var timeCondition string
+	if !fullLoad {
+		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 
 	exec := h.sctx.Context.(sqlexec.RestrictedSQLExecutor)
@@ -146,8 +146,10 @@ func (h *BindHandle) Update(fullLoad bool) (err error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBindInfo)
 	// No need to acquire the session context lock for ExecRestrictedSQL, it
 	// uses another background session.
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, `SELECT original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source, sql_digest, plan_digest
-	FROM mysql.bind_info WHERE update_time > %? ORDER BY update_time, create_time`, updateTime)
+	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
+       update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
+       %s ORDER BY update_time, create_time`, timeCondition)
+	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, selectStmt)
 
 	if err != nil {
 		h.bindInfo.Unlock()

@@ -547,9 +547,10 @@ type AnalyzeIndexTask struct {
 type Analyze struct {
 	baseSchemaProducer
 
-	ColTasks   []AnalyzeColumnsTask
-	IdxTasks   []AnalyzeIndexTask
-	Opts       map[ast.AnalyzeOptionType]uint64
+	ColTasks []AnalyzeColumnsTask
+	IdxTasks []AnalyzeIndexTask
+	Opts     map[ast.AnalyzeOptionType]uint64
+	// OptionsMap is used to store the options for each partition.
 	OptionsMap map[int64]V2AnalyzeOptions
 }
 
@@ -577,6 +578,7 @@ type LoadData struct {
 
 // LoadDataOpt represents load data option.
 type LoadDataOpt struct {
+	// Name is the name of the option, converted to lower case during parse.
 	Name  string
 	Value expression.Expression
 }

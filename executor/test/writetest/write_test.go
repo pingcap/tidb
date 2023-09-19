@@ -2849,7 +2849,6 @@ func TestWriteListColumnsPartitionTable2(t *testing.T) {
 	tk.MustQuery("select * from t order by id").Check(testkit.Rows())
 }
 
-// TestWriteListColumnsPartitionTable2 test for write list partition when the partition by multi-columns.
 func TestWriteListPartitionTableIssue21437(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

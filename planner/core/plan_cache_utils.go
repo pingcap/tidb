@@ -15,8 +15,10 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"math"
+	"slices"
 	"strconv"
 	"time"
 	"unsafe"
@@ -32,8 +34,8 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/codec"
@@ -44,7 +46,6 @@ import (
 	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/pingcap/tidb/util/size"
 	atomic2 "go.uber.org/atomic"
-	"golang.org/x/exp/slices"
 )
 
 const (
@@ -57,7 +58,7 @@ var (
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 
 	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
+	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error)
 )
 
 type paramMarkerExtractor struct {
@@ -109,8 +110,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	// The parameter markers are appended in visiting order, which may not
 	// be the same as the position order in the query string. We need to
 	// sort it by position.
-	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) bool {
-		return i.(*driver.ParamMarkerExpr).Offset < j.(*driver.ParamMarkerExpr).Offset
+	slices.SortFunc(extractor.markers, func(i, j ast.ParamMarkerExpr) int {
+		return cmp.Compare(i.(*driver.ParamMarkerExpr).Offset, j.(*driver.ParamMarkerExpr).Offset)
 	})
 	paramCount := len(extractor.markers)
 	for i := 0; i < paramCount; i++ {
@@ -137,14 +138,14 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		reason = "plan cache is disabled"
 	} else {
 		if isPrepStmt {
-			cacheable, reason = CacheableWithCtx(sctx, paramStmt, ret.InfoSchema)
+			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
 		} else {
 			cacheable = true // it is already checked here
 		}
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip prepared plan-cache: " + reason))
 		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB, false)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
 			digest4PC = ""
@@ -214,10 +215,11 @@ type planCacheKey struct {
 	isolationReadEngines     map[kv.StoreType]struct{}
 	selectLimit              uint64
 	bindSQL                  string
+	connCollation            string
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
-	ExprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
+	exprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
@@ -247,10 +249,11 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
 		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
+		key.hash = append(key.hash, hack.Slice(key.connCollation)...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
-		key.hash = codec.EncodeInt(key.hash, key.ExprBlacklistTS)
+		key.hash = codec.EncodeInt(key.hash, key.exprBlacklistTS)
 	}
 	return key.hash
 }
@@ -266,7 +269,7 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 	if key.memoryUsage > 0 {
 		return key.memoryUsage
 	}
-	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
+	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)+len(key.connCollation)) +
 		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
 	key.memoryUsage = sum
 	return
@@ -306,6 +309,8 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
+	_, connCollation := sessionVars.GetCharsetInfo()
+
 	key := &planCacheKey{
 		database:                 stmtDB,
 		connID:                   sessionVars.ConnectionID,
@@ -317,10 +322,11 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		isolationReadEngines:     make(map[kv.StoreType]struct{}),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
+		connCollation:            connCollation,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
-		ExprBlacklistTS:          exprBlacklistTS,
+		exprBlacklistTS:          exprBlacklistTS,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v
@@ -337,6 +343,8 @@ type PlanCacheValue struct {
 
 	// matchOpts stores some fields help to choose a suitable plan
 	matchOpts *utilpc.PlanCacheMatchOpts
+	// stmtHints stores the hints which set session variables, because the hints won't be processed using cached plan.
+	stmtHints *stmtctx.StmtHints
 }
 
 // unKnownMemoryUsage represent the memory usage of uncounted structure, maybe need implement later
@@ -383,7 +391,7 @@ func (v *PlanCacheValue) MemoryUsage() (sum int64) {
 
 // NewPlanCacheValue creates a SQLCacheValue.
 func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.TableInfo]bool,
-	matchOpts *utilpc.PlanCacheMatchOpts) *PlanCacheValue {
+	matchOpts *utilpc.PlanCacheMatchOpts, stmtHints *stmtctx.StmtHints) *PlanCacheValue {
 	dstMap := make(map[*model.TableInfo]bool)
 	for k, v := range srcMap {
 		dstMap[k] = v
@@ -397,6 +405,7 @@ func NewPlanCacheValue(plan Plan, names []*types.FieldName, srcMap map[*model.Ta
 		OutPutNames:       names,
 		TblInfo2UnionScan: dstMap,
 		matchOpts:         matchOpts,
+		stmtHints:         stmtHints.Clone(),
 	}
 }
 
@@ -473,24 +482,6 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 	return nil, ErrStmtNotFound
 }
 
-func tableStatsVersionForPlanCache(tStats *statistics.Table) (tableStatsVer uint64) {
-	if tStats == nil {
-		return 0
-	}
-	// use the max version of all columns and indices as the table stats version
-	for _, col := range tStats.Columns {
-		if col.LastUpdateVersion > tableStatsVer {
-			tableStatsVer = col.LastUpdateVersion
-		}
-	}
-	for _, idx := range tStats.Indices {
-		if idx.LastUpdateVersion > tableStatsVer {
-			tableStatsVer = idx.LastUpdateVersion
-		}
-	}
-	return tableStatsVer
-}
-
 // GetMatchOpts get options to fetch plan or generate new plan
 // we can add more options here
 func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanCacheStmt, params []expression.Expression) (*utilpc.PlanCacheMatchOpts, error) {
@@ -503,8 +494,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 			if err != nil { // CTE in this case
 				continue
 			}
-			tStats := getStatsTable(sctx, t.Meta(), t.Meta().ID)
-			statsVerHash += tableStatsVersionForPlanCache(tStats) // use '+' as the hash function for simplicity
+			statsVerHash += getLatestVersionFromStatsTable(sctx, t.Meta(), t.Meta().ID) // use '+' as the hash function for simplicity
 		}
 
 		for _, node := range stmt.QueryFeatures.limits {

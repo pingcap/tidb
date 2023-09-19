@@ -22,7 +22,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cockroachdb/pebble"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -95,7 +94,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange Range
+	keyRange common.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -103,10 +102,10 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	engine          *Engine
+	ingestData      common.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
-	metrics         *metric.Metrics
+	metrics         *metric.Common
 
 	retryCount       int
 	waitUntil        time.Time
@@ -149,8 +148,7 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 			return
 		}
 
-		j.engine.importedKVSize.Add(j.writeResult.totalBytes)
-		j.engine.importedKVCount.Add(j.writeResult.count)
+		j.ingestData.Finish(j.writeResult.totalBytes, j.writeResult.count)
 		if j.metrics != nil {
 			j.metrics.BytesCounter.WithLabelValues(metric.StateImported).
 				Add(float64(j.writeResult.totalBytes))
@@ -191,16 +189,16 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey, lastKey, err := j.engine.getFirstAndLastKey(j.keyRange.start, j.keyRange.end)
+	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.Start, j.keyRange.End)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if firstKey == nil {
 		j.convertStageTo(ingested)
 		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
-			logutil.Key("start", j.keyRange.start),
+			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("regionStart", region.StartKey),
-			logutil.Key("end", j.keyRange.end),
+			logutil.Key("end", j.keyRange.End),
 			logutil.Key("regionEnd", region.EndKey))
 		return nil
 	}
@@ -236,7 +234,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		},
 	}
 	for _, peer := range region.GetPeers() {
@@ -259,7 +257,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
-			CommitTs: j.engine.TS,
+			CommitTs: j.ingestData.GetTS(),
 		},
 	}
 
@@ -300,8 +298,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	opt := &pebble.IterOptions{LowerBound: j.keyRange.start, UpperBound: j.keyRange.end}
-	iter := j.engine.newKVIter(ctx, opt)
+	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End)
 	//nolint: errcheck
 	defer iter.Close()
 
@@ -339,8 +336,8 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
-					logutil.Key("startKey", j.keyRange.start),
-					logutil.Key("endKey", j.keyRange.end),
+					logutil.Key("startKey", j.keyRange.Start),
+					logutil.Key("endKey", j.keyRange.End),
 					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
 					logutil.Leader(j.region.Leader))
@@ -377,6 +374,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we don't forward the stage to wrote and let caller
 	// handle the retry.
 	if len(leaderPeerMetas) == 0 {
@@ -384,8 +386,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 			logutil.Region(region), logutil.Leader(j.region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", totalSize))
-		return errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Id, leaderID)
+		return common.ErrNoLeader.GenWithStackByArgs(region.Id, leaderID)
 	}
 
 	takeTime := time.Since(begin)
@@ -463,15 +464,15 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				zap.Stringer("job stage", j.stage),
 				logutil.ShortError(j.lastRetryableErr),
 				j.region.ToZapFields(),
-				logutil.Key("start", j.keyRange.start),
-				logutil.Key("end", j.keyRange.end))
+				logutil.Key("start", j.keyRange.Start),
+				logutil.Key("end", j.keyRange.End))
 			return nil
 		}
 		log.FromContext(ctx).Warn("meet error and will doIngest region again",
 			logutil.ShortError(j.lastRetryableErr),
 			j.region.ToZapFields(),
-			logutil.Key("start", j.keyRange.start),
-			logutil.Key("end", j.keyRange.end))
+			logutil.Key("start", j.keyRange.Start),
+			logutil.Key("end", j.keyRange.End))
 	}
 	return nil
 }
@@ -569,7 +570,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			ResourceControlContext: &kvrpcpb.ResourceControlContext{
 				ResourceGroupName: local.ResourceGroupName,
 			},
-			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, util.ExplicitTypeLightning),
+			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
 		if supportMultiIngest {

@@ -58,7 +58,14 @@ const (
 	jobStatusFinished  = "finished"
 
 	// when the job is finished, step will be set to none.
-	jobStepNone       = ""
+	jobStepNone = ""
+	// JobStepGlobalSorting is the first step when using global sort,
+	// step goes from none -> global-sorting -> importing -> validating -> none.
+	JobStepGlobalSorting = "global-sorting"
+	// JobStepImporting is the first step when using local sort,
+	// step goes from none -> importing -> validating -> none.
+	// when used in global sort, it means importing the sorted data.
+	// when used in local sort, it means encode&sort data and then importing the data.
 	JobStepImporting  = "importing"
 	JobStepValidating = "validating"
 
@@ -216,14 +223,14 @@ func CreateJob(
 	return rows[0].GetInt64(0), nil
 }
 
-// StartJob tries to start a pending job with jobID, change its status/step to running/importing.
+// StartJob tries to start a pending job with jobID, change its status/step to running/input step.
 // It will not return error when there's no matched job or the job has already started.
-func StartJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) error {
+func StartJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), start_time = CURRENT_TIMESTAMP(6), status = %?, step = %?
 		WHERE id = %? AND status = %?;`,
-		JobStatusRunning, JobStepImporting, jobID, jobStatusPending)
+		JobStatusRunning, step, jobID, jobStatusPending)
 
 	return err
 }

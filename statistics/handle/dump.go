@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -195,16 +196,18 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 	}
 	// dump its global-stats if existed
 	if tbl != nil {
-		jsonTbl.Partitions["global"] = tbl
+		jsonTbl.Partitions[globalstats.TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, fallbackTbls, nil
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error) {
-	h.mu.Lock()
-	isDynamicMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
-	h.mu.Unlock()
+	pruneMode, err := h.GetCurrentPruneMode()
+	if err != nil {
+		return nil, err
+	}
+	isDynamicMode := variable.PartitionPruneMode(pruneMode) == variable.Dynamic
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
@@ -233,7 +236,7 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 		return nil, errors.Trace(err)
 	}
 	if tbl != nil {
-		jsonTbl.Partitions["global"] = tbl
+		jsonTbl.Partitions[globalstats.TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, nil
 }
@@ -396,7 +399,7 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 			}
 		}
 		// load global-stats if existed
-		if globalStats, ok := jsonTbl.Partitions["global"]; ok {
+		if globalStats, ok := jsonTbl.Partitions[globalstats.TiDBGlobalStats]; ok {
 			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
 				return errors.Trace(err)
 			}
@@ -415,7 +418,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -424,7 +427,7 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.StatsVer), 1, false, StatsMetaHistorySourceLoadStats)
+		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), 1, false, StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}

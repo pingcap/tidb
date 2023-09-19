@@ -146,6 +146,7 @@
       "/rules_go_work-*": "ignore generated code",
       "GOROOT/": "ignore code",
       "/parser/": "ignore code",
+      "server/internal/testserverclient/server_client.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
     }
   },
@@ -174,7 +175,7 @@
       ".*_test\\.go$": "ignore test code"
     },
     "only_files": {
-      "statistics/handle": "statistics/handle code",
+      "statistics/": "statistics/ code",
       "util/checksum": "util/checksum code",
       "util/processinfo.go": "util/processinfo.go code",
       "util/cpuprofile/": "util/cpuprofile/ code",
@@ -286,8 +287,9 @@
       "tools/check/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
-      "cmd/explaintest/main.go": "ignore cmd/explaintest code",
+      "tests/integrationtest/main.go": "ignore tests/integrationtest code",
       "GOROOT/": "ignore code",
+      "server/internal/testserverclient/server_client.go": "ignore server_client code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -336,6 +338,7 @@
   },
   "lll": {
     "exclude_files": {
+      ".*_test\\.go$": "ignore test code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
@@ -408,6 +411,7 @@
       "planner/core/": "ignore core code",
       "planner/optimize.go": "ignore optimize code",
       "planner/cascades/": "ignore cascades code",
+      "planner/cardinality/": "ignore cardinality code",
       "planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
       "planner/funcdep/only_full_group_by_test.go": "ignore only_full_group_by code",
       "dumpling/export": "ignore export code",
@@ -444,6 +448,7 @@
       "parser/parser.go": "parser/parser.go code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
+      "$GOROOT/": "ignore GOROOT code",
       ".*_generated\\.go$": "ignore generated code"
     }
   },
@@ -508,12 +513,11 @@
       "types/json_binary_functions.go": "types/json_binary_functions.go",
       "types/json_binary_test.go": "types/json_binary_test.go",
       "ddl/": "ddl",
+      "expression/a": "expression/a code",
+      "expression/builtin.go": "expression/builtin code",
       "expression/builtin_cast.go": "expression/builtin_cast code",
-      "server/conn.go": "server/conn.go",
-      "server/conn_stmt.go": "server/conn_stmt.go",
-      "server/conn_test.go": "server/conn_test.go",
-      "server/internal": "server/internal",
-      "distsql/": "ignore distsql code",
+      "server/": "server/ code",
+      "distsql/": "distsql code",
       "disttask": "disttask code",
       "dumpling/export": "dumpling/export code",
       "lock/": "lock file",
@@ -593,11 +597,37 @@
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
       "util/chunk": "ignore util/chunk",
-      "br/pkg/restore": "ignore br/pkg/restore"
+      "br/pkg/lightning/mydump/": "more than 50",
+      "br/pkg/lightning/importer/": "more than 50",
+      "br/pkg/lightning/backend/local/": "more than 50",
+      "br/pkg/restore/": "more than 50",
+      "ddl/tests/partition/": "more than 50"
     },
     "only_files": {
+      "br/pkg/version/": "br/pkg/version/ coded",
+      "br/pkg/utils/storewatch/": "br/pkg/utils/storewatch/ coded",
+      "br/pkg/utils/iter/": "br/pkg/utils/iter/ coded",
+      "br/pkg/utils/": "br/pkg/utils/ coded",
+      "br/pkg/task/show/": "br/pkg/task/show/ coded",
+      "br/pkg/task/": "br/pkg/task/ coded",
+      "br/pkg/streamhelper/spans/": "br/pkg/streamhelper/spans/ coded",
+      "br/pkg/streamhelper/": "br/pkg/streamhelper/ coded",
+      "br/pkg/stream/": "br/pkg/stream/ coded",
+      "br/pkg/storage/": "br/pkg/storage/ coded",
+      "br/pkg/rtree/": "br/pkg/rtree/ coded",
+      "br/pkg/restore/tiflashrec/": "br/pkg/restore/tiflashrec/ coded",
+      "br/pkg/restore/split/": "br/pkg/restore/split/ coded",
+      "br/pkg/restore/ingestrec/": "br/pkg/restore/ingestrec/ coded",
+      "br/pkg/pdutil/": "br/pkg/pdutil/ coded",
+      "br/pkg/metautil/": "br/pkg/metautil/ coded",
+      "br/pkg/logutil/": "br/pkg/logutil/ coded",
+      "br/pkg/gluetidb/": "br/pkg/gluetidb/ coded",
+      "br/pkg/conn/": "br/pkg/conn/ coded",
+      "br/pkg/checkpoint/": "br/pkg/checkpoint/ coded",
+      "br/pkg/backup/": "br/pkg/backup/ coded",
       "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
       "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "planer/core/casetest/dag": "planer/core/casetest/dag",
       "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
       "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
       "planer/core/casetest/hint": "planer/core/casetest/hint",
@@ -608,6 +638,7 @@
       "planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
       "planer/core/casetest/testdata": "planer/core/casetest/testdata",
       "planer/core/casetest/windows": "planer/core/casetest/windows",
+      "planer/core/tests/": "planer/core/tests/",
       "executor/test/admintest": "executor/test/admintest",
       "executor/test/aggregate": "executor/test/aggregate",
       "executor/test/autoidtest": "executor/test/autoidtest",
@@ -628,6 +659,8 @@
       "executor/test/splittest": "executor/test/splittest",
       "executor/test/tiflashtest": "executor/test/tiflashtest",
       "executor/test/unstabletest": "executor/test/unstabletest",
+      "br/": "br code",
+      "session/test": "session/test code",
       "ddl/tests": "ddl/tests code",
       "disttask/": "disttask code",
       "timer/": "timer code",
@@ -683,11 +716,17 @@
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
       "server/tidb_test.go": "ignore test code",
+      "server/tests/tidb_test.go": "ignore test code",
+      "server/tests/tidb_serial_test.go": "ignore test code",
       "server/tidb_serial_test.go": "ignore test code",
       "server/statistics_handler_test.go": "ignore test code",
+      "server/handler/optimizor/optimize_trace_test.go": "ignore test code",
+      "server/handler/optimizor/plan_replayer_test.go": "ignore test code",
+      "server/handler/optimizor/statistics_handler_test.go": "ignore test code",
       "server/server_test.go": "ignore test code",
       "server/optimize_trace_test.go": "ignore test code",
-      "server/plan_replayer_test.go": "ignore test code"
+      "server/plan_replayer_test.go": "ignore test code",
+      "server/internal/testserverclient/server_client.go": "ignore test code"
     }
   },
   "S1000": {
@@ -1223,6 +1262,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1230,6 +1270,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1237,6 +1278,7 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
+      ".*_generated\\.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1245,6 +1287,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
@@ -1253,6 +1296,7 @@
       "parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   }

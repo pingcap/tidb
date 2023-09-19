@@ -57,4 +57,6 @@ const (
 	DistTask
 	// CheckTable is for admin check table component.
 	CheckTable
+	// ImportInto is for import into component.
+	ImportInto
 )

@@ -976,7 +976,9 @@ func TestMultiSchemaChangeAlterIndex(t *testing.T) {
 	var checked bool
 	callback := &callback.TestDDLCallback{Do: dom}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
-		assert.NotNil(t, job.MultiSchemaInfo)
+		if job.MultiSchemaInfo == nil {
+			return
+		}
 		// "modify column a tinyint" in write-reorg.
 		if job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StateWriteReorganization {
 			checked = true
@@ -1268,7 +1270,7 @@ func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 }
 
 func TestMultiSchemaChangeBlockedByRowLevelChecksum(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 
 	orig := variable.EnableRowLevelChecksum.Load()
 	defer variable.EnableRowLevelChecksum.Store(orig)

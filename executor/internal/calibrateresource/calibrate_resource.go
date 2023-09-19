@@ -119,14 +119,12 @@ const (
 	// lowUsageThreshold is the threshold used to determine whether the CPU is too low.
 	// When the CPU utilization of tikv or tidb is lower than lowUsageThreshold, but neither is higher than valuableUsageThreshold, the sampling point is unavailable
 	lowUsageThreshold = 0.1
-	// calibration is performed only when the available time point exceeds the percentOfPass
-	percentOfPass = 0.9
 	// For quotas computed at each point in time, the maximum and minimum portions are discarded, and discardRate is the percentage discarded
 	discardRate = 0.1
 
 	// duration Indicates the supported calibration duration
 	maxDuration = time.Hour * 24
-	minDuration = time.Minute * 10
+	minDuration = time.Minute
 )
 
 // Executor is used as executor of calibrate resource.
@@ -372,6 +370,24 @@ func (e *Executor) getTiDBQuota(ctx context.Context, exec sqlexec.RestrictedSQLE
 	return quota, nil
 }
 
+func (e *Executor) setupQuotas(quotas []float64, lowCount int) (float64, error) {
+	if len(quotas) < 2 {
+		return 0, errLowUsage
+	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
+		return 0, errLowUsage
+	}
+	sort.Slice(quotas, func(i, j int) bool {
+		return quotas[i] > quotas[j]
+	})
+	lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
+	upperBound := len(quotas) - lowerBound
+	sum := 0.
+	for i := lowerBound; i < upperBound; i++ {
+		sum += quotas[i]
+	}
+	return sum / float64(upperBound-lowerBound), nil
+}
+
 func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTs time.Time, endTs time.Time) (float64, error) {
 	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
@@ -390,24 +406,6 @@ func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedS
 	return 0, errors.New("cannot get tiflash quota because there is no tiflash store")
 }
 
-func (e *Executor) setupQuotas(quotas []float64, lowCount int) (float64, error) {
-	if len(quotas) < 5 {
-		return 0, errors.Trace(errLowUsage)
-	}
-	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
-		return 0, errors.Trace(errLowUsage)
-	}
-	sort.Slice(quotas, func(i, j int) bool {
-		return quotas[i] > quotas[j]
-	})
-	lowerBound := int(math.Round(float64(len(quotas)) * discardRate))
-	upperBound := len(quotas) - lowerBound
-	sum := 0.
-	for i := lowerBound; i < upperBound; i++ {
-		sum += quotas[i]
-	}
-	return sum / float64(upperBound-lowerBound), nil
-}
 
 func (e *Executor) getTiFlashQuotas(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime string, endTime string) ([]float64, int, error) {
 	lowCount := 0

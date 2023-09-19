@@ -48,7 +48,7 @@ func NewMapCache() *MapCache {
 }
 
 // Get implements StatsCacheInner
-func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
+func (m *MapCache) Get(k int64) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
 }
@@ -128,11 +128,6 @@ func (m *MapCache) Copy() internal.StatsCacheInner {
 
 // SetCapacity implements StatsCacheInner
 func (*MapCache) SetCapacity(int64) {}
-
-// Front implements StatsCacheInner
-func (*MapCache) Front() int64 {
-	return 0
-}
 
 // Close implements StatsCacheInner
 func (*MapCache) Close() {}

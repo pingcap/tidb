@@ -112,21 +112,13 @@ type Context interface {
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
 
-	// RefreshVars refreshes modified global variable to current session.
-	// only used to daemon session like `statsHandle` to detect global variable change.
-	RefreshVars(context.Context) error
-
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 
 	// GetSessionPlanCache returns the session-level cache of the physical plan.
 	GetSessionPlanCache() PlanCache
 
-	// StoreQueryFeedback stores the query feedback.
-	StoreQueryFeedback(feedback interface{})
-
 	// UpdateColStatsUsage updates the column stats usage.
-	// TODO: maybe we can use a method called GetSessionStatsCollector to replace both StoreQueryFeedback and UpdateColStatsUsage but we need to deal with import circle if we do so.
 	UpdateColStatsUsage(predicateColumns []model.TableItemID)
 
 	// HasDirtyContent checks whether there's dirty update on the given table.

@@ -102,6 +102,7 @@ func TestImportIntoOptionsNegativeCase(t *testing.T) {
 		{OptionStr: "skip_rows=true", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: "split_file='aa'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: "split_file, skip_rows=2", Err: exeerrors.ErrInvalidOptionVal},
 
 		{OptionStr: "disk_quota='aa'", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: "disk_quota='220MiBxxx'", Err: exeerrors.ErrInvalidOptionVal},
@@ -131,6 +132,11 @@ func TestImportIntoOptionsNegativeCase(t *testing.T) {
 		{OptionStr: "record_errors=-123", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: "record_errors=null", Err: exeerrors.ErrInvalidOptionVal},
 		{OptionStr: "record_errors=true", Err: exeerrors.ErrInvalidOptionVal},
+
+		{OptionStr: "cloud_storage_uri=123", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: "cloud_storage_uri=':'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: "cloud_storage_uri='sdsd'", Err: exeerrors.ErrInvalidOptionVal},
+		{OptionStr: "cloud_storage_uri='http://sdsd'", Err: exeerrors.ErrInvalidOptionVal},
 	}
 
 	sqlTemplate := "import into t from '/file.csv' with %s"
