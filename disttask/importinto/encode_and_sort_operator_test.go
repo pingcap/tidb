@@ -24,8 +24,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/disttask/importinto/mock"
 	"github.com/pingcap/tidb/disttask/operator"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -54,15 +56,32 @@ func TestEncodeAndSortOperator(t *testing.T) {
 		return executor
 	}
 
+	executorForParam := &importStepExecutor{
+		taskID: 1,
+		taskMeta: &TaskMeta{
+			Plan: importer.Plan{
+				ThreadCnt: 2,
+			},
+		},
+		tableImporter: &importer.TableImporter{
+			LoadDataController: &importer.LoadDataController{
+				Plan: &importer.Plan{
+					CloudStorageURI: "",
+				},
+			},
+		},
+		logger: logger,
+	}
+
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), 3, logger)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
 
 	// cancel on error
 	mockErr := errors.New("mock err")
-	executor.EXPECT().Run(gomock.Any()).Return(mockErr)
+	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
 		return op.hasError()
@@ -75,7 +94,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), 2, logger)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -89,20 +108,22 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// wait until 2 executor start running, else workerpool will be cancelled.
-	executor1.EXPECT().Run(gomock.Any()).DoAndReturn(func(context.Context) error {
-		wg.Done()
-		wg.Wait()
-		return mockErr2
-	})
-	executor2.EXPECT().Run(gomock.Any()).DoAndReturn(func(context.Context) error {
-		wg.Done()
-		wg.Wait()
-		// wait error in executor1 has been processed
-		require.Eventually(t, func() bool {
-			return op.hasError()
-		}, 3*time.Second, 300*time.Millisecond)
-		return errors.New("mock error should be logged")
-	})
+	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+			wg.Done()
+			wg.Wait()
+			return mockErr2
+		})
+	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+			wg.Done()
+			wg.Wait()
+			// wait error in executor1 has been processed
+			require.Eventually(t, func() bool {
+				return op.hasError()
+			}, 3*time.Second, 300*time.Millisecond)
+			return errors.New("mock error should be logged")
+		})
 	require.NoError(t, op.Open())
 	// send 2 tasks
 	source.Channel() <- &importStepMinimalTask{}

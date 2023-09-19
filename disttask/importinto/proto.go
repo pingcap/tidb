@@ -19,6 +19,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -29,12 +30,18 @@ import (
 
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
 // the initial step is StepInit(-1)
-// steps are processed in the following order: StepInit -> StepImport -> StepPostProcess
+// steps are processed in the following order:
+// - local sort: StepInit -> StepImport -> StepPostProcess -> StepDone
+// - global sort: StepInit -> StepEncodeAndSort -> StepWriteAndIngest -> StepPostProcess -> StepDone
 const (
 	// StepImport we sort source data and ingest it into TiKV in this step.
 	StepImport int64 = 1
 	// StepPostProcess we verify checksum and add index in this step.
 	StepPostProcess int64 = 2
+	// StepEncodeAndSort encode source data and write sorted kv into global storage.
+	StepEncodeAndSort int64 = 3
+	// StepWriteAndIngest write sorted kv into TiKV and ingest it.
+	StepWriteAndIngest int64 = 4
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -69,6 +76,24 @@ type ImportStepMeta struct {
 	// the max id is same among all allocator types for now, since we're using same base, see
 	// NewPanickingAllocators for more info.
 	MaxIDs map[autoid.AllocatorType]int64
+
+	SortedDataMeta *external.SortedKVMeta
+	// SortedIndexMetas is a map from index id to its sorted kv meta.
+	SortedIndexMetas map[int64]*external.SortedKVMeta
+}
+
+const (
+	dataKVGroup = "data"
+)
+
+// WriteIngestStepMeta is the meta of write and ingest step.
+// only used when global sort is enabled.
+type WriteIngestStepMeta struct {
+	KVGroup               string `json:"kv_group"`
+	external.SortedKVMeta `json:",inline"`
+	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+
+	Result Result
 }
 
 // PostProcessStepMeta is the meta of post process step.
@@ -79,7 +104,7 @@ type PostProcessStepMeta struct {
 	MaxIDs map[autoid.AllocatorType]int64
 }
 
-// SharedVars is the shared variables between subtask and minimal tasks.
+// SharedVars is the shared variables of all minimal tasks in a subtask.
 // This is because subtasks cannot directly obtain the results of the minimal subtask.
 // All the fields should be concurrent safe.
 type SharedVars struct {
@@ -90,6 +115,28 @@ type SharedVars struct {
 
 	mu       sync.Mutex
 	Checksum *verification.KVChecksum
+
+	SortedDataMeta *external.SortedKVMeta
+	// SortedIndexMetas is a map from index id to its sorted kv meta.
+	SortedIndexMetas map[int64]*external.SortedKVMeta
+}
+
+func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	sv.SortedDataMeta.MergeSummary(summary)
+}
+
+func (sv *SharedVars) mergeIndexSummary(indexID int64, summary *external.WriterSummary) {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	meta, ok := sv.SortedIndexMetas[indexID]
+	if !ok {
+		meta = external.NewSortedKVMeta(summary)
+		sv.SortedIndexMetas[indexID] = meta
+		return
+	}
+	meta.MergeSummary(summary)
 }
 
 // importStepMinimalTask is the minimal task of IMPORT INTO.

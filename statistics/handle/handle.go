@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
@@ -95,11 +94,6 @@ type Handle struct {
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
 
-	mu struct {
-		ctx sessionctx.Context
-		syncutil.RWMutex
-	}
-
 	schemaMu struct {
 		// pid2tid is the map from partition ID to table ID.
 		pid2tid map[int64]int64
@@ -131,11 +125,15 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 
 func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, analyzeSnapshot bool, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	pruneMode, err := h.GetCurrentPruneMode()
+	if err != nil {
+		return nil, nil, err
+	}
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		optFuncs := []sqlexec.OptionFuncAlias{
 			execOptionForAnalyze[statsVer],
 			sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
-			sqlexec.GetPartitionPruneModeOption(string(h.CurrentPruneMode())),
+			sqlexec.GetPartitionPruneModeOption(pruneMode),
 			sqlexec.ExecOptionUseCurSession,
 			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
 		}
@@ -156,26 +154,18 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
-	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
-	h.mu.Lock()
 	cache, err := cache.NewStatsCache()
 	if err != nil {
 		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
-		h.mu.Unlock()
 		return
 	}
 	h.statsCache.Replace(cache)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.mu.ctx.GetSessionVars().InitChunkSize = 1
-	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
-	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
-	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead.ClearForTest()
 	h.tableDelta.reset()
 	h.statsUsage.reset()
-	h.mu.Unlock()
 }
 
 type sessionPool interface {
@@ -184,7 +174,7 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
+func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 	gpool := gp.New(math.MaxInt16, time.Minute)
 	handle := &Handle{
@@ -199,7 +189,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	handle.mu.ctx = ctx
 	statsCache, err := cache.NewStatsCachePointer()
 	if err != nil {
 		return nil, err
@@ -211,10 +200,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
-	err = handle.RefreshVars()
-	if err != nil {
-		return nil, err
-	}
 	return handle, nil
 }
 
@@ -320,13 +305,6 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
-// UpdateSessionVar updates the necessary session variables for the stats reader.
-func (h *Handle) UpdateSessionVar() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return UpdateSCtxVarsForStats(h.mu.ctx)
-}
-
 // UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
 func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	// analyzer version
@@ -378,10 +356,14 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
+	sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
-	physicalID int64, isIndex int, histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+	physicalID int64,
+	isIndex bool,
+	histIDs []int64,
+	tablePartitionStats map[int64]*statistics.Table,
+) (globalStats *globalstats.GlobalStats, err error) {
 	return h.globalstatushandler.MergePartitionStats2GlobalStatsByTableID(sc, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
@@ -401,10 +383,21 @@ func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDe
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
-	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
-	isIndex int, histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+func (h *Handle) mergePartitionStats2GlobalStats(
+	opts map[ast.AnalyzeOptionType]uint64,
+	is infoschema.InfoSchema,
+	globalTableInfo *model.TableInfo,
+	isIndex bool,
+	histIDs []int64,
+	allPartitionStats map[int64]*statistics.Table,
+) (globalStats *globalstats.GlobalStats, err error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer h.pool.Put(se)
+	sc := se.(sessionctx.Context)
+
 	if err := UpdateSCtxVarsForStats(sc); err != nil {
 		return nil, err
 	}
@@ -1157,20 +1150,17 @@ func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, snapshot uint64) (
 }
 
 func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *statistics.StatsReader, err error) {
-	h.mu.Lock()
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("getGlobalStatsReader panic %v", r)
-		}
-		if err != nil {
-			h.mu.Unlock()
-		}
-	}()
-	return statistics.GetStatsReader(snapshot, h.mu.ctx.(sqlexec.RestrictedSQLExecutor))
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return statistics.GetStatsReader(snapshot, exec, func() {
+		h.pool.Put(se)
+	})
 }
 
-func (h *Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
-	defer h.mu.Unlock()
+func (*Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
 	return reader.Close()
 }
 
@@ -1423,9 +1413,16 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 		item.ScalarVals = 0
 		return item
 	}
-	h.mu.Lock()
-	sc := h.mu.ctx.GetSessionVars().StmtCtx
-	h.mu.Unlock()
+
+	se, seErr := h.pool.Get()
+	if seErr != nil {
+		logutil.BgLogger().Error("fail to get session", zap.String("category", "stats"), zap.Error(seErr))
+		return nil
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	sc := sctx.GetSessionVars().StmtCtx
+
 	var err error
 	samplesX, err = statistics.SortSampleItems(sc, samplesX)
 	if err != nil {
@@ -1521,18 +1518,6 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		statsVer = version
 	}
 	return nil
-}
-
-// CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
-func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
-	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
-}
-
-// RefreshVars uses to pull PartitionPruneMethod vars from kv storage.
-func (h *Handle) RefreshVars() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return UpdateSCtxVarsForStats(h.mu.ctx)
 }
 
 // CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
@@ -1737,12 +1722,16 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if err := UpdateSCtxVarsForStats(h.mu.ctx); err != nil {
+	se, err := h.pool.Get()
+	if err != nil {
 		return false, err
 	}
-	return h.mu.ctx.GetSessionVars().EnableHistoricalStats, nil
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		return false, err
+	}
+	return sctx.GetSessionVars().EnableHistoricalStats, nil
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

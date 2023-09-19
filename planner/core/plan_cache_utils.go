@@ -215,10 +215,11 @@ type planCacheKey struct {
 	isolationReadEngines     map[kv.StoreType]struct{}
 	selectLimit              uint64
 	bindSQL                  string
+	connCollation            string
 	inRestrictedSQL          bool
 	restrictedReadOnly       bool
 	TiDBSuperReadOnly        bool
-	ExprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
+	exprBlacklistTS          int64 // expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 
 	memoryUsage int64 // Do not include in hash
 	hash        []byte
@@ -248,10 +249,11 @@ func (key *planCacheKey) Hash() []byte {
 		}
 		key.hash = codec.EncodeInt(key.hash, int64(key.selectLimit))
 		key.hash = append(key.hash, hack.Slice(key.bindSQL)...)
+		key.hash = append(key.hash, hack.Slice(key.connCollation)...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.inRestrictedSQL))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.restrictedReadOnly))...)
 		key.hash = append(key.hash, hack.Slice(strconv.FormatBool(key.TiDBSuperReadOnly))...)
-		key.hash = codec.EncodeInt(key.hash, key.ExprBlacklistTS)
+		key.hash = codec.EncodeInt(key.hash, key.exprBlacklistTS)
 	}
 	return key.hash
 }
@@ -267,7 +269,7 @@ func (key *planCacheKey) MemoryUsage() (sum int64) {
 	if key.memoryUsage > 0 {
 		return key.memoryUsage
 	}
-	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)) +
+	sum = emptyPlanCacheKeySize + int64(len(key.database)+len(key.stmtText)+len(key.bindSQL)+len(key.connCollation)) +
 		int64(len(key.isolationReadEngines))*size.SizeOfUint8 + int64(cap(key.hash))
 	key.memoryUsage = sum
 	return
@@ -307,6 +309,8 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 	if sessionVars.TimeZone != nil {
 		_, timezoneOffset = time.Now().In(sessionVars.TimeZone).Zone()
 	}
+	_, connCollation := sessionVars.GetCharsetInfo()
+
 	key := &planCacheKey{
 		database:                 stmtDB,
 		connID:                   sessionVars.ConnectionID,
@@ -318,10 +322,11 @@ func NewPlanCacheKey(sessionVars *variable.SessionVars, stmtText, stmtDB string,
 		isolationReadEngines:     make(map[kv.StoreType]struct{}),
 		selectLimit:              sessionVars.SelectLimit,
 		bindSQL:                  bindSQL,
+		connCollation:            connCollation,
 		inRestrictedSQL:          sessionVars.InRestrictedSQL,
 		restrictedReadOnly:       variable.RestrictedReadOnly.Load(),
 		TiDBSuperReadOnly:        variable.VarTiDBSuperReadOnly.Load(),
-		ExprBlacklistTS:          exprBlacklistTS,
+		exprBlacklistTS:          exprBlacklistTS,
 	}
 	for k, v := range sessionVars.IsolationReadEngines {
 		key.isolationReadEngines[k] = v

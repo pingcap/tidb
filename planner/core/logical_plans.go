@@ -2034,6 +2034,8 @@ type FrameBound struct {
 	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
 	// and plus or minus for frames like `1 preceding`.
 	CalcFuncs []expression.Expression
+	// Sometimes we need to cast order by column to a specific type when frame type is range
+	CompareCols []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
 	// This field is used for passing information to tiflash
@@ -2052,6 +2054,44 @@ func (fb *FrameBound) Clone() *FrameBound {
 	cloned.CmpFuncs = fb.CmpFuncs
 
 	return cloned
+}
+
+// InitCompareCols will init CompareCols
+func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
+	if len(fb.CalcFuncs) > 0 {
+		fb.CompareCols = make([]expression.Expression, len(orderByCols))
+		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
+			var err error
+			fb.CompareCols[0], err = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+			if err != nil {
+				return err
+			}
+
+			// As compare column has been converted, compare function should also be changed
+			cmpDataType := expression.GetAccurateCmpType(fb.CompareCols[0], fb.CalcFuncs[0])
+			switch cmpDataType {
+			case types.ETInt:
+				fb.CmpFuncs[0] = expression.CompareInt
+				fb.CmpDataType = tipb.RangeCmpDataType_Int
+			case types.ETDatetime, types.ETTimestamp:
+				fb.CmpFuncs[0] = expression.CompareTime
+				fb.CmpDataType = tipb.RangeCmpDataType_DateTime
+			case types.ETReal:
+				fb.CmpFuncs[0] = expression.CompareReal
+				fb.CmpDataType = tipb.RangeCmpDataType_Float
+			case types.ETDecimal:
+				fb.CmpFuncs[0] = expression.CompareDecimal
+				fb.CmpDataType = tipb.RangeCmpDataType_Decimal
+			default:
+				return expression.ErrIncorrectType.GenWithStackByArgs("Invalid comparison data type for range frame")
+			}
+		} else {
+			for i, col := range orderByCols {
+				fb.CompareCols[i] = col
+			}
+		}
+	}
+	return nil
 }
 
 // LogicalWindow represents a logical window function plan.

@@ -239,3 +239,71 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 	}
 	return maxWeight
 }
+
+// SortedKVMeta is the meta of sorted kv.
+type SortedKVMeta struct {
+	MinKey      []byte   `json:"min_key"`
+	MaxKey      []byte   `json:"max_key"`
+	TotalKVSize uint64   `json:"total_kv_size"`
+	DataFiles   []string `json:"data_files"`
+	StatFiles   []string `json:"stat_files"`
+}
+
+// NewSortedKVMeta creates a SortedKVMeta from a WriterSummary.
+func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
+	meta := &SortedKVMeta{
+		MinKey:      summary.Min.Clone(),
+		MaxKey:      summary.Max.Clone(),
+		TotalKVSize: summary.TotalSize,
+	}
+	for _, f := range summary.MultipleFilesStats {
+		for _, filename := range f.Filenames {
+			meta.DataFiles = append(meta.DataFiles, filename[0])
+			meta.StatFiles = append(meta.StatFiles, filename[1])
+		}
+	}
+	return meta
+}
+
+// Merge merges the other SortedKVMeta into this one.
+func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
+	m.MinKey = NotNilMin(m.MinKey, other.MinKey)
+	m.MaxKey = NotNilMax(m.MaxKey, other.MaxKey)
+	m.TotalKVSize += other.TotalKVSize
+
+	m.DataFiles = append(m.DataFiles, other.DataFiles...)
+	m.StatFiles = append(m.StatFiles, other.StatFiles...)
+}
+
+// MergeSummary merges the WriterSummary into this SortedKVMeta.
+func (m *SortedKVMeta) MergeSummary(summary *WriterSummary) {
+	m.Merge(NewSortedKVMeta(summary))
+}
+
+// NotNilMin returns the smallest of a and b, ignoring nil values.
+func NotNilMin(a, b []byte) []byte {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	if bytes.Compare(a, b) < 0 {
+		return a
+	}
+	return b
+}
+
+// NotNilMax returns the largest of a and b, ignoring nil values.
+func NotNilMax(a, b []byte) []byte {
+	if len(a) == 0 {
+		return b
+	}
+	if len(b) == 0 {
+		return a
+	}
+	if bytes.Compare(a, b) > 0 {
+		return a
+	}
+	return b
+}

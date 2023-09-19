@@ -4933,6 +4933,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		resultColIdx++
 	}
 
+	var err error
 	if b.ctx.GetSessionVars().EnablePipelinedWindowExec {
 		exec := &PipelinedWindowExec{
 			BaseExecutor:   base,
@@ -4962,6 +4963,14 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 				exec.orderByCols = orderByCols
 				exec.expectedCmpResult = cmpResult
 				exec.isRangeFrame = true
+				err = exec.start.InitCompareCols(b.ctx, exec.orderByCols)
+				if err != nil {
+					return nil
+				}
+				err = exec.end.InitCompareCols(b.ctx, exec.orderByCols)
+				if err != nil {
+					return nil
+				}
 			}
 		}
 		return exec
@@ -4984,7 +4993,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		if len(v.OrderBy) > 0 && v.OrderBy[0].Desc {
 			cmpResult = 1
 		}
-		processor = &rangeFrameWindowProcessor{
+		tmpProcessor := &rangeFrameWindowProcessor{
 			windowFuncs:       windowFuncs,
 			partialResults:    partialResults,
 			start:             v.Frame.Start,
@@ -4992,6 +5001,17 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 			orderByCols:       orderByCols,
 			expectedCmpResult: cmpResult,
 		}
+
+		err = tmpProcessor.start.InitCompareCols(b.ctx, orderByCols)
+		if err != nil {
+			return nil
+		}
+		tmpProcessor.end.InitCompareCols(b.ctx, orderByCols)
+		if err != nil {
+			return nil
+		}
+
+		processor = tmpProcessor
 	}
 	return &WindowExec{BaseExecutor: base,
 		processor:      processor,
