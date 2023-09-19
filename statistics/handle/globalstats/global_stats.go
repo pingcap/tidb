@@ -260,6 +260,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 		if globalStatsNDV > globalStats.Count {
 			globalStatsNDV = globalStats.Count
 		}
+		globalStats.Fms[i].DestroyAndPutToPool()
 		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	if !externalCache {
