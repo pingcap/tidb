@@ -574,6 +574,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							break
 						}
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
+						// for ordeByItems, treat it like agg func's args, if it can be substituted by underlying projection's expression recording them temporarily.
 						if len(aggFunc.OrderByItems) != 0 {
 							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
 							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
