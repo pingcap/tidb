@@ -1083,10 +1083,46 @@ type FrameBound struct {
 	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
 	// and plus or minus for frames like `1 preceding`.
 	CalcFuncs []expression.Expression
+	// Sometimes we need to cast order by column to a specific type when frame type is range
+	CompareCols []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
 }
 
+<<<<<<< HEAD
+=======
+// Clone copies a frame bound totally.
+func (fb *FrameBound) Clone() *FrameBound {
+	cloned := new(FrameBound)
+	*cloned = *fb
+
+	cloned.CalcFuncs = make([]expression.Expression, 0, len(fb.CalcFuncs))
+	for _, it := range fb.CalcFuncs {
+		cloned.CalcFuncs = append(cloned.CalcFuncs, it.Clone())
+	}
+	cloned.CmpFuncs = fb.CmpFuncs
+
+	return cloned
+}
+
+// InitCompareCols will init CompareCols
+func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) {
+	if len(fb.CalcFuncs) > 0 {
+		fb.CompareCols = make([]expression.Expression, len(orderByCols))
+		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
+			fb.CompareCols[0], _ = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+
+			// As compare column has been converted, compare function should also be changed
+			fb.CmpFuncs[0] = expression.GetCmpFunction(ctx, fb.CompareCols[0], fb.CalcFuncs[0])
+		} else {
+			for i, col := range orderByCols {
+				fb.CompareCols[i] = col
+			}
+		}
+	}
+}
+
+>>>>>>> b3ec110e187 (executor: fix the error that is raised when executing the window function with range type frame (#46927))
 // LogicalWindow represents a logical window function plan.
 type LogicalWindow struct {
 	logicalSchemaProducer
