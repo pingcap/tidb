@@ -41,8 +41,8 @@ func TestPopulatePartitionIDAndNames(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), gotTID)
 	require.Equal(t, map[int64]string{
-		2: "test.t1 partition (p1)",
-		3: "test.t1 partition (p2)",
+		2: "p1",
+		3: "p2",
 	}, gotPIDNames)
 
 	// Empty partition names.
