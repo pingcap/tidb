@@ -501,7 +501,7 @@ func cleanupCloudStorageFiles(ctx context.Context, gTaskMeta *BackfillGlobalMeta
 	}
 	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
 	if err != nil {
-		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
 		return
 	}
 	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
