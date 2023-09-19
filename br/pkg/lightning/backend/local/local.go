@@ -1110,8 +1110,7 @@ func (local *local) WriteToTiKV(
 		log.FromContext(ctx).Warn("write to tikv no leader", logutil.Region(region.Region), logutil.Leader(region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
-		return nil, Range{}, stats, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Region.Id, leaderID)
+		return nil, Range{}, stats, common.ErrNoLeader.GenWithStackByArgs(region.Region.Id, leaderID)
 	}
 
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
