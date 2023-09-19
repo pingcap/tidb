@@ -278,27 +278,29 @@ select * from tb5;
 drop table tb5;
 create table tb5(a double, b float);
 insert into tb5 (a, b) values (184467440737095516160, 184467440737095516160);
+--enable_warnings
 select * from tb5 where cast(a as unsigned int)=0;
-show warnings;
 select * from tb5 where cast(b as unsigned int)=0;
-show warnings;
+--disable_warnings
 drop table tb5;
 create table tb5(a double, b bigint unsigned);
 insert into tb5 (a, b) values (18446744073709551616, 18446744073709551615);
+--enable_warnings
 select * from tb5 where cast(a as unsigned int)=b;
-show warnings;
+--disable_warnings
 drop table tb5;
 create table tb5(a json, b bigint unsigned);
 insert into tb5 (a, b) values ('184467440737095516160', 18446744073709551615);
+--enable_warnings
 select * from tb5 where cast(a as unsigned int)=b;
-show warnings;
 select * from tb5 where cast(b as unsigned int)=0;
-show warnings;
+--disable_warnings
 drop table tb5;
 create table tb5(a json, b bigint unsigned);
 insert into tb5 (a, b) values ('92233720368547758080', 18446744073709551615);
+--enable_warnings
 select * from tb5 where cast(a as signed int)=b;
-show warnings;
+--disable_warnings
 drop table tb5;
 create table tb5(a bigint(64) unsigned,b varchar(50));
 insert into tb5(a, b) values (9223372036854775808, '9223372036854775808');
@@ -319,32 +321,31 @@ select cast("170102034" as datetime);
 select cast("1701020304" as datetime);
 select cast("1701020304." as datetime);
 select cast("1701020304.1" as datetime);
+--enable_warnings
 select cast("1701020304.111" as datetime);
-show warnings;
+--disable_warnings
 select cast("17011" as datetime);
 select cast("150101." as datetime);
+--enable_warnings
 select cast("150101.a" as datetime);
-show warnings;
 select cast("150101.1a" as datetime);
-show warnings;
 select cast("150101.1a1" as datetime);
-show warnings;
 select cast("1101010101.111" as datetime);
-show warnings;
 select cast("1101010101.11aaaaa" as datetime);
-show warnings;
 select cast("1101010101.a1aaaaa" as datetime);
-show warnings;
+--disable_warnings
 select cast("1101010101.11" as datetime);
 select @@warning_count;
+--enable_warnings
 select cast("1101010101.111" as datetime);
-show warnings;
+--disable_warnings
 select cast("970101.111" as datetime);
 select @@warning_count;
 select cast("970101.11111" as datetime);
 select @@warning_count;
+--enable_warnings
 select cast("970101.111a1" as datetime);
-show warnings;
+--disable_warnings
 drop table if exists t;
 create table t (a int, b int, c int, d char(10), e datetime, f float, g decimal(10, 3));
 insert t values (1, 0, null, null, null, null, null);
@@ -355,61 +356,56 @@ select cast('-34 100:00:00' as time);
 DROP TABLE IF EXISTS t;
 CREATE TABLE t (ix TIME);
 SET SQL_MODE='';
+--enable_warnings
 select cast('10009010' as time);
-show warnings;
 insert into t select cast('10009010' as time);
-show warnings;
 select cast('239010' as time);
-show warnings;
 insert into t select cast('239010' as time);
-show warnings;
 select cast('233070' as time);
-show warnings;
 insert into t select cast('233070' as time);
-show warnings;
 select cast('23:90:10' as time);
-show warnings;
 insert into t select cast('23:90:10' as time);
-show warnings;
 select cast('23:30:70' as time);
-show warnings;
 insert into t select cast('23:30:70' as time);
-show warnings;
 select cast('239010.2' as time);
-show warnings;
 insert into t select cast('239010.2' as time);
-show warnings;
 select cast('233070.8' as time);
-show warnings;
 insert into t select cast('233070.8' as time);
-show warnings;
+--disable_warnings
 set sql_mode = 'STRICT_TRANS_TABLES';
+--enable_warnings
 select cast('10009010' as time);
-show warnings;
+--disable_warnings
 -- error 1292
 insert into t select cast('10009010' as time);
+--enable_warnings
 select cast('239010' as time);
-show warnings;
+--disable_warnings
 -- error 1292
 insert into t select cast('239010' as time);
+--enable_warnings
 select cast('233070' as time);
-show warnings;
+--disable_warnings
 -- error 1292
 insert into t select cast('233070' as time);
+--enable_warnings
 select cast('23:90:10' as time);
-show warnings;
+--disable_warnings
 -- error 1292
 insert into t select cast('23:90:10' as time);
+--enable_warnings
 select cast('23:30:70' as time);
-show warnings;
+--disable_warnings
 -- error 1292
 insert into t select cast('23:30:70' as time);
+--enable_warnings
 select cast('239010.2' as time);
-show warnings;
+--disable_warnings
 -- error 1292
 insert into t select cast('239010.2' as time);
+--enable_warnings
 select cast('233070.8' as time);
-show warnings;
+--disable_warnings
 -- error 1292
 insert into t select cast('233070.8' as time);
 select cast('18446744073709551616' as unsigned);
@@ -570,42 +566,29 @@ create table t1(c1 int not null);
 insert into t1 values(1);
 select (case when null then c1 end) is null from t1;
 select (case when null then c1 end) is not null from t1;
+--enable_warnings
 select case when b=0 then 1 else 1/b end from t;
-show warnings;
 select if(b=0, 1, 1/b) from t;
-show warnings;
 select ifnull(b, b/0) from t;
-show warnings;
 select case when 1 then 1 else 1/0 end;
-show warnings;
 select if(1,1,1/0);
-show warnings;
 select ifnull(1, 1/0);
-show warnings;
+--disable_warnings
 delete from t;
 insert t values ('str2', 0);
+--enable_warnings
 select case when b < 1 then 1 else 1/0 end from t;
-show warnings;
 select case when b < 1 then 1 when 1/0 then b else 1/0 end from t;
-show warnings;
 select if(b < 1 , 1, 1/0) from t;
-show warnings;
 select ifnull(b, 1/0) from t;
-show warnings;
 select COALESCE(1, b, b/0) from t;
-show warnings;
 select 0 and b/0 from t;
-show warnings;
 select 1 or b/0 from t;
-show warnings;
 select 1 or 1/0;
-show warnings;
 select 0 and 1/0;
-show warnings;
 select COALESCE(1, 1/0);
-show warnings;
 select interval(1,0,1,2,1/0);
-show warnings;
+--disable_warnings
 select case 2.0 when 2.0 then 3.0 when 3.0 then 2.0 end;
 select case 2.0 when 3.0 then 2.0 when 4.0 then 3.0 else 5.0 end;
 select case cast('2011-01-01' as date) when cast('2011-01-01' as date) then cast('2011-02-02' as date) end;
@@ -613,8 +596,9 @@ select case cast('2012-01-01' as date) when cast('2011-01-01' as date) then cast
 select case cast('10:10:10' as time) when cast('10:10:10' as time) then cast('11:11:11' as time) end;
 select case cast('10:10:13' as time) when cast('10:10:10' as time) then cast('11:11:11' as time) else cast('22:22:22' as time) end;
 select cast(1234 as char(3));
+--enable_warnings
 select cast(1234 as char(0));
-show warnings;
+--disable_warnings
 select CAST( - 8 AS DECIMAL ) * + 52 + 87 < - 86;
 select char(97, 100, 256, 89);
 select char(97, null, 100, 256, 89);
@@ -934,8 +918,9 @@ select export_set(NULL, "1", "0", ",", 65);
 select export_set(7, "1", "0", ",", 1);
 select format(12332.1, 4), format(12332.2, 0), format(12332.2, 2,'en_US');
 select format(NULL, 4), format(12332.2, NULL);
+--enable_warnings
 select format(12332.2, 2,'es_EC');
-show warnings;
+--disable_warnings
 select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);
 select field("1", 2, 1), field(1, "0", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);
 select field("1", 2, 1), field(1, "abc", NULL), field("1", NULL, 2, 1), field(NULL, 1, "2", NULL);
@@ -1089,14 +1074,16 @@ select 0.0 * -1;
 DROP TABLE IF EXISTS t;
 CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));
 INSERT INTO t(a, b) VALUES(-1.09, 1.999);
+--enable_warnings
 SELECT a/b, a/12, a/-0.01, b/12, b/-0.01, b/0.000, NULL/b, b/NULL, NULL/NULL FROM t;
-show warnings;
+--disable_warnings
 -- error 1690
 select 1e200/1e-200;
 SELECT 13 DIV 12, 13 DIV 0.01, -13 DIV 2, 13 DIV NULL, NULL DIV 13, NULL DIV NULL;
 SELECT 2.4 div 1.1, 2.4 div 1.2, 2.4 div 1.3;
+--enable_warnings
 SELECT 1.175494351E-37 div 1.7976931348623157E+308, 1.7976931348623157E+308 div -1.7976931348623157E+307, 1 div 1e-82;
-show warnings;
+--disable_warnings
 -- error 1690
 select 1e300 DIV 1.5;
 drop table if exists t;
@@ -1105,11 +1092,13 @@ INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');
 select c_varchar div nonzero, c_time div nonzero, c_time div zero, c_timestamp div nonzero, c_timestamp div zero, c_varchar div zero from t;
 select c_enum div nonzero from t;
 select c_enum div zero from t;
+--enable_warnings
 select nonzero div zero from t;
-show warnings;
+--disable_warnings
 select c_time div c_enum, c_timestamp div c_time, c_timestamp div c_enum from t;
+--enable_warnings
 select c_int_unsigned div nonzero, nonzero div c_int_unsigned, c_int_unsigned div zero from t;
-show warnings;
+--disable_warnings
 SELECT CAST(1 AS UNSIGNED) MOD -9223372036854775808, -9223372036854775808 MOD CAST(1 AS UNSIGNED);
 SELECT 13 MOD 12, 13 MOD 0.01, -13 MOD 2, 13 MOD NULL, NULL MOD 13, NULL DIV NULL;
 SELECT 2.4 MOD 1.1, 2.4 MOD 1.2, 2.4 mod 1.30;
@@ -1118,13 +1107,15 @@ CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_ti
 INSERT INTO t VALUE('abc', '12:00:00', 12, 0, '2017-08-05 18:19:03', 'b');
 select c_varchar MOD nonzero, c_time MOD nonzero, c_timestamp MOD nonzero, c_enum MOD nonzero from t;
 select c_time MOD c_enum, c_timestamp MOD c_time, c_timestamp MOD c_enum from t;
+--enable_warnings
 select c_enum MOD zero from t;
-show warnings;
+--disable_warnings
 SET SQL_MODE='ERROR_FOR_DIVISION_BY_ZERO,STRICT_ALL_TABLES';
 drop table if exists t;
 CREATE TABLE t (v int);
+--enable_warnings
 INSERT IGNORE INTO t VALUE(12 MOD 0);
-show warnings;
+--disable_warnings
 select v from t;
 select 0.000 % 0.11234500000000000000;
 -- error 1365
@@ -1137,8 +1128,9 @@ select sum(a) * 0.1 from t;
 drop table if exists t;
 create table t(a double);
 insert into t value(1.2);
+--enable_warnings
 select * from t where a/0 > 1;
-show warnings;
+--disable_warnings
 DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BIGINT, b DECIMAL(6, 2));
 INSERT INTO t VALUES(0, 1.12), (1, 1.21);
@@ -1220,13 +1212,15 @@ create table d(a varchar(100));
 insert into t values('hello'), ('hello');
 select group_concat(a) from t;
 set @@group_concat_max_len=7;
+--enable_warnings
 select group_concat(a) from t;
-show warnings;
+--disable_warnings
 -- error 1260
 insert into d select group_concat(a) from t;
 set sql_mode='';
+--enable_warnings
 insert into d select group_concat(a) from t;
-show warnings;
+--disable_warnings
 select * from d;
 set group_concat_max_len=default;
 set sql_mode=default;
