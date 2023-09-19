@@ -1517,25 +1517,36 @@ func (a *ExecStmt) RecordHistoryStats() {
 		return
 	}
 
+	mayEaryExit := traverseFlatPlanForHistoryStats(stmtCtx, flat.Main, sql)
+	if mayEaryExit {
+		return
+	}
 	for _, flatCTEPlanTree := range flat.CTEs {
 		traverseFlatPlanForHistoryStats(stmtCtx, flatCTEPlanTree, sql)
 	}
 	for _, flatSubQueryPlanTree := range flat.ScalarSubQueries {
 		traverseFlatPlanForHistoryStats(stmtCtx, flatSubQueryPlanTree, sql)
 	}
-	traverseFlatPlanForHistoryStats(stmtCtx, flat.Main, sql)
 }
 
-func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlanTree plannercore.FlatPlanTree, sql string) {
+func isTableFullScanWithoutFilters(tableScan *plannercore.PhysicalTableScan) bool {
+	return tableScan.HasRFFilters() || len(tableScan) > 0
+}
+
+// traverseFlatPlanForHistoryStats returns true when it contains limit operator, because limit operator may lead to early
+// exit, and make stats info inaccurate.
+func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlanTree plannercore.FlatPlanTree, sql string) bool {
 	for _, flatOp := range flatPlanTree {
 		pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
 		if !isPhysicalPlan {
 			continue
 		}
 		switch x := pp.(type) {
+		case *plannercore.PhysicalLimit:
+			return true
 		case *plannercore.PhysicalSelection:
 			if tableScan, ok := x.Children()[0].(*plannercore.PhysicalTableScan); ok {
-				if tableScan.HasRFFilters() {
+				if isTableFullScanWithoutFilters(tableScan) {
 					break
 				}
 				needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
@@ -1549,7 +1560,7 @@ func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlan
 				recordHistoryStats(sql, tableScan.Table.ID, x.ID(), false, hashCode, estRows, actualRows)
 			}
 		case *plannercore.PhysicalTableScan:
-			if x.HasRFFilters() {
+			if isTableFullScanWithoutFilters(x) {
 				break
 			}
 			needRecord, estRows, actualRows := needRecordHistoryStats(stmtCtx, x)
@@ -1559,6 +1570,7 @@ func traverseFlatPlanForHistoryStats(stmtCtx *stmtctx.StatementContext, flatPlan
 			recordHistoryStats(sql, x.Table.ID, x.ID(), true, 0, estRows, actualRows)
 		}
 	}
+	return false
 }
 
 func recordHistoryStats(sql string, tableID int64, planID int, nullHashCode bool, hashCode uint64, estRows float64, actualRows int64) {
