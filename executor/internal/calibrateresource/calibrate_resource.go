@@ -373,8 +373,6 @@ func (e *Executor) getTiDBQuota(ctx context.Context, exec sqlexec.RestrictedSQLE
 func (e *Executor) setupQuotas(quotas []float64, lowCount int) (float64, error) {
 	if len(quotas) < 2 {
 		return 0, errLowUsage
-	if float64(len(quotas))/float64(len(quotas)+lowCount) <= percentOfPass {
-		return 0, errLowUsage
 	}
 	sort.Slice(quotas, func(i, j int) bool {
 		return quotas[i] > quotas[j]
@@ -388,7 +386,7 @@ func (e *Executor) setupQuotas(quotas []float64, lowCount int) (float64, error) 
 	return sum / float64(upperBound-lowerBound), nil
 }
 
-func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTs time.Time, endTs time.Time) (float64, error) {
+func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTs, endTs time.Time) (float64, error) {
 	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 

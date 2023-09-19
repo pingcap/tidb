@@ -765,6 +765,7 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2023-09-19 19:59:39.502000"), "127.0.0.1:8234 ", 20),
 		types.MakeDatums(datetime("2023-09-19 20:00:39.502000"), "127.0.0.1:8234 ", 20),
 	}
+	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2023-09-19 19:50:39' DURATION '10m'").Check(testkit.Rows("69768"))
 
 	delete(mockData, "process_cpu_usage")
 	rs, err = tk.Exec("CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'")
