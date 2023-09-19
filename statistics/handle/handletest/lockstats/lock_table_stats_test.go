@@ -316,6 +316,26 @@ func TestShowStatsLockedTablePrivilege(t *testing.T) {
 	require.Len(t, rows, 1)
 }
 
+func TestSkipLockALotOfTables(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t; drop table if exists a; drop table if exists x; drop table if exists y; drop table if exists z")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b)); " +
+		"create table a(a int, b varchar(10), index idx_b (b)); " +
+		"create table x(a int, b varchar(10), index idx_b (b)); " +
+		"create table y(a int, b varchar(10), index idx_b (b)); " +
+		"create table z(a int, b varchar(10), index idx_b (b))")
+	tk.MustExec("lock stats test.t, test.a, test.x, test.y, test.z")
+
+	// Skip locking a lot of tables.
+	tk.MustExec("lock stats test.t, test.a, test.x, test.y, test.z")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip locking locked tables: test.a, test.t, test.x, test.y, test.z",
+	))
+}
+
 func setupTestEnvironmentWithTableT(t *testing.T) (kv.Storage, *testkit.TestKit, *model.TableInfo) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
