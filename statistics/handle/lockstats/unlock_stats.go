@@ -99,7 +99,7 @@ func RemoveLockedTables(
 		}
 	}
 
-	msg := generateSkippedMessage(tids, skippedTables, unlockAction, unlockedStatus)
+	msg := generateStableSkippedMessage(tids, skippedTables, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
@@ -164,7 +164,7 @@ func RemoveLockedPartitions(
 		}
 	}
 
-	msg := generateSkippedMessage(pids, skippedPartitions, unlockAction, unlockedStatus)
+	msg := generateStableSkippedMessage(pids, skippedPartitions, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }

@@ -17,6 +17,7 @@ package lockstats
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/kv"
@@ -110,7 +111,7 @@ func AddLockedTables(
 		}
 	}
 
-	msg := generateSkippedMessage(tids, skippedTables, lockAction, lockedStatus)
+	msg := generateStableSkippedMessage(tids, skippedTables, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
@@ -179,12 +180,16 @@ func AddLockedPartitions(
 		}
 	}
 
-	msg := generateSkippedMessage(pids, skippedPartitions, lockAction, lockedStatus)
+	msg := generateStableSkippedMessage(pids, skippedPartitions, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
 
-func generateSkippedMessage(ids []int64, skippedNames []string, action, status string) string {
+// generateStableSkippedMessage generates stable skipped message.
+func generateStableSkippedMessage(ids []int64, skippedNames []string, action, status string) string {
+	// Sort to stabilize the output.
+	slices.Sort(skippedNames)
+
 	if len(skippedNames) > 0 {
 		tables := strings.Join(skippedNames, ", ")
 		var msg string
