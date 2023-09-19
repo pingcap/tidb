@@ -99,7 +99,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 				}
 				// Dump global-level stats to kv.
 				for i := 0; i < globalStats.Num; i++ {
-					globalStats.Fms[i].Destroy()
+					globalStats.Fms[i].DestroyAndPutToPool()
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]
 					if hg == nil {
 						// All partitions have no stats so global stats are not created.
@@ -131,7 +131,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 
 		for _, value := range tableAllPartitionStats {
 			for _, v := range value.Columns {
-				v.FMSketch.Destroy()
+				v.FMSketch.DestroyAndPutToPool()
 			}
 		}
 	}

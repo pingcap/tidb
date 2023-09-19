@@ -210,7 +210,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 			zap.String("item", "columns"), zap.Strings("missing", newColGlobalStats.MissingPartitionStats))
 	}
 	for i := 0; i < newColGlobalStats.Num; i++ {
-		newColGlobalStats.Fms[i].Destroy()
+		newColGlobalStats.Fms[i].DestroyAndPutToPool()
 		hg, cms, topN := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i]
 		if hg == nil {
 			// All partitions have no stats so global stats are not created.
@@ -250,7 +250,7 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 				zap.String("item", "index "+idx.Name.L), zap.Strings("missing", newIndexGlobalStats.MissingPartitionStats))
 		}
 		for i := 0; i < newIndexGlobalStats.Num; i++ {
-			newColGlobalStats.Fms[i].Destroy()
+			newColGlobalStats.Fms[i].DestroyAndPutToPool()
 			hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
 			if hg == nil {
 				// All partitions have no stats so global stats are not created.

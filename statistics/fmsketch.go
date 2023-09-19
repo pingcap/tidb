@@ -212,8 +212,8 @@ func (s *FMSketch) reset() {
 	s.maxSize = 0
 }
 
-// Destroy resets the FMSketch and puts it back to the pool.
-func (s *FMSketch) Destroy() {
+// DestroyAndPutToPool resets the FMSketch and puts it to the pool.
+func (s *FMSketch) DestroyAndPutToPool() {
 	if s == nil {
 		return
 	}
