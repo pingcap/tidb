@@ -111,7 +111,7 @@ func AddLockedTables(
 		}
 	}
 
-	msg := generateStableSkippedMessage(tids, skippedTables, lockAction, lockedStatus)
+	msg := generateStableSkippedTablesMessage(tids, skippedTables, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
@@ -180,13 +180,13 @@ func AddLockedPartitions(
 		}
 	}
 
-	msg := generateStableSkippedMessage(pids, skippedPartitions, lockAction, lockedStatus)
+	msg := generateStableSkippedPartitionsMessage(pids, tableName, skippedPartitions, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
 
-// generateStableSkippedMessage generates stable skipped message.
-func generateStableSkippedMessage(ids []int64, skippedNames []string, action, status string) string {
+// generateStableSkippedTablesMessage generates stable skipped tables message.
+func generateStableSkippedTablesMessage(ids []int64, skippedNames []string, action, status string) string {
 	// Sort to stabilize the output.
 	slices.Sort(skippedNames)
 
@@ -205,6 +205,28 @@ func generateStableSkippedMessage(ids []int64, skippedNames []string, action, st
 		return msg
 	}
 
+	return ""
+}
+
+// generateStableSkippedPartitionsMessage generates stable skipped partitions message.
+func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skippedNames []string, action, status string) string {
+	// Sort to stabilize the output.
+	slices.Sort(skippedNames)
+
+	if len(skippedNames) > 0 {
+		partitions := strings.Join(skippedNames, ", ")
+		var msg string
+		if len(ids) > 1 {
+			if len(ids) > len(skippedNames) {
+				msg = fmt.Sprintf("skip %s %s partitions of table %s: %s, other partitions %s successfully", action, status, tableName, partitions, status)
+			} else {
+				msg = fmt.Sprintf("skip %s %s partitions of table %s: %s", action, status, tableName, partitions)
+			}
+		} else {
+			msg = fmt.Sprintf("skip %s %s partitions of table %s: %s", action, status, tableName, partitions)
+		}
+		return msg
+	}
 	return ""
 }
 

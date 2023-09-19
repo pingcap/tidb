@@ -124,7 +124,7 @@ func populatePartitionIDAndNames(
 		if err != nil {
 			return 0, nil, err
 		}
-		pidNames[pid] = genFullPartitionName(table, partitionName.L)
+		pidNames[pid] = partitionName.L
 	}
 
 	return tbl.Meta().ID, pidNames, nil

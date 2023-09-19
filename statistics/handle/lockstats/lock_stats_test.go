@@ -79,7 +79,7 @@ func TestGenerateSkippedMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := generateStableSkippedMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
+			msg := generateStableSkippedTablesMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
 			require.Equal(t, tt.expectedMsg, msg)
 		})
 	}
