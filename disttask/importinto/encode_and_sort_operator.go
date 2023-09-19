@@ -72,14 +72,12 @@ func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
 		logger:        executor.logger,
 		errCh:         make(chan error),
 	}
-	var workerIDAlloc atomic.Int64
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
 		util.ImportInto,
 		int(executor.taskMeta.Plan.ThreadCnt),
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			id := workerIDAlloc.Inc()
-			return newChunkWorker(ctx, op, id)
+			return newChunkWorker(ctx, op)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -137,7 +135,7 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, workerID int64) *chunkWorker {
+func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
