@@ -2329,7 +2329,6 @@ func (do *Domain) loadStatsWorker() {
 	for {
 		select {
 		case <-loadTicker.C:
-			err = statsHandle.RefreshVars()
 			if err != nil {
 				logutil.BgLogger().Debug("refresh variables failed", zap.Error(err))
 			}

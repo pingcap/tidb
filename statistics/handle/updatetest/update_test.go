@@ -299,7 +299,6 @@ func TestUpdatePartition(t *testing.T) {
 	testKit.MustQuery("select @@tidb_partition_prune_mode").Check(testkit.Rows(pruneMode))
 	testKit.MustExec("use test")
 	testkit.WithPruneMode(testKit, variable.Static, func() {
-		err := dom.StatsHandle().RefreshVars()
 		require.NoError(t, err)
 		testKit.MustExec("drop table if exists t")
 		createTable := `CREATE TABLE t (a int, b char(5)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6),PARTITION p1 VALUES LESS THAN (11))`
@@ -481,7 +480,6 @@ func TestAutoUpdatePartition(t *testing.T) {
 		tableInfo := tbl.Meta()
 		pi := tableInfo.GetPartitionInfo()
 		h := do.StatsHandle()
-		require.NoError(t, h.RefreshVars())
 
 		require.NoError(t, h.Update(is))
 		stats := h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
@@ -1020,7 +1018,6 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		do := dom
 		is := do.InfoSchema()
 		h := do.StatsHandle()
-		require.NoError(t, h.RefreshVars())
 		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 
 		testKit.MustExec("insert into t values (1, 'a'), (2, 'b'), (11, 'c'), (12, 'd'), (21, 'e'), (22, 'f')")
