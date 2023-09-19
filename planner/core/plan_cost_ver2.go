@@ -329,6 +329,20 @@ func (p *PhysicalIndexMergeReader) getPlanCostVer2(taskType property.TaskType, o
 	sumIndexSideCost := sumCostVer2(indexSideCost...)
 
 	p.planCostVer2 = sumCostVer2(tableSideCost, sumIndexSideCost)
+	// give a bias to pushDown limit, since it will get the same cost with NON_PUSH_DOWN_LIMIT case via expect count.
+	// push down limit case may reduce cop request consumption if any in some cases.
+	//
+	// for index merge intersection case, if we want to attach limit to table/index side, we should enumerate double-read-cop task type.
+	// otherwise, the entire index-merge-reader will be encapsulated as root task, and limit can only be put outside of that.
+	// while, since limit doesn't contain any physical cost, the expected cnt has already pushed down as a kind of physical property.
+	// that means the 2 physical tree format:
+	// 		limit -> index merge reader
+	// 		index-merger-reader(with embedded limit)
+	// will have the same cost, actually if limit are more close to the fetch side, the fewer rows that table plan need to read.
+	// todo: refine the cost computation out from cost model.
+	if p.PushedLimit != nil {
+		p.planCostVer2 = mulCostVer2(p.planCostVer2, 0.99)
+	}
 	p.planCostInit = true
 	return p.planCostVer2, nil
 }

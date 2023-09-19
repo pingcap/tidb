@@ -21,12 +21,12 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// AddLockedTables add locked tables id to store.
+// LockTables add locked tables id to store.
 // - tids: table ids of which will be locked.
 // - pids: partition ids of which will be locked.
 // - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
+func (h *Handle) LockTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return "", errors.Trace(err)
@@ -38,7 +38,29 @@ func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.Table
 	return lockstats.AddLockedTables(exec, tids, pids, tables)
 }
 
-// RemoveLockedTables remove tables from table locked array.
+// LockPartitions add locked partitions id to store.
+// If the whole table is locked, then skip all partitions of the table.
+// - tid: table id of which will be locked.
+// - tableName: table name of which will be locked.
+// - pidNames: partition ids of which will be locked.
+// Return the message of skipped tables and error.
+func (h *Handle) LockPartitions(
+	tid int64,
+	tableName *ast.TableName,
+	pidNames map[int64]string,
+) (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+
+	return lockstats.AddLockedPartitions(exec, tid, tableName, pidNames)
+}
+
+// RemoveLockedTables remove tables from table locked records.
 // - tids: table ids of which will be unlocked.
 // - pids: partition ids of which will be unlocked.
 // - tables: table names of which will be unlocked.
@@ -52,6 +74,25 @@ func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.Ta
 
 	exec := se.(sqlexec.RestrictedSQLExecutor)
 	return lockstats.RemoveLockedTables(exec, tids, pids, tables)
+}
+
+// RemoveLockedPartitions remove partitions from table locked records.
+// - tid: table id of which will be unlocked.
+// - tableName: table name of which will be unlocked.
+// - pidNames: partition ids of which will be unlocked.
+func (h *Handle) RemoveLockedPartitions(
+	tid int64,
+	tableName *ast.TableName,
+	pidNames map[int64]string,
+) (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return lockstats.RemoveLockedPartitions(exec, tid, tableName, pidNames)
 }
 
 // GetLockedTables returns the locked status of the given tables.

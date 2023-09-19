@@ -89,9 +89,10 @@ func TestDispatcherExt(t *testing.T) {
 	// to import stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task)
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	task.Step = ext.GetNextStep(d, task)
 	require.Equal(t, importinto.StepImport, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
@@ -99,30 +100,31 @@ func TestDispatcherExt(t *testing.T) {
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.ID, task.Type, "", m))
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
 	}
 	_, err = manager.UpdateGlobalTaskAndAddSubTasks(task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err := manager.GetSubtasksByStep(taskID, importinto.StepImport)
+	gotSubtasks, err := manager.GetSubtasksForImportInto(taskID, importinto.StepImport)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
 		require.NoError(t, manager.FinishSubtask(s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	task.Step++
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
+	task.Step = ext.GetNextStep(d, task)
 	require.Equal(t, importinto.StepPostProcess, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	task.Step++
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
+	task.Step = ext.GetNextStep(d, task)
+	require.Equal(t, proto.StepDone, task.Step)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "finished", gotJobInfo.Status)

@@ -105,7 +105,7 @@ func TestOnlyOneGroup(t *testing.T) {
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 5)
+		Build(memStore, subDir, "5")
 
 	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, [][]byte{{1}, {2}}, [][]byte{{1}, {2}})
 	require.NoError(t, err)
@@ -180,7 +180,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		SetMemorySizeLimit(15). // slightly larger than len("key01") + len("value01")
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 1)
+		Build(memStore, subDir, "1")
 	keys1 := [][]byte{
 		[]byte("key01"), []byte("key11"), []byte("key21"),
 	}
@@ -196,7 +196,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 2)
+		Build(memStore, subDir, "2")
 	keys2 := [][]byte{
 		[]byte("key02"), []byte("key12"), []byte("key22"),
 	}
@@ -212,7 +212,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 3)
+		Build(memStore, subDir, "3")
 	keys3 := [][]byte{
 		[]byte("key03"), []byte("key13"), []byte("key23"),
 	}
@@ -309,7 +309,7 @@ func TestExactlyKeyNum(t *testing.T) {
 		SetMemorySizeLimit(15).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
-		Build(memStore, subDir, 5)
+		Build(memStore, subDir, "5")
 
 	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, keys, values)
 	require.NoError(t, err)

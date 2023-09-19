@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
-	"go.uber.org/zap"
 )
 
 // Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
@@ -33,10 +32,9 @@ import (
 // steps are processed in the following order: StepInit -> StepImport -> StepPostProcess
 const (
 	// StepImport we sort source data and ingest it into TiKV in this step.
-	StepImport int64 = 0
+	StepImport int64 = 1
 	// StepPostProcess we verify checksum and add index in this step.
-	// TODO: Might split into StepValidate and StepAddIndex later.
-	StepPostProcess int64 = 1
+	StepPostProcess int64 = 2
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -107,19 +105,6 @@ func (*importStepMinimalTask) IsMinimalTask() {}
 
 func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
-}
-
-// postProcessStepMinimalTask is the minimal task of post process step.
-type postProcessStepMinimalTask struct {
-	meta     PostProcessStepMeta
-	taskMeta *TaskMeta
-	logger   *zap.Logger
-}
-
-func (*postProcessStepMinimalTask) IsMinimalTask() {}
-
-func (*postProcessStepMinimalTask) String() string {
-	return "post process"
 }
 
 // Chunk records the chunk information.

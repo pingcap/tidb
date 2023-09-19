@@ -3463,7 +3463,7 @@ func RedactURL(str string) string {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" {
+			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" || normalizedKey == "session-token" {
 				values[k] = []string{"xxxxxx"}
 			}
 		}
@@ -3681,8 +3681,6 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	// Hints with args except query block.
 	switch n.HintName.L {
 	case "max_execution_time":
-		ctx.WritePlainf("%d", n.HintData.(uint64))
-	case "tidb_kv_read_timeout":
 		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "resource_group":
 		ctx.WriteName(n.HintData.(string))
