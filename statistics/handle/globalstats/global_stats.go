@@ -93,8 +93,6 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-<<<<<<< HEAD
-=======
 	externalCache := false
 	if allPartitionStats == nil {
 		allPartitionStats = make(map[int64]*statistics.Table)
@@ -103,7 +101,6 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 	}
 	// initialized the globalStats
 	globalStats = new(GlobalStats)
->>>>>>> 2d79e445e2 (update)
 	if len(histIDs) == 0 {
 		for _, col := range globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
@@ -144,17 +141,10 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-<<<<<<< HEAD
-		if allPartitionStats != nil {
-			partitionStats, ok = allPartitionStats[partitionID]
-		}
 
-		// If preload partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats.
-=======
 		partitionStats, ok = allPartitionStats[partitionID]
 		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
->>>>>>> 2d79e445e2 (update)
-		if allPartitionStats == nil || partitionStats == nil || !ok {
+		if !ok {
 			var err1 error
 			partitionStats, err1 = loadTablePartitionStatsFn(tableInfo, &def)
 			if err1 != nil {
