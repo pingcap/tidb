@@ -211,7 +211,7 @@ func TestSnapshotWitInterceptor(t *testing.T) {
 	require.Nil(t, iter)
 	require.Equal(t, []interface{}{"OnIterReverse", kv.Key{}}, mockInterceptor.spy)
 
-	snap.SetOption(kv.TidbKvReadTimeout, uint64(10))
+	snap.SetOption(kv.TiKVClientReadTimeout, uint64(10))
 }
 
 func checkIter(t *testing.T, iter kv.Iterator, expected [][]interface{}) {

@@ -136,7 +136,7 @@ func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
 		if size > 0 {
 			s.KVSnapshot.SetScanBatchSize(size)
 		}
-	case kv.TidbKvReadTimeout:
+	case kv.TiKVClientReadTimeout:
 		s.KVSnapshot.SetKVReadTimeout(time.Duration(val.(uint64) * uint64(time.Millisecond)))
 	}
 }
