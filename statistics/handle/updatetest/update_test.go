@@ -16,6 +16,7 @@ package updatetest
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/sessionctx"
 	"math/rand"
 	"strconv"
 	"strings"
@@ -1007,21 +1008,41 @@ func TestStatsVariables(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	//is := dom.InfoSchema()
 	h := dom.StatsHandle()
+	sctx := tk.Session().(sessionctx.Context)
+
 	pruneMode, err := h.GetCurrentPruneMode()
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Dynamic), pruneMode)
 	analyzeVer, err := h.GetCurrentAnalyzeVersion()
 	require.NoError(t, err)
 	require.Equal(t, 2, analyzeVer)
+	err = handle.UpdateSCtxVarsForStats(sctx)
+	require.NoError(t, err)
+	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
+	require.Equal(t, string(variable.Dynamic), sctx.GetSessionVars().PartitionPruneMode.Load())
+	require.Equal(t, false, sctx.GetSessionVars().EnableAnalyzeSnapshot)
+	require.Equal(t, true, sctx.GetSessionVars().SkipMissingPartitionStats)
 
 	tk.MustExec(`set global tidb_analyze_version=1`)
 	tk.MustExec(`set global tidb_partition_prune_mode='static'`)
+	tk.MustExec(`set global tidb_enable_historical_stats=0`)
+	tk.MustExec(`set global tidb_enable_analyze_snapshot=1`)
+	tk.MustExec(`set global tidb_skip_missing_partition_stats=0`)
+
 	pruneMode, err = h.GetCurrentPruneMode()
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Static), pruneMode)
 	analyzeVer, err = h.GetCurrentAnalyzeVersion()
 	require.NoError(t, err)
 	require.Equal(t, 1, analyzeVer)
+	err = handle.UpdateSCtxVarsForStats(sctx)
+	require.NoError(t, err)
+	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
+	require.Equal(t, false, sctx.GetSessionVars().EnableHistoricalStats)
+	require.Equal(t, string(variable.Static), sctx.GetSessionVars().PartitionPruneMode.Load())
+	require.Equal(t, true, sctx.GetSessionVars().EnableAnalyzeSnapshot)
+	require.Equal(t, false, sctx.GetSessionVars().SkipMissingPartitionStats)
 }
 
 func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
