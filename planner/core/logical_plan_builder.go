@@ -6832,8 +6832,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	}
 
 	if bound.CalcFuncs[0].GetType().EvalType() != col.GetType().EvalType() {
-		funcName = ast.Cast
-		bound.CompareCols[0], err = expression.NewFunctionBase(b.ctx, funcName, bound.CalcFuncs[0].GetType(), col)
+		bound.CompareCols[0], err = expression.NewFunctionBase(b.ctx, ast.Cast, bound.CalcFuncs[0].GetType(), col)
 		if err != nil {
 			return nil, err
 		}
