@@ -83,7 +83,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID,
-					info.isIndex, info.histIDs,
+					info.isIndex == 1,
+					info.histIDs,
 					tableAllPartitionStats,
 				)
 				if err != nil {
