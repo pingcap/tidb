@@ -390,18 +390,11 @@ func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedS
 	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
-	tiflashServers, err := infoschema.GetTiFlashServerInfo(e.Ctx())
+	tiflashQuotas, tiflashLowCount, err := e.getTiFlashQuotas(ctx, exec, startTime, endTime)
 	if err != nil {
 		return 0, err
 	}
-	if len(tiflashServers) != 0 {
-		tiflashQuotas, tiflashLowCount, err := e.getTiFlashQuotas(ctx, exec, startTime, endTime)
-		if err != nil {
-			return 0, err
-		}
-		return e.setupQuotas(tiflashQuotas, tiflashLowCount)
-	}
-	return 0, errors.New("cannot get tiflash quota because there is no tiflash store")
+	return e.setupQuotas(tiflashQuotas, tiflashLowCount)
 }
 
 
