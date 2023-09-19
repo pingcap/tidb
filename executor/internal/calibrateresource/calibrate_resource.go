@@ -81,6 +81,17 @@ var (
 			readReqCount:     0,
 			writeReqCount:    3550,
 		},
+		// TiFlash only consider cpu and read bytes. Others are ignored.
+		// cpu usage: 105494.666484 / 20 / 20 = 263.74
+		// read bytes: 401799161689.0 / 20 / 20 = 1004497904.22
+		ast.TPCH10: {
+			tidbToKVCPURatio: 0,
+			kvCPU:            263.74,
+			readBytes:        1004497904,
+			writeBytes:       0,
+			readReqCount:     0,
+			writeReqCount:    0,
+		},
 	}
 )
 
@@ -261,9 +272,11 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 	tiflashQuota, err2 := e.getTiFlashQuota(ctx, exec, startTs, endTs)
 	if err1 != nil && err2 != nil {
 		return err1
-	} else if err1 != nil {
+	}
+	if err1 != nil {
 		logutil.BgLogger().Error("get tidb/tikv ru quota failed", zap.Error(err1))
-	} else if err2 != nil {
+	}
+	if err2 != nil {
 		logutil.BgLogger().Error("get tiflash ru quota failed", zap.Error(err2))
 	}
 	req.AppendUint64(0, uint64(tidbQuota+tiflashQuota))
@@ -374,7 +387,7 @@ func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedS
 		}
 		return e.setupQuotas(tiflashQuotas, tiflashLowCount)
 	}
-	return 0, errors.New("no tiflash store")
+	return 0, errors.New("cannot get tiflash quota because there is no tiflash store")
 }
 
 func (e *Executor) setupQuotas(quotas []float64, lowCount int) (float64, error) {
@@ -447,8 +460,8 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 		return errors.New("resource group controller is not initialized")
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
-	if e.WorkloadType == ast.TPCH50 {
-		return e.staticCalibrateTpch50(ctx, req, exec, ruCfg)
+	if e.WorkloadType == ast.TPCH10 {
+		return e.staticCalibrateTpch10(ctx, req, exec, ruCfg)
 	}
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
@@ -482,10 +495,12 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	return nil
 }
 
-func (e *Executor) staticCalibrateTpch50(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig) error {
-	// 105.494666484 / 20 / 20 = 0.26
-	// 401799161689.0 / 20 / 20 / 1024 / 1024 = 957.9
-	ruPerCPU := float64(ruCfg.CPUMsCost)*0.26*1000 + float64(ruCfg.ReadBytesCost)*957.9
+func (e *Executor) staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig) error {
+	baseCost, ok := workloadBaseRUCostMap[ast.TPCH10]
+	if !ok {
+		return errors.Errorf("unknown workload '%T'", ast.TPCH10)
+	}
+	ruPerCPU := float64(ruCfg.CPUMsCost)*baseCost.kvCPU + float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes)
 	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
 	if err != nil {
 		return err
