@@ -216,8 +216,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	logger.Info("on next subtasks batch")
 
 	defer func() {
-		// currently, framework will take the task as finished when err is not nil or resSubtaskMeta is empty.
-		taskFinished := err == nil && len(resSubtaskMeta) == 0
+		taskFinished := err == nil && nextStep == proto.StepDone
 		if taskFinished {
 			// todo: we're not running in a transaction with task update
 			if err2 := dsp.finishJob(ctx, logger, taskHandle, gTask, taskMeta); err2 != nil {
@@ -232,9 +231,9 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		}
 	}()
 
-	var previousSubtaskMetas [][]byte
-	switch gTask.Step {
-	case proto.StepInit:
+	previousSubtaskMetas := make(map[int64][][]byte, 1)
+	switch nextStep {
+	case StepImport, StepEncodeAndSort:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
@@ -245,18 +244,30 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		if err = startJob(ctx, logger, taskHandle, taskMeta, jobStep); err != nil {
 			return nil, err
 		}
-	case StepEncodeAndSort:
-		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
-			failpoint.Return(nil, errors.New("injected error"))
-		})
-		previousSubtaskMetas, err = taskHandle.GetPreviousSubtaskMetas(gTask.ID, StepEncodeAndSort)
+	case StepMergeSort:
+		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, StepEncodeAndSort)
 		if err != nil {
 			return nil, err
 		}
+		previousSubtaskMetas[StepEncodeAndSort] = sortAndEncodeMeta
+	case StepWriteAndIngest:
+		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
+			failpoint.Return(nil, errors.New("injected error"))
+		})
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, StepEncodeAndSort)
+		if err != nil {
+			return nil, err
+		}
+		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, StepMergeSort)
+		if err != nil {
+			return nil, err
+		}
+		previousSubtaskMetas[StepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[StepMergeSort] = mergeSortMetas
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
-	case StepImport, StepWriteAndIngest:
+	case StepPostProcess:
 		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
@@ -272,12 +283,13 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 			return nil, err
 		}
 		step := getStepOfEncode(dsp.GlobalSort)
-		previousSubtaskMetas, err = taskHandle.GetPreviousSubtaskMetas(gTask.ID, step)
+		metas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, step)
 		if err != nil {
 			return nil, err
 		}
+		previousSubtaskMetas[step] = metas
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
-	case StepPostProcess:
+	case proto.StepDone:
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
@@ -285,8 +297,9 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 
 	planCtx := planner.PlanCtx{
 		Ctx:                  ctx,
+		TaskID:               gTask.ID,
 		PreviousSubtaskMetas: previousSubtaskMetas,
-		CurrTaskStep:         gTask.Step,
+		GlobalSort:           dsp.GlobalSort,
 		NextTaskStep:         nextStep,
 	}
 	logicalPlan := &LogicalPlan{}
@@ -372,6 +385,8 @@ func (dsp *ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto
 		}
 		return StepImport
 	case StepEncodeAndSort:
+		return StepMergeSort
+	case StepMergeSort:
 		return StepWriteAndIngest
 	case StepImport, StepWriteAndIngest:
 		return StepPostProcess
@@ -751,9 +766,11 @@ func stepStr(step int64) string {
 	case StepImport:
 		return "import"
 	case StepPostProcess:
-		return "postprocess"
+		return "post-process"
 	case StepEncodeAndSort:
 		return "encode&sort"
+	case StepMergeSort:
+		return "merge-sort"
 	case StepWriteAndIngest:
 		return "write&ingest"
 	case proto.StepDone:

@@ -19,7 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/disttask/framework/planner"
-	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -57,7 +56,6 @@ func TestToPhysicalPlan(t *testing.T) {
 		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
 	planCtx := planner.PlanCtx{
-		CurrTaskStep: proto.StepInit,
 		NextTaskStep: StepImport,
 	}
 	physicalPlan, err := logicalPlan.ToPhysicalPlan(planCtx)
@@ -98,13 +96,14 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta1)
 	require.NoError(t, err)
 	planCtx = planner.PlanCtx{
-		CurrTaskStep: StepImport,
 		NextTaskStep: StepPostProcess,
 	}
 	physicalPlan, err = logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
 	subtaskMetas2, err := physicalPlan.ToSubtaskMetas(planner.PlanCtx{
-		PreviousSubtaskMetas: [][]byte{bs},
+		PreviousSubtaskMetas: map[int64][][]byte{
+			StepImport: {bs},
+		},
 	}, StepPostProcess)
 	require.NoError(t, err)
 	subtaskMeta2 := PostProcessStepMeta{

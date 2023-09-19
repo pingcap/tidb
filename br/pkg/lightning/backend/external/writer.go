@@ -36,7 +36,15 @@ import (
 	"go.uber.org/zap"
 )
 
-var multiFileStatNum = 500
+var (
+	multiFileStatNum = 500
+
+	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
+	// if the overlap ratio is greater than this threshold, we will merge the files.
+	MergeSortOverlapThreshold int64 = 1000
+	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
+	MergeSortFileCountStep = 1000
+)
 
 const (
 	// DefaultMemSizeLimit is the default memory size limit for writer.
