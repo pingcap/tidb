@@ -148,7 +148,7 @@ func TestLockAndUnlockPartitionStatsRepeatedly(t *testing.T) {
 	// Lock the partition again and check the warning.
 	tk.MustExec("lock stats t partition p0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip locking locked partitions of table test.t: p0",
+		"Warning 1105 skip locking locked partition of table test.t: p0",
 	))
 
 	// Unlock the partition.
@@ -160,7 +160,7 @@ func TestLockAndUnlockPartitionStatsRepeatedly(t *testing.T) {
 	// Unlock the partition again and check the warning.
 	tk.MustExec("unlock stats t partition p0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip unlocking unlocked partitions of table test.t: p0",
+		"Warning 1105 skip unlocking unlocked partition of table test.t: p0",
 	))
 }
 

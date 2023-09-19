@@ -239,5 +239,5 @@ func TestAddLockedTables(t *testing.T) {
 		pidAndNames,
 	)
 	require.NoError(t, err)
-	require.Equal(t, "skip locking locked partitions: test.t1, other partitions locked successfully", msg)
+	require.Equal(t, "skip locking locked tables: test.t1, other tables locked successfully", msg)
 }
