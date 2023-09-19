@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -43,6 +44,8 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
+
+var cleanExternalStoreFilesConcurrency uint = 3
 
 type backfillingDispatcherExt struct {
 	d                    *ddl
@@ -83,6 +86,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 	defer func() {
 		// Only redact when the task is complete.
 		if len(taskMeta) == 0 && useExtStore {
+			cleanupCloudStorageFiles(ctx, &gTaskMeta)
 			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
 		}
 	}()
@@ -487,6 +491,25 @@ func getSummaryFromLastStep(
 		}
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
+}
+
+func cleanupCloudStorageFiles(ctx context.Context, gTaskMeta *BackfillGlobalMeta) {
+	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
+	if err != nil {
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		return
+	}
+	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
+	if err != nil {
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		return
+	}
+	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
+	err = external.CleanUpFiles(ctx, extStore, prefix, cleanExternalStoreFilesConcurrency)
+	if err != nil {
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		return
+	}
 }
 
 func redactCloudStorageURI(
