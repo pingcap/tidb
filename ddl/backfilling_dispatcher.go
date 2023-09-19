@@ -367,12 +367,14 @@ func generateMergeSortPlan(
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
 		m := &BackfillSubTaskMeta{
-			MinKey:         startKey,
-			MaxKey:         endKey,
-			DataFiles:      dataFiles,
-			StatFiles:      statFiles,
+			SortedKVMeta: external.SortedKVMeta{
+				MinKey:      startKey,
+				MaxKey:      endKey,
+				DataFiles:   dataFiles,
+				StatFiles:   statFiles,
+				TotalKVSize: totalSize / uint64(len(instanceIDs)),
+			},
 			RangeSplitKeys: rangeSplitKeys,
-			TotalKVSize:    totalSize / uint64(len(instanceIDs)),
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -404,7 +406,9 @@ func generateMergePlan(
 			end = len(dataFiles)
 		}
 		m := &BackfillSubTaskMeta{
-			DataFiles: dataFiles[start:end],
+			SortedKVMeta: external.SortedKVMeta{
+				DataFiles: dataFiles[start:end],
+			},
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -475,8 +479,8 @@ func getSummaryFromLastStep(
 		}
 		// Skip empty subtask.MinKey/MaxKey because it means
 		// no records need to be written in this subtask.
-		minKey = notNilMin(minKey, subtask.MinKey)
-		maxKey = notNilMax(maxKey, subtask.MaxKey)
+		minKey = external.NotNilMin(minKey, subtask.MinKey)
+		maxKey = external.NotNilMax(maxKey, subtask.MaxKey)
 		totalKVSize += subtask.TotalKVSize
 
 		for _, stat := range subtask.MultipleFilesStats {
@@ -501,32 +505,4 @@ func redactCloudStorageURI(
 		return
 	}
 	gTask.Meta = metaBytes
-}
-
-// notNilMin returns the smaller of a and b, ignoring nil values.
-func notNilMin(a, b []byte) []byte {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	if bytes.Compare(a, b) < 0 {
-		return a
-	}
-	return b
-}
-
-// notNilMax returns the larger of a and b, ignoring nil values.
-func notNilMax(a, b []byte) []byte {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	if bytes.Compare(a, b) > 0 {
-		return a
-	}
-	return b
 }

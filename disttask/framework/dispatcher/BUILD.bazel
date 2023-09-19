@@ -37,8 +37,9 @@ go_test(
     embed = [":dispatcher"],
     flaky = True,
     race = "off",
-    shard_count = 10,
+    shard_count = 11,
     deps = [
+        "//disttask/framework/mock",
         "//disttask/framework/proto",
         "//disttask/framework/storage",
         "//domain/infosync",
@@ -52,5 +53,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_mock//gomock",
     ],
 )

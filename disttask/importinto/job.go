@@ -258,24 +258,42 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
 		return 0, err
 	}
-	if globalTask == nil {
+	if task == nil {
 		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
-	subtasks, err := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, StepImport)
-	if err != nil {
+	taskMeta := TaskMeta{}
+	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return 0, err
 	}
 	var importedRows uint64
-	for _, subtask := range subtasks {
-		var subtaskMeta ImportStepMeta
-		if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-			return 0, err2
+	if taskMeta.Plan.CloudStorageURI == "" {
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepImport)
+		if err != nil {
+			return 0, err
 		}
-		importedRows += subtaskMeta.Result.LoadedRowCnt
+		for _, subtask := range subtasks {
+			var subtaskMeta ImportStepMeta
+			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
+				return 0, err2
+			}
+			importedRows += subtaskMeta.Result.LoadedRowCnt
+		}
+	} else {
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepWriteAndIngest)
+		if err != nil {
+			return 0, err
+		}
+		for _, subtask := range subtasks {
+			var subtaskMeta WriteIngestStepMeta
+			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
+				return 0, err2
+			}
+			importedRows += subtaskMeta.Result.LoadedRowCnt
+		}
 	}
 	return importedRows, nil
 }
