@@ -156,16 +156,6 @@ func (dm *Manager) dispatchTaskLoop() {
 			if len(tasks) == 0 {
 				break
 			}
-			waitcnt := make(map[string]int)
-			for _, task := range tasks {
-				waitcnt[task.Type] = 0
-			}
-			for _, task := range tasks {
-				if !dm.isRunningTask(task.ID) {
-					waitcnt[task.Type]++
-					tidbmetrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, tidbmetrics.DpWaitingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(task.StartTime)).Microseconds()))
-				}
-			}
 
 			cnt := dm.getRunningTaskCnt()
 			if dm.checkConcurrencyOverflow(cnt) {
@@ -178,7 +168,7 @@ func (dm *Manager) dispatchTaskLoop() {
 					continue
 				}
 				startTime := time.Now()
-				tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpDispatchingStatus).Inc()
+				metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
@@ -200,7 +190,8 @@ func (dm *Manager) dispatchTaskLoop() {
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
 					dm.startDispatcher(task, startTime)
 					cnt++
-					waitcnt[task.Type]--
+					metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
+					metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 					continue
 				}
 				if dm.checkConcurrencyOverflow(cnt) {
@@ -208,13 +199,8 @@ func (dm *Manager) dispatchTaskLoop() {
 				}
 				dm.startDispatcher(task, startTime)
 				cnt++
-				waitcnt[task.Type]--
-			}
-			for _, task := range tasks {
-				if !dm.isRunningTask(task.ID) {
-					tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpWaitingStatus).Set(float64(waitcnt[task.Type]))
-					tidbmetrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, tidbmetrics.DpWaitingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(task.StartTime)).Microseconds()))
-				}
+				metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
+				metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
 			}
 		}
 	}
@@ -235,13 +221,13 @@ func (dm *Manager) startDispatcher(task *proto.Task, startTime time.Time) {
 		dispatcherFactory := GetDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		dm.setRunningTask(task, dispatcher)
-		tidbmetrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, tidbmetrics.DpDispatchingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(startTime)).Microseconds()))
-		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpDispatchingStatus).Dec()
-		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpRunningStatus).Inc()
+		metrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(startTime)).Microseconds()))
+		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Dec()
+		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.RunningStatus).Inc()
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
-		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpRunningStatus).Dec()
-		tidbmetrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, tidbmetrics.DpcompletedStatus).Inc()
+		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.RunningStatus).Dec()
+		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.CompletedStatus).Inc()
 	})
 }
 

@@ -277,10 +277,4 @@ const (
 	LblFairLockingStmtUsed      = "stmt-used"
 	LblFairLockingStmtEffective = "stmt-effective"
 	LblScope                    = "scope"
-
-	LblTaskStatus  = "status"
-	LblTaskType    = "task_id"
-	LblTaskID      = "task_type"
-	LblSubTaskID   = "subtask_id"
-	LblSchedulerID = "scheduler_id"
 )

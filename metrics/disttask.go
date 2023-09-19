@@ -18,22 +18,30 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var (
-	DpDispatchingStatus string = "dispatching"
-	DpWaitingStatus     string = "waiting"
-	DpRunningStatus     string = "running"
-	DpcompletedStatus   string = "completed"
+const (
+	DispatchingStatus = "dispatching"
+	WaitingStatus     = "waiting"
+	RunningStatus     = "running"
+	CompletedStatus   = "completed"
 )
 
-// disttask metrics.
+const (
+	LblTaskStatus  = "status"
+	LblTaskType    = "task_type"
+	LblTaskID      = "task_id"
+	LblSubTaskID   = "subtask_id"
+	LblSchedulerID = "scheduler_id"
+)
+
 var (
 	//DistTaskHistogram      *prometheus.HistogramVec
-	DistTaskDispatcherGauge         *prometheus.GaugeVec
-	DistTaskDispatcherDurationGauge *prometheus.GaugeVec
+	DistTaskDispatcherGauge          *prometheus.GaugeVec
+	DistTaskDispatcherDurationGauge  *prometheus.GaugeVec
+	DistTaskDispatcherStarttimeGauge *prometheus.GaugeVec
 )
 
-// InitDistTaskMetrics initializes disttask metrics.
-func InitDistTaskMetrics() {
+// InitDistDDLMetrics initializes disttask metrics.
+func InitDistDDLMetrics() {
 	DistTaskDispatcherGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -42,11 +50,19 @@ func InitDistTaskMetrics() {
 			Help:      "Gauge of distdispatcher.",
 		}, []string{LblTaskType, LblTaskStatus})
 
+	DistTaskDispatcherStarttimeGauge = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "disttask",
+			Name:      "dispatcher_start_time",
+			Help:      "Gauge of start_time of distdispatcher.",
+		}, []string{LblTaskType, LblTaskStatus, LblTaskID})
+
 	DistTaskDispatcherDurationGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
 			Name:      "dispatcher_duration",
-			Help:      "Gauge of duration time (s) of distdispatcher.",
+			Help:      "Gauge of duration time (ms) of distdispatcher.",
 		}, []string{LblTaskType, LblTaskStatus, LblTaskID})
 }
