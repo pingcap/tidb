@@ -1530,7 +1530,7 @@ func (a *ExecStmt) RecordHistoryStats() {
 }
 
 func isTableFullScanWithoutFilters(tableScan *plannercore.PhysicalTableScan) bool {
-	return tableScan.HasRFFilters() || len(tableScan) > 0
+	return tableScan.HasRFFilters() || len(tableScan.AccessCondition) > 0 || tableScan.HasLateMaterializationFilterCondition()
 }
 
 // traverseFlatPlanForHistoryStats returns true when it contains limit operator, because limit operator may lead to early

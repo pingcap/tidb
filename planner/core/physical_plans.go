@@ -937,6 +937,11 @@ func (ts *PhysicalTableScan) HasRFFilters() bool {
 	return len(ts.runtimeFilterList) > 0
 }
 
+// HasLateMaterializationFilterCondition returns true when lateMaterializationFilterCondition length > 0.
+func (ts *PhysicalTableScan) HasLateMaterializationFilterCondition() bool {
+	return len(ts.lateMaterializationFilterCondition) > 0
+}
+
 // ResolveCorrelatedColumns resolves the correlated columns in range access.
 // We already limit range mem usage when building ranges in optimizer phase, so we don't need and shouldn't limit range
 // mem usage when rebuilding ranges during the execution phase.
