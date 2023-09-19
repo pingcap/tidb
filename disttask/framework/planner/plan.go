@@ -33,6 +33,8 @@ type PlanCtx struct {
 	// PreviousSubtaskMetas is a list of subtask metas from previous step.
 	// We can remove this field if we find a better way to pass the result between steps.
 	PreviousSubtaskMetas [][]byte
+	CurrTaskStep         int64
+	NextTaskStep         int64
 }
 
 // LogicalPlan represents a logical plan in distribute framework.

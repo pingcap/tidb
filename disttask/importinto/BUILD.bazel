@@ -17,6 +17,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/backend",
+        "//br/pkg/lightning/backend/external",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/backend/local",
         "//br/pkg/lightning/checkpoints",
@@ -26,6 +27,7 @@ go_library(
         "//br/pkg/lightning/metric",
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/verification",
+        "//br/pkg/storage",
         "//br/pkg/utils",
         "//config",
         "//disttask/framework/dispatcher",
@@ -86,6 +88,7 @@ go_test(
     race = "on",
     shard_count = 8,
     deps = [
+        "//br/pkg/lightning/backend",
         "//br/pkg/lightning/checkpoints",
         "//br/pkg/lightning/mydump",
         "//br/pkg/lightning/verification",
@@ -99,7 +102,6 @@ go_test(
         "//executor/importer",
         "//meta/autoid",
         "//parser/model",
-        "//parser/mysql",
         "//testkit",
         "//util/logutil",
         "//util/sqlexec",

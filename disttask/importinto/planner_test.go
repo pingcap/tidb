@@ -19,11 +19,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/disttask/framework/planner"
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,7 +56,10 @@ func TestToPhysicalPlan(t *testing.T) {
 		EligibleInstances: []*infosync.ServerInfo{{ID: "1"}},
 		ChunkMap:          map[int32][]Chunk{chunkID: {{Path: "gs://test-load/1.csv"}}},
 	}
-	planCtx := planner.PlanCtx{}
+	planCtx := planner.PlanCtx{
+		CurrTaskStep: proto.StepInit,
+		NextTaskStep: StepImport,
+	}
 	physicalPlan, err := logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
 	plan := &planner.PhysicalPlan{
@@ -77,24 +80,6 @@ func TestToPhysicalPlan(t *testing.T) {
 				},
 				Step: StepImport,
 			},
-			{
-				ID: 1,
-				Input: planner.InputSpec{
-					ColumnTypes: []byte{
-						mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeLonglong, mysql.TypeJSON,
-					},
-					Links: []planner.LinkSpec{
-						{
-							ProcessorID: 0,
-						},
-					},
-				},
-				Pipeline: &PostProcessSpec{
-					Schema: "db",
-					Table:  "tb",
-				},
-				Step: StepPostProcess,
-			},
 		},
 	}
 	require.Equal(t, plan, physicalPlan)
@@ -111,6 +96,12 @@ func TestToPhysicalPlan(t *testing.T) {
 
 	subtaskMeta1.Checksum = Checksum{Size: 1, KVs: 2, Sum: 3}
 	bs, err = json.Marshal(subtaskMeta1)
+	require.NoError(t, err)
+	planCtx = planner.PlanCtx{
+		CurrTaskStep: StepImport,
+		NextTaskStep: StepPostProcess,
+	}
+	physicalPlan, err = logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
 	subtaskMetas2, err := physicalPlan.ToSubtaskMetas(planner.PlanCtx{
 		PreviousSubtaskMetas: [][]byte{bs},

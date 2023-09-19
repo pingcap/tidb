@@ -1123,7 +1123,7 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 		}
 		return 0, 0, errors.New("invalid connection")
 	}
-	splitSize, splitKeys, err := getRegionSplitSizeKeys(ctx, cli, nil)
+	splitSize, splitKeys, err := GetRegionSplitSizeKeys(ctx, cli, nil)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), splitSize)
 	require.Equal(t, int64(2), splitKeys)

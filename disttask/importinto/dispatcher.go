@@ -122,7 +122,8 @@ func (t *taskInfo) close(ctx context.Context) {
 
 // ImportDispatcherExt is an extension of ImportDispatcher, exported for test.
 type ImportDispatcherExt struct {
-	mu sync.RWMutex
+	globalSort bool
+	mu         sync.RWMutex
 	// NOTE: there's no need to sync for below 2 fields actually, since we add a restriction that only one
 	// task can be running at a time. but we might support task queuing in the future, leave it for now.
 	// the last time we switch TiKV into IMPORT mode, this is a global operation, do it for one task makes
@@ -196,13 +197,14 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
-	_ int64,
+	nextStep int64,
 ) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
-		zap.String("step", stepStr(gTask.Step)),
+		zap.String("curr-step", stepStr(gTask.Step)),
+		zap.String("next-step", stepStr(nextStep)),
 	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(gTask.Meta, taskMeta)
@@ -228,18 +230,28 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		}
 	}()
 
+	var previousSubtaskMetas [][]byte
 	switch gTask.Step {
 	case proto.StepInit:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
-		if err := preProcess(ctx, taskHandle, gTask, taskMeta, logger); err != nil {
+		jobStep := importer.JobStepImporting
+		if dsp.globalSort {
+			jobStep = importer.JobStepGlobalSorting
+		}
+		if err = startJob(ctx, logger, taskHandle, taskMeta, jobStep); err != nil {
 			return nil, err
 		}
-		if err = startJob(ctx, logger, taskHandle, taskMeta); err != nil {
+	case StepEncodeAndSort:
+		previousSubtaskMetas, err = taskHandle.GetPreviousSubtaskMetas(gTask.ID, StepEncodeAndSort)
+		if err != nil {
 			return nil, err
 		}
-	case StepImport:
+		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
+			return nil, err
+		}
+	case StepImport, StepWriteAndIngest:
 		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
@@ -253,6 +265,15 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		if err := updateResult(taskHandle, gTask, taskMeta); err != nil {
 			return nil, err
 		}
+		// we need get metas where checksum is stored.
+		step := StepImport
+		if dsp.globalSort {
+			step = StepEncodeAndSort
+		}
+		previousSubtaskMetas, err = taskHandle.GetPreviousSubtaskMetas(gTask.ID, step)
+		if err != nil {
+			return nil, err
+		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
 	case StepPostProcess:
 		return nil, nil
@@ -260,11 +281,12 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
-	previousSubtaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
-	if err != nil {
-		return nil, err
+	planCtx := planner.PlanCtx{
+		Ctx:                  ctx,
+		PreviousSubtaskMetas: previousSubtaskMetas,
+		CurrTaskStep:         gTask.Step,
+		NextTaskStep:         nextStep,
 	}
-	planCtx := planner.PlanCtx{Ctx: ctx, PreviousSubtaskMetas: previousSubtaskMetas}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(gTask.Meta); err != nil {
 		return nil, err
@@ -273,7 +295,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	if err != nil {
 		return nil, err
 	}
-	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, dsp.GetNextStep(taskHandle, gTask))
+	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, nextStep)
 	if err != nil {
 		return nil, err
 	}
@@ -340,11 +362,16 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 }
 
 // GetNextStep implements dispatcher.Extension interface.
-func (*ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+func (dsp *ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
 	switch task.Step {
 	case proto.StepInit:
+		if dsp.globalSort {
+			return StepEncodeAndSort
+		}
 		return StepImport
-	case StepImport:
+	case StepEncodeAndSort:
+		return StepWriteAndIngest
+	case StepImport, StepWriteAndIngest:
 		return StepPostProcess
 	default:
 		// current step must be StepPostProcess
@@ -391,26 +418,33 @@ func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
 	serverID string, task *proto.Task) dispatcher.Dispatcher {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
-	dis := importDispatcher{
+	dsp := importDispatcher{
 		BaseDispatcher: dispatcher.NewBaseDispatcher(subCtx, taskMgr, serverID, task),
 	}
-	dis.BaseDispatcher.Extension = &ImportDispatcherExt{}
-	return &dis
+	return &dsp
+}
+
+func (dsp *importDispatcher) Init() (err error) {
+	defer func() {
+		if err != nil {
+			// if init failed, close is not called, so we need to unregister here.
+			metricsManager.unregister(dsp.Task.ID)
+		}
+	}()
+	taskMeta := &TaskMeta{}
+	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+
+	dsp.BaseDispatcher.Extension = &ImportDispatcherExt{
+		globalSort: taskMeta.Plan.CloudStorageURI != "",
+	}
+	return dsp.BaseDispatcher.Init()
 }
 
 func (dsp *importDispatcher) Close() {
 	metricsManager.unregister(dsp.Task.ID)
 	dsp.BaseDispatcher.Close()
-}
-
-// preProcess does the pre-processing for the task.
-func preProcess(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta, logger *zap.Logger) error {
-	logger.Info("pre process")
-	// TODO: drop table indexes depends on the option.
-	// if err := dropTableIndexes(ctx, handle, taskMeta, logger); err != nil {
-	// 	return err
-	// }
-	return updateMeta(gTask, taskMeta)
 }
 
 // nolint:deadcode
@@ -530,7 +564,7 @@ func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *Tas
 	return updateMeta(gTask, taskMeta)
 }
 
-func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.TaskHandle, taskMeta *TaskMeta) error {
+func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
 	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -544,7 +578,7 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
-				return importer.StartJob(ctx, exec, taskMeta.JobID)
+				return importer.StartJob(ctx, exec, taskMeta.JobID, jobStep)
 			})
 		},
 	)
@@ -610,6 +644,9 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
 	taskMeta.Stmt = ""
 	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
+	if taskMeta.Plan.CloudStorageURI != "" {
+		taskMeta.Plan.CloudStorageURI = ast.RedactURL(taskMeta.Plan.CloudStorageURI)
+	}
 	if err := updateMeta(gTask, taskMeta); err != nil {
 		// marshal failed, should not happen
 		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
@@ -645,10 +682,18 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 
 func stepStr(step int64) string {
 	switch step {
+	case proto.StepInit:
+		return "init"
 	case StepImport:
 		return "import"
 	case StepPostProcess:
 		return "postprocess"
+	case StepEncodeAndSort:
+		return "encode&sort"
+	case StepWriteAndIngest:
+		return "write&ingest"
+	case proto.StepDone:
+		return "done"
 	default:
 		return "unknown"
 	}

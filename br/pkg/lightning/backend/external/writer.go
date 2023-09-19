@@ -24,6 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -441,4 +444,40 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 		return "", "", nil, nil, err
 	}
 	return dataPath, statPath, dataWriter, statsWriter, nil
+}
+
+// EngineWriter implements backend.EngineWriter interface.
+type EngineWriter struct {
+	w *Writer
+}
+
+// NewEngineWriter creates a new EngineWriter.
+func NewEngineWriter(w *Writer) *EngineWriter {
+	return &EngineWriter{w: w}
+}
+
+// AppendRows implements backend.EngineWriter interface.
+func (e *EngineWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
+	kvs := kv.Rows2KvPairs(rows)
+	if len(kvs) == 0 {
+		return nil
+	}
+	for _, item := range kvs {
+		err := e.w.WriteRow(ctx, item.Key, item.Val, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// IsSynced implements backend.EngineWriter interface.
+func (e *EngineWriter) IsSynced() bool {
+	// only used when saving checkpoint
+	return true
+}
+
+// Close implements backend.EngineWriter interface.
+func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+	return nil, e.w.Close(ctx)
 }

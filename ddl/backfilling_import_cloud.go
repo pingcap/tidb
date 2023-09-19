@@ -77,7 +77,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
-	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, int32(m.index.ID))
+	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, m.index.ID)
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,

@@ -276,6 +276,19 @@ func DecodeKeyHead(key kv.Key) (tableID int64, indexID int64, isRecordKey bool, 
 	return
 }
 
+// DecodeIndexID decodes indexID from the key.
+// this method simply extract index id part, and no other checking.
+// Caller should make sure the key is an index key.
+func DecodeIndexID(key kv.Key) (int64, error) {
+	key = key[len(tablePrefix)+8+len(indexPrefixSep):]
+
+	_, indexID, err := codec.DecodeInt(key)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return indexID, nil
+}
+
 // DecodeTableID decodes the table ID of the key, if the key is not table key, returns 0.
 func DecodeTableID(key kv.Key) int64 {
 	if !key.HasPrefix(tablePrefix) {

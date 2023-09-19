@@ -194,7 +194,7 @@ func (e *ImportIntoExec) getJobImporter(ctx context.Context, param *importer.Job
 	importFromServer, err := storage.IsLocalPath(e.controller.Path)
 	if err != nil {
 		// since we have checked this during creating controller, this should not happen.
-		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(err.Error())
+		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(plannercore.ImportIntoDataSource, err.Error())
 	}
 	logutil.Logger(ctx).Info("get job importer", zap.Stringer("param", e.controller.Parameters),
 		zap.Bool("dist-task-enabled", variable.EnableDistTask.Load()))

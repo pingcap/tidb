@@ -16,14 +16,24 @@ package importinto
 
 import (
 	"context"
+	"path"
+	"strconv"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/disttask/operator"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+)
+
+const (
+	maxWaitDuration = 30 * time.Second
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -39,31 +49,35 @@ type encodeAndSortOperator struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	logger *zap.Logger
-	errCh  chan error
+	taskID, subtaskID int64
+	tableImporter     *importer.TableImporter
+	sharedVars        *SharedVars
+	logger            *zap.Logger
+	errCh             chan error
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
 var _ operator.WithSource[*importStepMinimalTask] = (*encodeAndSortOperator)(nil)
 var _ operator.WithSink[workerpool.None] = (*encodeAndSortOperator)(nil)
 
-func newEncodeAndSortOperator(ctx context.Context, concurrency int, logger *zap.Logger) *encodeAndSortOperator {
+func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor, sharedVars *SharedVars, subtaskID int64) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
-		ctx:    subCtx,
-		cancel: cancel,
-		logger: logger,
-		errCh:  make(chan error),
+		ctx:           subCtx,
+		cancel:        cancel,
+		taskID:        executor.taskID,
+		subtaskID:     subtaskID,
+		tableImporter: executor.tableImporter,
+		sharedVars:    sharedVars,
+		logger:        executor.logger,
+		errCh:         make(chan error),
 	}
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
 		util.ImportInto,
-		concurrency,
+		int(executor.taskMeta.Plan.ThreadCnt),
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return &chunkWorker{
-				ctx: subCtx,
-				op:  op,
-			}
+			return newChunkWorker(ctx, op)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -116,6 +130,42 @@ func (op *encodeAndSortOperator) Done() <-chan struct{} {
 type chunkWorker struct {
 	ctx context.Context
 	op  *encodeAndSortOperator
+
+	dataWriter  *external.EngineWriter
+	indexWriter *importer.IndexRouteWriter
+}
+
+func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker {
+	w := &chunkWorker{
+		ctx: ctx,
+		op:  op,
+	}
+	if op.tableImporter.IsGlobalSort() {
+		// in case on network partition, 2 nodes might run the same subtask.
+		workerUUID := uuid.New().String()
+		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
+		indexWriterFn := func(indexID int64) *external.Writer {
+			builder := external.NewWriterBuilder().
+				SetOnCloseFunc(func(summary *external.WriterSummary) {
+					op.sharedVars.mergeIndexSummary(indexID, summary)
+				})
+			prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
+			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
+			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+			return writer
+		}
+
+		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
+		builder := external.NewWriterBuilder().
+			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
+		prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
+		writerID := path.Join("data", workerUUID)
+		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+		w.dataWriter = external.NewEngineWriter(writer)
+
+		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
+	}
+	return w
 }
 
 func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.None)) {
@@ -125,10 +175,29 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx); err != nil {
+	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter); err != nil {
 		w.op.onError(err)
 	}
 }
 
-func (*chunkWorker) Close() {
+func (w *chunkWorker) Close() {
+	closeCtx := w.ctx
+	if closeCtx.Err() != nil {
+		// in case of context canceled, we need to create a new context to close writers.
+		newCtx, cancel := context.WithTimeout(context.Background(), maxWaitDuration)
+		closeCtx = newCtx
+		defer cancel()
+	}
+	if w.dataWriter != nil {
+		// Note: we cannot ignore close error as we're writing to S3 or GCS.
+		// ignore error might cause data loss. below too.
+		if _, err := w.dataWriter.Close(closeCtx); err != nil {
+			w.op.onError(errors.Trace(err))
+		}
+	}
+	if w.indexWriter != nil {
+		if _, err := w.indexWriter.Close(closeCtx); err != nil {
+			w.op.onError(errors.Trace(err))
+		}
+	}
 }

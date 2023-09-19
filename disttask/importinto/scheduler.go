@@ -22,8 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -52,32 +55,34 @@ type importStepExecutor struct {
 	wg           sync.WaitGroup
 }
 
-func (s *importStepExecutor) Init(ctx context.Context) error {
-	s.logger.Info("init subtask env")
-
+func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
-	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
+	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	astArgs, err := importer.ASTArgsFromStmt(s.taskMeta.Stmt)
+	astArgs, err := importer.ASTArgsFromStmt(taskMeta.Stmt)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(&s.taskMeta.Plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// todo: this method will load all files, but we only import files related to current subtask.
-	if err := controller.InitDataFiles(ctx); err != nil {
-		return err
+	if err = controller.InitDataStore(ctx); err != nil {
+		return nil, err
 	}
 
-	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
+	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(false),
 		Job:      &asyncloaddata.Job{},
-	}, controller, s.taskID)
+	}, controller, taskID)
+}
+
+func (s *importStepExecutor) Init(ctx context.Context) error {
+	s.logger.Info("init subtask env")
+	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta)
 	if err != nil {
 		return err
 	}
@@ -86,11 +91,14 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.tableImporter.CheckDiskQuota(s.importCtx)
-	}()
+	// only need to check disk quota when we are using local sort.
+	if s.tableImporter.IsLocalSort() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.tableImporter.CheckDiskQuota(s.importCtx)
+		}()
+	}
 	return nil
 }
 
@@ -103,31 +111,37 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 	}
 	s.logger.Info("split and run subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
-	dataEngine, err := s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
-	if err != nil {
-		return err
-	}
-	// Unlike in Lightning, we start an index engine for each subtask, whereas previously there was only a single index engine globally.
-	// This is because the scheduler currently does not have a post-processing mechanism.
-	// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
-	// Multiple index engines may suffer performance degradation due to range overlap.
-	// These issues will be alleviated after we integrate s3 sorter.
-	// engineID = -1, -2, -3, ...
-	indexEngine, err := s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
-	if err != nil {
-		return err
+	var dataEngine, indexEngine *backend.OpenedEngine
+	if s.tableImporter.IsLocalSort() {
+		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
+		if err != nil {
+			return err
+		}
+		// Unlike in Lightning, we start an index engine for each subtask,
+		// whereas previously there was only a single index engine globally.
+		// This is because the scheduler currently does not have a post-processing mechanism.
+		// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
+		// Multiple index engines may suffer performance degradation due to range overlap.
+		// These issues will be alleviated after we integrate s3 sorter.
+		// engineID = -1, -2, -3, ...
+		indexEngine, err = s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
+		if err != nil {
+			return err
+		}
 	}
 	sharedVars := &SharedVars{
-		TableImporter: s.tableImporter,
-		DataEngine:    dataEngine,
-		IndexEngine:   indexEngine,
-		Progress:      asyncloaddata.NewProgress(false),
-		Checksum:      &verification.KVChecksum{},
+		TableImporter:    s.tableImporter,
+		DataEngine:       dataEngine,
+		IndexEngine:      indexEngine,
+		Progress:         asyncloaddata.NewProgress(false),
+		Checksum:         &verification.KVChecksum{},
+		SortedDataMeta:   &external.SortedKVMeta{},
+		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(ctx, int(s.taskMeta.Plan.ThreadCnt), s.logger)
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID)
 	op.SetSource(source)
 	pipeline := operator.NewAsyncPipeline(op)
 	if err = pipeline.Execute(); err != nil {
@@ -169,23 +183,27 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
-	s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
-	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
-	if err != nil {
-		return err
-	}
-	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
-	if err != nil {
-		return err
-	}
+	var dataKVCount int64
+	if s.tableImporter.IsLocalSort() {
+		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
+		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
+		closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
+		if err != nil {
+			return err
+		}
+		dataKVCount, err = s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+		if err != nil {
+			return err
+		}
 
-	s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
-	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
-		return err
-	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
-		return err
+		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
+		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
+			return err
+		} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+			return err
+		}
 	}
+	// there's no imported dataKVCount on this stage when using global sort.
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
@@ -203,6 +221,8 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
+	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -222,6 +242,86 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 func (s *importStepExecutor) Rollback(context.Context) error {
 	// TODO: add rollback
 	s.logger.Info("rollback")
+	return nil
+}
+
+type writeAndIngestStepExecutor struct {
+	scheduler.EmptySubtaskExecutor
+	taskID        int64
+	taskMeta      *TaskMeta
+	logger        *zap.Logger
+	tableImporter *importer.TableImporter
+}
+
+var _ execute.SubtaskExecutor = &writeAndIngestStepExecutor{}
+
+func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
+	if err != nil {
+		return err
+	}
+	e.tableImporter = tableImporter
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	e.logger.Info("write and ingest kv", zap.Int64("subtask-id", subtask.ID))
+
+	sm := &WriteIngestStepMeta{}
+	err := json.Unmarshal(subtask.Meta, sm)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	localBackend := e.tableImporter.Backend()
+	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
+		External: &backend.ExternalEngineConfig{
+			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:     sm.DataFiles,
+			StatFiles:     sm.StatFiles,
+			MinKey:        sm.MinKey,
+			MaxKey:        sm.MaxKey,
+			SplitKeys:     sm.RangeSplitKeys,
+			TotalFileSize: int64(sm.TotalKVSize),
+			TotalKVCount:  0,
+		},
+	}, engineUUID)
+	if err != nil {
+		return err
+	}
+	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+}
+
+func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+	var subtaskMeta WriteIngestStepMeta
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return err
+	}
+	if subtaskMeta.KVGroup != dataKVGroup {
+		return nil
+	}
+
+	// only data kv group has loaded row count
+	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	localBackend := e.tableImporter.Backend()
+	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
+	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return err
+	}
+	subtask.Meta = newMeta
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
+	e.logger.Info("cleanup subtask env")
+	return e.tableImporter.Close()
+}
+
+func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
+	e.logger.Info("rollback")
 	return nil
 }
 
@@ -277,8 +377,14 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 	logger.Info("create step scheduler")
 
 	switch task.Step {
-	case StepImport:
+	case StepImport, StepEncodeAndSort:
 		return &importStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	case StepWriteAndIngest:
+		return &writeAndIngestStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,

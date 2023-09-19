@@ -139,7 +139,7 @@ func TestDispatcherExt(t *testing.T) {
 	task.Meta = bs
 	// Set step to StepPostProcess to skip the rollback sql.
 	task.Step = importinto.StepPostProcess
-	require.NoError(t, importer.StartJob(ctx, conn, jobID))
+	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
 	_, err = ext.OnErrStage(ctx, d, task, []error{errors.New("test")})
 	require.NoError(t, err)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
