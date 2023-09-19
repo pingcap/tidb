@@ -23,7 +23,6 @@ import (
 // LockTables add locked tables id to store.
 // - tidAndNames: table ids and names of which will be locked.
 // - pidAndNames: partition ids and names of which will be locked.
-// - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
 func (h *Handle) LockTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (string, error) {
 	se, err := h.pool.Get()
@@ -43,6 +42,7 @@ func (h *Handle) LockTables(tidAndNames map[int64]string, pidAndNames map[int64]
 // - tableName: table name of which will be locked.
 // - pidNames: partition ids of which will be locked.
 // Return the message of skipped tables and error.
+// Note: If the whole table is locked, then skip all partitions of the table.
 func (h *Handle) LockPartitions(
 	tid int64,
 	tableName string,
@@ -62,7 +62,6 @@ func (h *Handle) LockPartitions(
 // RemoveLockedTables remove tables from table locked records.
 // - tidAndNames:  table ids and names of which will be unlocked.
 // - pidAndNames: partition ids and names of which will be unlocked.
-// - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
 func (h *Handle) RemoveLockedTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (string, error) {
 	se, err := h.pool.Get()
@@ -79,6 +78,7 @@ func (h *Handle) RemoveLockedTables(tidAndNames map[int64]string, pidAndNames ma
 // - tid: table id of which will be unlocked.
 // - tableName: table name of which will be unlocked.
 // - pidNames: partition ids of which will be unlocked.
+// Note: If the whole table is locked, then skip all partitions of the table.
 func (h *Handle) RemoveLockedPartitions(
 	tid int64,
 	tableName string,

@@ -34,7 +34,6 @@ const (
 // - exec: sql executor.
 // - tidAndNames: table ids and names of which will be unlocked.
 // - pidAndNames: partition ids and names of which will be unlocked.
-// - tables: table names of which will be unlocked.
 // Return the message of skipped tables and error.
 func RemoveLockedTables(
 	exec sqlexec.RestrictedSQLExecutor,

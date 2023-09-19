@@ -45,7 +45,6 @@ var (
 // - exec: sql executor.
 // - tidAndNames: table ids and names of which will be locked.
 // - pidAndNames: partition ids and names of which will be locked.
-// - tables: table names of which will be locked.
 // Return the message of skipped tables and error.
 func AddLockedTables(
 	exec sqlexec.RestrictedSQLExecutor,
