@@ -5006,7 +5006,7 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 		if err != nil {
 			return nil
 		}
-		tmpProcessor.end.InitCompareCols(b.ctx, orderByCols)
+		err = tmpProcessor.end.InitCompareCols(b.ctx, orderByCols)
 		if err != nil {
 			return nil
 		}
