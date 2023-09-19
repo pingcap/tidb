@@ -55,8 +55,8 @@ Error 1292: Incorrect time value: '20171231235959.999999'
 select ADDDATE('2008-01-34', -1);
 ADDDATE('2008-01-34', -1)
 NULL
-Show warnings;
 Level	Code	Message
+Warning	1292	Incorrect datetime value: '2008-01-34'
 set sql_mode='';
 drop table if exists t;
 create table t1(a decimal(10,5), b decimal(10,1));

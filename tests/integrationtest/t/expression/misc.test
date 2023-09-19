@@ -29,8 +29,9 @@ select time '2017-01-01 00:00:00';
 select time '071231235959.999999';
 -- error 1292
 select time '20171231235959.999999';
+--enable_warnings
 select ADDDATE('2008-01-34', -1);
-Show warnings;
+--disable_warnings
 
 # TestTwoDecimalTruncate
 set sql_mode='';
