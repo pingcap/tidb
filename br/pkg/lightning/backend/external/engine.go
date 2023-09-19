@@ -144,6 +144,11 @@ func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.
 	logutil.Logger(ctx).Info("load data from external storage",
 		zap.Duration("cost time", time.Since(now)),
 		zap.Int("iterated count", cnt))
+	if len(keys) > 0 {
+		logutil.Logger(ctx).Info("min and max key",
+			zap.String("min key", hex.EncodeToString(keys[0])),
+			zap.String("max key", hex.EncodeToString(keys[len(keys)-1])))
+	}
 	return &MemoryIngestData{
 		keyAdapter:         e.keyAdapter,
 		duplicateDetection: e.duplicateDetection,

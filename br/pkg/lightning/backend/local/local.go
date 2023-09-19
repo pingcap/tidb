@@ -1272,6 +1272,22 @@ func (local *Backend) generateJobForRange(
 			log.ShortError(err), zap.Int("region_len", len(regions)),
 			logutil.Key("startKey", startKey),
 			logutil.Key("endKey", endKey))
+
+		iter := data.NewIter(ctx, nil, nil)
+		defer iter.Close()
+		var lastKey []byte
+		for iter.First(); iter.Valid(); iter.Next() {
+			if len(lastKey) > 0 {
+				cmp := bytes.Compare(lastKey, iter.Key())
+				if cmp >= 0 {
+					log.FromContext(ctx).Error("invalid key order",
+						zap.Binary("lastKey", lastKey),
+						zap.Binary("currentKey", iter.Key()))
+				}
+			}
+			lastKey = append(lastKey[:0], iter.Key()...)
+		}
+
 		return nil, err
 	}
 
