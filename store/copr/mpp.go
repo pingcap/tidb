@@ -108,7 +108,6 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		CoordinatorAddress:     req.CoordinatorAddress,
 		ReportExecutionSummary: req.ReportExecutionSummary,
 		MppVersion:             req.MppVersion.ToInt64(),
-		ResourceGroupName:      req.ResourceGroupName,
 	}
 
 	mppReq := &mpp.DispatchTaskRequest{
