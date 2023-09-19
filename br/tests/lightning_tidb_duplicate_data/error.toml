@@ -1,4 +1,4 @@
 [tikv-importer]
 backend = "tidb"
 on-duplicate = "error"
-sql-statement-length = 1
+tidb-write-throughput-limit = 1

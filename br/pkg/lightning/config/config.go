@@ -84,7 +84,7 @@ const (
 	defaultIndexConcurrency           = 2
 	DefaultRegionCheckBackoffLimit    = 1800
 	DefaultRegionSplitBatchSize       = 4096
-	DefaultSQLStatementLength         = 1 * units.MiB
+	DefaultTiDBWriteThroughputLimit   = 1 * units.MiB
 
 	// defaultMetaSchemaName is the default database name used to store lightning metadata
 	defaultMetaSchemaName     = "lightning_metadata"
@@ -1061,16 +1061,17 @@ type TikvImporter struct {
 	DiskQuota               ByteSize                     `toml:"disk-quota" json:"disk-quota"`
 	RangeConcurrency        int                          `toml:"range-concurrency" json:"range-concurrency"`
 	DuplicateResolution     DuplicateResolutionAlgorithm `toml:"duplicate-resolution" json:"duplicate-resolution"`
-	SQLStatementLength      ByteSize                     `toml:"sql-statement-length" json:"sql-statement-length"`
 	// deprecated, use ParallelImport instead.
 	IncrementalImport bool   `toml:"incremental-import" json:"incremental-import"`
 	ParallelImport    bool   `toml:"parallel-import" json:"parallel-import"`
 	KeyspaceName      string `toml:"keyspace-name" json:"keyspace-name"`
 	AddIndexBySQL     bool   `toml:"add-index-by-sql" json:"add-index-by-sql"`
 
-	EngineMemCacheSize      ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
-	LocalWriterMemCacheSize ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
-	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	EngineMemCacheSize       ByteSize `toml:"engine-mem-cache-size" json:"engine-mem-cache-size"`
+	LocalWriterMemCacheSize  ByteSize `toml:"local-writer-mem-cache-size" json:"local-writer-mem-cache-size"`
+	StoreWriteBWLimit        ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
+	TiDBWriteThroughputLimit ByteSize `toml:"tidb-write-throughput-limit" json:"tidb-write-throughput-limit"`
+
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
 }
@@ -1086,10 +1087,10 @@ func (t *TikvImporter) adjust() error {
 	}
 	switch t.Backend {
 	case BackendTiDB:
-		if t.SQLStatementLength <= 0 {
+		if t.TiDBWriteThroughputLimit <= 0 {
 			return common.ErrInvalidConfig.GenWithStack(
-				"`tikv-importer.sql-statement-length` got %d, should be larger than 0",
-				t.SQLStatementLength)
+				"`tikv-importer.tidb-write-throughput-limit` got %d, should be larger than 0",
+				t.TiDBWriteThroughputLimit)
 		}
 		t.DuplicateResolution = DupeResAlgNone
 	case BackendLocal:
@@ -1454,18 +1455,18 @@ func NewConfig() *Config {
 			DataInvalidCharReplace: string(defaultCSVDataInvalidCharReplace),
 		},
 		TikvImporter: TikvImporter{
-			Backend:                 "",
-			MaxKVPairs:              4096,
-			SendKVPairs:             32768,
-			SendKVSize:              KVWriteBatchSize,
-			RegionSplitSize:         0,
-			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
-			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
-			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
-			DiskQuota:               ByteSize(math.MaxInt64),
-			DuplicateResolution:     DupeResAlgNone,
-			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
-			SQLStatementLength:      ByteSize(DefaultSQLStatementLength),
+			Backend:                  "",
+			MaxKVPairs:               4096,
+			SendKVPairs:              32768,
+			SendKVSize:               KVWriteBatchSize,
+			RegionSplitSize:          0,
+			RegionSplitBatchSize:     DefaultRegionSplitBatchSize,
+			RegionSplitConcurrency:   runtime.GOMAXPROCS(0),
+			RegionCheckBackoffLimit:  DefaultRegionCheckBackoffLimit,
+			DiskQuota:                ByteSize(math.MaxInt64),
+			DuplicateResolution:      DupeResAlgNone,
+			PausePDSchedulerScope:    PausePDSchedulerScopeTable,
+			TiDBWriteThroughputLimit: ByteSize(DefaultTiDBWriteThroughputLimit),
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

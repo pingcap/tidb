@@ -73,7 +73,7 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	cfg.Conflict.Strategy = config.ReplaceOnDup
 	cfg.Conflict.Threshold = math.MaxInt64
 	cfg.Conflict.MaxRecordRows = 100
-	backendObj := tidb.NewTiDBBackend(context.Background(), db, cfg.Conflict, errormanager.New(nil, cfg, log.L()), config.DefaultSQLStatementLength)
+	backendObj := tidb.NewTiDBBackend(context.Background(), db, cfg.Conflict, errormanager.New(nil, cfg, log.L()), config.DefaultTiDBWriteThroughputLimit)
 	return &mysqlSuite{
 		dbHandle:   db,
 		mockDB:     mock,
@@ -166,7 +166,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	cfg.Conflict.Strategy = config.IgnoreOnDup
 	cfg.Conflict.Threshold = math.MaxInt64
 	cfg.Conflict.MaxRecordRows = 0
-	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultSQLStatementLength)
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultTiDBWriteThroughputLimit)
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -193,7 +193,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	// test conflict.strategy == ignore and not 0 conflict.max-record-rows will use ErrorOnDup
 
 	cfg.Conflict.MaxRecordRows = 10
-	ignoreBackend = tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultSQLStatementLength)
+	ignoreBackend = tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultTiDBWriteThroughputLimit)
 	engine, err = backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -246,7 +246,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	cfg.Conflict.Strategy = config.ErrorOnDup
 	cfg.Conflict.Threshold = math.MaxInt64
 	cfg.Conflict.MaxRecordRows = 0
-	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultSQLStatementLength)
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultTiDBWriteThroughputLimit)
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -541,7 +541,7 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 		s.dbHandle,
 		cfg.Conflict,
 		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultSQLStatementLength,
+		config.DefaultTiDBWriteThroughputLimit,
 	)
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
@@ -611,7 +611,7 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 		s.dbHandle,
 		cfg.Conflict,
 		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultSQLStatementLength,
+		config.DefaultTiDBWriteThroughputLimit,
 	)
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
@@ -670,7 +670,7 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 		s.dbHandle,
 		cfg.Conflict,
 		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultSQLStatementLength,
+		config.DefaultTiDBWriteThroughputLimit,
 	)
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
@@ -716,7 +716,7 @@ func TestWriteRowsRecordOneError(t *testing.T) {
 		s.dbHandle,
 		cfg.Conflict,
 		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultSQLStatementLength,
+		config.DefaultTiDBWriteThroughputLimit,
 	)
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
@@ -749,7 +749,7 @@ func TestDuplicateThreshold(t *testing.T) {
 		s.dbHandle,
 		cfg.Conflict,
 		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultSQLStatementLength,
+		config.DefaultTiDBWriteThroughputLimit,
 	)
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
@@ -872,7 +872,7 @@ func TestEncodeRowForRecord(t *testing.T) {
 	require.Equal(t, row, "(5, \"test test\", \x00\x00\x00\xab\xcd\xef)")
 }
 
-func TestSQLStatementLength(t *testing.T) {
+func TestTiDBWriteThroughputLimit(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 
