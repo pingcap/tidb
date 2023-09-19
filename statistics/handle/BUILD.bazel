@@ -41,7 +41,6 @@ go_library(
         "//util/logutil",
         "//util/mathutil",
         "//util/sqlexec",
-        "//util/syncutil",
         "//util/timeutil",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
