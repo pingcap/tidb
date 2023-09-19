@@ -1225,7 +1225,7 @@ func TestSQLBinding(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("show session bindings").Check(param.([][]any))
-				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustHavePlan("select * from test.t1", "IndexFullScan")
 				tk.MustExec("drop session binding for select * from test.t1")
 				tk.MustQuery("show session bindings").Check(testkit.Rows())
 			},
@@ -1240,7 +1240,7 @@ func TestSQLBinding(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("show session bindings").Check(param.([][]any))
-				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustHavePlan("select * from test.t1", "IndexFullScan")
 				tk.MustExec("drop session binding for select * from test.t1")
 				tk.MustQuery("show session bindings").Check(testkit.Rows())
 			},
@@ -1268,7 +1268,7 @@ func TestSQLBinding(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("show session bindings").Check(param.([][]any))
-				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustHavePlan("select * from test.t1", "IndexFullScan")
 			},
 		},
 		{
@@ -1322,9 +1322,9 @@ func TestSQLBinding(t *testing.T) {
 				rows := param.([][][]any)
 				tk.MustQuery("show bindings").Check(rows[0])
 				tk.MustQuery("show global bindings").Check(rows[1])
-				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustHavePlan("select * from test.t1", "IndexFullScan")
 				tk.MustExec("drop session binding for select * from test.t1")
-				require.True(t, tk.HasPlan("select * from test.t1", "TableFullScan"))
+				tk.MustHavePlan("select * from test.t1", "TableFullScan")
 			},
 			cleanFunc: func(tk *testkit.TestKit) {
 				tk.MustExec("drop global binding for select * from test.t1")
@@ -1342,7 +1342,7 @@ func TestSQLBinding(t *testing.T) {
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
 				tk.MustQuery("show bindings").Check(param.([][]any))
-				require.True(t, tk.HasPlan("select * from test.t1", "IndexFullScan"))
+				tk.MustHavePlan("select * from test.t1", "IndexFullScan")
 			},
 		},
 	}

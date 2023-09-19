@@ -36,6 +36,9 @@ var (
 	checkTaskRunningInterval   = 3 * time.Second
 )
 
+// WaitTaskFinished is used to sync the test.
+var WaitTaskFinished = make(chan struct{})
+
 func (dm *Manager) getRunningTaskCnt() int {
 	dm.runningTasks.RLock()
 	defer dm.runningTasks.RUnlock()
@@ -199,13 +202,16 @@ func (dm *Manager) dispatchTaskLoop() {
 }
 
 func (dm *Manager) gcSubtaskHistoryTable() {
-	logutil.Logger(dm.ctx).Info("task table gc loop start")
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
 	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
 		if seconds, ok := val.(int); ok {
 			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
 		}
+
+		<-WaitTaskFinished
 	})
+
+	logutil.Logger(dm.ctx).Info("task table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {

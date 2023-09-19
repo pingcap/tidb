@@ -192,7 +192,12 @@ func (dsp *ImportDispatcherExt) unregisterTask(ctx context.Context, task *proto.
 }
 
 // OnNextSubtasksBatch generate batch of next stage's plan.
-func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHandle dispatcher.TaskHandle, gTask *proto.Task) (
+func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
+	ctx context.Context,
+	taskHandle dispatcher.TaskHandle,
+	gTask *proto.Task,
+	_ int64,
+) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
 		zap.String("type", gTask.Type),
@@ -224,7 +229,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHan
 	}()
 
 	switch gTask.Step {
-	case StepImport:
+	case proto.StepInit:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
@@ -234,7 +239,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHan
 		if err = startJob(ctx, logger, taskHandle, taskMeta); err != nil {
 			return nil, err
 		}
-	case StepPostProcess:
+	case StepImport:
 		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
@@ -248,17 +253,14 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHan
 		if err := updateResult(taskHandle, gTask, taskMeta); err != nil {
 			return nil, err
 		}
-		if err := taskHandle.UpdateTask(gTask.State, nil, dispatcher.RetrySQLTimes); err != nil {
-			return nil, err
-		}
 		logger.Info("move to post-process step ", zap.Any("result", taskMeta.Result))
-	case StepPostProcess + 1:
+	case StepPostProcess:
 		return nil, nil
 	default:
 		return nil, errors.Errorf("unknown step %d", gTask.Step)
 	}
 
-	previousSubtaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step-1)
+	previousSubtaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +273,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(ctx context.Context, taskHan
 	if err != nil {
 		return nil, err
 	}
-	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, gTask.Step)
+	metaBytes, err := physicalPlan.ToSubtaskMetas(planCtx, dsp.GetNextStep(taskHandle, gTask))
 	if err != nil {
 		return nil, err
 	}
@@ -337,14 +339,17 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-// StageFinished check if current stage finished.
-func (*ImportDispatcherExt) StageFinished(_ *proto.Task) bool {
-	return true
-}
-
-// Finished check if current task finished.
-func (*ImportDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == StepPostProcess+1
+// GetNextStep implements dispatcher.Extension interface.
+func (*ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return StepImport
+	case StepImport:
+		return StepPostProcess
+	default:
+		// current step must be StepPostProcess
+		return proto.StepDone
+	}
 }
 
 func (dsp *ImportDispatcherExt) switchTiKV2NormalMode(ctx context.Context, task *proto.Task, logger *zap.Logger) {
@@ -500,7 +505,7 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 
 // we will update taskMeta in place and make gTask.Meta point to the new taskMeta.
 func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
-	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step-1)
+	metas, err := handle.GetPreviousSubtaskMetas(gTask.ID, gTask.Step)
 	if err != nil {
 		return err
 	}
@@ -572,9 +577,6 @@ func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logge
 	taskHandle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
-	if err := taskHandle.UpdateTask(gTask.State, nil, dispatcher.RetrySQLTimes); err != nil {
-		return err
-	}
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
@@ -593,9 +595,6 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)
 	redactSensitiveInfo(gTask, taskMeta)
-	if err := taskHandle.UpdateTask(gTask.State, nil, dispatcher.RetrySQLTimes); err != nil {
-		return err
-	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,

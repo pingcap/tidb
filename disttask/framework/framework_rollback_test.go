@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/mock"
+	mockexecute "github.com/pingcap/tidb/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
@@ -40,7 +41,7 @@ var rollbackCnt atomic.Int32
 func (*rollbackDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		dsp.cnt = 3
 		return [][]byte{
@@ -64,62 +65,34 @@ func (*rollbackDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *rollbackDispatcherExt) StageFinished(task *proto.Task) bool {
-	return task.Step == proto.StepInit && dsp.cnt >= 3
-}
-
-func (dsp *rollbackDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepInit && dsp.cnt >= 3
-}
-
-type testRollbackMiniTask struct{}
-
-func (testRollbackMiniTask) IsMinimalTask() {}
-
-func (testRollbackMiniTask) String() string {
-	return ""
-}
-
-type rollbackScheduler struct {
-	m *sync.Map
-}
-
-func (*rollbackScheduler) Init(_ context.Context) error { return nil }
-
-func (t *rollbackScheduler) Cleanup(_ context.Context) error { return nil }
-
-func (t *rollbackScheduler) Rollback(_ context.Context) error {
-	t.m = &sync.Map{}
-	rollbackCnt.Add(1)
-	return nil
-}
-
-func (t *rollbackScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
-	return []proto.MinimalTask{
-		testRollbackMiniTask{},
-		testRollbackMiniTask{},
-		testRollbackMiniTask{},
-	}, nil
-}
-
-func (t *rollbackScheduler) OnFinished(_ context.Context, _ *proto.Subtask) error {
-	return nil
-}
-
-type rollbackSubtaskExecutor struct {
-	m *sync.Map
-}
-
-func (e *rollbackSubtaskExecutor) Run(_ context.Context) error {
-	e.m.Store("1", "1")
-	return nil
+func (dsp *rollbackDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	default:
+		return proto.StepDone
+	}
 }
 
 func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&rollbackScheduler{m: m}, nil).AnyTimes()
-	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&rollbackSubtaskExecutor{m: m}, nil).AnyTimes()
-	registerTaskMetaInner(t, mockExtension, &rollbackDispatcherExt{})
+	mockExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
+	mockExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
+	mockExecutor.EXPECT().Rollback(gomock.Any()).DoAndReturn(
+		func(_ context.Context) error {
+			rollbackCnt.Add(1)
+			return nil
+		},
+	).AnyTimes()
+	mockExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Subtask) error {
+			m.Store("1", "1")
+			return nil
+		}).AnyTimes()
+	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, &rollbackDispatcherExt{})
 	rollbackCnt.Store(0)
 }
 

@@ -1767,3 +1767,77 @@ select  `col_float_key_signed` , `col_float_key_signed` % `col_float_key_signed`
 -- sorted_result
 select  `col_float_key_signed` , (`col_float_key_signed` % `col_float_key_signed`) IS FALSE from t1;
 
+# TestRailsFKUsage
+# issue https://github.com/pingcap/tidb/issues/26111
+drop table if exists author_addresses, authors;
+CREATE TABLE author_addresses (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE authors (
+	id bigint(20) NOT NULL AUTO_INCREMENT,
+	name varchar(255) NOT NULL,
+	author_address_id bigint(20) DEFAULT NULL,
+	author_address_extra_id bigint(20) DEFAULT NULL,
+	organization_id varchar(255) DEFAULT NULL,
+	owned_essay_id varchar(255) DEFAULT NULL,
+	PRIMARY KEY (id),
+	KEY index_authors_on_author_address_id (author_address_id),
+	KEY index_authors_on_author_address_extra_id (author_address_extra_id),
+	CONSTRAINT fk_rails_94423a17a3 FOREIGN KEY (author_address_id) REFERENCES author_addresses (id) ON UPDATE CASCADE ON DELETE RESTRICT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+SELECT fk.referenced_table_name AS 'to_table',
+  fk.referenced_column_name AS 'primary_key',
+  fk.column_name AS 'column',
+  fk.constraint_name AS 'name',
+  rc.update_rule AS 'on_update',
+  rc.delete_rule AS 'on_delete'
+FROM information_schema.referential_constraints rc
+JOIN information_schema.key_column_usage fk
+USING (constraint_schema, constraint_name)
+WHERE fk.referenced_column_name IS NOT NULL
+  AND fk.table_schema = database()
+  AND fk.table_name = 'authors';
+
+# TestIssue4954
+drop table if exists t;
+CREATE TABLE t (a CHAR(5) CHARACTER SET latin1);
+INSERT INTO t VALUES ('oe');
+INSERT INTO t VALUES (0xf6);
+SELECT * FROM t WHERE a= 'oe';
+SELECT HEX(a) FROM t WHERE a= 0xf6;
+
+# TestIssue4006
+drop table if exists tb;
+create table tb(id int auto_increment primary key, v varchar(32));
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+insert into tb(v) values('hello');
+insert into tb(v) (select v from tb);
+SELECT * FROM tb;
+
+# TestIssue5111
+drop table if exists t;
+create table t(c varchar(32));
+insert into t values('1e649'),('-1e649');
+--enable_warnings
+SELECT * FROM t where c < 1;
+SELECT * FROM t where c > 1;
+--disable_warnings
+
+# TestIssue5293
+drop table if exists t;
+create table t(a int);
+insert t values (1);
+select * from t where cast(a as binary);
+
+# TestIssue16351
+drop table if exists t2;
+create table t2(a int, b varchar(20));
+insert into t2 values(1,"1111"),(2,"2222"),(3,"3333"),(4,"4444"),(5,"5555"),(6,"6666"),(7,"7777"),(8,"8888"),(9,"9999"),(10,"0000");
+select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (select @j := 0, @i := "0") tt limit 10;
+
+# TestIssue23479
+select b'10000000' DIV 10;
+select cast(b'10000000' as unsigned) / 10;
+select b'10000000' / 10;

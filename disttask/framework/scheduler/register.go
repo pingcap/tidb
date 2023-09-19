@@ -17,11 +17,11 @@ package scheduler
 import (
 	"context"
 
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 )
 
 type taskTypeOptions struct {
-	PoolSize int32
 	// Summary is the summary of all tasks of the task type.
 	// TODO: better have a summary per task/subtask.
 	Summary *execute.Summary
@@ -30,20 +30,13 @@ type taskTypeOptions struct {
 // TaskTypeOption is the option of TaskType.
 type TaskTypeOption func(opts *taskTypeOptions)
 
-// WithPoolSize is the option of TaskType to set the pool size.
-func WithPoolSize(poolSize int32) TaskTypeOption {
-	return func(opts *taskTypeOptions) {
-		opts.PoolSize = poolSize
-	}
-}
-
 var (
 	// key is task type
 	taskTypes              = make(map[string]taskTypeOptions)
 	taskSchedulerFactories = make(map[string]schedulerFactoryFn)
 )
 
-type schedulerFactoryFn func(ctx context.Context, id string, taskID int64, taskTable TaskTable, pool Pool) Scheduler
+type schedulerFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler
 
 // RegisterTaskType registers the task type.
 func RegisterTaskType(taskType string, factory schedulerFactoryFn, opts ...TaskTypeOption) {
