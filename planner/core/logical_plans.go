@@ -2055,7 +2055,7 @@ func (fb *FrameBound) Clone() *FrameBound {
 }
 
 // InitCompareCols will init CompareCols
-func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
+func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) {
 	if len(fb.CalcFuncs) > 0 {
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
 		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
@@ -2069,7 +2069,6 @@ func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*exp
 			}
 		}
 	}
-	return nil
 }
 
 // LogicalWindow represents a logical window function plan.
