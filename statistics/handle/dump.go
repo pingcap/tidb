@@ -16,12 +16,13 @@ package handle
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -532,6 +533,12 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 	return tbl, nil
 }
 
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
+
 // JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
 func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 	data, err := json.Marshal(jsTable)
@@ -539,7 +546,9 @@ func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	var gzippedData bytes.Buffer
-	gzipWriter := gzip.NewWriter(&gzippedData)
+	gzipWriter := gzipWriterPool.Get().(*gzip.Writer)
+	defer gzipWriterPool.Put(gzipWriter)
+	gzipWriter.Reset(&gzippedData)
 	if _, err := gzipWriter.Write(data); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -558,6 +567,12 @@ func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 	return blocks, nil
 }
 
+var gzipReaderPool = sync.Pool{
+	New: func() any {
+		return &gzip.Reader{}
+	},
+}
+
 // BlocksToJSONTable convert gzip-compressed blocks to JSONTable
 func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
 	if len(blocks) == 0 {
@@ -568,10 +583,14 @@ func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
 		data = append(data, blocks[i]...)
 	}
 	gzippedData := bytes.NewReader(data)
-	gzipReader, err := gzip.NewReader(gzippedData)
-	if err != nil {
+	gzipReader := gzipReaderPool.Get().(*gzip.Reader)
+	if err := gzipReader.Reset(gzippedData); err != nil {
+		gzipReaderPool.Put(gzipReader)
 		return nil, err
 	}
+	defer func() {
+		gzipReaderPool.Put(gzipReader)
+	}()
 	if err := gzipReader.Close(); err != nil {
 		return nil, err
 	}

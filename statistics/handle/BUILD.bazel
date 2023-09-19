@@ -42,6 +42,7 @@ go_library(
         "//util/mathutil",
         "//util/sqlexec",
         "//util/timeutil",
+        "@com_github_klauspost_compress//gzip",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
