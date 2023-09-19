@@ -33,8 +33,11 @@ type Index struct {
 	Info           *model.IndexInfo
 	Histogram
 	StatsLoadedStatus
-	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
-	Flag       int64
+	StatsVer int64 // StatsVer is the version of the current stats, used to maintain compatibility
+	Flag     int64
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
 }
 
@@ -118,7 +121,6 @@ func (idx *Index) String() string {
 
 // TotalRowCount returns the total count of this index.
 func (idx *Index) TotalRowCount() float64 {
-	idx.CheckStats()
 	if idx.StatsVer >= Version2 {
 		return idx.Histogram.TotalRowCount() + float64(idx.TopN.TotalCount())
 	}
@@ -127,9 +129,7 @@ func (idx *Index) TotalRowCount() float64 {
 
 // IsInvalid checks if this index is invalid.
 func (idx *Index) IsInvalid(sctx sessionctx.Context, collPseudo bool) (res bool) {
-	if !collPseudo {
-		idx.CheckStats()
-	}
+	idx.CheckStats()
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -182,7 +182,6 @@ func (idx *Index) MemoryUsage() CacheItemMemoryUsage {
 // QueryBytes is used to query the count of specified bytes.
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
 func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) {
-	idx.CheckStats()
 	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer func() {

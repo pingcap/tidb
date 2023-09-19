@@ -1053,7 +1053,7 @@ func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	if v.OriginNode != nil {
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSQLBindDrop,
-			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			NormdOrigSQL: parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
 			IsGlobal:     v.GlobalScope,
 			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 		}
@@ -1076,7 +1076,7 @@ func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, er
 	if v.OriginNode != nil {
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSetBindingStatus,
-			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			NormdOrigSQL: parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
 			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 		}
 	} else if v.SQLDigest != "" {
@@ -1169,7 +1169,7 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
@@ -1202,7 +1202,7 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		return nil, err
 	}
 
-	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text()))
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text()))
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
@@ -1807,10 +1807,10 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		Ranges:           ranger.FullRange(),
 		physicalTableID:  physicalID,
 		isPartition:      isPartition,
-		tblColHists:      &(statistics.PseudoTable(tblInfo)).HistColl,
+		tblColHists:      &(statistics.PseudoTable(tblInfo, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	// There is no alternative plan choices, so just use pseudo stats to avoid panic.
-	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo)).HistColl})
+	is.SetStats(&property.StatsInfo{HistColl: &(statistics.PseudoTable(tblInfo, false)).HistColl})
 	if hasCommonCols {
 		for _, c := range commonInfos {
 			is.Columns = append(is.Columns, c.ColumnInfo)
@@ -1826,7 +1826,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName m
 		DBName:          dbName,
 		physicalTableID: physicalID,
 		isPartition:     isPartition,
-		tblColHists:     &(statistics.PseudoTable(tblInfo)).HistColl,
+		tblColHists:     &(statistics.PseudoTable(tblInfo, false)).HistColl,
 	}.Init(b.ctx, b.getSelectOffset())
 	ts.SetSchema(idxColSchema)
 	ts.Columns = ExpandVirtualColumn(ts.Columns, ts.schema, ts.Table.Columns)
@@ -2439,14 +2439,17 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // in tblInfo.Indices, index.Columns[i].Offset is set according to tblInfo.Columns. Since we decode row samples according to colsInfo rather than tbl.Columns
 // in the execution phase of ANALYZE, we need to modify index.Columns[i].Offset according to colInfos.
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
-func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) []*model.IndexInfo {
+// For multi-valued index, we need to collect it separately here and analyze it as independent index analyze task.
+// See comments for AnalyzeResults.ForMVIndex for more details.
+func getModifiedIndexesInfoForAnalyze(tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) ([]*model.IndexInfo, []*model.IndexInfo) {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
+	independentIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
 		if originIdx.State != model.StatePublic {
 			continue
 		}
 		if originIdx.MVIndex {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
+			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
 		if allColumns {
@@ -2462,7 +2465,7 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 		}
 		idxsInfo = append(idxsInfo, idx)
 	}
-	return idxsInfo
+	return idxsInfo, independentIdxsInfo
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
@@ -2501,14 +2504,13 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast
 
 func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 	as *ast.AnalyzeTableStmt,
-	tasks []AnalyzeColumnsTask,
+	analyzePlan *Analyze,
 	physicalIDs []int64,
 	partitionNames []string,
 	tbl *ast.TableName,
 	version int,
 	persistOpts bool,
-	rsOptionsMap map[int64]V2AnalyzeOptions,
-) ([]AnalyzeColumnsTask, error) {
+) error {
 	// Version 2 doesn't support incremental analyze.
 	// And incremental analyze will be deprecated in the future.
 	if as.Incremental {
@@ -2517,12 +2519,12 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	astOpts, err := handleAnalyzeOptionsV2(as.AnalyzeOpts)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	// Get all column info which need to be analyzed.
 	astColList, err := getAnalyzeColumnList(as.ColumnNames, tbl)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	var predicateCols, mustAnalyzedCols calcOnceMap
@@ -2533,15 +2535,15 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 
 	astColsInfo, _, err := b.getFullAnalyzeColumnsInfo(tbl, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns, true)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	isAnalyzeTable := len(as.PartitionNames) == 0
 	optionsMap, colsInfoMap, err := b.genV2AnalyzeOptions(persistOpts, tbl, isAnalyzeTable, physicalIDs, astOpts, as.ColumnChoice, astColList, &predicateCols, &mustAnalyzedCols, mustAllColumns)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for physicalID, opts := range optionsMap {
-		rsOptionsMap[physicalID] = opts
+		analyzePlan.OptionsMap[physicalID] = opts
 	}
 
 	// Build tasks for each partition.
@@ -2567,7 +2569,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
@@ -2582,10 +2584,18 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
 			newTask.HandleCols = &IntHandleCols{col: colInfoToColumn(extraCol, len(newTask.ColsInfo)-1)}
 		}
-		tasks = append(tasks, newTask)
+		analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
+		for _, indexInfo := range independentIndexes {
+			newIdxTask := AnalyzeIndexTask{
+				IndexInfo:   indexInfo,
+				TblInfo:     tbl.TableInfo,
+				AnalyzeInfo: info,
+			}
+			analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
+		}
 	}
 
-	return tasks, nil
+	return nil
 }
 
 func (b *PlanBuilder) genV2AnalyzeOptions(
@@ -2791,7 +2801,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 		}
 		var commonHandleInfo *model.IndexInfo
 		if version == statistics.Version2 {
-			p.ColTasks, err = b.buildAnalyzeFullSamplingTask(as, p.ColTasks, physicalIDs, partitionNames, tbl, version, usePersistedOptions, p.OptionsMap)
+			err = b.buildAnalyzeFullSamplingTask(as, p, physicalIDs, partitionNames, tbl, version, usePersistedOptions)
 			if err != nil {
 				return nil, err
 			}
@@ -2816,24 +2826,7 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 				b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 				continue
 			}
-			for i, id := range physicalIDs {
-				if id == tbl.TableInfo.ID {
-					id = -1
-				}
-				info := AnalyzeInfo{
-					DBName:        tbl.Schema.O,
-					TableName:     tbl.Name.O,
-					PartitionName: partitionNames[i],
-					TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-					Incremental:   as.Incremental,
-					StatsVersion:  version,
-				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{
-					IndexInfo:   idx,
-					AnalyzeInfo: info,
-					TblInfo:     tbl.TableInfo,
-				})
-			}
+			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, partitionNames, physicalIDs, version)...)
 		}
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, true, nil)
 		if len(colInfo) > 0 || handleCols != nil {
@@ -2914,20 +2907,7 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("analyzing multi-valued indexes is not supported, skip %s", idx.Name.L))
 			continue
 		}
-		for i, id := range physicalIDs {
-			if id == tblInfo.ID {
-				id = -1
-			}
-			info := AnalyzeInfo{
-				DBName:        as.TableNames[0].Schema.O,
-				TableName:     as.TableNames[0].Name.O,
-				PartitionName: names[i],
-				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
-				Incremental:   as.Incremental,
-				StatsVersion:  version,
-			}
-			p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
-		}
+		p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 	}
 	return p, nil
 }
@@ -2961,20 +2941,7 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				continue
 			}
 
-			for i, id := range physicalIDs {
-				if id == tblInfo.ID {
-					id = -1
-				}
-				info := AnalyzeInfo{
-					DBName:        as.TableNames[0].Schema.O,
-					TableName:     as.TableNames[0].Name.O,
-					PartitionName: names[i],
-					TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
-					Incremental:   as.Incremental,
-					StatsVersion:  version,
-				}
-				p.IdxTasks = append(p.IdxTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
-			}
+			p.IdxTasks = append(p.IdxTasks, generateIndexTasks(idx, as, tblInfo, names, physicalIDs, version)...)
 		}
 	}
 	handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
@@ -2995,6 +2962,37 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 		}
 	}
 	return p, nil
+}
+
+func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo *model.TableInfo, names []string, physicalIDs []int64, version int) []AnalyzeIndexTask {
+	if idx.Global {
+		info := AnalyzeInfo{
+			DBName:        as.TableNames[0].Schema.O,
+			TableName:     as.TableNames[0].Name.O,
+			PartitionName: "",
+			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: -1},
+			Incremental:   as.Incremental,
+			StatsVersion:  version,
+		}
+		return []AnalyzeIndexTask{{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo}}
+	}
+
+	indexTasks := make([]AnalyzeIndexTask, 0, len(physicalIDs))
+	for i, id := range physicalIDs {
+		if id == tblInfo.ID {
+			id = -1
+		}
+		info := AnalyzeInfo{
+			DBName:        as.TableNames[0].Schema.O,
+			TableName:     as.TableNames[0].Name.O,
+			PartitionName: names[i],
+			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+			Incremental:   as.Incremental,
+			StatsVersion:  version,
+		}
+		indexTasks = append(indexTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
+	}
+	return indexTasks
 }
 
 // CMSketchSizeLimit indicates the size limit of CMSketch.
@@ -3153,17 +3151,8 @@ func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently")
 	}
 
-	// Check privilege.
-	for _, tbl := range as.TableNames {
-		user := b.ctx.GetSessionVars().User
-		var insertErr, selectErr error
-		if user != nil {
-			insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
-			selectErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
-		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
-	}
+	// Require INSERT and SELECT privilege for tables.
+	b.requireInsertAndSelectPriv(as.TableNames)
 
 	opts, err := handleAnalyzeOptions(as.AnalyzeOpts, statsVersion)
 	if err != nil {
@@ -4542,14 +4531,39 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-func (*PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
-	p := &LockStats{Tables: ld.Tables}
+// buildLockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
+func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
+	p := &LockStats{
+		Tables: ld.Tables,
+	}
+
+	b.requireInsertAndSelectPriv(ld.Tables)
+
 	return p
 }
 
-func (*PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
-	p := &UnlockStats{Tables: ld.Tables}
+// buildUnlockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
+func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
+	p := &UnlockStats{
+		Tables: ld.Tables,
+	}
+	b.requireInsertAndSelectPriv(ld.Tables)
+
 	return p
+}
+
+// requireInsertAndSelectPriv requires INSERT and SELECT privilege for the tables.
+func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
+	for _, tbl := range tables {
+		user := b.ctx.GetSessionVars().User
+		var insertErr, selectErr error
+		if user != nil {
+			insertErr = ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+			selectErr = ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
+		}
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
+	}
 }
 
 func (*PlanBuilder) buildIndexAdvise(node *ast.IndexAdviseStmt) Plan {

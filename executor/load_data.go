@@ -322,6 +322,9 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
+			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
+				return err
+			}
 			err = w.processOneStream(ctx, dataParser, outCh)
 			terror.Log(dataParser.Close())
 			if err != nil {
@@ -342,7 +345,7 @@ func (w *encodeWorker) processOneStream(
 		r := recover()
 		if r != nil {
 			logutil.Logger(ctx).Error("process routine panicked",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack"))
 			err = errors.Errorf("%v", r)
 		}
@@ -523,7 +526,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 		r := recover()
 		if r != nil {
 			logutil.Logger(ctx).Error("commitWork panicked",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack"))
 			err = errors.Errorf("%v", r)
 		}

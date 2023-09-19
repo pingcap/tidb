@@ -2033,7 +2033,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			}
 			defer w.sessPool.Put(sctx)
 			rh := newReorgHandler(sess.NewSession(sctx))
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -2062,6 +2062,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		if tblInfo.TiFlashReplica != nil {
 			removeTiFlashAvailablePartitionIDs(tblInfo, physicalTableIDs)
 		}
+		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
 		job.CtxVars = []interface{}{physicalTableIDs}
@@ -2071,7 +2072,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		}
 		job.SchemaState = model.StateNone
 		job.FinishTableJob(model.JobStateDone, model.StateNone, ver, tblInfo)
-		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: tblInfo.Partition.Definitions}})
+		asyncNotifyEvent(d, &util.Event{Tp: model.ActionDropTablePartition, TableInfo: tblInfo, PartInfo: &model.PartitionInfo{Definitions: droppedDefs}})
 		// A background job will be created to delete old partition data.
 		job.Args = []interface{}{physicalTableIDs}
 	default:
@@ -2219,7 +2220,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 			defer w.sessPool.Put(sctx)
 			rh := newReorgHandler(sess.NewSession(sctx))
-			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
+			reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, pt, physicalTableIDs, elements)
 
 			if err != nil || reorgInfo.first {
 				// If we run reorg firstly, we should update the job snapshot version
@@ -2930,15 +2931,17 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// Overloading the NewTableID here with the oldTblID instead,
 			// for keeping the old global statistics
 			statisticsPartInfo.NewTableID = oldTblID
-			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
+			// TODO: Handle bundles?
+			// TODO: Add concurrent test!
+			// TODO: Will this result in big gaps?
+			// TODO: How to carrie over AUTO_INCREMENT etc.?
+			// Check if they are carried over in ApplyDiff?!?
+			autoIDs, err := t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			// TODO: Handle bundles?
-			// TODO: How to carrie over AUTO_INCREMENT etc.?
-			// Check if they are carried over in ApplyDiff?!?
-			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Del()
+			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -2953,13 +2956,15 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				tblInfo.Partition = nil
 			} else {
 				// ALTER TABLE ... PARTITION BY
-				//tblInfo.Partition.Type = tblInfo.Partition.DDLType
-				//tblInfo.Partition.Expr = tblInfo.Partition.DDLExpr
-				//tblInfo.Partition.Columns = tblInfo.Partition.DDLColumns
 				tblInfo.Partition.DDLType = model.PartitionTypeNone
 				tblInfo.Partition.DDLExpr = ""
 				tblInfo.Partition.DDLColumns = nil
 				tblInfo.Partition.NewTableID = 0
+			}
+			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
 			}
 			// TODO: Add failpoint here?
 			err = t.CreateTableOrView(job.SchemaID, tblInfo)
@@ -3012,7 +3017,7 @@ func doPartitionReorgWork(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job, tb
 	if err != nil {
 		return false, ver, errors.Trace(err)
 	}
-	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
+	reorgInfo, err := getReorgInfoFromPartitions(d.jobContext(job.ID, job.ReorgMeta), d, rh, job, dbInfo, partTbl, physTblIDs, elements)
 	err = w.runReorgJob(reorgInfo, tbl.Meta(), d.lease, func() (reorgErr error) {
 		defer tidbutil.Recover(metrics.LabelDDL, "doPartitionReorgWork",
 			func() {
@@ -3097,6 +3102,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
 		}
+		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
 		rowRecords, nextKey, taskDone, err := w.fetchRowColVals(txn, handleRange)
 		if err != nil {
@@ -3289,7 +3295,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 		// like where the regInfo PhysicalTableID and element is the same,
 		// and the tableid in the key-prefix regInfo.StartKey and regInfo.EndKey matches with PhysicalTableID
 		// do not change the reorgInfo start/end key
-		startHandle, endHandle, err := getTableRange(reorgInfo.d.jobContext(reorgInfo.Job.ID), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
+		startHandle, endHandle, err := getTableRange(reorgInfo.NewJobContext(), reorgInfo.d, physTbl, currentVer.Ver, reorgInfo.Job.Priority)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3421,6 +3427,8 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	if rowCount != 0 {
 		return errors.Trace(dbterror.ErrRowDoesNotMatchPartition)
 	}
+	// Check warnings!
+	// Is it possible to check how many rows where checked as well?
 	return nil
 }
 
@@ -3461,13 +3469,13 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 		buf.WriteString("select 1 from %n.%n where ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return buf.String(), paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
 		buf.WriteString("select 1 from %n.%n where ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" < %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return buf.String(), paramList
 	} else {
 		buf.WriteString("select 1 from %n.%n where ")
@@ -3475,26 +3483,22 @@ func buildCheckSQLForRangeExprPartition(pi *model.PartitionInfo, index int, sche
 		buf.WriteString(" < %? or ")
 		buf.WriteString(pi.Expr)
 		buf.WriteString(" >= %? limit 1")
-		paramList = append(paramList, schemaName.L, tableName.L, trimQuotation(pi.Definitions[index-1].LessThan[0]), trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return buf.String(), paramList
 	}
-}
-
-func trimQuotation(str string) string {
-	return strings.Trim(str, "'")
 }
 
 func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	paramList := make([]interface{}, 0, 6)
 	colName := pi.Columns[0].L
 	if index == 0 {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return "select 1 from %n.%n where %n >= %? limit 1", paramList
 	} else if index == len(pi.Definitions)-1 && strings.EqualFold(pi.Definitions[index].LessThan[0], partitionMaxValue) {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]))
 		return "select 1 from %n.%n where %n < %? limit 1", paramList
 	} else {
-		paramList = append(paramList, schemaName.L, tableName.L, colName, trimQuotation(pi.Definitions[index-1].LessThan[0]), colName, trimQuotation(pi.Definitions[index].LessThan[0]))
+		paramList = append(paramList, schemaName.L, tableName.L, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index-1].LessThan[0]), colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))
 		return "select 1 from %n.%n where %n < %? or %n >= %? limit 1", paramList
 	}
 }
@@ -3502,32 +3506,57 @@ func buildCheckSQLForRangeColumnsPartition(pi *model.PartitionInfo, index int, s
 func buildCheckSQLForListPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	buf.WriteString(pi.Expr)
-	buf.WriteString(" not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 3)
-	paramList = append(paramList, schemaName.L, tableName.L, inValues)
+	buf.WriteString(" not (")
+	for i, inValue := range pi.Definitions[index].InValues {
+		if i != 0 {
+			buf.WriteString(" OR ")
+		}
+		// AND has higher priority than OR, so no need for parentheses
+		for j, val := range inValue {
+			if j != 0 {
+				// Should never happen, since there should be no multi-columns, only a single expression :)
+				buf.WriteString(" AND ")
+			}
+			// null-safe compare '<=>'
+			buf.WriteString(fmt.Sprintf("(%s) <=> %s", pi.Expr, val))
+		}
+	}
+	buf.WriteString(") limit 1")
+	paramList := make([]interface{}, 0, 2)
+	paramList = append(paramList, schemaName.L, tableName.L)
 	return buf.String(), paramList
 }
 
 func buildCheckSQLForListColumnsPartition(pi *model.PartitionInfo, index int, schemaName, tableName model.CIStr) (string, []interface{}) {
-	colName := pi.Columns[0].L
 	var buf strings.Builder
-	buf.WriteString("select 1 from %n.%n where %n not in (%?) limit 1")
-	inValues := getInValues(pi, index)
-
-	paramList := make([]interface{}, 0, 4)
-	paramList = append(paramList, schemaName.L, tableName.L, colName, inValues)
-	return buf.String(), paramList
-}
-
-func getInValues(pi *model.PartitionInfo, index int) []string {
-	inValues := make([]string, 0, len(pi.Definitions[index].InValues))
-	for _, inValue := range pi.Definitions[index].InValues {
-		inValues = append(inValues, inValue...)
+	// How to find a match?
+	// (row <=> vals1) OR (row <=> vals2)
+	// How to find a non-matching row:
+	// NOT ( (row <=> vals1) OR (row <=> vals2) ... )
+	buf.WriteString("select 1 from %n.%n where not (")
+	colNames := make([]string, 0, len(pi.Columns))
+	for i := range pi.Columns {
+		// TODO: check if there are no proper quoting function for this?
+		n := "`" + strings.ReplaceAll(pi.Columns[i].O, "`", "``") + "`"
+		colNames = append(colNames, n)
 	}
-	return inValues
+	for i, colValues := range pi.Definitions[index].InValues {
+		if i != 0 {
+			buf.WriteString(" OR ")
+		}
+		// AND has higher priority than OR, so no need for parentheses
+		for j, val := range colValues {
+			if j != 0 {
+				buf.WriteString(" AND ")
+			}
+			// null-safe compare '<=>'
+			buf.WriteString(fmt.Sprintf("%s <=> %s", colNames[j], val))
+		}
+	}
+	buf.WriteString(") limit 1")
+	paramList := make([]interface{}, 0, 2)
+	paramList = append(paramList, schemaName.L, tableName.L)
+	return buf.String(), paramList
 }
 
 func checkAddPartitionTooManyPartitions(piDefs uint64) error {

@@ -60,10 +60,11 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	dsp := importDispatcher{}
+	dsp := ImportDispatcherExt{}
 	gTask := &proto.Task{Meta: []byte("{}")}
+	ctx := context.WithValue(context.Background(), "etcd", true)
 	s.enableFailPoint("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
-	eligibleInstances, err := dsp.GetEligibleInstances(context.Background(), gTask)
+	eligibleInstances, err := dsp.GetEligibleInstances(ctx, gTask)
 	s.NoError(err)
 	// order of slice is not stable, change to map
 	resultMap := map[string]*infosync.ServerInfo{}
@@ -73,7 +74,7 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	s.Equal(serverInfoMap, resultMap)
 
 	gTask.Meta = []byte(`{"EligibleInstances":[{"ip": "1.1.1.1", "listening_port": 4000}]}`)
-	eligibleInstances, err = dsp.GetEligibleInstances(context.Background(), gTask)
+	eligibleInstances, err = dsp.GetEligibleInstances(ctx, gTask)
 	s.NoError(err)
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
 }
@@ -87,7 +88,7 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	dsp := importDispatcher{}
+	dsp := ImportDispatcherExt{}
 	require.Equal(s.T(), int64(0), dsp.currTaskID.Load())
 	require.False(s.T(), dsp.disableTiKVImportMode.Load())
 

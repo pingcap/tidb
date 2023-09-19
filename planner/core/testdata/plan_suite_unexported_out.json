@@ -971,6 +971,10 @@
   {
     "Name": "TestOuterJoinEliminator",
     "Cases": [
+      "DataScan(t1)->Aggr(count(1))->Projection",
+      "DataScan(t1)->Projection",
+      "DataScan(t2)->Aggr(count(1))->Projection",
+      "DataScan(t2)->Projection",
       "DataScan(t1)->Projection",
       "DataScan(t2)->Projection",
       "DataScan(t1)->Aggr(max(test.t.a),min(test.t.b))->Projection",

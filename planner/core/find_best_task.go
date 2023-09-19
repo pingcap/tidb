@@ -1284,14 +1284,19 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	return
 }
 
+// convertToIndexMergeScan builds the index merge scan for intersection or union cases.
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {
 	if prop.IsFlashProp() || prop.TaskTp == property.CopSingleReadTaskType {
 		return invalidTask, nil
 	}
-	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IndexMergeIsIntersection {
+	// lift the limitation of that double read can not build index merge **COP** task with intersection.
+	// that means we can output a cop task here without encapsulating it as root task, for the convenience of attaching limit to its table side.
+
+	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
 		return invalidTask, nil
 	}
-	if !prop.IsSortItemEmpty() && !candidate.isMatchProp {
+	// while for now, we still can not push the sort prop to the intersection index plan side, temporarily banned here.
+	if !prop.IsSortItemEmpty() && candidate.path.IndexMergeIsIntersection {
 		return invalidTask, nil
 	}
 	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
@@ -1370,6 +1375,13 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 	is := ds.getOriginalPhysicalIndexScan(prop, path, matchProp, false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
+	if matchProp {
+		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.schema)
+		}
+		// Add sort items for index scan for merge-sort operation between partitions.
+		is.ByItems = byItems
+	}
 	if len(indexConds) > 0 {
 		var selectivity float64
 		if path.CountAfterAccess > 0 {
@@ -1384,13 +1396,6 @@ func (ds *DataSource) convertToPartialIndexScan(prop *property.PhysicalProperty,
 		indexPlan := PhysicalSelection{Conditions: indexConds}.Init(is.SCtx(), stats, ds.SelectBlockOffset())
 		indexPlan.SetChildren(is)
 		return indexPlan
-	}
-	if matchProp {
-		if is.Table.GetPartitionInfo() != nil && !is.Index.Global && is.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			is.Columns, is.schema, _ = AddExtraPhysTblIDColumn(is.SCtx(), is.Columns, is.schema)
-		}
-		// Add sort items for index scan for merge-sort operation between partitions.
-		is.ByItems = byItems
 	}
 	indexPlan = is
 	return indexPlan
@@ -1417,6 +1422,12 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		}
 	}
 	ts.filterCondition = newFilterConds
+	if matchProp {
+		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
+			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
+		}
+		ts.ByItems = byItems
+	}
 	if len(ts.filterCondition) > 0 {
 		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, ts.filterCondition, nil)
 		if err != nil {
@@ -1426,12 +1437,6 @@ func (ds *DataSource) convertToPartialTableScan(prop *property.PhysicalProperty,
 		tablePlan = PhysicalSelection{Conditions: ts.filterCondition}.Init(ts.SCtx(), ts.StatsInfo().ScaleByExpectCnt(selectivity*rowCount), ds.SelectBlockOffset())
 		tablePlan.SetChildren(ts)
 		return tablePlan
-	}
-	if matchProp {
-		if ts.Table.GetPartitionInfo() != nil && ts.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-			ts.Columns, ts.schema, _ = AddExtraPhysTblIDColumn(ts.SCtx(), ts.Columns, ts.schema)
-		}
-		ts.ByItems = byItems
 	}
 	tablePlan = ts
 	return tablePlan

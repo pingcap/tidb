@@ -19,11 +19,10 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
-	kv2 "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
@@ -67,7 +66,7 @@ func seekPropsOffsets(
 	moved := false
 	for iter.Next() {
 		p := iter.prop()
-		propKey := kv.Key(p.key)
+		propKey := kv.Key(p.firstKey)
 		if propKey.Cmp(start) > 0 {
 			if !moved {
 				return nil, fmt.Errorf("start key %s is too small for stat files %v",
@@ -164,25 +163,79 @@ func MockExternalEngine(
 	keys [][]byte,
 	values [][]byte,
 ) (dataFiles []string, statsFiles []string, err error) {
-	ctx := context.Background()
+	subDir := "/mock-test"
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(128).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
-		Build(storage, "/mock-test", 0)
-	kvs := make([]common.KvPair, len(keys))
+		Build(storage, "/mock-test", "0")
+	return MockExternalEngineWithWriter(storage, writer, subDir, keys, values)
+}
+
+// MockExternalEngineWithWriter generates an external engine with the given
+// writer, keys and values.
+func MockExternalEngineWithWriter(
+	storage storage.ExternalStorage,
+	writer *Writer,
+	subDir string,
+	keys [][]byte,
+	values [][]byte,
+) (dataFiles []string, statsFiles []string, err error) {
+	ctx := context.Background()
 	for i := range keys {
-		kvs[i].Key = keys[i]
-		kvs[i].Val = values[i]
+		err := writer.WriteRow(ctx, keys[i], values[i], nil)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
-	rows := kv2.MakeRowsFromKvPairs(kvs)
-	err = writer.AppendRows(ctx, nil, rows)
+	err = writer.Close(ctx)
 	if err != nil {
 		return nil, nil, err
 	}
-	_, err = writer.Close(ctx)
-	if err != nil {
-		return nil, nil, err
+	return GetAllFileNames(ctx, storage, subDir)
+}
+
+// EndpointTp is the type of Endpoint.Key.
+type EndpointTp int
+
+const (
+	// ExclusiveEnd represents "..., Endpoint.Key)".
+	ExclusiveEnd EndpointTp = iota
+	// InclusiveStart represents "[Endpoint.Key, ...".
+	InclusiveStart
+	// InclusiveEnd represents "..., Endpoint.Key]".
+	InclusiveEnd
+)
+
+// Endpoint represents an endpoint of an interval which can be used by GetMaxOverlapping.
+type Endpoint struct {
+	Key    []byte
+	Tp     EndpointTp
+	Weight int64 // all EndpointTp use positive weight
+}
+
+// GetMaxOverlapping returns the maximum overlapping weight treating given
+// `points` as endpoints of intervals. `points` are not required to be sorted,
+// and will be sorted in-place in this function.
+func GetMaxOverlapping(points []Endpoint) int64 {
+	slices.SortFunc(points, func(i, j Endpoint) int {
+		if cmp := bytes.Compare(i.Key, j.Key); cmp != 0 {
+			return cmp
+		}
+		return int(i.Tp) - int(j.Tp)
+	})
+	var maxWeight int64
+	var curWeight int64
+	for _, p := range points {
+		switch p.Tp {
+		case InclusiveStart:
+			curWeight += p.Weight
+		case ExclusiveEnd, InclusiveEnd:
+			curWeight -= p.Weight
+		}
+		if curWeight > maxWeight {
+			maxWeight = curWeight
+		}
 	}
-	return GetAllFileNames(ctx, storage, "/mock-test")
+	return maxWeight
 }

@@ -38,6 +38,9 @@ type Engine struct {
 	storage    storage.ExternalStorage
 	dataFiles  []string
 	statsFiles []string
+	minKey     []byte
+	maxKey     []byte
+	splitKeys  [][]byte
 	bufPool    *membuf.Pool
 
 	iter *MergeKVIter
@@ -48,6 +51,9 @@ type Engine struct {
 	dupDetectOpt       common.DupDetectOpt
 	ts                 uint64
 
+	totalKVSize  int64
+	totalKVCount int64
+
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 }
@@ -57,22 +63,32 @@ func NewExternalEngine(
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
+	minKey []byte,
+	maxKey []byte,
+	splitKeys [][]byte,
 	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
 	duplicateDB *pebble.DB,
 	dupDetectOpt common.DupDetectOpt,
 	ts uint64,
+	totalKVSize int64,
+	totalKVCount int64,
 ) common.Engine {
 	return &Engine{
 		storage:            storage,
 		dataFiles:          dataFiles,
 		statsFiles:         statsFiles,
+		minKey:             minKey,
+		maxKey:             maxKey,
+		splitKeys:          splitKeys,
 		bufPool:            membuf.NewPool(),
 		keyAdapter:         keyAdapter,
 		duplicateDetection: duplicateDetection,
 		duplicateDB:        duplicateDB,
 		dupDetectOpt:       dupDetectOpt,
 		ts:                 ts,
+		totalKVSize:        totalKVSize,
+		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
 	}
@@ -167,6 +183,47 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		return nil, errors.Trace(err)
 	}
 	return iter, nil
+}
+
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
+	return e.totalKVSize, e.totalKVCount
+}
+
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
+	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// ID is the identifier of an engine.
+func (e *Engine) ID() string {
+	return "external"
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
+	return e.minKey, e.maxKey, nil
+}
+
+// SplitRanges split the ranges by split keys provided by external engine.
+func (e *Engine) SplitRanges(
+	startKey, endKey []byte,
+	_, _ int64,
+	_ log.Logger,
+) ([]common.Range, error) {
+	splitKeys := e.splitKeys
+	ranges := make([]common.Range, 0, len(splitKeys)+1)
+	ranges = append(ranges, common.Range{Start: startKey})
+	for i := 0; i < len(splitKeys); i++ {
+		ranges[len(ranges)-1].End = splitKeys[i]
+		var endK []byte
+		if i < len(splitKeys)-1 {
+			endK = splitKeys[i+1]
+		}
+		ranges = append(ranges, common.Range{Start: splitKeys[i], End: endK})
+	}
+	ranges[len(ranges)-1].End = endKey
+	return ranges, nil
 }
 
 // Close releases the resources of the engine.

@@ -87,10 +87,10 @@ type engineMeta struct {
 
 type syncedRanges struct {
 	sync.Mutex
-	ranges []Range
+	ranges []common.Range
 }
 
-func (r *syncedRanges) add(g Range) {
+func (r *syncedRanges) add(g common.Range) {
 	r.Lock()
 	r.ranges = append(r.ranges, g)
 	r.Unlock()
@@ -273,6 +273,46 @@ func (e *Engine) TotalMemorySize() int64 {
 		return true
 	})
 	return memSize
+}
+
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalSize int64, totalKVCount int64) {
+	return e.TotalSize.Load(), e.Length.Load()
+}
+
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
+	return e.importedKVSize.Load(), e.importedKVCount.Load()
+}
+
+// ID is the identifier of an engine.
+func (e *Engine) ID() string {
+	return e.UUID.String()
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
+	return e.GetFirstAndLastKey(nil, nil)
+}
+
+// SplitRanges gets size properties from pebble and split ranges according to size/keys limit.
+func (e *Engine) SplitRanges(
+	startKey, endKey []byte,
+	sizeLimit, keysLimit int64,
+	logger log.Logger,
+) ([]common.Range, error) {
+	sizeProps, err := getSizePropertiesFn(logger, e.getDB(), e.keyAdapter)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	ranges := splitRangeBySizeProps(
+		common.Range{Start: startKey, End: endKey},
+		sizeProps,
+		sizeLimit,
+		keysLimit,
+	)
+	return ranges, nil
 }
 
 type rangeOffsets struct {

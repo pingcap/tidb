@@ -18,61 +18,79 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/util/syncutil"
-	"golang.org/x/exp/maps"
 )
 
-// Dispatcher is used to control the process operations for each task.
-type Dispatcher interface {
+// Extension is used to control the process operations for each task.
+// it's used to extend functions of BaseDispatcher.
+// as golang doesn't support inheritance, we embed this interface in Dispatcher
+// to simulate abstract method as in other OO languages.
+type Extension interface {
 	// OnTick is used to handle the ticker event, if business impl need to do some periodical work, you can
 	// do it here, but don't do too much work here, because the ticker interval is small, and it will block
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
-	OnTick(ctx context.Context, gTask *proto.Task)
-	// OnNextStage is used to move the task to next stage, if returns no error and there's no new subtasks
-	// the task is finished.
+	OnTick(ctx context.Context, task *proto.Task)
+
+	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage
 	// NOTE: don't change gTask.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
-	// 	2. subtasks of previous step has all finished with no error.
-	OnNextStage(ctx context.Context, h TaskHandle, gTask *proto.Task) (subtaskMetas [][]byte, err error)
+	// 	2. subtasks dispatched has all finished with no error.
+	// when next step is StepDone, it should return nil, nil.
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step int64) (subtaskMetas [][]byte, err error)
+
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
 	// 	2. task is cancelled after we have dispatched some subtasks.
-	OnErrStage(ctx context.Context, h TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+	OnErrStage(ctx context.Context, h TaskHandle, task *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
-	GetEligibleInstances(ctx context.Context, gTask *proto.Task) ([]*infosync.ServerInfo, error)
+	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, error)
+
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
+
+	// GetNextStep is used to get the next step for the task.
+	// if task runs successfully, it should go from StepInit to business steps,
+	// then to StepDone, then dispatcher will mark it as finished.
+	GetNextStep(h TaskHandle, task *proto.Task) int64
 }
 
-var taskDispatcherMap struct {
+// FactoryFn is used to create a dispatcher.
+type FactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
+
+var dispatcherFactoryMap = struct {
 	syncutil.RWMutex
-	dispatcherMap map[string]Dispatcher
+	m map[string]FactoryFn
+}{
+	m: make(map[string]FactoryFn),
 }
 
-// RegisterTaskDispatcher is used to register the task Dispatcher.
-func RegisterTaskDispatcher(taskType string, dispatcherHandle Dispatcher) {
-	taskDispatcherMap.Lock()
-	taskDispatcherMap.dispatcherMap[taskType] = dispatcherHandle
-	taskDispatcherMap.Unlock()
+// RegisterDispatcherFactory is used to register the dispatcher factory.
+// normally dispatcher ctor should be registered before the server start.
+// and should be called in a single routine, such as in init().
+// after the server start, there's should be no write to the map.
+// but for index backfill, the register call stack is so deep, not sure
+// if it's safe to do so, so we use a lock here.
+func RegisterDispatcherFactory(taskType string, ctor FactoryFn) {
+	dispatcherFactoryMap.Lock()
+	defer dispatcherFactoryMap.Unlock()
+	dispatcherFactoryMap.m[taskType] = ctor
 }
 
-// ClearTaskDispatcher is only used in test.
-func ClearTaskDispatcher() {
-	taskDispatcherMap.Lock()
-	maps.Clear(taskDispatcherMap.dispatcherMap)
-	taskDispatcherMap.Unlock()
+// GetDispatcherFactory is used to get the dispatcher factory.
+func GetDispatcherFactory(taskType string) FactoryFn {
+	dispatcherFactoryMap.RLock()
+	defer dispatcherFactoryMap.RUnlock()
+	return dispatcherFactoryMap.m[taskType]
 }
 
-// GetTaskDispatcher is used to get the task Dispatcher.
-func GetTaskDispatcher(taskType string) Dispatcher {
-	taskDispatcherMap.Lock()
-	defer taskDispatcherMap.Unlock()
-	return taskDispatcherMap.dispatcherMap[taskType]
-}
-
-func init() {
-	taskDispatcherMap.dispatcherMap = make(map[string]Dispatcher)
+// ClearDispatcherFactory is only used in test
+func ClearDispatcherFactory() {
+	dispatcherFactoryMap.Lock()
+	defer dispatcherFactoryMap.Unlock()
+	dispatcherFactoryMap.m = make(map[string]FactoryFn)
 }
