@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
+	resourceControlClient "github.com/tikv/pd/client/resource_group/controller"
 	"go.uber.org/zap"
 )
 
@@ -396,9 +397,9 @@ func (e *Executor) setupQuotas(quotas []float64, lowCount int) (float64, error) 
 }
 
 func (e *Executor) getTiFlashQuotas(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime string, endTime string) ([]float64, int, error) {
-	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
 	lowCount := 0
 	quotas := make([]float64, 0)
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
 	if err != nil {
 		return quotas, lowCount, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
@@ -445,6 +446,10 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
 	}
+	ruCfg := resourceGroupCtl.GetConfig()
+	if e.WorkloadType == ast.TPCH50 {
+		return e.staticCalibrateTpch50(ctx, req, exec, ruCfg)
+	}
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
@@ -467,13 +472,25 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
 		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
 	}
-	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
 		float64(ruCfg.CPUMsCost)*baseCost.kvCPU*1000 + // convert to ms
 		float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes) +
 		float64(ruCfg.WriteBaseCost)*float64(baseCost.writeReqCount) +
 		float64(ruCfg.WriteBytesCost)*float64(baseCost.writeBytes)
 	quota := totalKVCPUQuota * ruPerKVCPU
+	req.AppendUint64(0, uint64(quota))
+	return nil
+}
+
+func (e *Executor) staticCalibrateTpch50(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig) error {
+	// 105.494666484 / 20 / 20 = 0.26
+	// 401799161689.0 / 20 / 20 / 1024 / 1024 = 957.9
+	ruPerCPU := float64(ruCfg.CPUMsCost)*0.26*1000 + float64(ruCfg.ReadBytesCost)*957.9
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
+	if err != nil {
+		return err
+	}
+	quota := totalTiFlashLogicalCores * ruPerCPU
 	req.AppendUint64(0, uint64(quota))
 	return nil
 }

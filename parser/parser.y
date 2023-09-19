@@ -514,6 +514,7 @@ import (
 	oltpReadOnly          "OLTP_READ_ONLY"
 	oltpReadWrite         "OLTP_READ_WRITE"
 	oltpWriteOnly         "OLTP_WRITE_ONLY"
+	tpch50                "TPCH_50"
 	onDuplicate           "ON_DUPLICATE"
 	online                "ONLINE"
 	only                  "ONLY"
@@ -6869,6 +6870,7 @@ UnReservedKeyword:
 |	"OLTP_READ_WRITE"
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
+|   "TPCH_50"
 
 TiDBKeyword:
 	"ADMIN"
@@ -15877,6 +15879,10 @@ CalibrateResourceWorkloadOption:
 |	"WORKLOAD" "OLTP_WRITE_ONLY"
 	{
 		$$ = ast.OLTPWRITEONLY
+	}
+|	"WORKLOAD" "TPCH_50"
+	{
+		$$ = ast.TPCH50
 	}
 
 /********************************************************************
