@@ -496,7 +496,7 @@ func getSummaryFromLastStep(
 func cleanupCloudStorageFiles(ctx context.Context, gTaskMeta *BackfillGlobalMeta) {
 	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
 	if err != nil {
-		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to parse cloud storage url", zap.Error(err))
 		return
 	}
 	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
