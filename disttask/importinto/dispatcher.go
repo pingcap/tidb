@@ -689,6 +689,8 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 func cleanUpGlobalSortedData(ctx context.Context, gTask *proto.Task, taskMeta *TaskMeta) {
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
+	// we don't return error here, since the task is already done, we should
+	// return success if the task is success.
 	logger := logutil.BgLogger().With(zap.Int64("task-id", gTask.ID))
 	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	defer callLog.End(zap.InfoLevel, nil)
