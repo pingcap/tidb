@@ -375,10 +375,14 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
+	sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
-	physicalID int64, isIndex int, histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+	physicalID int64,
+	isIndex bool,
+	histIDs []int64,
+	tablePartitionStats map[int64]*statistics.Table,
+) (globalStats *globalstats.GlobalStats, err error) {
 	return h.globalstatushandler.MergePartitionStats2GlobalStatsByTableID(sc, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
@@ -398,9 +402,14 @@ func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDe
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(opts map[ast.AnalyzeOptionType]uint64,
-	is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+func (h *Handle) mergePartitionStats2GlobalStats(
+	opts map[ast.AnalyzeOptionType]uint64,
+	is infoschema.InfoSchema,
+	globalTableInfo *model.TableInfo,
+	isIndex bool,
+	histIDs []int64,
+	allPartitionStats map[int64]*statistics.Table,
+) (globalStats *globalstats.GlobalStats, err error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return nil, err
