@@ -1783,6 +1783,9 @@ func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*exp
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
 		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
 			fb.CompareCols[0], _ = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+
+			// As compare column has been converted, compare function should also be changed
+			fb.CmpFuncs[0] = expression.GetCmpFunction(ctx, fb.CompareCols[0], fb.CalcFuncs[0])
 		} else {
 			for i, col := range orderByCols {
 				fb.CompareCols[i] = col
