@@ -1049,8 +1049,7 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		// Here means the job enters another state (delete only, write only, public, etc...) or is cancelled.
 		// If the job is done or still running or rolling back, we will wait 2 * lease time to guarantee other servers to update
 		// the newest schema.
-		waitSchemaChanged(d, waitTime, schemaVer, job)
-
+		_ = waitSchemaChanged(d, waitTime, schemaVer, job)
 		if RunInGoTest {
 			// d.mu.hook is initialed from domain / test callback, which will force the owner host update schema diff synchronously.
 			d.mu.RLock()
