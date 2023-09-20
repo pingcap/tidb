@@ -81,17 +81,6 @@ var (
 			readReqCount:     0,
 			writeReqCount:    3550,
 		},
-		// TiFlash only consider cpu and read bytes. Others are ignored.
-		// cpu usage: 105494.666484 / 20 / 20 = 263.74
-		// read bytes: 401799161689.0 / 20 / 20 = 1004497904.22
-		ast.TPCH10: {
-			tidbToKVCPURatio: 0,
-			kvCPU:            263.74,
-			readBytes:        1004497904,
-			writeBytes:       0,
-			readReqCount:     0,
-			writeReqCount:    0,
-		},
 	}
 )
 
@@ -436,7 +425,7 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	if e.WorkloadType == ast.TPCH10 {
-		return staticCalibrateTpch10(ctx, req, exec, ruCfg, e.WorkloadType)
+		return staticCalibrateTpch10(ctx, req, exec, ruCfg)
 	}
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
@@ -470,12 +459,13 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	return nil
 }
 
-func staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig, workloadTp ast.CalibrateResourceType) error {
-	baseCost, ok := workloadBaseRUCostMap[workloadTp]
-	if !ok {
-		return errors.Errorf("unknown workload '%T'", workloadTp)
-	}
-	ruPerCPU := float64(ruCfg.CPUMsCost)*baseCost.kvCPU + float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes)
+func staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig) error {
+	// TiFlash only consider cpu and read bytes. Others are ignored.
+	// cpu usage: 105494.666484 / 20 / 20 = 263.74
+	// read bytes: 401799161689.0 / 20 / 20 = 1004497904.22
+	const cpuTimePerCPUPerSec float64 = 263.74
+	const readBytesPerCPUPerSec float64 = 1004497904.22
+	ruPerCPU := float64(ruCfg.CPUMsCost)*cpuTimePerCPUPerSec + float64(ruCfg.ReadBytesCost)*readBytesPerCPUPerSec
 	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
 	if err != nil {
 		return err
