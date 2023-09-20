@@ -293,3 +293,15 @@ func TestRenameMultiTables(t *testing.T) {
 	tk.MustExec("drop database test1")
 	tk.MustExec("drop database test")
 }
+
+func TestRenameMultiTablesIssue47064(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int)")
+	tk.MustExec("create database test1")
+	tk.MustExec("rename table test.t1 to test1.t1, test.t2 to test1.t2")
+	tk.MustQuery("select column_name from information_schema.columns where table_name = 't1'").Check(testkit.Rows("a"))
+}
