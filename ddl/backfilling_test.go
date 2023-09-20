@@ -64,7 +64,6 @@ func TestPickBackfillType(t *testing.T) {
 		})
 	ingest.LitBackCtxMgr = mockMgr
 	mockCtx := context.Background()
-	const uk = false
 	mockJob := &model.Job{
 		ID: 1,
 		ReorgMeta: &model.DDLReorgMeta{
@@ -72,19 +71,19 @@ func TestPickBackfillType(t *testing.T) {
 		},
 	}
 	variable.EnableFastReorg.Store(true)
-	tp, err := pickBackfillType(mockCtx, mockJob, uk, nil)
+	tp, err := pickBackfillType(mockCtx, mockJob, nil)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxn)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = false
-	tp, err = pickBackfillType(mockCtx, mockJob, uk, nil)
+	tp, err = pickBackfillType(mockCtx, mockJob, nil)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeTxnMerge)
 
 	mockJob.ReorgMeta.ReorgTp = model.ReorgTypeNone
 	ingest.LitInitialized = true
-	tp, err = pickBackfillType(mockCtx, mockJob, uk, nil)
+	tp, err = pickBackfillType(mockCtx, mockJob, nil)
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeLitMerge)
 }

@@ -35,7 +35,7 @@ import (
 // BackendCtxMgr is used to manage the backend context.
 type BackendCtxMgr interface {
 	CheckAvailable() (bool, error)
-	Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error)
+	Register(ctx context.Context, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error)
 	Unregister(jobID int64)
 	Load(jobID int64) (BackendCtx, bool)
 }
@@ -87,7 +87,7 @@ func (m *litBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register creates a new backend and registers it to the backend context.
-func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error) {
+func (m *litBackendCtxMgr) Register(ctx context.Context, jobID int64, etcdClient *clientv3.Client, resourceGroupName string) (BackendCtx, error) {
 	bc, exist := m.Load(jobID)
 	if !exist {
 		m.memRoot.RefreshConsumption()
@@ -95,7 +95,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		if !ok {
 			return nil, genBackendAllocMemFailedErr(ctx, m.memRoot, jobID)
 		}
-		cfg, err := genConfig(ctx, m.memRoot, jobID, unique, m.isRaftKV2)
+		cfg, err := genConfig(ctx, m.memRoot, jobID, m.isRaftKV2)
 		if err != nil {
 			logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Int64("job ID", jobID), zap.Error(err))
 			return nil, err
@@ -112,8 +112,7 @@ func (m *litBackendCtxMgr) Register(ctx context.Context, unique bool, jobID int6
 		m.memRoot.Consume(StructSizeBackendCtx)
 		logutil.Logger(ctx).Info(LitInfoCreateBackend, zap.Int64("job ID", jobID),
 			zap.Int64("current memory usage", m.memRoot.CurrentUsage()),
-			zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()),
-			zap.Bool("is unique index", unique))
+			zap.Int64("max memory quota", m.memRoot.MaxMemoryQuota()))
 		return bcCtx, nil
 	}
 	return bc, nil

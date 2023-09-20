@@ -39,7 +39,7 @@ type Config struct {
 	IsRaftKV2    bool
 }
 
-func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, isRaftKV2 bool) (*Config, error) {
+func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, isRaftKV2 bool) (*Config, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	cfg := lightning.NewConfig()
 	cfg.TikvImporter.Backend = lightning.BackendLocal
@@ -55,13 +55,9 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool, i
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
 	cfg.Checkpoint.Enable = true
-	if unique {
-		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
-		// TODO(lance6716): will introduce fail-fast for DDL usage later
-		cfg.Conflict.Threshold = math.MaxInt64
-	} else {
-		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgNone
-	}
+	cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
+	// TODO(lance6716): will introduce fail-fast for DDL usage later
+	cfg.Conflict.Threshold = math.MaxInt64
 	cfg.TiDB.PdAddr = tidbCfg.Path
 	cfg.TiDB.Host = "127.0.0.1"
 	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)

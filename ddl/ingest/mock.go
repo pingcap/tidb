@@ -48,7 +48,7 @@ func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(_ context.Context, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
 	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -122,7 +122,7 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 }
 
 // ResetWorkers implements BackendCtx.ResetWorkers interface.
-func (*MockBackendCtx) ResetWorkers(_, _ int64) {
+func (*MockBackendCtx) ResetWorkers(_ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.

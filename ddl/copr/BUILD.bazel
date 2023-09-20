@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "copr",
+    srcs = ["copr_ctx.go"],
+    importpath = "github.com/pingcap/tidb/ddl/copr",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//expression",
+        "//parser/model",
+        "//sessionctx",
+        "//table/tables",
+        "//types",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

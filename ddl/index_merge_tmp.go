@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -37,8 +38,11 @@ func IsEnableFastReorg() bool {
 	return variable.EnableFastReorg.Load()
 }
 
-func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(txn kv.Transaction, idxRecords []*temporaryIndexRecord) error {
-	idxInfo := w.index.Meta()
+func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
+	txn kv.Transaction,
+	idxInfo *model.IndexInfo,
+	idxRecords []*temporaryIndexRecord,
+) error {
 	if !idxInfo.Unique {
 		// non-unique key need no check, just overwrite it,
 		// because in most case, backfilling indices is not exists.
@@ -122,21 +126,24 @@ type temporaryIndexRecord struct {
 type mergeIndexWorker struct {
 	*backfillCtx
 
-	index table.Index
+	indexes []table.Index
 
 	tmpIdxRecords []*temporaryIndexRecord
 	originIdxKeys []kv.Key
 	tmpIdxKeys    []kv.Key
 }
 
-func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, eleID int64) *mergeIndexWorker {
-	indexInfo := model.FindIndexInfoByID(t.Meta().Indices, eleID)
-
-	index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) *mergeIndexWorker {
+	allIndexes := make([]table.Index, 0, len(elements))
+	for _, elem := range elements {
+		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
+		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		allIndexes = append(allIndexes, index)
+	}
 
 	return &mergeIndexWorker{
 		backfillCtx: bfCtx,
-		index:       index,
+		indexes:     allIndexes,
 	}
 }
 
@@ -144,60 +151,62 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, eleID in
 func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx backfillTaskContext, errInTxn error) {
 	oprStartTime := time.Now()
 	ctx := kv.WithInternalSourceAndTaskType(context.Background(), w.jobContext.ddlJobSourceType(), kvutil.ExplicitTypeDDL)
-	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		taskCtx.addedCount = 0
-		taskCtx.scanCount = 0
-		txn.SetOption(kv.Priority, taskRange.priority)
-		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
-			txn.SetOption(kv.ResourceGroupTagger, tagger)
-		}
-		txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
-
-		tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, taskRange)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		taskCtx.nextKey = nextKey
-		taskCtx.done = taskDone
-
-		err = w.batchCheckTemporaryUniqueKey(txn, tmpIdxRecords)
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		for i, idxRecord := range tmpIdxRecords {
-			taskCtx.scanCount++
-			// The index is already exists, we skip it, no needs to backfill it.
-			// The following update, delete, insert on these rows, TiDB can handle it correctly.
-			// If all batch are skipped, update first index key to make txn commit to release lock.
-			if idxRecord.skip {
-				continue
+	for _, idx := range w.indexes {
+		errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+			taskCtx.addedCount = 0
+			taskCtx.scanCount = 0
+			txn.SetOption(kv.Priority, taskRange.priority)
+			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
+				txn.SetOption(kv.ResourceGroupTagger, tagger)
 			}
+			txn.SetOption(kv.ResourceGroupName, w.jobContext.resourceGroupName)
 
-			// Lock the corresponding row keys so that it doesn't modify the index KVs
-			// that are changing by a pessimistic transaction.
-			rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), idxRecord.handle)
-			err := txn.LockKeys(context.Background(), new(kv.LockCtx), rowKey)
+			tmpIdxRecords, nextKey, taskDone, err := w.fetchTempIndexVals(txn, idx.Meta(), taskRange)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			taskCtx.nextKey = nextKey
+			taskCtx.done = taskDone
+
+			err = w.batchCheckTemporaryUniqueKey(txn, idx.Meta(), tmpIdxRecords)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			if idxRecord.delete {
-				if idxRecord.unique {
-					err = txn.GetMemBuffer().DeleteWithFlags(w.originIdxKeys[i], kv.SetNeedLocked)
-				} else {
-					err = txn.GetMemBuffer().Delete(w.originIdxKeys[i])
+			for i, idxRecord := range tmpIdxRecords {
+				taskCtx.scanCount++
+				// The index is already exists, we skip it, no needs to backfill it.
+				// The following update, delete, insert on these rows, TiDB can handle it correctly.
+				// If all batch are skipped, update first index key to make txn commit to release lock.
+				if idxRecord.skip {
+					continue
 				}
-			} else {
-				err = txn.GetMemBuffer().Set(w.originIdxKeys[i], idxRecord.vals)
+
+				// Lock the corresponding row keys so that it doesn't modify the index KVs
+				// that are changing by a pessimistic transaction.
+				rowKey := tablecodec.EncodeRecordKey(w.table.RecordPrefix(), idxRecord.handle)
+				err := txn.LockKeys(context.Background(), new(kv.LockCtx), rowKey)
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				if idxRecord.delete {
+					if idxRecord.unique {
+						err = txn.GetMemBuffer().DeleteWithFlags(w.originIdxKeys[i], kv.SetNeedLocked)
+					} else {
+						err = txn.GetMemBuffer().Delete(w.originIdxKeys[i])
+					}
+				} else {
+					err = txn.GetMemBuffer().Set(w.originIdxKeys[i], idxRecord.vals)
+				}
+				if err != nil {
+					return err
+				}
+				taskCtx.addedCount++
 			}
-			if err != nil {
-				return err
-			}
-			taskCtx.addedCount++
-		}
-		return nil
-	})
+			return nil
+		})
+	}
 
 	failpoint.Inject("mockDMLExecutionMerging", func(val failpoint.Value) {
 		//nolint:forcetypeassert
@@ -220,7 +229,11 @@ func (w *mergeIndexWorker) GetCtx() *backfillCtx {
 	return w.backfillCtx
 }
 
-func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reorgBackfillTask) ([]*temporaryIndexRecord, kv.Key, bool, error) {
+func (w *mergeIndexWorker) fetchTempIndexVals(
+	txn kv.Transaction,
+	indexInfo *model.IndexInfo,
+	taskRange reorgBackfillTask,
+) ([]*temporaryIndexRecord, kv.Key, bool, error) {
 	startTime := time.Now()
 	w.tmpIdxRecords = w.tmpIdxRecords[:0]
 	w.tmpIdxKeys = w.tmpIdxKeys[:0]
@@ -246,7 +259,7 @@ func (w *mergeIndexWorker) fetchTempIndexVals(txn kv.Transaction, taskRange reor
 			if err != nil {
 				return false, err
 			}
-			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(w.index.Meta().Columns))
+			tempIdxVal, err = decodeTempIndexHandleFromIndexKV(indexKey, tempIdxVal, len(indexInfo.Columns))
 			if err != nil {
 				return false, err
 			}

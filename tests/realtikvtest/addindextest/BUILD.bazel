@@ -37,6 +37,7 @@ go_test(
         "//br/pkg/lightning/backend/local",
         "//config",
         "//ddl",
+        "//ddl/copr",
         "//ddl/ingest",
         "//ddl/testutil",
         "//ddl/util/callback",

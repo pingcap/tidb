@@ -581,8 +581,8 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
-		assertMultiSchema(t, job, 4)
-		return job.MultiSchemaInfo.SubJobs[2].SchemaState == model.StateWriteReorganization
+		assertMultiSchema(t, job, 1)
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
 	})
 	dom.DDL().SetHook(cancelHook)
 	tk.MustGetErrCode("alter table t "+
@@ -603,11 +603,11 @@ func TestMultiSchemaChangeAddIndexesCancelled(t *testing.T) {
 		if job.Type != model.ActionMultiSchemaChange {
 			return false
 		}
-		assertMultiSchema(t, job, 4)
-		return job.MultiSchemaInfo.SubJobs[1].SchemaState == model.StatePublic
+		assertMultiSchema(t, job, 1)
+		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StatePublic
 	})
 	dom.DDL().SetHook(cancelHook)
-	tk.MustExec("alter table t add index t(a, b), add index t1(a), " +
+	tk.MustExec("alter table t add index t(a, b), add unique index t1(a), " +
 		"add index t2(a), add index t3(a, b);")
 	dom.DDL().SetHook(originHook)
 	cancelHook.MustCancelFailed(t)

@@ -443,8 +443,9 @@ type reorgInfo struct {
 	// If the table is not partitioned, PhysicalTableID would be TableID.
 	PhysicalTableID int64
 	dbInfo          *model.DBInfo
-	elements        []*meta.Element
-	currElement     *meta.Element
+	// TODO(tangenta): initialize elements correctly.
+	elements    []*meta.Element
+	currElement *meta.Element
 }
 
 func (r *reorgInfo) NewJobContext() *JobContext {
