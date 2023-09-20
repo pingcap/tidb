@@ -1420,6 +1420,10 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			// Keep this as Schema ID of non-partitioned table
 			// to avoid trigger early rename in TiFlash
 			diff.AffectedOpts[0].SchemaID = job.SchemaID
+			// Need reload partition table, use diff.AffectedOpts[0].OldSchemaID to mark it.
+			if len(multiInfos) > 0 {
+				diff.AffectedOpts[0].OldSchemaID = ptSchemaID
+			}
 		} else {
 			// Swap
 			diff.TableID = ptDefID
