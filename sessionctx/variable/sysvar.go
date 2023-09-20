@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util/fixcontrol"
@@ -40,6 +41,7 @@ import (
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/collate"
+	distroleutil "github.com/pingcap/tidb/util/distrole"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -173,9 +175,28 @@ var defaultSysVars = []*SysVar{
 		s.TiFlashMaxBytesBeforeExternalSort = TidbOptInt64(val, DefTiFlashMaxBytesBeforeExternalSort)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashPipelineMode, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableTiFlashPipelineMode), SetSession: func(s *SessionVars, val string) error {
-		s.TiFlashEnablePipelineMode = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashMemQuotaQueryPerNode, Type: TypeInt, Value: strconv.Itoa(DefTiFlashMemQuotaQueryPerNode), MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashMaxQueryMemoryPerNode = TidbOptInt64(val, DefTiFlashMemQuotaQueryPerNode)
 		return nil
+	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiFlashQuerySpillRatio, Type: TypeFloat, Value: strconv.FormatFloat(DefTiFlashQuerySpillRatio, 'f', -1, 64), MinValue: 0, MaxValue: 1, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, flag ScopeFlag) (string, error) {
+		val, err := strconv.ParseFloat(normalizedValue, 64)
+		if err != nil {
+			return "", err
+		}
+		if val > 0.85 || val < 0 {
+			return "", errors.New("The valid value of tidb_tiflash_auto_spill_ratio is between 0 and 0.85")
+		}
+		return normalizedValue, nil
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.TiFlashQuerySpillRatio = tidbOptFloat64(val, DefTiFlashQuerySpillRatio)
+		return nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBEnableTiFlashPipelineMode, Type: TypeBool, Value: BoolToOnOff(DefTiDBEnableTiFlashPipelineMode), SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		TiFlashEnablePipelineMode.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(TiFlashEnablePipelineMode.Load()), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBSnapshot, Value: "", skipInit: true, SetSession: func(s *SessionVars, val string) error {
 		err := setSnapshotTS(s, val)
@@ -326,7 +347,10 @@ var defaultSysVars = []*SysVar{
 			case kv.TiKV.Name():
 				s.IsolationReadEngines[kv.TiKV] = struct{}{}
 			case kv.TiFlash.Name():
-				s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				// If the tiflash is removed by the strict SQL mode. The hint should also not take effect.
+				if !s.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode {
+					s.IsolationReadEngines[kv.TiFlash] = struct{}{}
+				}
 			case kv.TiDB.Name():
 				s.IsolationReadEngines[kv.TiDB] = struct{}{}
 			}
@@ -1371,9 +1395,9 @@ var defaultSysVars = []*SysVar{
 		s.MaxExecutionTime = uint64(timeoutMS)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TidbKvReadTimeout, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiKVClientReadTimeout, Value: "0", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, IsHintUpdatable: true, SetSession: func(s *SessionVars, val string) error {
 		timeoutMS := tidbOptPositiveInt32(val, 0)
-		s.TidbKvReadTimeout = uint64(timeoutMS)
+		s.TiKVClientReadTimeout = uint64(timeoutMS)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: CollationServer, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
@@ -1384,8 +1408,18 @@ var defaultSysVars = []*SysVar{
 		}
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: DefaultCollationForUTF8MB4, Value: mysql.DefaultCollationName, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+		coll, err := checkDefaultCollationForUTF8MB4(vars, normalizedValue, originalValue, scope)
+		if err == nil {
+			vars.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs(DefaultCollationForUTF8MB4))
+		}
+		return coll, err
+	}, SetSession: func(s *SessionVars, val string) error {
+		s.DefaultCollationForUTF8MB4 = val
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLLogBin, Value: On, Type: TypeBool},
-	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
+	{Scope: ScopeGlobal | ScopeSession, Name: TimeZone, Value: "SYSTEM", IsHintUpdatable: true, Validation: func(varErrFunctionsNoopImpls *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		if strings.EqualFold(normalizedValue, "SYSTEM") {
 			return "SYSTEM", nil
 		}
@@ -2228,6 +2262,22 @@ var defaultSysVars = []*SysVar{
 		DDLDiskQuota.Store(TidbOptUint64(val, DefTiDBDDLDiskQuota))
 		return nil
 	}},
+	// can't assign validate function here. Because validation function will run after GetGlobal function
+	{Scope: ScopeGlobal, Name: TiDBCloudStorageURI, Value: "", Type: TypeStr, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+		cloudStorageURI := CloudStorageURI.Load()
+		if len(cloudStorageURI) > 0 {
+			cloudStorageURI = ast.RedactURL(cloudStorageURI)
+		}
+		return cloudStorageURI, nil
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		if len(val) > 0 && val != CloudStorageURI.Load() {
+			if err := ValidateCloudStorageURI(ctx, val); err != nil {
+				return err
+			}
+		}
+		CloudStorageURI.Store(val)
+		return nil
+	}},
 	{Scope: ScopeSession, Name: TiDBConstraintCheckInPlacePessimistic, Value: BoolToOnOff(config.GetGlobalConfig().PessimisticTxn.ConstraintCheckInPlacePessimistic), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
 			s.ConstraintCheckInPlacePessimistic = TiDBOptOn(val)
@@ -2779,13 +2829,23 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeSession, Name: TiDBSessionAlias, Value: "", Type: TypeStr,
 		Validation: func(s *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
-			if len(normalizedValue) > 64 {
+			chars := []rune(normalizedValue)
+			warningAdded := false
+			if len(chars) > 64 {
 				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
-				normalizedValue = normalizedValue[:64]
+				warningAdded = true
+				chars = chars[:64]
+				normalizedValue = string(chars)
 			}
 
-			if len(normalizedValue) > 0 && util.IsInCorrectIdentifierName(normalizedValue) {
-				return "", ErrWrongValueForVar.GenWithStack("Incorrect value for variable @@%s '%s'", TiDBSessionAlias, normalizedValue)
+			// truncate to a valid identifier
+			for normalizedValue != "" && util.IsInCorrectIdentifierName(normalizedValue) {
+				if !warningAdded {
+					s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
+					warningAdded = true
+				}
+				chars = chars[:len(chars)-1]
+				normalizedValue = string(chars)
 			}
 
 			return normalizedValue, nil
@@ -2807,6 +2867,28 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 	},
+	{Scope: ScopeInstance, Name: TiDBServiceScope, Value: "", Type: TypeStr,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ ScopeFlag) (string, error) {
+			_, ok := distroleutil.ToTiDBServiceScope(originalValue)
+			if !ok {
+				err := fmt.Errorf("incorrect value: `%s`. %s options: %s",
+					originalValue,
+					TiDBServiceScope, `"", background`)
+				return normalizedValue, err
+			}
+			return normalizedValue, nil
+		},
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			ServiceScope.Store(strings.ToLower(s))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return ServiceScope.Load(), nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBSchemaVersionCacheLimit, Value: strconv.Itoa(DefTiDBSchemaVersionCacheLimit), Type: TypeInt, MinValue: 2, MaxValue: math.MaxUint8, AllowEmpty: true,
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			SchemaVersionCacheLimit.Store(TidbOptInt64(val, DefTiDBSchemaVersionCacheLimit))
+			return nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
@@ -3081,6 +3163,8 @@ const (
 	InitConnect = "init_connect"
 	// CollationServer is the name of 'collation_server' variable.
 	CollationServer = "collation_server"
+	// DefaultCollationForUTF8MB4 is the name of 'default_collation_for_utf8mb4' variable.
+	DefaultCollationForUTF8MB4 = "default_collation_for_utf8mb4"
 	// NetWriteTimeout is the name of 'net_write_timeout' variable.
 	NetWriteTimeout = "net_write_timeout"
 	// ThreadPoolSize is the name of 'thread_pool_size' variable.
@@ -3109,8 +3193,8 @@ const (
 	TxnIsolationOneShot = "tx_isolation_one_shot"
 	// MaxExecutionTime is the name of the 'max_execution_time' system variable.
 	MaxExecutionTime = "max_execution_time"
-	// TidbKvReadTimeout is the name of the 'tidb_kv_read_timeout' system variable.
-	TidbKvReadTimeout = "tidb_kv_read_timeout"
+	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
+	TiKVClientReadTimeout = "tikv_client_read_timeout"
 	// ReadOnly is the name of the 'read_only' system variable.
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.

@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/disttask/framework/handle"
+	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -175,19 +176,25 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 		if err2 != nil {
 			return err2
 		}
-		task := TaskMeta{
+
+		// TODO: use planner.Run to run the logical plan
+		// now creating import job and submitting distributed task should be in the same transaction.
+		logicalPlan := &LogicalPlan{
 			JobID:             jobID,
 			Plan:              *plan,
 			Stmt:              ti.stmt,
 			EligibleInstances: instances,
 			ChunkMap:          ti.chunkMap,
 		}
-		taskMeta, err2 := json.Marshal(task)
-		if err2 != nil {
-			return err2
+		planCtx := planner.PlanCtx{
+			Ctx:        ctx,
+			SessionCtx: se,
+			TaskKey:    TaskKey(jobID),
+			TaskType:   proto.ImportInto,
+			ThreadCnt:  int(plan.ThreadCnt),
 		}
-		taskID, err2 = globalTaskManager.AddGlobalTaskWithSession(se, TaskKey(jobID), proto.ImportInto,
-			int(plan.ThreadCnt), taskMeta)
+		p := planner.NewPlanner()
+		taskID, err2 = p.Run(planCtx, logicalPlan)
 		if err2 != nil {
 			return err2
 		}
@@ -251,24 +258,42 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
 		return 0, err
 	}
-	if globalTask == nil {
+	if task == nil {
 		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
-	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, StepImport)
-	if err != nil {
+	taskMeta := TaskMeta{}
+	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return 0, err
 	}
 	var importedRows uint64
-	for _, subtask := range subtasks {
-		var subtaskMeta ImportStepMeta
-		if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-			return 0, err2
+	if taskMeta.Plan.CloudStorageURI == "" {
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepImport)
+		if err != nil {
+			return 0, err
 		}
-		importedRows += subtaskMeta.Result.LoadedRowCnt
+		for _, subtask := range subtasks {
+			var subtaskMeta ImportStepMeta
+			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
+				return 0, err2
+			}
+			importedRows += subtaskMeta.Result.LoadedRowCnt
+		}
+	} else {
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepWriteAndIngest)
+		if err != nil {
+			return 0, err
+		}
+		for _, subtask := range subtasks {
+			var subtaskMeta WriteIngestStepMeta
+			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
+				return 0, err2
+			}
+			importedRows += subtaskMeta.Result.LoadedRowCnt
+		}
 	}
 	return importedRows, nil
 }

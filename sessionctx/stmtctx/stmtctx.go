@@ -304,6 +304,8 @@ type StatementContext struct {
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
 
+	SetVarHintRestore map[string]string
+
 	// If the statement read from table cache, this flag is set.
 	ReadFromTableCache bool
 
@@ -422,7 +424,6 @@ type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
 	MaxExecutionTime        uint64
-	TidbKvReadTimeout       uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
@@ -439,7 +440,6 @@ type StmtHints struct {
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
-	HasTidbKvReadTimeout           bool
 	HasEnableCascadesPlannerHint   bool
 	HasResourceGroup               bool
 	SetVars                        map[string]string
@@ -472,7 +472,6 @@ func (sh *StmtHints) Clone() *StmtHints {
 	return &StmtHints{
 		MemQuotaQuery:                  sh.MemQuotaQuery,
 		MaxExecutionTime:               sh.MaxExecutionTime,
-		TidbKvReadTimeout:              sh.TidbKvReadTimeout,
 		ReplicaRead:                    sh.ReplicaRead,
 		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
 		NoIndexMergeHint:               sh.NoIndexMergeHint,
@@ -484,7 +483,6 @@ func (sh *StmtHints) Clone() *StmtHints {
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
 		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
-		HasTidbKvReadTimeout:           sh.HasTidbKvReadTimeout,
 		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
 		HasResourceGroup:               sh.HasResourceGroup,
 		SetVars:                        vars,
@@ -1272,6 +1270,14 @@ func (sc *StatementContext) GetStaleTSO() (uint64, error) {
 	}
 	sc.StaleTSOProvider.value = &tso
 	return tso, nil
+}
+
+// AddSetVarHintRestore records the variables which are affected by SET_VAR hint. And restore them to the old value later.
+func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
+	if sc.SetVarHintRestore == nil {
+		sc.SetVarHintRestore = make(map[string]string)
+	}
+	sc.SetVarHintRestore[name] = val
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

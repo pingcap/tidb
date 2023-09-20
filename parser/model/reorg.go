@@ -23,12 +23,13 @@ import (
 
 // DDLReorgMeta is meta info of DDL reorganization.
 type DDLReorgMeta struct {
-	SQLMode       mysql.SQLMode                    `json:"sql_mode"`
-	Warnings      map[errors.ErrorID]*terror.Error `json:"warnings"`
-	WarningsCount map[errors.ErrorID]int64         `json:"warnings_count"`
-	Location      *TimeZoneLocation                `json:"location"`
-	ReorgTp       ReorgType                        `json:"reorg_tp"`
-	IsDistReorg   bool                             `json:"is_dist_reorg"`
+	SQLMode           mysql.SQLMode                    `json:"sql_mode"`
+	Warnings          map[errors.ErrorID]*terror.Error `json:"warnings"`
+	WarningsCount     map[errors.ErrorID]int64         `json:"warnings_count"`
+	Location          *TimeZoneLocation                `json:"location"`
+	ReorgTp           ReorgType                        `json:"reorg_tp"`
+	IsDistReorg       bool                             `json:"is_dist_reorg"`
+	ResourceGroupName string                           `json:"resource_group_name"`
 }
 
 // ReorgType indicates which process is used for the data reorganization.

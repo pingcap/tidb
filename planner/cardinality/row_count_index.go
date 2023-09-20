@@ -49,16 +49,18 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 	sc := sctx.GetSessionVars().StmtCtx
 	idx, ok := coll.Indices[idxID]
 	colNames := make([]string, 0, 8)
+	isMVIndex := false
 	if ok {
 		if idx.Info != nil {
 			name = idx.Info.Name.O
 			for _, col := range idx.Info.Columns {
 				colNames = append(colNames, col.Name.O)
 			}
+			isMVIndex = idx.Info.MVIndex
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
-	if statistics.IndexStatsIsInvalid(idx, sctx, coll, idxID) {
+	if statistics.IndexStatsIsInvalid(idx, sctx, coll, idxID) || isMVIndex {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -209,7 +211,6 @@ func isSingleColIdxNullRange(idx *statistics.Index, ran *ranger.Range) bool {
 
 // It uses the modifyCount to adjust the influence of modifications on the table.
 func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, coll *statistics.HistColl, indexRanges []*ranger.Range, realtimeRowCount, modifyCount int64) (float64, error) {
-	idx.CheckStats()
 	sc := sctx.GetSessionVars().StmtCtx
 	debugTrace := sc.EnableOptimizerDebugTrace
 	if debugTrace {

@@ -17,102 +17,144 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
+	"math"
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	framework_store "github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/zap"
 )
 
-type backfillingDispatcher struct {
-	d *ddl
+type backfillingDispatcherExt struct {
+	d                    *ddl
+	previousSchedulerIDs []string
 }
 
-var _ dispatcher.Dispatcher = (*backfillingDispatcher)(nil)
+var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
 
-// NewBackfillingDispatcher creates a new backfillingDispatcher.
-func NewBackfillingDispatcher(d DDL) (dispatcher.Dispatcher, error) {
+// NewBackfillingDispatcherExt creates a new backfillingDispatcherExt.
+func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &backfillingDispatcher{
+	return &backfillingDispatcherExt{
 		d: ddl,
 	}, nil
 }
 
-func (*backfillingDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+// OnTick implements dispatcher.Extension interface.
+func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-// OnNextStage generate next stage's plan.
-func (h *backfillingDispatcher) OnNextStage(ctx context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) ([][]byte, error) {
-	var globalTaskMeta BackfillGlobalMeta
-	if err := json.Unmarshal(gTask.Meta, &globalTaskMeta); err != nil {
+// OnNextSubtasksBatch generate batch of next step's plan.
+func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
+	ctx context.Context,
+	taskHandle dispatcher.TaskHandle,
+	gTask *proto.Task,
+	step int64,
+) (taskMeta [][]byte, err error) {
+	var gTaskMeta BackfillGlobalMeta
+	if err := json.Unmarshal(gTask.Meta, &gTaskMeta); err != nil {
 		return nil, err
 	}
-	job := &globalTaskMeta.Job
-	var tblInfo *model.TableInfo
+
+	job := &gTaskMeta.Job
+	useExtStore := len(gTaskMeta.CloudStorageURI) > 0
+	defer func() {
+		// Only redact when the task is complete.
+		if len(taskMeta) == 0 && useExtStore {
+			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
+		}
+	}()
+
 	tblInfo, err := getTblInfo(h.d, job)
 	if err != nil {
 		return nil, err
 	}
-	var subTaskMetas [][]byte
-	// generate partition table's plan.
-	if tblInfo.Partition != nil {
-		if gTask.Step != proto.StepInit {
-			// This flow for partition table has only one step
+
+	switch step {
+	case proto.StepOne:
+		if tblInfo.Partition != nil {
+			return generatePartitionPlan(tblInfo)
+		}
+		return generateNonPartitionPlan(h.d, tblInfo, job)
+	case proto.StepTwo:
+		return generateMergePlan(taskHandle, gTask)
+	case proto.StepThree:
+		if useExtStore {
+			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
+		}
+		if tblInfo.Partition != nil {
 			return nil, nil
 		}
-		subTaskMetas, err := generatePartitionPlan(tblInfo)
-		if err != nil {
-			return nil, err
-		}
-		gTask.Step = proto.StepOne
-		return subTaskMetas, nil
-	}
-
-	// generate non-partition table's plan.
-	switch gTask.Step {
-	case proto.StepInit:
-		subtaskMeta, err := generateNonPartitionPlan(h.d, tblInfo, job)
-		if err != nil {
-			return nil, err
-		}
-		gTask.Step = proto.StepOne
-		return subtaskMeta, nil
-	case proto.StepOne:
-		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		subTaskMetas = make([][]byte, 0, len(serverNodes))
-		dummyMeta := &BackfillSubTaskMeta{}
-		metaBytes, err := json.Marshal(dummyMeta)
-		if err != nil {
-			return nil, err
-		}
-		for range serverNodes {
-			subTaskMetas = append(subTaskMetas, metaBytes)
-		}
-		gTask.Step = proto.StepTwo
-		return subTaskMetas, nil
-	case proto.StepTwo:
-		return nil, nil
+		return generateIngestTaskPlan(ctx, h, taskHandle, gTask)
 	default:
 		return nil, nil
 	}
 }
 
+func (*backfillingDispatcherExt) GetNextStep(
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		// when in tests
+		if taskHandle == nil {
+			return proto.StepThree
+		}
+		// if data files overlaps too much, we need a merge step.
+		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
+		if err != nil {
+			// TODO(lance6716): should we return error?
+			return proto.StepTwo
+		}
+		multiStats := make([]external.MultipleFilesStat, 0, 100)
+		for _, bs := range subTaskMetas {
+			var subtask BackfillSubTaskMeta
+			err = json.Unmarshal(bs, &subtask)
+			if err != nil {
+				// TODO(lance6716): should we return error?
+				return proto.StepThree
+			}
+			multiStats = append(multiStats, subtask.MultipleFilesStats...)
+		}
+		if external.GetMaxOverlappingTotal(multiStats) > 1000 {
+			return proto.StepTwo
+		}
+		return proto.StepThree
+	case proto.StepTwo:
+		return proto.StepThree
+	default:
+		// current step should be proto.StepThree
+		return proto.StepDone
+	}
+}
+
 // OnErrStage generate error handling stage's plan.
-func (*backfillingDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
+func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	firstErr := receiveErr[0]
 	task.Error = firstErr
@@ -120,13 +162,40 @@ func (*backfillingDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHan
 	return nil, nil
 }
 
-func (*backfillingDispatcher) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes(ctx)
+func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(h.previousSchedulerIDs) > 0 {
+		// Only the nodes that executed step one can have step two.
+		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
+		for _, id := range h.previousSchedulerIDs {
+			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
+				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
+			}
+		}
+		return involvedServerInfos, nil
+	}
+	return serverInfos, nil
 }
 
 // IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
-func (*backfillingDispatcher) IsRetryableErr(error) bool {
+func (*backfillingDispatcherExt) IsRetryableErr(error) bool {
 	return true
+}
+
+type litBackfillDispatcher struct {
+	*dispatcher.BaseDispatcher
+}
+
+func newLitBackfillDispatcher(ctx context.Context, taskMgr *framework_store.TaskManager,
+	serverID string, task *proto.Task, handle dispatcher.Extension) dispatcher.Dispatcher {
+	dis := litBackfillDispatcher{
+		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
+	}
+	dis.BaseDispatcher.Extension = handle
+	return &dis
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
@@ -173,7 +242,7 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	startKey, endKey, err := getTableRange(d.jobContext(job.ID), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
+	startKey, endKey, err := getTableRange(d.jobContext(job.ID, job.ReorgMeta), d.ddlCtx, tbl.(table.PhysicalTable), ver.Ver, job.Priority)
 	if startKey == nil && endKey == nil {
 		// Empty table.
 		return nil, nil
@@ -212,4 +281,228 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
+}
+
+func generateIngestTaskPlan(
+	ctx context.Context,
+	h *backfillingDispatcherExt,
+	taskHandle dispatcher.TaskHandle,
+	gTask *proto.Task,
+) ([][]byte, error) {
+	// We dispatch dummy subtasks because the rest data in local engine will be imported
+	// in the initialization of subtask executor.
+	var ingestSubtaskCnt int
+	if intest.InTest && taskHandle == nil {
+		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ingestSubtaskCnt = len(serverNodes)
+	} else {
+		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
+		if err != nil {
+			return nil, err
+		}
+		h.previousSchedulerIDs = schedulerIDs
+		ingestSubtaskCnt = len(schedulerIDs)
+	}
+
+	subTaskMetas := make([][]byte, 0, ingestSubtaskCnt)
+	dummyMeta := &BackfillSubTaskMeta{}
+	metaBytes, err := json.Marshal(dummyMeta)
+	if err != nil {
+		return nil, err
+	}
+	for i := 0; i < ingestSubtaskCnt; i++ {
+		subTaskMetas = append(subTaskMetas, metaBytes)
+	}
+	return subTaskMetas, nil
+}
+
+func generateMergeSortPlan(
+	ctx context.Context,
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+	jobID int64,
+	cloudStorageURI string,
+) ([][]byte, error) {
+	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID)
+	if err != nil {
+		return nil, err
+	}
+	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	splitter, err := getRangeSplitter(
+		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := splitter.Close()
+		if err != nil {
+			logutil.Logger(ctx).Error("failed to close range splitter", zap.Error(err))
+		}
+	}()
+
+	metaArr := make([][]byte, 0, 16)
+	startKey := firstKey
+	var endKey kv.Key
+	for {
+		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
+		if err != nil {
+			return nil, err
+		}
+		if len(endKeyOfGroup) == 0 {
+			endKey = lastKey.Next()
+		} else {
+			endKey = kv.Key(endKeyOfGroup).Clone()
+		}
+		logutil.Logger(ctx).Info("split subtask range",
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("endKey", hex.EncodeToString(endKey)))
+		if startKey.Cmp(endKey) >= 0 {
+			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		m := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				MinKey:      startKey,
+				MaxKey:      endKey,
+				DataFiles:   dataFiles,
+				StatFiles:   statFiles,
+				TotalKVSize: totalSize / uint64(len(instanceIDs)),
+			},
+			RangeSplitKeys: rangeSplitKeys,
+		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
+		if len(endKeyOfGroup) == 0 {
+			return metaArr, nil
+		}
+		startKey = endKey
+	}
+}
+
+func generateMergePlan(
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+) ([][]byte, error) {
+	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	start := 0
+	step := 1000
+	metaArr := make([][]byte, 0, 16)
+	for start < len(dataFiles) {
+		end := start + step
+		if end > len(dataFiles) {
+			end = len(dataFiles)
+		}
+		m := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				DataFiles: dataFiles[start:end],
+			},
+		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
+
+		start = end
+	}
+	return metaArr, nil
+}
+
+func getRangeSplitter(
+	ctx context.Context,
+	cloudStorageURI string,
+	jobID int64,
+	totalSize int64,
+	instanceCnt int64,
+	dataFiles, statFiles []string,
+) (*external.RangeSplitter, error) {
+	backend, err := storage.ParseBackend(cloudStorageURI, nil)
+	if err != nil {
+		return nil, err
+	}
+	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
+	if err != nil {
+		return nil, err
+	}
+
+	rangeGroupSize := totalSize / instanceCnt
+	rangeGroupKeys := int64(math.MaxInt64)
+	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
+	if !ok {
+		return nil, errors.Errorf("backend context not found")
+	}
+
+	local := bcCtx.GetLocalBackend()
+	if local == nil {
+		return nil, errors.Errorf("local backend not found")
+	}
+	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
+	if err != nil {
+		logutil.Logger(ctx).Warn("fail to get region split keys and size", zap.Error(err))
+	}
+	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
+	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
+
+	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
+		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)
+}
+
+func getSummaryFromLastStep(
+	taskHandle dispatcher.TaskHandle,
+	gTaskID int64,
+) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
+	if err != nil {
+		return nil, nil, 0, nil, nil, errors.Trace(err)
+	}
+	var minKey, maxKey kv.Key
+	allDataFiles := make([]string, 0, 16)
+	allStatFiles := make([]string, 0, 16)
+	for _, subTaskMeta := range subTaskMetas {
+		var subtask BackfillSubTaskMeta
+		err := json.Unmarshal(subTaskMeta, &subtask)
+		if err != nil {
+			return nil, nil, 0, nil, nil, errors.Trace(err)
+		}
+		// Skip empty subtask.MinKey/MaxKey because it means
+		// no records need to be written in this subtask.
+		minKey = external.NotNilMin(minKey, subtask.MinKey)
+		maxKey = external.NotNilMax(maxKey, subtask.MaxKey)
+		totalKVSize += subtask.TotalKVSize
+
+		for _, stat := range subtask.MultipleFilesStats {
+			for i := range stat.Filenames {
+				allDataFiles = append(allDataFiles, stat.Filenames[i][0])
+				allStatFiles = append(allStatFiles, stat.Filenames[i][1])
+			}
+		}
+	}
+	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
+}
+
+func redactCloudStorageURI(
+	ctx context.Context,
+	gTask *proto.Task,
+	origin *BackfillGlobalMeta,
+) {
+	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
+	metaBytes, err := json.Marshal(origin)
+	if err != nil {
+		logutil.Logger(ctx).Warn("fail to marshal task meta", zap.Error(err))
+		return
+	}
+	gTask.Meta = metaBytes
 }

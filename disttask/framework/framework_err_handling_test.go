@@ -22,30 +22,31 @@ import (
 
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
+	"go.uber.org/mock/gomock"
 )
 
-type planErrDispatcher struct {
+type planErrDispatcherExt struct {
 	callTime int
+	cnt      int
 }
 
 var (
-	_ dispatcher.Dispatcher = (*planErrDispatcher)(nil)
-	_ dispatcher.Dispatcher = (*planNotRetryableErrDispatcher)(nil)
+	_ dispatcher.Extension = (*planErrDispatcherExt)(nil)
+	_ dispatcher.Extension = (*planNotRetryableErrDispatcherExt)(nil)
 )
 
-func (*planErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+func (*planErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
-	if gTask.State == proto.TaskStatePending {
+func (p *planErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
+	if gTask.Step == proto.StepInit {
 		if p.callTime == 0 {
 			p.callTime++
 			return nil, errors.New("retryable err")
 		}
-		gTask.Step = proto.StepOne
+		p.cnt = 3
 		return [][]byte{
 			[]byte("task1"),
 			[]byte("task2"),
@@ -53,7 +54,7 @@ func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHand
 		}, nil
 	}
 	if gTask.Step == proto.StepOne {
-		gTask.Step = proto.StepTwo
+		p.cnt = 4
 		return [][]byte{
 			[]byte("task4"),
 		}, nil
@@ -61,7 +62,7 @@ func (p *planErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHand
 	return nil, nil
 }
 
-func (p *planErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (p *planErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	if p.callTime == 1 {
 		p.callTime++
 		return nil, errors.New("not retryable err")
@@ -69,64 +70,78 @@ func (p *planErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandl
 	return []byte("planErrTask"), nil
 }
 
-func (*planErrDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*planErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*planErrDispatcher) IsRetryableErr(error) bool {
+func (*planErrDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-type planNotRetryableErrDispatcher struct {
+func (p *planErrDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		return proto.StepTwo
+	default:
+		return proto.StepDone
+	}
 }
 
-func (*planNotRetryableErrDispatcher) OnTick(_ context.Context, _ *proto.Task) {
+type planNotRetryableErrDispatcherExt struct {
+	cnt int
 }
 
-func (p *planNotRetryableErrDispatcher) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (*planNotRetryableErrDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
+}
+
+func (p *planNotRetryableErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ int64) (metas [][]byte, err error) {
 	return nil, errors.New("not retryable err")
 }
 
-func (*planNotRetryableErrDispatcher) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (*planNotRetryableErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
 	return nil, errors.New("not retryable err")
 }
 
-func (*planNotRetryableErrDispatcher) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (*planNotRetryableErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	return generateSchedulerNodes4Test()
 }
 
-func (*planNotRetryableErrDispatcher) IsRetryableErr(error) bool {
+func (*planNotRetryableErrDispatcherExt) IsRetryableErr(error) bool {
 	return false
 }
 
-func TestPlanErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
-	defer scheduler.ClearSchedulers()
-	m := sync.Map{}
+func (p *planNotRetryableErrDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) int64 {
+	return proto.StepDone
+}
 
-	RegisterTaskMeta(&m, &planErrDispatcher{0})
+func TestPlanErr(t *testing.T) {
+	m := sync.Map{}
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestRevertPlanErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
 
-	RegisterTaskMeta(&m, &planErrDispatcher{0})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planErrDispatcherExt{0, 0})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckSuccess("key1", t, &m)
 	distContext.Close()
 }
 
 func TestPlanNotRetryableErr(t *testing.T) {
-	defer dispatcher.ClearTaskDispatcher()
-	defer scheduler.ClearSchedulers()
 	m := sync.Map{}
-
-	RegisterTaskMeta(&m, &planNotRetryableErrDispatcher{})
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &planNotRetryableErrDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 2)
 	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateFailed)
 	distContext.Close()

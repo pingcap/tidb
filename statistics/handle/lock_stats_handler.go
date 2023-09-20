@@ -15,66 +15,109 @@
 package handle
 
 import (
-	"context"
-
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// AddLockedTables add locked tables id to store.
-// - tids: table ids of which will be locked.
-// - pids: partition ids of which will be locked.
-// - tables: table names of which will be locked.
+// LockTables add locked tables id to store.
+// - tidAndNames: table ids and names of which will be locked.
+// - pidAndNames: partition ids and names of which will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return lockstats.AddLockedTables(h.mu.ctx.(sqlexec.SQLExecutor), tids, pids, tables)
+func (h *Handle) LockTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+
+	return lockstats.AddLockedTables(exec, tidAndNames, pidAndNames)
 }
 
-// RemoveLockedTables remove tables from table locked array.
-// - tids: table ids of which will be unlocked.
-// - pids: partition ids of which will be unlocked.
-// - tables: table names of which will be unlocked.
+// LockPartitions add locked partitions id to store.
+// If the whole table is locked, then skip all partitions of the table.
+// - tid: table id of which will be locked.
+// - tableName: table name of which will be locked.
+// - pidNames: partition ids of which will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
+// Note: If the whole table is locked, then skip all partitions of the table.
+func (h *Handle) LockPartitions(
+	tid int64,
+	tableName string,
+	pidNames map[int64]string,
+) (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
 
-	return lockstats.RemoveLockedTables(h.mu.ctx.(sqlexec.SQLExecutor), tids, pids, tables)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+
+	return lockstats.AddLockedPartitions(exec, tid, tableName, pidNames)
 }
 
-// QueryTablesLockedStatuses query whether table is locked in handle with Handle.Mutex.
-// Note: This function query locked tables from store, so please try to batch the query.
-func (h *Handle) QueryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.queryTablesLockedStatuses(tableIDs...)
+// RemoveLockedTables remove tables from table locked records.
+// - tidAndNames:  table ids and names of which will be unlocked.
+// - pidAndNames: partition ids and names of which will be unlocked.
+// Return the message of skipped tables and error.
+func (h *Handle) RemoveLockedTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return lockstats.RemoveLockedTables(exec, tidAndNames, pidAndNames)
 }
 
-// queryTablesLockedStatuses query whether table is locked in handle without Handle.Mutex
+// RemoveLockedPartitions remove partitions from table locked records.
+// - tid: table id of which will be unlocked.
+// - tableName: table name of which will be unlocked.
+// - pidNames: partition ids of which will be unlocked.
+// Note: If the whole table is locked, then skip all partitions of the table.
+func (h *Handle) RemoveLockedPartitions(
+	tid int64,
+	tableName string,
+	pidNames map[int64]string,
+) (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	defer h.pool.Put(se)
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return lockstats.RemoveLockedPartitions(exec, tid, tableName, pidNames)
+}
+
+// GetLockedTables returns the locked status of the given tables.
 // Note: This function query locked tables from store, so please try to batch the query.
-func (h *Handle) queryTablesLockedStatuses(tableIDs ...int64) (map[int64]bool, error) {
-	tableLocked, err := h.queryLockedTablesWithoutLock()
+func (h *Handle) GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error) {
+	tableLocked, err := h.queryLockedTables()
 	if err != nil {
 		return nil, err
 	}
-	return lockstats.GetTablesLockedStatuses(tableLocked, tableIDs...), nil
+
+	return lockstats.GetLockedTables(tableLocked, tableIDs...), nil
 }
 
-// queryLockedTablesWithoutLock query locked tables from store without Handle.Mutex.
-func (h *Handle) queryLockedTablesWithoutLock() (map[int64]struct{}, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+// queryLockedTables query locked tables from store.
+func (h *Handle) queryLockedTables() (map[int64]struct{}, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer h.pool.Put(se)
 
-	return lockstats.QueryLockedTables(ctx, exec)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return lockstats.QueryLockedTables(exec)
 }
 
-// GetTableLockedAndClearForTest for unit test only
+// GetTableLockedAndClearForTest for unit test only.
 func (h *Handle) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.queryLockedTablesWithoutLock()
+	return h.queryLockedTables()
 }

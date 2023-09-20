@@ -1782,7 +1782,7 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
 			case plannercore.HintMemoryQuota, plannercore.HintUseToja, plannercore.HintNoIndexMerge,
-				plannercore.HintMaxExecutionTime, plannercore.HintTidbKvReadTimeout,
+				plannercore.HintMaxExecutionTime,
 				plannercore.HintIgnoreIndex, plannercore.HintReadFromStorage, plannercore.HintMerge,
 				plannercore.HintSemiJoinRewrite, plannercore.HintNoDecorrelate:
 				hints = append(hints, tableHint)

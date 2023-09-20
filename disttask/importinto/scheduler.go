@@ -17,15 +17,23 @@ package importinto
 import (
 	"context"
 	"encoding/json"
-	"runtime"
 	"sync"
+	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
@@ -34,137 +42,174 @@ import (
 	"go.uber.org/zap"
 )
 
-// importStepScheduler is a scheduler for import step.
-// Scheduler is equivalent to a Lightning instance.
-type importStepScheduler struct {
+// importStepExecutor is a executor for import step.
+// SubtaskExecutor is equivalent to a Lightning instance.
+type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	tableImporter *importer.TableImporter
 	sharedVars    sync.Map
 	logger        *zap.Logger
 
+	indexMemorySizeLimit uint64
+
 	importCtx    context.Context
 	importCancel context.CancelFunc
 	wg           sync.WaitGroup
 }
 
-func (s *importStepScheduler) InitSubtaskExecEnv(ctx context.Context) error {
-	s.logger.Info("init subtask env")
-
+func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*importer.TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(0)
-	tbl, err := tables.TableFromMeta(idAlloc, s.taskMeta.Plan.TableInfo)
+	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	astArgs, err := importer.ASTArgsFromStmt(s.taskMeta.Stmt)
+	astArgs, err := importer.ASTArgsFromStmt(taskMeta.Stmt)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	controller, err := importer.NewLoadDataController(&s.taskMeta.Plan, tbl, astArgs)
+	controller, err := importer.NewLoadDataController(&taskMeta.Plan, tbl, astArgs)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	// todo: this method will load all files, but we only import files related to current subtask.
-	if err := controller.InitDataFiles(ctx); err != nil {
-		return err
+	if err = controller.InitDataStore(ctx); err != nil {
+		return nil, err
 	}
 
-	tableImporter, err := importer.NewTableImporter(&importer.JobImportParam{
+	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
 		Progress: asyncloaddata.NewProgress(false),
 		Job:      &asyncloaddata.Job{},
-	}, controller, s.taskID)
+	}, controller, taskID)
+}
+
+func (s *importStepExecutor) Init(ctx context.Context) error {
+	s.logger.Info("init subtask env")
+	tableImporter, err := getTableImporter(ctx, s.taskID, s.taskMeta)
 	if err != nil {
 		return err
 	}
 	s.tableImporter = tableImporter
 
-	// we need this sub context since CleanupSubtaskExecEnv which wait on this routine is called
+	// we need this sub context since Cleanup which wait on this routine is called
 	// before parent context is canceled in normal flow.
 	s.importCtx, s.importCancel = context.WithCancel(ctx)
-	s.wg.Add(1)
-	go func() {
-		defer s.wg.Done()
-		s.tableImporter.CheckDiskQuota(s.importCtx)
-	}()
+	// only need to check disk quota when we are using local sort.
+	if s.tableImporter.IsLocalSort() {
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			s.tableImporter.CheckDiskQuota(s.importCtx)
+		}()
+	}
+	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
+	s.logger.Info("index writer memory size limit",
+		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
 	return nil
 }
 
-func (s *importStepScheduler) SplitSubtask(ctx context.Context, bs []byte) ([]proto.MinimalTask, error) {
+func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
 	err := json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	s.logger.Info("split subtask", zap.Int32("engine-id", subtaskMeta.ID))
+	s.logger.Info("split and run subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
-	dataEngine, err := s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
-	if err != nil {
-		return nil, err
-	}
-	// Unlike in Lightning, we start an index engine for each subtask, whereas previously there was only a single index engine globally.
-	// This is because the scheduler currently does not have a post-processing mechanism.
-	// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
-	// Multiple index engines may suffer performance degradation due to range overlap.
-	// These issues will be alleviated after we integrate s3 sorter.
-	// engineID = -1, -2, -3, ...
-	indexEngine, err := s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
-	if err != nil {
-		return nil, err
+	var dataEngine, indexEngine *backend.OpenedEngine
+	if s.tableImporter.IsLocalSort() {
+		dataEngine, err = s.tableImporter.OpenDataEngine(ctx, subtaskMeta.ID)
+		if err != nil {
+			return err
+		}
+		// Unlike in Lightning, we start an index engine for each subtask,
+		// whereas previously there was only a single index engine globally.
+		// This is because the scheduler currently does not have a post-processing mechanism.
+		// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
+		// Multiple index engines may suffer performance degradation due to range overlap.
+		// These issues will be alleviated after we integrate s3 sorter.
+		// engineID = -1, -2, -3, ...
+		indexEngine, err = s.tableImporter.OpenIndexEngine(ctx, common.IndexEngineID-subtaskMeta.ID)
+		if err != nil {
+			return err
+		}
 	}
 	sharedVars := &SharedVars{
-		TableImporter: s.tableImporter,
-		DataEngine:    dataEngine,
-		IndexEngine:   indexEngine,
-		Progress:      asyncloaddata.NewProgress(false),
-		Checksum:      &verification.KVChecksum{},
+		TableImporter:    s.tableImporter,
+		DataEngine:       dataEngine,
+		IndexEngine:      indexEngine,
+		Progress:         asyncloaddata.NewProgress(false),
+		Checksum:         &verification.KVChecksum{},
+		SortedDataMeta:   &external.SortedKVMeta{},
+		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
 
-	miniTask := make([]proto.MinimalTask, 0, len(subtaskMeta.Chunks))
+	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
+	op := newEncodeAndSortOperator(ctx, s, sharedVars, subtask.ID, s.indexMemorySizeLimit)
+	op.SetSource(source)
+	pipeline := operator.NewAsyncPipeline(op)
+	if err = pipeline.Execute(); err != nil {
+		return err
+	}
+
+outer:
 	for _, chunk := range subtaskMeta.Chunks {
-		miniTask = append(miniTask, &importStepMinimalTask{
+		// TODO: current workpool impl doesn't drain the input channel, it will
+		// just return on context cancel(error happened), so we add this select.
+		select {
+		case source.Channel() <- &importStepMinimalTask{
 			Plan:       s.taskMeta.Plan,
 			Chunk:      chunk,
 			SharedVars: sharedVars,
-		})
+		}:
+		case <-op.Done():
+			break outer
+		}
 	}
-	return miniTask, nil
+	source.Finish()
+
+	return pipeline.Close()
 }
 
-func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMetaBytes []byte) ([]byte, error) {
+func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
-	if err := json.Unmarshal(subtaskMetaBytes, &subtaskMeta); err != nil {
-		return nil, err
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return err
 	}
 	s.logger.Info("on subtask finished", zap.Int32("engine-id", subtaskMeta.ID))
 
 	val, ok := s.sharedVars.Load(subtaskMeta.ID)
 	if !ok {
-		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
+		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 	sharedVars, ok := val.(*SharedVars)
 	if !ok {
-		return nil, errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
+		return errors.Errorf("sharedVars %d not found", subtaskMeta.ID)
 	}
 
-	// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
-	s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
-	closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
-	if err != nil {
-		return nil, err
-	}
-	dataKVCount, err := s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
-	if err != nil {
-		return nil, err
-	}
+	var dataKVCount int64
+	if s.tableImporter.IsLocalSort() {
+		// TODO: we should close and cleanup engine in all case, since there's no checkpoint.
+		s.logger.Info("import data engine", zap.Int32("engine-id", subtaskMeta.ID))
+		closedDataEngine, err := sharedVars.DataEngine.Close(ctx)
+		if err != nil {
+			return err
+		}
+		dataKVCount, err = s.tableImporter.ImportAndCleanup(ctx, closedDataEngine)
+		if err != nil {
+			return err
+		}
 
-	s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
-	if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
-		return nil, err
-	} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
-		return nil, err
+		s.logger.Info("import index engine", zap.Int32("engine-id", subtaskMeta.ID))
+		if closedEngine, err := sharedVars.IndexEngine.Close(ctx); err != nil {
+			return err
+		} else if _, err := s.tableImporter.ImportAndCleanup(ctx, closedEngine); err != nil {
+			return err
+		}
 	}
+	// there's no imported dataKVCount on this stage when using global sort.
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
@@ -182,84 +227,185 @@ func (s *importStepScheduler) OnSubtaskFinished(ctx context.Context, subtaskMeta
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
+	subtaskMeta.SortedDataMeta = sharedVars.SortedDataMeta
+	subtaskMeta.SortedIndexMetas = sharedVars.SortedIndexMetas
 	s.sharedVars.Delete(subtaskMeta.ID)
-	return json.Marshal(subtaskMeta)
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return err
+	}
+	subtask.Meta = newMeta
+	return nil
 }
 
-func (s *importStepScheduler) CleanupSubtaskExecEnv(_ context.Context) (err error) {
+func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	s.logger.Info("cleanup subtask env")
 	s.importCancel()
 	s.wg.Wait()
 	return s.tableImporter.Close()
 }
 
-func (s *importStepScheduler) Rollback(context.Context) error {
+func (s *importStepExecutor) Rollback(context.Context) error {
 	// TODO: add rollback
 	s.logger.Info("rollback")
 	return nil
 }
 
-type postStepScheduler struct {
-	scheduler.EmptyScheduler
+type writeAndIngestStepExecutor struct {
+	scheduler.EmptySubtaskExecutor
+	taskID        int64
+	taskMeta      *TaskMeta
+	logger        *zap.Logger
+	tableImporter *importer.TableImporter
+}
+
+var _ execute.SubtaskExecutor = &writeAndIngestStepExecutor{}
+
+func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
+	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
+	if err != nil {
+		return err
+	}
+	e.tableImporter = tableImporter
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	e.logger.Info("write and ingest kv", zap.Int64("subtask-id", subtask.ID))
+
+	sm := &WriteIngestStepMeta{}
+	err := json.Unmarshal(subtask.Meta, sm)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	localBackend := e.tableImporter.Backend()
+	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
+		External: &backend.ExternalEngineConfig{
+			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:     sm.DataFiles,
+			StatFiles:     sm.StatFiles,
+			MinKey:        sm.MinKey,
+			MaxKey:        sm.MaxKey,
+			SplitKeys:     sm.RangeSplitKeys,
+			TotalFileSize: int64(sm.TotalKVSize),
+			TotalKVCount:  0,
+		},
+	}, engineUUID)
+	if err != nil {
+		return err
+	}
+	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+}
+
+func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+	var subtaskMeta WriteIngestStepMeta
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return err
+	}
+	if subtaskMeta.KVGroup != dataKVGroup {
+		return nil
+	}
+
+	// only data kv group has loaded row count
+	_, engineUUID := backend.MakeUUID("", subtask.ID)
+	localBackend := e.tableImporter.Backend()
+	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
+	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return err
+	}
+	subtask.Meta = newMeta
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
+	e.logger.Info("cleanup subtask env")
+	return e.tableImporter.Close()
+}
+
+func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
+	e.logger.Info("rollback")
+	return nil
+}
+
+type postStepExecutor struct {
+	scheduler.EmptySubtaskExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
 
-var _ scheduler.Scheduler = &postStepScheduler{}
+var _ execute.SubtaskExecutor = &postStepExecutor{}
 
-func (p *postStepScheduler) SplitSubtask(_ context.Context, metaBytes []byte) ([]proto.MinimalTask, error) {
-	mTask := &postProcessStepMinimalTask{
-		taskMeta: p.taskMeta,
-		logger:   p.logger,
+func (p *postStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+	stepMeta := PostProcessStepMeta{}
+	if err := json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
+		return err
 	}
-	if err := json.Unmarshal(metaBytes, &mTask.meta); err != nil {
+	failpoint.Inject("waitBeforePostProcess", func() {
+		time.Sleep(5 * time.Second)
+	})
+	return postProcess(ctx, p.taskMeta, &stepMeta, p.logger)
+}
+
+type importScheduler struct {
+	*scheduler.BaseScheduler
+}
+
+func newImportScheduler(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
+	s := &importScheduler{
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable),
+	}
+	s.BaseScheduler.Extension = s
+	return s
+}
+
+func (s *importScheduler) Run(ctx context.Context, task *proto.Task) error {
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
+	defer metricsManager.unregister(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
+	return s.BaseScheduler.Run(subCtx, task)
+}
+
+func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
+	taskMeta := TaskMeta{}
+	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, err
 	}
-	return []proto.MinimalTask{mTask}, nil
+	logger := logutil.BgLogger().With(
+		zap.String("type", proto.ImportInto),
+		zap.Int64("task-id", task.ID),
+		zap.String("step", stepStr(task.Step)),
+	)
+	logger.Info("create step scheduler")
+
+	switch task.Step {
+	case StepImport, StepEncodeAndSort:
+		return &importStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	case StepWriteAndIngest:
+		return &writeAndIngestStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	case StepPostProcess:
+		return &postStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	default:
+		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
+	}
 }
 
 func init() {
-	prepareFn := func(taskID int64, bs []byte, step int64) (*TaskMeta, *zap.Logger, error) {
-		taskMeta := TaskMeta{}
-		if err := json.Unmarshal(bs, &taskMeta); err != nil {
-			return nil, nil, err
-		}
-		logger := logutil.BgLogger().With(
-			zap.String("type", proto.ImportInto),
-			zap.Int64("task-id", taskID),
-			zap.String("step", stepStr(step)),
-		)
-		logger.Info("create step scheduler")
-		return &taskMeta, logger, nil
-	}
-	scheduler.RegisterTaskType(proto.ImportInto, scheduler.WithPoolSize(int32(runtime.GOMAXPROCS(0))))
-	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepImport,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
-			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
-			if err != nil {
-				return nil, err
-			}
-			return &importStepScheduler{
-				taskID:   taskID,
-				taskMeta: taskMeta,
-				logger:   logger,
-			}, nil
-		},
-	)
-	scheduler.RegisterSchedulerConstructor(proto.ImportInto, StepPostProcess,
-		func(ctx context.Context, taskID int64, bs []byte, step int64) (scheduler.Scheduler, error) {
-			// TODO(tangenta): use context for lifetime control.
-			taskMeta, logger, err := prepareFn(taskID, bs, step)
-			if err != nil {
-				return nil, err
-			}
-			return &postStepScheduler{
-				taskID:   taskID,
-				taskMeta: taskMeta,
-				logger:   logger,
-			}, nil
-		},
-	)
+	scheduler.RegisterTaskType(proto.ImportInto, newImportScheduler)
 }
