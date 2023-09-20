@@ -66,16 +66,34 @@ func getColumnName(t *testing.T, is infoschema.InfoSchema, tblColID model.TableI
 	return colName
 }
 
-func checkColumnStatsUsage(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, histNeededOnly bool, expected []string, comment string) {
-	var tblColIDs []model.TableItemID
-	if histNeededOnly {
-		_, tblColIDs = CollectColumnStatsUsage(lp, false, true)
+func getStatsLoadItem(t *testing.T, is infoschema.InfoSchema, item model.StatsLoadItem, comment string) string {
+	str := getColumnName(t, is, item.TableItemID, comment)
+	if item.FullLoad {
+		str += " full"
 	} else {
-		tblColIDs, _ = CollectColumnStatsUsage(lp, true, false)
+		str += " meta"
 	}
+	return str
+}
+
+func checkColumnStatsUsageForPredicates(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, expected []string, comment string) {
+	var tblColIDs []model.TableItemID
+	tblColIDs, _ = CollectColumnStatsUsage(lp, true, false)
 	cols := make([]string, 0, len(tblColIDs))
 	for _, tblColID := range tblColIDs {
 		col := getColumnName(t, is, tblColID, comment)
+		cols = append(cols, col)
+	}
+	sort.Strings(cols)
+	require.Equal(t, expected, cols, comment)
+}
+
+func checkColumnStatsUsageForStatsLoad(t *testing.T, is infoschema.InfoSchema, lp LogicalPlan, expected []string, comment string) {
+	var loadItems []model.StatsLoadItem
+	_, loadItems = CollectColumnStatsUsage(lp, false, true)
+	cols := make([]string, 0, len(loadItems))
+	for _, item := range loadItems {
+		col := getStatsLoadItem(t, is, item, comment)
 		cols = append(cols, col)
 	}
 	sort.Strings(cols)
@@ -266,10 +284,10 @@ func TestCollectPredicateColumns(t *testing.T) {
 		require.True(t, ok, comment)
 		// We check predicate columns twice, before and after logical optimization. Some logical plan patterns may occur before
 		// logical optimization while others may occur after logical optimization.
-		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
+		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
 		lp, err = logicalOptimize(ctx, builder.GetOptFlag(), lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsage(t, s.is, lp, false, tt.res, comment)
+		checkColumnStatsUsageForPredicates(t, s.is, lp, tt.res, comment)
 	}
 }
 
@@ -353,6 +371,6 @@ func TestCollectHistNeededColumns(t *testing.T) {
 		flags &= ^(flagJoinReOrder | flagPrunColumnsAgain)
 		lp, err = logicalOptimize(ctx, flags, lp)
 		require.NoError(t, err, comment)
-		checkColumnStatsUsage(t, s.is, lp, true, tt.res, comment)
+		checkColumnStatsUsageForStatsLoad(t, s.is, lp, tt.res, comment)
 	}
 }

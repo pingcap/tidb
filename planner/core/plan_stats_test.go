@@ -262,13 +262,13 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := tbl.Meta()
-	neededColumn := model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}
+	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
 	resultCh := make(chan stmtctx.StatsLoadResult, 1)
 	timeout := time.Duration(1<<63 - 1)
 	task := &handle.NeededItemTask{
-		TableItemID: neededColumn,
-		ResultCh:    resultCh,
-		ToTimeout:   time.Now().Local().Add(timeout),
+		Item:      neededColumn,
+		ResultCh:  resultCh,
+		ToTimeout: time.Now().Local().Add(timeout),
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
 	sql := "select * from t where c>1"
