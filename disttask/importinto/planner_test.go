@@ -15,9 +15,13 @@
 package importinto
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
@@ -113,4 +117,73 @@ func TestToPhysicalPlan(t *testing.T) {
 	bs, err = json.Marshal(subtaskMeta2)
 	require.NoError(t, err)
 	require.Equal(t, [][]byte{bs}, subtaskMetas2)
+}
+
+func TestGenerateMergeSortSpecs(t *testing.T) {
+	stepBak := external.MergeSortFileCountStep
+	external.MergeSortFileCountStep = 2
+	t.Cleanup(func() {
+		external.MergeSortFileCountStep = stepBak
+	})
+	// force merge sort for data kv
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/importinto/forceMergeSort", `return("data")`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/forceMergeSort"))
+	})
+	sortStepMetaBytes := make([][]byte, 0, 3)
+	for i := 0; i < 3; i++ {
+		prefix := fmt.Sprintf("t%d_", i)
+		sortStepMeta := &ImportStepMeta{
+			SortedDataMeta: &external.SortedKVMeta{
+				MinKey:      []byte(prefix + "a"),
+				MaxKey:      []byte(prefix + "c"),
+				TotalKVSize: 12,
+				DataFiles:   []string{prefix + "data/1"},
+				StatFiles:   []string{prefix + "data/1.stat"},
+				MultipleFilesStats: []external.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{prefix + "data/1", prefix + "data/1.stat"},
+						},
+					},
+				},
+			},
+			SortedIndexMetas: map[int64]*external.SortedKVMeta{
+				1: {
+					MinKey:      []byte(prefix + "i_a"),
+					MaxKey:      []byte(prefix + "i_c"),
+					TotalKVSize: 12,
+					DataFiles:   []string{prefix + "index/1"},
+					StatFiles:   []string{prefix + "index/1.stat"},
+					MultipleFilesStats: []external.MultipleFilesStat{
+						{
+							Filenames: [][2]string{
+								{prefix + "index/1", prefix + "index/1.stat"},
+							},
+						},
+					},
+				},
+			},
+		}
+		bytes, err := json.Marshal(sortStepMeta)
+		require.NoError(t, err)
+		sortStepMetaBytes = append(sortStepMetaBytes, bytes)
+	}
+	planCtx := planner.PlanCtx{
+		Ctx:    context.Background(),
+		TaskID: 1,
+		PreviousSubtaskMetas: map[int64][][]byte{
+			StepEncodeAndSort: sortStepMetaBytes,
+		},
+	}
+	specs, err := generateMergeSortSpecs(planCtx)
+	require.NoError(t, err)
+	require.Len(t, specs, 2)
+	require.Len(t, specs[0].(*MergeSortSpec).DataFiles, 2)
+	require.Equal(t, "data", specs[0].(*MergeSortSpec).KVGroup)
+	require.Equal(t, "t0_data/1", specs[0].(*MergeSortSpec).DataFiles[0])
+	require.Equal(t, "t1_data/1", specs[0].(*MergeSortSpec).DataFiles[1])
+	require.Equal(t, "data", specs[1].(*MergeSortSpec).KVGroup)
+	require.Len(t, specs[1].(*MergeSortSpec).DataFiles, 1)
+	require.Equal(t, "t2_data/1", specs[1].(*MergeSortSpec).DataFiles[0])
 }
