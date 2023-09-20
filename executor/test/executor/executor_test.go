@@ -805,6 +805,23 @@ func TestTablePKisHandleScan(t *testing.T) {
 	}
 }
 
+func TestDefaultNull(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key auto_increment, b int default 1, c int)")
+	tk.MustExec("insert t values ()")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
+	tk.MustExec("update t set b = NULL where a = 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 <nil> <nil>"))
+	tk.MustExec("update t set c = 1")
+	tk.MustQuery("select * from t ").Check(testkit.Rows("1 <nil> 1"))
+	tk.MustExec("delete from t where a = 1")
+	tk.MustExec("insert t (a) values (1)")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 <nil>"))
+}
+
 func TestJSON(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
