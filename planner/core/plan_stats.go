@@ -59,7 +59,12 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		tblID2Tbl[neededCol.TableID] = tbl
 	}
 
+	// collect needed virtual columns from already needed columns
+	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on
+	// the virtual columns themselves. It's because virtual columns themselves don't have statistics, while expression
+	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
 	dependingVirtualCols := CollectDependingVirtualCols(tblID2Tbl, histNeededColumns)
+
 	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2Tbl)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	if histNeeded && len(histNeededItems) > 0 {
