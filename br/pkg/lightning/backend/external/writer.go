@@ -24,6 +24,9 @@ import (
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -34,6 +37,11 @@ import (
 )
 
 var multiFileStatNum = 500
+
+const (
+	// DefaultMemSizeLimit is the default memory size limit for writer.
+	DefaultMemSizeLimit = 256 * size.MB
+)
 
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
@@ -58,8 +66,11 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID           string
-	Seq                int
+	WriterID string
+	Seq      int
+	// Min and Max are the min and max key written by this writer, both are
+	// inclusive, i.e. [Min, Max].
+	// will be empty if no key is written.
 	Min                tidbkv.Key
 	Max                tidbkv.Key
 	TotalSize          uint64
@@ -87,7 +98,7 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    256 * size.MB,
+		memSizeLimit:    DefaultMemSizeLimit,
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
@@ -449,4 +460,40 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 		return "", "", nil, nil, err
 	}
 	return dataPath, statPath, dataWriter, statsWriter, nil
+}
+
+// EngineWriter implements backend.EngineWriter interface.
+type EngineWriter struct {
+	w *Writer
+}
+
+// NewEngineWriter creates a new EngineWriter.
+func NewEngineWriter(w *Writer) *EngineWriter {
+	return &EngineWriter{w: w}
+}
+
+// AppendRows implements backend.EngineWriter interface.
+func (e *EngineWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
+	kvs := kv.Rows2KvPairs(rows)
+	if len(kvs) == 0 {
+		return nil
+	}
+	for _, item := range kvs {
+		err := e.w.WriteRow(ctx, item.Key, item.Val, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// IsSynced implements backend.EngineWriter interface.
+func (e *EngineWriter) IsSynced() bool {
+	// only used when saving checkpoint
+	return true
+}
+
+// Close implements backend.EngineWriter interface.
+func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+	return nil, e.w.Close(ctx)
 }

@@ -39,15 +39,17 @@ show create table t;
 # TestIssue20118
 drop table if exists t;
 create table t(a tinyint, b bit(63));
+--enable_warnings
 insert ignore into t values(599999999, -1);
-show warnings;
+--disable_warnings
 select * from t;
 
 # TestIssue24900
 drop table if exists t;
 create table t(b bit(16));
+--enable_warnings
 insert ignore into t values(0x3635313836),(0x333830);
-show warnings;
+--disable_warnings
 select * from t;
 
 # TestIssue9123
@@ -80,8 +82,9 @@ select 1 from t1 where char_length(c1) = 10;
 drop table if exists t;
 create table t (id int NOT NULL DEFAULT 8);
 SET sql_mode = '';
+--enable_warnings
 insert into t values (1), (NULL), (2);
-show warnings;
+--disable_warnings
 select * from t;
 set @@sql_mode=default;
 
@@ -151,8 +154,9 @@ insert into ft values(1234567890,123467890.123456789,123467890.123456789,'123467
 SELECT FROM_UNIXTIME(tchar) from ft;
 truncate table ft;
 insert into ft values(1234567890,123467890.1234,123467890.1234,'123467890.1234000000000000000000100111111111');
+--enable_warnings
 SELECT FROM_UNIXTIME(tchar) from ft;
-show warnings;
+--disable_warnings
 truncate table ft;
 insert into ft values(1234567890,123467890.1234,123467890.1234,'11111123467890.1234');
 SELECT FROM_UNIXTIME(tchar) from ft;
@@ -215,24 +219,29 @@ select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_da
 # TestIssue41733
 drop table if exists t_tiny, t_small, t_medium, t_int, t_big;
 create table t_tiny (c0 TINYINT UNSIGNED);
+--enable_warnings
 INSERT IGNORE INTO t_tiny(c0) VALUES (1E9);
-show warnings;
+--disable_warnings
 select * from t_tiny;
 create table t_small (c0 SMALLINT UNSIGNED);
+--enable_warnings
 INSERT IGNORE INTO t_small(c0) VALUES (1E9);
-show warnings;
+--disable_warnings
 select * from t_small;
 create table t_medium (c0 MEDIUMINT UNSIGNED);
+--enable_warnings
 INSERT IGNORE INTO t_medium(c0) VALUES (1E9);
-show warnings;
+--disable_warnings
 select * from t_medium;
 create table t_int (c0 INT UNSIGNED);
+--enable_warnings
 INSERT IGNORE INTO t_int(c0) VALUES (1E20);
-show warnings;
+--disable_warnings
 select * from t_int;
 create table t_big (c0 BIGINT UNSIGNED);
+--enable_warnings
 INSERT IGNORE INTO t_big(c0) VALUES (1E20);
-show warnings;
+--disable_warnings
 select * from t_big;
 
 # TestInPredicate4UnsignedInt, TestIssue6661
@@ -855,8 +864,9 @@ create table t12205(
     `col_varchar_64_key` varchar(64) DEFAULT NULL
 );
 insert into t12205 values('-1038024704','-527892480');
+--enable_warnings
 select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205; ;
-show warnings;
+--disable_warnings
 
 # TestIssue21677
 drop table if exists t;
@@ -887,8 +897,9 @@ create table t12206(
     `col_year_key` year(4) DEFAULT NULL
 );
 insert into t12206 values(73,0,0000);
+--enable_warnings
 SELECT TIME_FORMAT( `col_tinyint_unsigned`, ( IFNULL( `col_double_unsigned`, `col_year_key` ) ) ) AS field1 FROM `t12206`;
-show warnings;
+--disable_warnings
 
 # TestIssue12209
 drop table if exists t12209;
@@ -1172,8 +1183,9 @@ select a from t1 order by a;
 -- error 1301
 insert into t1 values  (cast("a" as binary(4294967295)));
 select a from t1 order by a;
+--enable_warnings
 INSERT IGNORE INTO t1 VALUES (REPEAT(0125,200000000));
-show warnings;
+--disable_warnings
 select a from t1 order by a;
 
 # TestIssue32488
@@ -1272,10 +1284,10 @@ drop table if exists t;
 create table t (c int primary key, c2 enum('a', 'b'));
 set session sql_mode = '';
 insert into t values(4, 'a');
+--enable_warnings
 insert into t values(4, 0) on duplicate key update c=values(c), c2=values(c2);
-show warnings;
 insert into t values(4, 'a') on duplicate key update c=values(c), c2=values(c2);
-show warnings;
+--disable_warnings
 set @@sql_mode=default;
 
 # TestIssue38736
@@ -1463,14 +1475,12 @@ select collation(lag(b, 1, 'B') over w) from t window w as (order by b);
 select coercibility(lag(b, 1, 'B') over w) from t window w as (order by b);
 
 # TestIssue11177
+--enable_warnings
 SELECT 'lvuleck' BETWEEN '2008-09-16 22:23:50' AND 0;
-show warnings;
 SELECT 'aa' BETWEEN 'bb' AND 0;
-show warnings;
 select 1 between 0 and b'110';
-show warnings;
 select 'b' between 'a' and b'110';
-show warnings;
+--disable_warnings
 
 # TestIssue19804
 drop table if exists t;
