@@ -6873,7 +6873,7 @@ UnReservedKeyword:
 |	"OLTP_READ_WRITE"
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
-|   "TPCH_10"
+|	"TPCH_10"
 
 TiDBKeyword:
 	"ADMIN"
