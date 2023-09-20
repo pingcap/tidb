@@ -28,7 +28,8 @@ import (
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/logutil/zap"
+	"github.com/pingcap/tidb/util/logutil"
+	// "github.com/pingcap/tidb/util/logutil/zap"
 	"github.com/stretchr/testify/require"
 )
 
@@ -712,7 +713,7 @@ func TestPickCompactionFiles(t *testing.T) {
 		},
 	}
 	for _, tc := range testCases {
-		actual := pickCompactionFiles(tc.allFiles, tc.compactionThreshold, zap.NewNop())
+		actual := pickCompactionFiles(tc.allFiles, tc.compactionThreshold, logutil.BgLogger())
 		slices.SortFunc(actual, func(a, b *fileMetadata) int {
 			return cmp.Compare(a.fileNum, b.fileNum)
 		})

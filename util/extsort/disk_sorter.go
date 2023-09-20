@@ -34,9 +34,11 @@ import (
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/cockroachdb/pebble/vfs"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/generic"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/logutil/zap"
+	// "github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/syncutil"
 	"golang.org/x/sync/errgroup"
 )
@@ -739,7 +741,7 @@ func (o *DiskSorterOptions) ensureDefaults() {
 		o.MaxCompactionSize = 512 << 20
 	}
 	if o.Logger == nil {
-		o.Logger = log.L()
+		o.Logger = logutil.BgLogger()
 	}
 }
 

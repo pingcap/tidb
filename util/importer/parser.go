@@ -20,12 +20,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/types"
 	_ "github.com/pingcap/tidb/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 )
 

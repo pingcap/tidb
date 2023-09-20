@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	// litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
+	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/util"
@@ -1085,8 +1085,7 @@ func (e *LoadDataController) GetParser(
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataWrongFormatConfig.GenWithStack(err.Error())
 	}
-	panic("TODO")
-	// parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
+	parser.SetLogger(litlog.Logger{Logger: log.L()})
 
 	return parser, nil
 }

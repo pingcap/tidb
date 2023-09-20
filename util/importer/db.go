@@ -22,9 +22,10 @@ import (
 
 	_ "github.com/go-sql-driver/mysql" // for mysql driver
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 )
 

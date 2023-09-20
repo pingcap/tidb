@@ -16,6 +16,8 @@ package testutil
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -23,7 +25,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
+	// "go.uber.org/zap"
+	"go.uber.org/zap/exp/zapslog"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -40,6 +43,7 @@ func (l *logEntry) CheckField(t *testing.T, requireFields ...zapcore.Field) {
 	for _, rf := range requireFields {
 		var f *zapcore.Field
 		for i, field := range l.fields {
+			fmt.Println("================ field ===", field)
 			if field.Equals(rf) {
 				f = &l.fields[i]
 				break
@@ -110,7 +114,8 @@ func WithLogHook(ctx context.Context, t *testing.T, msgFilter string) (newCtx co
 	enc, err := log.NewTextEncoder(&log.Config{Format: "text"})
 	require.NoError(t, err)
 	hook = &LogHook{r.Core, nil, enc, msgFilter}
-	logger := zap.New(hook)
+	handler := zapslog.NewHandler(hook, nil)
+	logger := slog.New(handler)
 	newCtx = context.WithValue(ctx, logutil.CtxLogKey, logger)
 	return
 }

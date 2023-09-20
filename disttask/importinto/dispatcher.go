@@ -539,7 +539,7 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 	// the errors include errors happened when communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	panic("TODO")
+	// panic("TODO")
 	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
@@ -563,7 +563,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	// we might call this in scheduler later, there's no dispatcher.TaskHandle, so we use globalTaskManager here.
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	panic("TODO")
+	// panic("TODO")
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
@@ -584,7 +584,7 @@ func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logge
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	panic("TODO")
+	// panic("TODO")
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
@@ -605,7 +605,7 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	panic("TODO")
+	// panic("TODO")
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, nil,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {

@@ -15,7 +15,8 @@
 package importer
 
 import (
-	"github.com/pingcap/log"
+	// "github.com/pingcap/log"
+	"github.com/pingcap/tidb/util/logutil/log"
 	"github.com/pingcap/tidb/util/logutil/zap"
 )
 
