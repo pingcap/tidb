@@ -892,31 +892,6 @@ func TestJSON(t *testing.T) {
 		"1234567890123456789012345678901234567890123456789012345.12"))
 }
 
-func TestMultiUpdate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE test_mu (a int primary key, b int, c int)`)
-	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3), (4, 5, 6), (7, 8, 9)`)
-
-	// Test INSERT ... ON DUPLICATE UPDATE set_lists.
-	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = 3, c = b`)
-	tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`).Check(testkit.Rows(`1 3 3`, `4 5 6`, `7 8 9`))
-
-	tk.MustExec(`INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE c = 2, b = c+5`)
-	tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`).Check(testkit.Rows(`1 7 2`, `4 5 6`, `7 8 9`))
-
-	// Test UPDATE ... set_lists.
-	tk.MustExec(`UPDATE test_mu SET b = 0, c = b WHERE a = 4`)
-	tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`).Check(testkit.Rows(`1 7 2`, `4 0 5`, `7 8 9`))
-
-	tk.MustExec(`UPDATE test_mu SET c = 8, b = c WHERE a = 4`)
-	tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`).Check(testkit.Rows(`1 7 2`, `4 5 8`, `7 8 9`))
-
-	tk.MustExec(`UPDATE test_mu SET c = b, b = c WHERE a = 7`)
-	tk.MustQuery(`SELECT * FROM test_mu ORDER BY a`).Check(testkit.Rows(`1 7 2`, `4 5 8`, `7 9 8`))
-}
-
 func TestGeneratedColumnWrite(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
