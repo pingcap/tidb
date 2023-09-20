@@ -565,17 +565,6 @@ select (t1.a,null) not in (select 1,1 from t2) from t1;
 select (1,null) in (select * from t1);
 select (1,null) not in (select * from t1);
 
-# TestSelectVar
-drop table if exists t;
-create table t (d int);
-insert into t values(1), (2), (1);
-## This behavior is different from MySQL.
-select @a, @a := d+1 from t;
-## Test for PR #10658.
-select SQL_BIG_RESULT d from t group by d;
-select SQL_SMALL_RESULT d from t group by d;
-select SQL_BUFFER_RESULT d from t group by d;
-
 # TestStrToDateBuiltin
 select str_to_date('20190101','%Y%m%d%!') from dual;
 select str_to_date('20190101','%Y%m%d%f') from dual;

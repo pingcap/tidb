@@ -1030,26 +1030,6 @@ NULL
 select (1,null) not in (select * from t1);
 (1,null) not in (select * from t1)
 NULL
-drop table if exists t;
-create table t (d int);
-insert into t values(1), (2), (1);
-select @a, @a := d+1 from t;
-@a	@a := d+1
-NULL	2
-2	3
-3	2
-select SQL_BIG_RESULT d from t group by d;
-d
-1
-2
-select SQL_SMALL_RESULT d from t group by d;
-d
-2
-1
-select SQL_BUFFER_RESULT d from t group by d;
-d
-2
-1
 select str_to_date('20190101','%Y%m%d%!') from dual;
 str_to_date('20190101','%Y%m%d%!')
 2019-01-01

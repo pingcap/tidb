@@ -4488,6 +4488,22 @@ func TestColumnName(t *testing.T) {
 	require.Nil(t, rs.Close())
 }
 
+func TestSelectVar(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (d int)")
+	tk.MustExec("insert into t values(1), (2), (1)")
+	// This behavior is different from MySQL.
+	result := tk.MustQuery("select @a, @a := d+1 from t")
+	result.Check(testkit.Rows("<nil> 2", "2 3", "3 2"))
+	// Test for PR #10658.
+	tk.MustExec("select SQL_BIG_RESULT d from t group by d")
+	tk.MustExec("select SQL_SMALL_RESULT d from t group by d")
+	tk.MustExec("select SQL_BUFFER_RESULT d from t group by d")
+}
+
 func TestHistoryRead(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
