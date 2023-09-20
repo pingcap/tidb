@@ -55,6 +55,7 @@ go_library(
         "//tablecodec",
         "//types",
         "//util/codec",
+        "//util/compress",
         "//util/engine",
         "//util/hack",
         "//util/mathutil",
