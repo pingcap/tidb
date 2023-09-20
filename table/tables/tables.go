@@ -350,6 +350,20 @@ func (t *TableCommon) WritableConstraint() []*table.Constraint {
 	return writeableConstraint
 }
 
+// CheckRowConstraint verify row check constraints.
+func (t *TableCommon) CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error {
+	for _, constraint := range t.WritableConstraint() {
+		ok, isNull, err := constraint.ConstraintExpr.EvalInt(sctx, chunk.MutRowFromDatums(rowToCheck).ToRow())
+		if err != nil {
+			return err
+		}
+		if ok == 0 && !isNull {
+			return table.ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
+		}
+	}
+	return nil
+}
+
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
@@ -507,14 +521,9 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 	// check data constraint
-	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(sctx, chunk.MutRowFromDatums(rowToCheck).ToRow())
-		if err != nil {
-			return err
-		}
-		if ok == 0 && !isNull {
-			return table.ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
-		}
+	err = t.CheckRowConstraint(sctx, rowToCheck)
+	if err != nil {
+		return err
 	}
 	sessVars := sctx.GetSessionVars()
 	// rebuild index
@@ -966,17 +975,11 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			row = append(row, value)
 		}
 	}
-
-	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(sctx, chunk.MutRowFromDatums(r).ToRow())
-		if err != nil {
-			return nil, err
-		}
-		if ok == 0 && !isNull {
-			return nil, table.ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
-		}
+	// check data constraint
+	err = t.CheckRowConstraint(sctx, r)
+	if err != nil {
+		return nil, err
 	}
-
 	writeBufs := sessVars.GetWriteStmtBufs()
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(recordID)

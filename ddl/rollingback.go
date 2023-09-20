@@ -264,11 +264,35 @@ func needNotifyAndStopReorgWorker(job *model.Job) bool {
 
 // rollbackExchangeTablePartition will clear the non-partitioned
 // table's ExchangePartitionInfo state.
-func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (int64, error) {
+func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
 	tblInfo.ExchangePartitionInfo = nil
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StatePublic
-	return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	if len(tblInfo.Constraints) == 0 {
+		return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	}
+	var (
+		defID          int64
+		ptSchemaID     int64
+		ptID           int64
+		partName       string
+		withValidation bool
+	)
+	if err = job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+		return ver, errors.Trace(err)
+	}
+	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	pt.ExchangePartitionInfo = nil
+	var ptInfo []schemaIDAndTableInfo
+	ptInfo = append(ptInfo, schemaIDAndTableInfo{
+		schemaID: ptSchemaID,
+		tblInfo:  pt,
+	})
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true, ptInfo...)
+	return ver, errors.Trace(err)
 }
 
 func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {

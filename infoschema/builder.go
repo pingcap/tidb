@@ -315,9 +315,31 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 }
 
 func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
-	// The partitioned table is not affected until the last stage
+	// It is not in StatePublic.
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
-		return b.applyTableUpdate(m, diff)
+		ntIDs, err := b.applyTableUpdate(m, diff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if diff.AffectedOpts == nil || diff.AffectedOpts[0].OldSchemaID == 0 {
+			return ntIDs, err
+		}
+		// Reload parition tabe.
+		ptSchemaID := diff.AffectedOpts[0].OldSchemaID
+		ptID := diff.AffectedOpts[0].TableID
+		ptDiff := &model.SchemaDiff{
+			Type:        diff.Type,
+			Version:     diff.Version,
+			TableID:     ptID,
+			SchemaID:    ptSchemaID,
+			OldTableID:  ptID,
+			OldSchemaID: ptSchemaID,
+		}
+		ptIDs, err := b.applyTableUpdate(m, ptDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return append(ptIDs, ntIDs...), nil
 	}
 	ntSchemaID := diff.OldSchemaID
 	ntID := diff.OldTableID
