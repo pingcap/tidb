@@ -245,7 +245,7 @@ type SortedKVMeta struct {
 	MinKey      []byte `json:"min-key"`
 	MaxKey      []byte `json:"max-key"`
 	TotalKVSize uint64 `json:"total-kv-size"`
-	// sometimes, those 2 fields can be generated from MultipleFilesStats,
+	// seems those 2 fields always generated from MultipleFilesStats,
 	// maybe remove them later.
 	DataFiles          []string            `json:"data-files"`
 	StatFiles          []string            `json:"stat-files"`

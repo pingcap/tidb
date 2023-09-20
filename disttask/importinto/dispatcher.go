@@ -254,6 +254,8 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
 		})
+		// merge sort might be skipped for some kv groups, so we need to get all
+		// subtask metas of StepEncodeAndSort step too.
 		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, StepEncodeAndSort)
 		if err != nil {
 			return nil, err
