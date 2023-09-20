@@ -53,19 +53,19 @@ insert ignore into t values(599999999, -1);
 Level	Code	Message
 Warning	1264	Out of range value for column 'a' at row 1
 Warning	1406	Data too long for column 'b' at row 1
-select * from t;
-a	b
-127	ÿÿÿÿÿÿÿ
+select hex(a), hex(b) from t;
+hex(a)	hex(b)
+7F	7FFFFFFFFFFFFFFF
 drop table if exists t;
 create table t(b bit(16));
 insert ignore into t values(0x3635313836),(0x333830);
 Level	Code	Message
 Warning	1406	Data too long for column 'b' at row 1
 Warning	1406	Data too long for column 'b' at row 2
-select * from t;
-b
-ÿÿ
-ÿÿ
+select hex(b) from t;
+hex(b)
+FFFF
+FFFF
 drop table if exists t;
 create table t(a char(32) not null, b float default '0') engine=innodb default charset=utf8mb4;
 insert into t value('0a6f9d012f98467f8e671e9870044528', 208.867);

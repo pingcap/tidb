@@ -42,7 +42,7 @@ create table t(a tinyint, b bit(63));
 --enable_warnings
 insert ignore into t values(599999999, -1);
 --disable_warnings
-select * from t;
+select hex(a), hex(b) from t;
 
 # TestIssue24900
 drop table if exists t;
@@ -50,7 +50,7 @@ create table t(b bit(16));
 --enable_warnings
 insert ignore into t values(0x3635313836),(0x333830);
 --disable_warnings
-select * from t;
+select hex(b) from t;
 
 # TestIssue9123
 drop table if exists t;
