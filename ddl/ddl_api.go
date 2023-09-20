@@ -7158,6 +7158,12 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 				colInfo.FieldType.SetDecimal(types.MaxFsp)
 			}
 		}
+		// For an array, the collation is set to "binary". The collation has no effect on the array itself (as it's usually
+		// regarded as a JSON), but will influence how TiKV handles the index value.
+		if colInfo.FieldType.IsArray() {
+			colInfo.SetCharset("binary")
+			colInfo.SetCollate("binary")
+		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range FindColumnNamesInExpr(idxPart.Expr) {
 			colInfo.Dependences[colName.Name.L] = struct{}{}

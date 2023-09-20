@@ -79,4 +79,19 @@ func TestColumnToProto(t *testing.T) {
 	}
 	pc = util.ColumnToProto(col2, false)
 	require.Len(t, pc.Elems, 2)
+
+	tp = types.NewFieldTypeBuilder().
+		SetType(mysql.TypeString).
+		SetCharset("utf8mb4").
+		SetCollate("utf8mb4_bin").
+		SetFlen(100).
+		SetFlag(10).
+		SetArray(true).
+		BuildP()
+	col3 := &model.ColumnInfo{
+		FieldType: *tp,
+	}
+	pc = util.ColumnToProto(col3, true)
+	expect = &tipb.ColumnInfo{ColumnId: 0, Tp: 0xfe, Collation: 63, ColumnLen: 100, Decimal: 0, Flag: 10, Elems: []string(nil), DefaultVal: []uint8(nil), PkHandle: false, XXX_unrecognized: []uint8(nil)}
+	require.Equal(t, expect, pc)
 }
