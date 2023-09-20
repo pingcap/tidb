@@ -34,20 +34,19 @@ func CheckSubtasksState(t *testing.T, taskID int64, state string, expectedCnt in
 	mgr.PrintSubtaskInfo(taskID)
 	mgr.PrintHistorySubtaskInfo(taskID)
 	cnt, err := mgr.GetSubtaskInStatesCnt(taskID, state)
-	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(mgr)
+	historySubTasksCnt, err := storage.GetSubtasksFromHistoryByTaskIDForTest(mgr, taskID)
 
 	require.NoError(t, err)
 	require.Equal(t, expectedCnt, cnt+int64(historySubTasksCnt))
 }
 
-func TestFrameworkPauseAndResumeBasic(t *testing.T) {
+func TestFrameworkPauseAndResume(t *testing.T) {
 	var m sync.Map
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
-
-	// dispatch and pause one task.
+	// 1. dispatch and pause one running task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/pauseTaskAfterRefreshTask", "2*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/syncAfterResume", "return()"))
 	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStatePaused)
@@ -62,6 +61,22 @@ func TestFrameworkPauseAndResumeBasic(t *testing.T) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	errs, err := mgr.CollectSubTaskError(1)
+	require.Empty(t, errs)
+
+	// 2. pause pending task.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/pausePendingTask", "2*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/syncAfterResume", "1*return()"))
+	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStatePaused)
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/pausePendingTask"))
+	// 4 subtask dispatched.
+	require.NoError(t, handle.ResumeTask("key2"))
+	<-dispatcher.TestSyncChan
+	WaitTaskExit(t, "key2")
+	CheckSubtasksState(t, 1, proto.TaskStateSucceed, 4)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/syncAfterResume"))
+
+	errs, err = mgr.CollectSubTaskError(1)
 	require.Empty(t, errs)
 	distContext.Close()
 }

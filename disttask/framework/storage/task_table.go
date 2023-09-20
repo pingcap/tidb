@@ -353,9 +353,9 @@ func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, taskID int64, err er
 }
 
 // PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
-func (stm *TaskManager) PrintSubtaskInfo(_ int64) {
+func (stm *TaskManager) PrintSubtaskInfo(taskID int64) {
 	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
-		"select * from mysql.tidb_background_subtask")
+		"select * from mysql.tidb_background_subtask where task_key = %?", taskID)
 
 	for _, r := range rs {
 		errBytes := r.GetBytes(13)

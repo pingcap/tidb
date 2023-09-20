@@ -168,12 +168,23 @@ func (d *BaseDispatcher) scheduleTask() {
 				}
 			})
 
+			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
+				if val.(bool) && d.Task.State == proto.TaskStatePending {
+					err := d.taskMgr.PauseTask(d.Task.ID)
+					if err != nil {
+						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
+					}
+					d.Task.State = proto.TaskStatePausing
+				}
+			})
+
 			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
 					err := d.taskMgr.PauseTask(d.Task.ID)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
 					}
+					d.Task.State = proto.TaskStatePausing
 				}
 			})
 
@@ -227,7 +238,8 @@ func (d *BaseDispatcher) onCancelling() error {
 // handle task in pausing state, cancel all running subtasks.
 func (d *BaseDispatcher) onPausing() error {
 	logutil.Logger(d.logCtx).Info("on pausing state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning)
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending) // ywq todo remove
+	d.taskMgr.PrintSubtaskInfo(d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -685,7 +697,6 @@ func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.C
 }
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
-// TODO: YWQ verify it's true.
 func VerifyTaskStateTransform(from, to string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {
