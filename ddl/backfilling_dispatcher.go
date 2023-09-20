@@ -433,7 +433,11 @@ func getRangeSplitter(
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	extStore, err := storage.New(ctx, backend, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -499,7 +503,11 @@ func cleanupCloudStorageFiles(ctx context.Context, gTaskMeta *BackfillGlobalMeta
 		logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
 		return
 	}
-	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	extStore, err := storage.New(ctx, backend, opt)
 	if err != nil {
 		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
 		return
