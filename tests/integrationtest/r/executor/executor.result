@@ -424,6 +424,7 @@ b
 30
 40
 5
+set @tmp=(select @@tidb_init_chunk_size);
 set @@tidb_init_chunk_size=2;
 select * from t where a > 0 limit 2, 1;
 a	b
@@ -461,6 +462,7 @@ b
 40
 5
 6
+set @@tidb_init_chunk_size = @tmp;
 drop table if exists t;
 create table t (a int unique);
 insert t values (-1), (2), (3), (5), (6), (7), (8), (9);
@@ -822,6 +824,7 @@ count(distinct t.a, t.b)
 4
 drop table if exists t;
 create table t (a decimal(10,6), b decimal, index idx_b (b));
+set @tmp=(select @@sql_mode);
 set sql_mode = '';
 insert t values (1.1, 1.1);
 insert t values (2.4, 2.4);
@@ -879,8 +882,10 @@ select * from t where not(a != 1 and a != 2);
 a
 1
 2
+set @@sql_mode = @tmp;
 drop table if exists t;
 create table t (a decimal(10,6), b decimal, index idx_b (b));
+set @tmp=(select @@sql_mode);
 set sql_mode = '';
 insert t values (1.1, 1.1);
 insert t values (2.2, 2.2);
@@ -906,6 +911,7 @@ select * from t where b > '11:11:11.5';
 a	b
 11:11:12.000	11:11:12
 11:11:13.000	11:11:13
+set @@sql_mode = @tmp;
 Select 1;
 1
 1
@@ -1185,6 +1191,7 @@ drop table if exists t1;
 create table t1(i int, j int, k int);
 insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4);
 INSERT INTO t1 SELECT 10*i,j,5*j FROM t1 UNION SELECT 20*i,j,5*j FROM t1 UNION SELECT 30*i,j,5*j FROM t1;
+set @tmp=(select @@session.tidb_enable_window_function);
 set @@session.tidb_enable_window_function=1;
 SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w;
 SUM(i) OVER W
@@ -1204,6 +1211,7 @@ SUM(i) OVER W
 124
 183
 244
+set @@session.tidb_enable_window_function=@tmp;
 drop table if exists a;
 create table a (f1 int, f2 varchar(32), primary key (f1));
 insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c');
@@ -1236,7 +1244,11 @@ insert into s select * from s;
 insert into s select * from s;
 insert into s select * from s;
 insert into s select * from s;
+set @tmp_tidb_max_chunk_size=(select @@tidb_max_chunk_size);
 set @@tidb_max_chunk_size=32;
+set @tmp_tidb_enable_null_aware_anti_join=(select @@tidb_enable_null_aware_anti_join);
 set @@tidb_enable_null_aware_anti_join=true;
 select * from t where (a,b) not in (select a, b from s);
 a	b
+set @@tidb_max_chunk_size=@tmp_tidb_max_chunk_size;
+set @@tidb_enable_null_aware_anti_join=@tmp_tidb_enable_null_aware_anti_join;
