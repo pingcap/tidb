@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "copr",
@@ -12,5 +12,22 @@ go_library(
         "//table/tables",
         "//types",
         "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "copr_test",
+    timeout = "short",
+    srcs = ["copr_ctx_test.go"],
+    embed = [":copr"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//expression",
+        "//parser/model",
+        "//parser/mysql",
+        "//types",
+        "//util/mock",
+        "@com_github_stretchr_testify//require",
     ],
 )
