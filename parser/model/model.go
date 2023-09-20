@@ -1761,6 +1761,11 @@ type TableItemID struct {
 	IsIndex bool
 }
 
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`

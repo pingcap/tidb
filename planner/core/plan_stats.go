@@ -78,7 +78,7 @@ func (syncWaitStatsLoadPoint) name() string {
 const maxDuration = 1<<63 - 1
 
 // RequestLoadStats send load column/index stats requests to stats handle
-func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemID, syncWait int64) error {
+func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.StatsLoadItem, syncWait int64) error {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
 	if hintMaxExecutionTime <= 0 {
@@ -94,11 +94,11 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
+			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err), zap.Float64("sync wait timeout", float64(syncWait)), zap.Int64("max exec in hint", hintMaxExecutionTime), zap.Int64("max exec in sess", sessMaxExecutionTime))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("RequestLoadStats failed", zap.Error(err))
+		logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err), zap.Float64("sync wait timeout", float64(syncWait)), zap.Int64("max exec in hint", hintMaxExecutionTime), zap.Int64("max exec in sess", sessMaxExecutionTime))
 		return err
 	}
 	return nil
@@ -128,7 +128,7 @@ func SyncWaitStatsLoad(plan LogicalPlan) error {
 // 1. the indices contained the any one of histNeededColumns, eg: histNeededColumns contained A,B columns, and idx_a is
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
-func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableItemID) map[model.TableItemID]struct{} {
+func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.StatsLoadItem) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
 	stats := domain.GetDomain(ctx).StatsHandle()
 	for _, column := range histNeededColumns {
@@ -158,9 +158,8 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
-				// if tblStats.ColAndIndexExistenceSet.Has(int(idxID)*-1)
 				idxStats, ok := tblStats.Indices[idx.Meta().ID]
-				if ok && idxStats.IsFullLoad() || !idxStats.IsStatsInitialized() {
+				if ok && (idxStats.IsFullLoad() || !idxStats.IsStatsInitialized()) {
 					continue
 				}
 				if !ok && !tblStats.ColAndIndexExistenceMap.Has(idxID, true) {
@@ -173,9 +172,10 @@ func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableI
 	return histNeededIndices
 }
 
-func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.TableItemID) {
+func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.StatsLoadItem) {
+	histNeededItems = make([]model.StatsLoadItem, 0, len(histNeededColumns)+len(histNeededIndices))
 	for idx := range histNeededIndices {
-		histNeededItems = append(histNeededItems, idx)
+		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
 	histNeededItems = append(histNeededItems, histNeededColumns...)
 	return
