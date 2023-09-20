@@ -26,14 +26,15 @@ type PlanCtx struct {
 
 	// integrate with current distribute framework
 	SessionCtx sessionctx.Context
+	TaskID     int64
 	TaskKey    string
 	TaskType   string
 	ThreadCnt  int
 
-	// PreviousSubtaskMetas is a list of subtask metas from previous step.
+	// PreviousSubtaskMetas is subtask metas of previous steps.
 	// We can remove this field if we find a better way to pass the result between steps.
-	PreviousSubtaskMetas [][]byte
-	CurrTaskStep         int64
+	PreviousSubtaskMetas map[int64][][]byte
+	GlobalSort           bool
 	NextTaskStep         int64
 }
 

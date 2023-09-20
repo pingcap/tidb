@@ -245,7 +245,7 @@ func getTaskMeta(jobID int64) (*TaskMeta, error) {
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return &taskMeta, nil
 }
@@ -267,7 +267,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 	}
 	taskMeta := TaskMeta{}
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
@@ -278,7 +278,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 		for _, subtask := range subtasks {
 			var subtaskMeta ImportStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, err2
+				return 0, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
@@ -290,7 +290,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 		for _, subtask := range subtasks {
 			var subtaskMeta WriteIngestStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, err2
+				return 0, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}

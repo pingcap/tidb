@@ -141,7 +141,7 @@ func (*backfillingDispatcherExt) GetNextStep(
 			}
 			multiStats = append(multiStats, subtask.MultipleFilesStats...)
 		}
-		if external.GetMaxOverlappingTotal(multiStats) > 1000 {
+		if external.GetMaxOverlappingTotal(multiStats) > external.MergeSortOverlapThreshold {
 			return proto.StepTwo
 		}
 		return proto.StepThree
@@ -398,7 +398,7 @@ func generateMergePlan(
 	}
 
 	start := 0
-	step := 1000
+	step := external.MergeSortFileCountStep
 	metaArr := make([][]byte, 0, 16)
 	for start < len(dataFiles) {
 		end := start + step

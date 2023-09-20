@@ -47,8 +47,6 @@ type BackfillSubTaskMeta struct {
 
 	RangeSplitKeys        [][]byte `json:"range_split_keys"`
 	external.SortedKVMeta `json:",inline"`
-	// MultipleFilesStats is the output of subtask, it will be used by the next subtask.
-	MultipleFilesStats []external.MultipleFilesStat `json:"multiple_files_stats"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.

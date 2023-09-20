@@ -91,7 +91,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(d, task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(d, task)
@@ -112,7 +112,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 		require.NoError(t, manager.FinishSubtask(s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(d, task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(d, task)
@@ -122,7 +122,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(d, task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(d, task)
@@ -208,7 +208,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	task.ID = taskID
 
-	// to import stage, job should be running
+	// to encode-sort stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{
 		GlobalSort: true,
@@ -232,9 +232,35 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	gotSubtasks, err := manager.GetSubtasksForImportInto(taskID, task.Step)
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
-		SortedDataMeta: &external.SortedKVMeta{},
+		SortedDataMeta: &external.SortedKVMeta{
+			MinKey:      []byte("ta"),
+			MaxKey:      []byte("tc"),
+			TotalKVSize: 12,
+			DataFiles:   []string{"gs://sort-bucket/data/1"},
+			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},
+			MultipleFilesStats: []external.MultipleFilesStat{
+				{
+					Filenames: [][2]string{
+						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+					},
+				},
+			},
+		},
 		SortedIndexMetas: map[int64]*external.SortedKVMeta{
-			1: {},
+			1: {
+				MinKey:      []byte("ia"),
+				MaxKey:      []byte("ic"),
+				TotalKVSize: 12,
+				DataFiles:   []string{"gs://sort-bucket/index/1"},
+				StatFiles:   []string{"gs://sort-bucket/index/1.stat"},
+				MultipleFilesStats: []external.MultipleFilesStat{
+					{
+						Filenames: [][2]string{
+							{"gs://sort-bucket/index/1", "gs://sort-bucket/index/1.stat"},
+						},
+					},
+				},
+			},
 		},
 	}
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
@@ -242,6 +268,53 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	for _, s := range gotSubtasks {
 		require.NoError(t, manager.FinishSubtask(s.ID, sortStepMetaBytes))
 	}
+
+	// to merge-sort stage
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/importinto/forceMergeSort", `return("data")`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/importinto/forceMergeSort"))
+	})
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(nil, task))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 1)
+	task.Step = ext.GetNextStep(nil, task)
+	require.Equal(t, importinto.StepMergeSort, task.Step)
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "running", gotJobInfo.Status)
+	require.Equal(t, "global-sorting", gotJobInfo.Step)
+	// update task/subtask, and finish subtask, so we can go to next stage
+	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
+	for _, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", m))
+	}
+	_, err = manager.UpdateGlobalTaskAndAddSubTasks(task, subtasks, proto.TaskStatePending)
+	require.NoError(t, err)
+	gotSubtasks, err = manager.GetSubtasksForImportInto(taskID, task.Step)
+	require.NoError(t, err)
+	mergeSortStepMeta := &importinto.MergeSortStepMeta{
+		KVGroup: "data",
+		SortedKVMeta: external.SortedKVMeta{
+			MinKey:      []byte("ta"),
+			MaxKey:      []byte("tc"),
+			TotalKVSize: 12,
+			DataFiles:   []string{"gs://sort-bucket/data/1"},
+			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},
+			MultipleFilesStats: []external.MultipleFilesStat{
+				{
+					Filenames: [][2]string{
+						{"gs://sort-bucket/data/1", "gs://sort-bucket/data/1.stat"},
+					},
+				},
+			},
+		},
+	}
+	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
+	require.NoError(t, err)
+	for _, s := range gotSubtasks {
+		require.NoError(t, manager.FinishSubtask(s.ID, mergeSortStepMetaBytes))
+	}
+
 	// to write-and-ingest stage
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/importinto/mockWriteIngestSpecs", "return(true)"))
 	t.Cleanup(func() {

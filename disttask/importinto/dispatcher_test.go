@@ -152,7 +152,8 @@ func (s *importIntoSuite) TestGetNextStep() {
 
 	task.Step = proto.StepInit
 	ext = &ImportDispatcherExt{GlobalSort: true}
-	for _, nextStep := range []int64{StepEncodeAndSort, StepWriteAndIngest, StepPostProcess, proto.StepDone} {
+	for _, nextStep := range []int64{StepEncodeAndSort, StepMergeSort,
+		StepWriteAndIngest, StepPostProcess, proto.StepDone} {
 		s.Equal(nextStep, ext.GetNextStep(nil, task))
 		task.Step = nextStep
 	}
@@ -161,7 +162,8 @@ func (s *importIntoSuite) TestGetNextStep() {
 func (s *importIntoSuite) TestStr() {
 	s.Equal("init", stepStr(proto.StepInit))
 	s.Equal("import", stepStr(StepImport))
-	s.Equal("postprocess", stepStr(StepPostProcess))
+	s.Equal("post-process", stepStr(StepPostProcess))
+	s.Equal("merge-sort", stepStr(StepMergeSort))
 	s.Equal("encode&sort", stepStr(StepEncodeAndSort))
 	s.Equal("write&ingest", stepStr(StepWriteAndIngest))
 	s.Equal("done", stepStr(proto.StepDone))

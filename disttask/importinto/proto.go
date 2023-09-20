@@ -32,7 +32,9 @@ import (
 // the initial step is StepInit(-1)
 // steps are processed in the following order:
 // - local sort: StepInit -> StepImport -> StepPostProcess -> StepDone
-// - global sort: StepInit -> StepEncodeAndSort -> StepWriteAndIngest -> StepPostProcess -> StepDone
+// - global sort:
+// StepInit -> StepEncodeAndSort -> StepMergeSort -> StepWriteAndIngest
+// -> StepPostProcess -> StepDone
 const (
 	// StepImport we sort source data and ingest it into TiKV in this step.
 	StepImport int64 = 1
@@ -40,8 +42,13 @@ const (
 	StepPostProcess int64 = 2
 	// StepEncodeAndSort encode source data and write sorted kv into global storage.
 	StepEncodeAndSort int64 = 3
+	// StepMergeSort merge sorted kv from global storage, so we can have better
+	// read performance during StepWriteAndIngest.
+	// depends on how much kv files are overlapped, there's might 0 subtasks
+	// in this step.
+	StepMergeSort int64 = 4
 	// StepWriteAndIngest write sorted kv into TiKV and ingest it.
-	StepWriteAndIngest int64 = 4
+	StepWriteAndIngest int64 = 5
 )
 
 // TaskMeta is the task of IMPORT INTO.
@@ -83,15 +90,25 @@ type ImportStepMeta struct {
 }
 
 const (
+	// dataKVGroup is the group name of the sorted kv for data.
+	// index kv will be stored in a group named as index-id.
 	dataKVGroup = "data"
 )
+
+// MergeSortStepMeta is the meta of merge sort step.
+type MergeSortStepMeta struct {
+	// KVGroup is the group name of the sorted kv, either dataKVGroup or index-id.
+	KVGroup               string   `json:"kv-group"`
+	DataFiles             []string `json:"data-files"`
+	external.SortedKVMeta `json:"sorted-kv-meta"`
+}
 
 // WriteIngestStepMeta is the meta of write and ingest step.
 // only used when global sort is enabled.
 type WriteIngestStepMeta struct {
-	KVGroup               string `json:"kv_group"`
-	external.SortedKVMeta `json:",inline"`
-	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+	KVGroup               string `json:"kv-group"`
+	external.SortedKVMeta `json:"sorted-kv-meta"`
+	RangeSplitKeys        [][]byte `json:"range-split-keys"`
 
 	Result Result
 }
