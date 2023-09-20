@@ -148,7 +148,7 @@ func TestUpdateStatsAndUnlockTable(t *testing.T) {
 				exec.EXPECT().ExecRestrictedSQL(
 					ctx,
 					useCurrentSession,
-					deleteLockSQL,
+					DeleteLockSQL,
 					gomock.Eq([]interface{}{tt.tableID}),
 				).Return(nil, nil, nil)
 			} else {
@@ -209,7 +209,7 @@ func TestRemoveLockedTables(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		useCurrentSession,
-		deleteLockSQL,
+		DeleteLockSQL,
 		gomock.Eq([]interface{}{int64(1)}),
 	).Return(nil, nil, nil)
 
