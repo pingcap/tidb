@@ -2822,6 +2822,21 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 	return partitionByCols
 }
 
+// Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
+func (lw *LogicalWindow) checkComparison(frameBound *FrameBound) bool {
+	if len(frameBound.CompareCols) > 0 {
+		compareColEvalType := frameBound.CompareCols[0].GetType().EvalType()
+		calFuncEvalType := frameBound.CalcFuncs[0].GetType().EvalType()
+
+		if compareColEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
+			return false
+		} else if calFuncEvalType == types.ETDuration && (compareColEvalType == types.ETDatetime || compareColEvalType == types.ETTimestamp) {
+			return false
+		}
+	}
+	return true
+}
+
 func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
 		return nil
@@ -2858,6 +2873,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.End.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
+				return nil
+			}
+
+			if !lw.checkComparison(lw.Frame.Start) || !lw.checkComparison(lw.Frame.End) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.")
 				return nil
 			}
 		}

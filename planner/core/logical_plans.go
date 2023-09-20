@@ -2056,8 +2056,31 @@ func (fb *FrameBound) Clone() *FrameBound {
 	return cloned
 }
 
-// InitCompareCols will init CompareCols
-func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
+func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) error {
+	switch cmpDataType {
+	case types.ETInt:
+		fb.CmpFuncs[0] = expression.CompareInt
+		fb.CmpDataType = tipb.RangeCmpDataType_Int
+	case types.ETDatetime, types.ETTimestamp:
+		fb.CmpFuncs[0] = expression.CompareTime
+		fb.CmpDataType = tipb.RangeCmpDataType_DateTime
+	case types.ETDuration:
+		fb.CmpFuncs[0] = expression.CompareDuration
+		fb.CmpDataType = tipb.RangeCmpDataType_Duration
+	case types.ETReal:
+		fb.CmpFuncs[0] = expression.CompareReal
+		fb.CmpDataType = tipb.RangeCmpDataType_Float
+	case types.ETDecimal:
+		fb.CmpFuncs[0] = expression.CompareDecimal
+		fb.CmpDataType = tipb.RangeCmpDataType_Decimal
+	default:
+		return expression.ErrIncorrectType.GenWithStackByArgs("Invalid comparison data type for range frame")
+	}
+	return nil
+}
+
+// UpdateCompareCols will update CompareCols.
+func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
 	if len(fb.CalcFuncs) > 0 {
 		fb.CompareCols = make([]expression.Expression, len(orderByCols))
 		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
@@ -2066,29 +2089,16 @@ func (fb *FrameBound) InitCompareCols(ctx sessionctx.Context, orderByCols []*exp
 			if err != nil {
 				return err
 			}
-
-			// As compare column has been converted, compare function should also be changed
-			cmpDataType := expression.GetAccurateCmpType(fb.CompareCols[0], fb.CalcFuncs[0])
-			switch cmpDataType {
-			case types.ETInt:
-				fb.CmpFuncs[0] = expression.CompareInt
-				fb.CmpDataType = tipb.RangeCmpDataType_Int
-			case types.ETDatetime, types.ETTimestamp:
-				fb.CmpFuncs[0] = expression.CompareTime
-				fb.CmpDataType = tipb.RangeCmpDataType_DateTime
-			case types.ETReal:
-				fb.CmpFuncs[0] = expression.CompareReal
-				fb.CmpDataType = tipb.RangeCmpDataType_Float
-			case types.ETDecimal:
-				fb.CmpFuncs[0] = expression.CompareDecimal
-				fb.CmpDataType = tipb.RangeCmpDataType_Decimal
-			default:
-				return expression.ErrIncorrectType.GenWithStackByArgs("Invalid comparison data type for range frame")
-			}
 		} else {
 			for i, col := range orderByCols {
 				fb.CompareCols[i] = col
 			}
+		}
+
+		cmpDataType := expression.GetAccurateCmpType(fb.CompareCols[0], fb.CalcFuncs[0])
+		err := fb.updateCmpFuncsAndCmpDataType(cmpDataType)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

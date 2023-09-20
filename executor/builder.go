@@ -4963,11 +4963,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 				exec.orderByCols = orderByCols
 				exec.expectedCmpResult = cmpResult
 				exec.isRangeFrame = true
-				err = exec.start.InitCompareCols(b.ctx, exec.orderByCols)
+				err = exec.start.UpdateCompareCols(b.ctx, exec.orderByCols)
 				if err != nil {
 					return nil
 				}
-				err = exec.end.InitCompareCols(b.ctx, exec.orderByCols)
+				err = exec.end.UpdateCompareCols(b.ctx, exec.orderByCols)
 				if err != nil {
 					return nil
 				}
@@ -5002,11 +5002,11 @@ func (b *executorBuilder) buildWindow(v *plannercore.PhysicalWindow) exec.Execut
 			expectedCmpResult: cmpResult,
 		}
 
-		err = tmpProcessor.start.InitCompareCols(b.ctx, orderByCols)
+		err = tmpProcessor.start.UpdateCompareCols(b.ctx, orderByCols)
 		if err != nil {
 			return nil
 		}
-		err = tmpProcessor.end.InitCompareCols(b.ctx, orderByCols)
+		err = tmpProcessor.end.UpdateCompareCols(b.ctx, orderByCols)
 		if err != nil {
 			return nil
 		}

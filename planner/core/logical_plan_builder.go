@@ -6826,22 +6826,14 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		}
 	}
 
-	cmpDataType := expression.GetAccurateCmpType(orderByItems[0].Col, bound.CalcFuncs[0])
-	switch cmpDataType {
-	case types.ETInt:
-		bound.CmpFuncs[0] = expression.CompareInt
-		bound.CmpDataType = tipb.RangeCmpDataType_Int
-	case types.ETDatetime, types.ETTimestamp:
-		bound.CmpFuncs[0] = expression.CompareTime
-		bound.CmpDataType = tipb.RangeCmpDataType_DateTime
-	case types.ETReal:
-		bound.CmpFuncs[0] = expression.CompareReal
-		bound.CmpDataType = tipb.RangeCmpDataType_Float
-	case types.ETDecimal:
-		bound.CmpFuncs[0] = expression.CompareDecimal
-		bound.CmpDataType = tipb.RangeCmpDataType_Decimal
-	default:
-		return nil, expression.ErrIncorrectType.GenWithStackByArgs("Invalid comparison data type for range frame")
+	orderByCols := make([]*expression.Column, len(orderByItems))
+	for i, item := range orderByItems {
+		orderByCols[i] = item.Col
+	}
+
+	err = bound.UpdateCompareCols(b.ctx, orderByCols)
+	if err != nil {
+		return nil, err
 	}
 	return bound, nil
 }

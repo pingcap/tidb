@@ -5288,8 +5288,8 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test.first_range;")
-	tk.MustExec("create table test.first_range(p int not null, o int not null, v int not null);")
-	tk.MustExec("insert into test.first_range (p, o, v) values (0, 0, 0), (1, 1, 1), (1, 2, 2), (1, 4, 4), (1, 8, 8), (2, 0, 0), (2, 3, 3), (2, 10, 10), (2, 13, 13), (2, 15, 15), (3, 1, 1), (3, 3, 3), (3, 5, 5), (3, 9, 9), (3, 15, 15), (3, 20, 20), (3, 31, 31);")
+	tk.MustExec("create table test.first_range(p int not null, o int not null, v int not null, o_datetime datetime not null);")
+	tk.MustExec("insert into test.first_range (p, o, v, o_datetime) values (0, 0, 0, '2023-9-20 11:17:10');")
 
 	tk.MustExec("drop table if exists test.first_range_d64;")
 	tk.MustExec("create table test.first_range_d64(p int not null, o decimal(17,1) not null, v int not null);")
@@ -5311,32 +5311,43 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 		}
 	}
 
+	tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
+
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
 		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#6 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 8",
-		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 8",
-		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 8",
-		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 8",
+		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#7 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
+		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
+		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
+		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9E0 following) as a from test.first_range;").Check(testkit.Rows(
 		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#6 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 8",
-		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 8",
-		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 8",
-		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 8",
+		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#7 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
+		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
+		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
+		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 2.3 preceding and 0 following) as a from test.first_range_d64;").Check(testkit.Rows(
 		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range_d64.v)->Column#6 over(partition by test.first_range_d64.p order by test.first_range_d64.o range between 2.3 preceding and 0 following), stream_count: 8",
-		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range_d64.p, test.first_range_d64.o, stream_count: 8",
-		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 8",
-		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range_d64.p, collate: binary], stream_count: 8",
+		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range_d64.v)->Column#6 over(partition by test.first_range_d64.p order by test.first_range_d64.o range between 2.3 preceding and 0 following), stream_count: 20",
+		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range_d64.p, test.first_range_d64.o, stream_count: 20",
+		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
+		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range_d64.p, collate: binary], stream_count: 20",
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range_d64 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o_datetime range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
+		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
+		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#7 over(partition by test.first_range.p order by test.first_range.o_datetime range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following), stream_count: 20",
+		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o_datetime, stream_count: 20",
+		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
+		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
+		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 }
 
 func TestIssue46298(t *testing.T) {
