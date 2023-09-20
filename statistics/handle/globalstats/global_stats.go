@@ -214,7 +214,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 			continue
 		}
 		// Merge CMSketch.
-		globalStats.Cms[i] = allCms[i][0].Copy()
+		globalStats.Cms[i] = allCms[i][0]
 		for j := 1; j < len(allCms[i]); j++ {
 			err = globalStats.Cms[i].MergeCMSketch(allCms[i][j])
 			if err != nil {
