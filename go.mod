@@ -310,4 +310,4 @@ replace (
 	github.com/pingcap/tidb/parser => ./parser
 )
 
-replace github.com/pingcap/kvproto => github.com/yujuncen/kvproto v0.0.0-20230913085421-7b5c641805b9
+replace github.com/pingcap/kvproto => github.com/yujuncen/kvproto v0.0.0-20230920093617-240e56b2e11a

@@ -145,7 +145,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		if e != nil {
 			return errors.Trace(err)
 		}
-		denyLightning := utils.NewDenyImporting("backup_ebs_command", mgr.StoreManager)
+		denyLightning := utils.NewSuspendImporting("backup_ebs_command", mgr.StoreManager)
 		_, err := denyLightning.DenyAllStores(ctx, utils.DefaultBRGCSafePointTTL)
 		if err != nil {
 			return errors.Annotate(err, "lightning from running")

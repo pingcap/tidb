@@ -32,23 +32,23 @@ func (mgr *StoreManager) GetDenyLightningClient(ctx context.Context, storeID uin
 	return cli, nil
 }
 
-type DenyImportingEnv interface {
+type SuspendImportingEnv interface {
 	GetAllStores(ctx context.Context) ([]*metapb.Store, error)
 	GetDenyLightningClient(ctx context.Context, storeID uint64) (DenyLightningClient, error)
 }
 
 type DenyLightningClient interface {
 	// Temporarily disable ingest / download / write for data listeners don't support catching import data.
-	DenyImportRPC(ctx context.Context, in *import_sstpb.DenyImportRPCRequest, opts ...grpc.CallOption) (*import_sstpb.DenyImportRPCResponse, error)
+	SuspendImportRPC(ctx context.Context, in *import_sstpb.SuspendImportRPCRequest, opts ...grpc.CallOption) (*import_sstpb.SuspendImportRPCResponse, error)
 }
 
-type DenyImporting struct {
-	env  DenyImportingEnv
+type SuspendImporting struct {
+	env  SuspendImportingEnv
 	name string
 }
 
-func NewDenyImporting(name string, env DenyImportingEnv) *DenyImporting {
-	return &DenyImporting{
+func NewSuspendImporting(name string, env SuspendImportingEnv) *SuspendImporting {
+	return &SuspendImporting{
 		env:  env,
 		name: name,
 	}
@@ -56,28 +56,28 @@ func NewDenyImporting(name string, env DenyImportingEnv) *DenyImporting {
 
 // DenyAllStores tries to deny all current stores' lightning execution for the period of time.
 // Returns a map mapping store ID to whether they are already denied to import tasks.
-func (d *DenyImporting) DenyAllStores(ctx context.Context, dur time.Duration) (map[uint64]bool, error) {
-	return d.forEachStores(ctx, func() *import_sstpb.DenyImportRPCRequest {
-		return &import_sstpb.DenyImportRPCRequest{
-			ShouldDenyImports: true,
-			DurationSecs:      uint64(dur.Seconds()),
-			Caller:            d.name,
+func (d *SuspendImporting) DenyAllStores(ctx context.Context, dur time.Duration) (map[uint64]bool, error) {
+	return d.forEachStores(ctx, func() *import_sstpb.SuspendImportRPCRequest {
+		return &import_sstpb.SuspendImportRPCRequest{
+			ShouldSuspendImports: true,
+			DurationInSecs:       uint64(dur.Seconds()),
+			Caller:               d.name,
 		}
 	})
 }
 
-func (d *DenyImporting) AllowAllStores(ctx context.Context) (map[uint64]bool, error) {
-	return d.forEachStores(ctx, func() *import_sstpb.DenyImportRPCRequest {
-		return &import_sstpb.DenyImportRPCRequest{
-			ShouldDenyImports: false,
-			Caller:            d.name,
+func (d *SuspendImporting) AllowAllStores(ctx context.Context) (map[uint64]bool, error) {
+	return d.forEachStores(ctx, func() *import_sstpb.SuspendImportRPCRequest {
+		return &import_sstpb.SuspendImportRPCRequest{
+			ShouldSuspendImports: false,
+			Caller:               d.name,
 		}
 	})
 }
 
 // forEachStores send the request to each stores reachable.
 // Returns a map mapping store ID to whether they are already denied to import tasks.
-func (d *DenyImporting) forEachStores(ctx context.Context, makeReq func() *import_sstpb.DenyImportRPCRequest) (map[uint64]bool, error) {
+func (d *SuspendImporting) forEachStores(ctx context.Context, makeReq func() *import_sstpb.SuspendImportRPCRequest) (map[uint64]bool, error) {
 	stores, err := d.env.GetAllStores(ctx)
 	if err != nil {
 		return nil, errors.Annotate(err, "failed to get all stores")
@@ -90,18 +90,18 @@ func (d *DenyImporting) forEachStores(ctx context.Context, makeReq func() *impor
 			return nil, errors.Annotatef(err, "failed to get client for store %d", store.Id)
 		}
 		req := makeReq()
-		resp, err := cli.DenyImportRPC(ctx, req)
+		resp, err := cli.SuspendImportRPC(ctx, req)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to deny lightning rpc for store %d", store.Id)
 		}
-		result[store.Id] = resp.AlreadyDeniedImports
+		result[store.Id] = resp.AlreadySuspended
 	}
 	return result, nil
 }
 
 // HasKeptDenying checks whether a result returned by `DenyAllStores` is able to keep the consistency with last request.
 // i.e. Whether the store has some holes of pausing the import requests.
-func (d *DenyImporting) ConsistentWithPrev(result map[uint64]bool) error {
+func (d *SuspendImporting) ConsistentWithPrev(result map[uint64]bool) error {
 	for storeId, denied := range result {
 		if !denied {
 			return errors.Annotatef(berrors.ErrPossibleInconsistency, "failed to keep importing to store %d being denied, the state might be inconsistency", storeId)
@@ -110,7 +110,7 @@ func (d *DenyImporting) ConsistentWithPrev(result map[uint64]bool) error {
 	return nil
 }
 
-func (d *DenyImporting) Keeper(ctx context.Context, ttl time.Duration) error {
+func (d *SuspendImporting) Keeper(ctx context.Context, ttl time.Duration) error {
 	lastSuccess := time.Now()
 	t := time.NewTicker(ttl / DenyLightningUpdateFrequency)
 	defer t.Stop()

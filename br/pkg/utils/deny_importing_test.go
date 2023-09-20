@@ -22,7 +22,7 @@ type ImportTargetStore struct {
 	mu                  sync.Mutex
 	Id                  uint64
 	LastSuccessDenyCall time.Time
-	DenyImportFor       time.Duration
+	SuspendImportFor    time.Duration
 	DeniedImport        bool
 
 	ErrGen func() error
@@ -69,7 +69,7 @@ func (s *ImportTargetStores) GetDenyLightningClient(ctx context.Context, storeID
 }
 
 // Temporarily disable ingest / download / write for data listeners don't support catching import data.
-func (s *ImportTargetStore) DenyImportRPC(ctx context.Context, in *import_sstpb.DenyImportRPCRequest, opts ...grpc.CallOption) (*import_sstpb.DenyImportRPCResponse, error) {
+func (s *ImportTargetStore) SuspendImportRPC(ctx context.Context, in *import_sstpb.SuspendImportRPCRequest, opts ...grpc.CallOption) (*import_sstpb.SuspendImportRPCResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -80,14 +80,14 @@ func (s *ImportTargetStore) DenyImportRPC(ctx context.Context, in *import_sstpb.
 	}
 
 	denied := s.DeniedImport
-	if in.ShouldDenyImports {
+	if in.ShouldSuspendImports {
 		s.DeniedImport = true
-		s.DenyImportFor = time.Duration(in.DurationSecs) * time.Second
+		s.SuspendImportFor = time.Duration(in.DurationSecs) * time.Second
 		s.LastSuccessDenyCall = time.Now()
 	} else {
 		s.DeniedImport = false
 	}
-	return &import_sstpb.DenyImportRPCResponse{
+	return &import_sstpb.SuspendImportRPCResponse{
 		AlreadyDeniedImports: denied,
 	}, nil
 }
@@ -102,7 +102,7 @@ func (s *ImportTargetStores) assertAllStoresDenied(t *testing.T) {
 			defer store.mu.Unlock()
 
 			require.True(t, store.DeniedImport, "ID = %d", store.Id)
-			require.Less(t, time.Since(store.LastSuccessDenyCall), store.DenyImportFor, "ID = %d", store.Id)
+			require.Less(t, time.Since(store.LastSuccessDenyCall), store.SuspendImportFor, "ID = %d", store.Id)
 		}()
 	}
 }
@@ -111,7 +111,7 @@ func TestBasic(t *testing.T) {
 	req := require.New(t)
 
 	ss := initWithIDs([]int{1, 4, 5})
-	deny := utils.NewDenyImporting(t.Name(), ss)
+	deny := utils.NewSuspendImporting(t.Name(), ss)
 
 	ctx := context.Background()
 	res, err := deny.DenyAllStores(ctx, 10*time.Second)
@@ -119,7 +119,7 @@ func TestBasic(t *testing.T) {
 	req.Error(deny.ConsistentWithPrev(res))
 	for id, inner := range ss.items {
 		req.True(inner.DeniedImport, "at %d", id)
-		req.Equal(inner.DenyImportFor, 10*time.Second, "at %d", id)
+		req.Equal(inner.SuspendImportFor, 10*time.Second, "at %d", id)
 	}
 
 	res, err = deny.DenyAllStores(ctx, 10*time.Second)
@@ -136,7 +136,7 @@ func TestKeeperError(t *testing.T) {
 
 	ctx := context.Background()
 	ss := initWithIDs([]int{1, 4, 5})
-	deny := utils.NewDenyImporting(t.Name(), ss)
+	deny := utils.NewSuspendImporting(t.Name(), ss)
 	ttl := time.Second
 
 	now := time.Now()
@@ -167,7 +167,7 @@ func TestKeeperErrorExit(t *testing.T) {
 
 	ctx := context.Background()
 	ss := initWithIDs([]int{1, 4, 5})
-	deny := utils.NewDenyImporting(t.Name(), ss)
+	deny := utils.NewSuspendImporting(t.Name(), ss)
 	ttl := time.Second
 
 	triggeredErr := uint32(0)
@@ -191,7 +191,7 @@ func TestKeeperCalled(t *testing.T) {
 
 	ctx := context.Background()
 	ss := initWithIDs([]int{1, 4, 5})
-	deny := utils.NewDenyImporting(t.Name(), ss)
+	deny := utils.NewSuspendImporting(t.Name(), ss)
 	ttl := 1 * time.Second
 
 	_, err := deny.DenyAllStores(ctx, ttl)
