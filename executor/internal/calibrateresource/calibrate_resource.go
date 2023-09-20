@@ -460,7 +460,7 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 }
 
 func staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig) error {
-	// TiFlash only consider cpu and read bytes. Others are ignored.
+	// TPCH10 only considers the resource usage of the TiFlash including cpu and read bytes. Others are ignored.
 	// cpu usage: 105494.666484 / 20 / 20 = 263.74
 	// read bytes: 401799161689.0 / 20 / 20 = 1004497904.22
 	const cpuTimePerCPUPerSec float64 = 263.74
