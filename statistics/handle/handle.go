@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
@@ -57,7 +56,9 @@ import (
 
 // Handle can update stats info periodically.
 type Handle struct {
-	pool sessionPool
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
+	pool  sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
@@ -90,15 +91,8 @@ type Handle struct {
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
 	statsUsage *statsUsage
 
-	globalstatushandler *globalstats.GlobalStatusHandler
-
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
-
-	mu struct {
-		ctx sessionctx.Context
-		syncutil.RWMutex
-	}
 
 	schemaMu struct {
 		// pid2tid is the map from partition ID to table ID.
@@ -160,26 +154,18 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
-	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
-	h.mu.Lock()
 	cache, err := cache.NewStatsCache()
 	if err != nil {
 		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
-		h.mu.Unlock()
 		return
 	}
 	h.statsCache.Replace(cache)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.mu.ctx.GetSessionVars().InitChunkSize = 1
-	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
-	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
-	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead.ClearForTest()
 	h.tableDelta.reset()
 	h.statsUsage.reset()
-	h.mu.Unlock()
 }
 
 type sessionPool interface {
@@ -188,11 +174,11 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
+func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
-	gpool := gp.New(math.MaxInt16, time.Minute)
+
 	handle := &Handle{
-		globalstatushandler:     globalstats.NewGlobalStatusHandler(gpool),
+		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		listHead:                NewSessionStatsCollector(),
 		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
@@ -203,7 +189,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	handle.mu.ctx = ctx
 	statsCache, err := cache.NewStatsCachePointer()
 	if err != nil {
 		return nil, err
@@ -215,10 +200,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
-	err = handle.RefreshVars()
-	if err != nil {
-		return nil, err
-	}
 	return handle, nil
 }
 
@@ -375,11 +356,15 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
+	sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
-	physicalID int64, isIndex int, histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
-	return h.globalstatushandler.MergePartitionStats2GlobalStatsByTableID(sc, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	physicalID int64,
+	isIndex bool,
+	histIDs []int64,
+	tablePartitionStats map[int64]*statistics.Table,
+) (globalStats *globalstats.GlobalStats, err error) {
+	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -398,9 +383,14 @@ func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDe
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(opts map[ast.AnalyzeOptionType]uint64,
-	is infoschema.InfoSchema, globalTableInfo *model.TableInfo, isIndex int, histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
+func (h *Handle) mergePartitionStats2GlobalStats(
+	opts map[ast.AnalyzeOptionType]uint64,
+	is infoschema.InfoSchema,
+	globalTableInfo *model.TableInfo,
+	isIndex bool,
+	histIDs []int64,
+	allPartitionStats map[int64]*statistics.Table,
+) (*globalstats.GlobalStats, error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return nil, err
@@ -411,7 +401,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(opts map[ast.AnalyzeOptionType]
 	if err := UpdateSCtxVarsForStats(sc); err != nil {
 		return nil, err
 	}
-	return h.globalstatushandler.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
@@ -1530,13 +1520,6 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	return nil
 }
 
-// RefreshVars uses to pull PartitionPruneMethod vars from kv storage.
-func (h *Handle) RefreshVars() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return UpdateSCtxVarsForStats(h.mu.ctx)
-}
-
 // CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
 	// We simply choose one physical id to get its stats.
@@ -1814,7 +1797,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.globalstatushandler.Close()
+	h.gpool.Close()
 	h.statsCache.Load().Close()
 }
 

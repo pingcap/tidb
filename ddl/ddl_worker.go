@@ -1377,9 +1377,13 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		affects := make([]*model.AffectedOption, len(newSchemaIDs))
+		affects := make([]*model.AffectedOption, len(newSchemaIDs)-1)
 		for i, newSchemaID := range newSchemaIDs {
-			affects[i] = &model.AffectedOption{
+			// Do not add the first table to AffectedOpts. Related issue tidb#47064.
+			if i == 0 {
+				continue
+			}
+			affects[i-1] = &model.AffectedOption{
 				SchemaID:    newSchemaID,
 				TableID:     tableIDs[i],
 				OldTableID:  tableIDs[i],
@@ -1420,6 +1424,10 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			// Keep this as Schema ID of non-partitioned table
 			// to avoid trigger early rename in TiFlash
 			diff.AffectedOpts[0].SchemaID = job.SchemaID
+			// Need reload partition table, use diff.AffectedOpts[0].OldSchemaID to mark it.
+			if len(multiInfos) > 0 {
+				diff.AffectedOpts[0].OldSchemaID = ptSchemaID
+			}
 		} else {
 			// Swap
 			diff.TableID = ptDefID

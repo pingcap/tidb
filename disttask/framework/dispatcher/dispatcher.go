@@ -67,9 +67,13 @@ type TaskHandle interface {
 // Dispatcher manages the lifetime of a task
 // including submitting subtasks and updating the status of a task.
 type Dispatcher interface {
+	// Init initializes the dispatcher, should be called before ExecuteTask.
+	// if Init returns error, dispatcher manager will fail the task directly,
+	// so the returned error should be a fatal error.
+	Init() error
+	// ExecuteTask start to schedule a task.
 	ExecuteTask()
-	// Close closes the dispatcher, not routine-safe, and should be called
-	// after ExecuteTask finished.
+	// Close closes the dispatcher, should be called if Init returns nil.
 	Close()
 }
 
@@ -116,7 +120,12 @@ func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, server
 	}
 }
 
-// ExecuteTask start to schedule a task.
+// Init implements the Dispatcher interface.
+func (*BaseDispatcher) Init() error {
+	return nil
+}
+
+// ExecuteTask implements the Dispatcher interface.
 func (d *BaseDispatcher) ExecuteTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
 		zap.String("state", d.Task.State), zap.Uint64("concurrency", d.Task.Concurrency))

@@ -26,9 +26,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -79,23 +81,8 @@ func updateRecord(
 
 	// Handle exchange partition
 	tbl := t.Meta()
-	if tbl.ExchangePartitionInfo != nil {
-		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
-		if !tableFound {
-			return false, errors.Errorf("exchange partition process table by id failed")
-		}
-		p, ok := pt.(table.PartitionedTable)
-		if !ok {
-			return false, errors.Errorf("exchange partition process assert table partition failed")
-		}
-		err := p.CheckForExchangePartition(
-			sctx,
-			pt.Meta().Partition,
-			newData,
-			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
-		)
-		if err != nil {
+	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
+		if err := checkRowForExchangePartition(sctx, newData, tbl); err != nil {
 			return false, err
 		}
 	}
@@ -325,4 +312,43 @@ func rebaseAutoRandomValue(
 func resetErrDataTooLong(colName string, rowIdx int, _ error) error {
 	newErr := types.ErrDataTooLong.GenWithStack("Data too long for column '%v' at row %v", colName, rowIdx)
 	return newErr
+}
+
+// checkRowForExchangePartition is only used for ExchangePartition by non-partitionTable during write only state.
+// It check if rowData inserted or updated violate partition definition or checkConstraints of partitionTable.
+func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tbl *model.TableInfo) error {
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionTableID)
+	if !tableFound {
+		return errors.Errorf("exchange partition process table by id failed")
+	}
+	p, ok := pt.(table.PartitionedTable)
+	if !ok {
+		return errors.Errorf("exchange partition process assert table partition failed")
+	}
+	err := p.CheckForExchangePartition(
+		sctx,
+		pt.Meta().Partition,
+		row,
+		tbl.ExchangePartitionInfo.ExchangePartitionDefID,
+		tbl.ID,
+	)
+	if err != nil {
+		return err
+	}
+	if variable.EnableCheckConstraint.Load() {
+		type CheckConstraintTable interface {
+			CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
+		}
+		cc, ok := pt.(CheckConstraintTable)
+		if !ok {
+			return errors.Errorf("exchange partition process assert check constraint failed")
+		}
+		err := cc.CheckRowConstraint(sctx, row)
+		if err != nil {
+			// TODO: make error include ExchangePartition info.
+			return err
+		}
+	}
+	return nil
 }

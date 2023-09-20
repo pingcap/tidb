@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/kv"
@@ -41,10 +42,12 @@ func TestWriter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
-	writer := NewWriterBuilder().
+	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		Build(memStore, "/test", "0")
+
+	writer := NewEngineWriter(w)
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -58,12 +61,9 @@ func TestWriter(t *testing.T) {
 		_, err = rand.Read(kvs[i].Val)
 		require.NoError(t, err)
 	}
-	for _, pair := range kvs {
-		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
-		require.NoError(t, err)
-	}
 
-	err := writer.Close(ctx)
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
