@@ -70,7 +70,7 @@ func (c *AsyncOperator[T, R]) Open() error {
 func (c *AsyncOperator[T, R]) Close() error {
 	// Wait all tasks done.
 	// We don't need to close the task channel because
-	// it is closed by the workerpool.
+	// it is maintained outside this operator, see SetSource.
 	c.pool.Wait()
 	c.pool.Release()
 	return nil

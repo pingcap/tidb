@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
@@ -690,28 +689,15 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			}
 		}
 	}
-	tbl := e.Table.Meta()
+
 	// Handle exchange partition
-	if tbl.ExchangePartitionInfo != nil {
-		is := e.Ctx().GetDomainInfoSchema().(infoschema.InfoSchema)
-		pt, tableFound := is.TableByID(tbl.ExchangePartitionInfo.ExchangePartitionID)
-		if !tableFound {
-			return nil, errors.Errorf("exchange partition process table by id failed")
-		}
-		p, ok := pt.(table.PartitionedTable)
-		if !ok {
-			return nil, errors.Errorf("exchange partition process assert table partition failed")
-		}
-		err := p.CheckForExchangePartition(
-			e.Ctx(),
-			pt.Meta().Partition,
-			row,
-			tbl.ExchangePartitionInfo.ExchangePartitionDefID,
-		)
-		if err != nil {
+	tbl := e.Table.Meta()
+	if tbl.ExchangePartitionInfo != nil && tbl.GetPartitionInfo() == nil {
+		if err := checkRowForExchangePartition(e.Ctx(), row, tbl); err != nil {
 			return nil, err
 		}
 	}
+
 	sc := e.Ctx().GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for i, gCol := range gCols {

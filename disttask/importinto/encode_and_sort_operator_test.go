@@ -24,9 +24,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	mockexecute "github.com/pingcap/tidb/disttask/framework/mock/execute"
-	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/disttask/importinto/mock"
 	"github.com/pingcap/tidb/disttask/operator"
+	"github.com/pingcap/tidb/executor/importer"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -46,24 +47,41 @@ func TestEncodeAndSortOperator(t *testing.T) {
 
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	executor := mockexecute.NewMockMiniTaskExecutor(ctrl)
+	executor := mock.NewMockMiniTaskExecutor(ctrl)
 	backup := newImportMinimalTaskExecutor
 	t.Cleanup(func() {
 		newImportMinimalTaskExecutor = backup
 	})
-	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) execute.MiniTaskExecutor {
+	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) MiniTaskExecutor {
 		return executor
 	}
 
+	executorForParam := &importStepExecutor{
+		taskID: 1,
+		taskMeta: &TaskMeta{
+			Plan: importer.Plan{
+				ThreadCnt: 2,
+			},
+		},
+		tableImporter: &importer.TableImporter{
+			LoadDataController: &importer.LoadDataController{
+				Plan: &importer.Plan{
+					CloudStorageURI: "",
+				},
+			},
+		},
+		logger: logger,
+	}
+
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), 3, logger)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
 
 	// cancel on error
 	mockErr := errors.New("mock err")
-	executor.EXPECT().Run(gomock.Any()).Return(mockErr)
+	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
 		return op.hasError()
@@ -76,12 +94,12 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), 2, logger)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2)
 	op.SetSource(source)
-	executor1 := mockexecute.NewMockMiniTaskExecutor(ctrl)
-	executor2 := mockexecute.NewMockMiniTaskExecutor(ctrl)
+	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
+	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
 	var id atomic.Int32
-	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) execute.MiniTaskExecutor {
+	newImportMinimalTaskExecutor = func(t *importStepMinimalTask) MiniTaskExecutor {
 		if id.Add(1) == 1 {
 			return executor1
 		}
@@ -90,20 +108,22 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// wait until 2 executor start running, else workerpool will be cancelled.
-	executor1.EXPECT().Run(gomock.Any()).DoAndReturn(func(context.Context) error {
-		wg.Done()
-		wg.Wait()
-		return mockErr2
-	})
-	executor2.EXPECT().Run(gomock.Any()).DoAndReturn(func(context.Context) error {
-		wg.Done()
-		wg.Wait()
-		// wait error in executor1 has been processed
-		require.Eventually(t, func() bool {
-			return op.hasError()
-		}, 3*time.Second, 300*time.Millisecond)
-		return errors.New("mock error should be logged")
-	})
+	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+			wg.Done()
+			wg.Wait()
+			return mockErr2
+		})
+	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+			wg.Done()
+			wg.Wait()
+			// wait error in executor1 has been processed
+			require.Eventually(t, func() bool {
+				return op.hasError()
+			}, 3*time.Second, 300*time.Millisecond)
+			return errors.New("mock error should be logged")
+		})
 	require.NoError(t, op.Open())
 	// send 2 tasks
 	source.Channel() <- &importStepMinimalTask{}

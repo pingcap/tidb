@@ -627,6 +627,7 @@
       "br/pkg/backup/": "br/pkg/backup/ coded",
       "planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
       "planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "planer/core/casetest/dag": "planer/core/casetest/dag",
       "planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
       "planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
       "planer/core/casetest/hint": "planer/core/casetest/hint",

@@ -578,6 +578,7 @@ type LoadData struct {
 
 // LoadDataOpt represents load data option.
 type LoadDataOpt struct {
+	// Name is the name of the option, converted to lower case during parse.
 	Name  string
 	Value expression.Expression
 }

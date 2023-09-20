@@ -33,12 +33,13 @@ type Extension interface {
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
 	OnTick(ctx context.Context, task *proto.Task)
 
-	// OnNextSubtasksBatch is used to generate batch of subtasks for current stage
+	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage
 	// NOTE: don't change gTask.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error)
+	// when next step is StepDone, it should return nil, nil.
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step int64) (subtaskMetas [][]byte, err error)
 
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
@@ -52,14 +53,10 @@ type Extension interface {
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
 
-	// StageFinished is used to check if all subtasks in current stage are dispatched and processed.
-	// StageFinished is called before generating batch of subtasks.
-	StageFinished(task *proto.Task) bool
-
-	// Finished is used to check if all subtasks for the task are dispatched and processed.
-	// Finished is called before generating batch of subtasks.
-	// Once Finished return true, mark the task as succeed.
-	Finished(task *proto.Task) bool
+	// GetNextStep is used to get the next step for the task.
+	// if task runs successfully, it should go from StepInit to business steps,
+	// then to StepDone, then dispatcher will mark it as finished.
+	GetNextStep(h TaskHandle, task *proto.Task) int64
 }
 
 // FactoryFn is used to create a dispatcher.

@@ -281,6 +281,32 @@ func (m *MockScheduler) EXPECT() *MockSchedulerMockRecorder {
 	return m.recorder
 }
 
+// Close mocks base method.
+func (m *MockScheduler) Close() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Close")
+}
+
+// Close indicates an expected call of Close.
+func (mr *MockSchedulerMockRecorder) Close() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockScheduler)(nil).Close))
+}
+
+// Init mocks base method.
+func (m *MockScheduler) Init(arg0 context.Context) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Init", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Init indicates an expected call of Init.
+func (mr *MockSchedulerMockRecorder) Init(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockScheduler)(nil).Init), arg0)
+}
+
 // Rollback mocks base method.
 func (m *MockScheduler) Rollback(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
@@ -330,21 +356,6 @@ func NewMockExtension(ctrl *gomock.Controller) *MockExtension {
 // EXPECT returns an object that allows the caller to indicate expected use.
 func (m *MockExtension) EXPECT() *MockExtensionMockRecorder {
 	return m.recorder
-}
-
-// GetMiniTaskExecutor mocks base method.
-func (m *MockExtension) GetMiniTaskExecutor(arg0 proto.MinimalTask, arg1 string, arg2 int64) (execute.MiniTaskExecutor, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetMiniTaskExecutor", arg0, arg1, arg2)
-	ret0, _ := ret[0].(execute.MiniTaskExecutor)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// GetMiniTaskExecutor indicates an expected call of GetMiniTaskExecutor.
-func (mr *MockExtensionMockRecorder) GetMiniTaskExecutor(arg0, arg1, arg2 interface{}) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetMiniTaskExecutor", reflect.TypeOf((*MockExtension)(nil).GetMiniTaskExecutor), arg0, arg1, arg2)
 }
 
 // GetSubtaskExecutor mocks base method.

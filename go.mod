@@ -64,7 +64,7 @@ require (
 	github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.3
-	github.com/klauspost/compress v1.16.5
+	github.com/klauspost/compress v1.17.0
 	github.com/kyoh86/exportloopref v0.1.11
 	github.com/lestrrat-go/jwx/v2 v2.0.11
 	github.com/mgechev/revive v1.3.2
@@ -101,7 +101,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20230911065915-f9e28714c62c
-	github.com/tikv/pd/client v0.0.0-20230728033905-31343e006842
+	github.com/tikv/pd/client v0.0.0-20230912103610-2f57a9f050eb
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible

@@ -36,6 +36,9 @@ var (
 	checkTaskRunningInterval   = 3 * time.Second
 )
 
+// WaitTaskFinished is used to sync the test.
+var WaitTaskFinished = make(chan struct{})
+
 func (dm *Manager) getRunningTaskCnt() int {
 	dm.runningTasks.RLock()
 	defer dm.runningTasks.RUnlock()
@@ -173,12 +176,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				if GetDispatcherFactory(task.Type) == nil {
 					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
 						zap.String("task-type", task.Type))
-					prevState := task.State
-					task.State = proto.TaskStateFailed
-					task.Error = errors.New("unknown task type")
-					if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState); err2 != nil {
-						logutil.BgLogger().Warn("update task state of unknown type failed", zap.Error(err2))
-					}
+					dm.failTask(task, errors.New("unknown task type"))
 					continue
 				}
 				// the task is not in runningTasks set when:
@@ -198,14 +196,27 @@ func (dm *Manager) dispatchTaskLoop() {
 	}
 }
 
+func (dm *Manager) failTask(task *proto.Task, err error) {
+	prevState := task.State
+	task.State = proto.TaskStateFailed
+	task.Error = err
+	if _, err2 := dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, prevState); err2 != nil {
+		logutil.BgLogger().Warn("failed to update task state to failed",
+			zap.Int64("task-id", task.ID), zap.Error(err2))
+	}
+}
+
 func (dm *Manager) gcSubtaskHistoryTable() {
-	logutil.Logger(dm.ctx).Info("task table gc loop start")
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
 	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
 		if seconds, ok := val.(int); ok {
 			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
 		}
+
+		<-WaitTaskFinished
 	})
+
+	logutil.Logger(dm.ctx).Info("task table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
@@ -238,6 +249,11 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 	_ = dm.gPool.Run(func() {
 		dispatcherFactory := GetDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
+		if err := dispatcher.Init(); err != nil {
+			logutil.BgLogger().Error("init dispatcher failed", zap.Error(err))
+			dm.failTask(task, err)
+			return
+		}
 		defer dispatcher.Close()
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()

@@ -2458,16 +2458,27 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(err)
 			}
 		}
+		var ptInfo []schemaIDAndTableInfo
+		if len(nt.Constraints) > 0 {
+			pt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
+				ExchangePartitionTableID: nt.ID,
+				ExchangePartitionDefID:   defID,
+			}
+			ptInfo = append(ptInfo, schemaIDAndTableInfo{
+				schemaID: ptSchemaID,
+				tblInfo:  pt,
+			})
+		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionID:    ptID,
-			ExchangePartitionDefID: defID,
+			ExchangePartitionTableID: ptID,
+			ExchangePartitionDefID:   defID,
 		}
 		// We need an interim schema version,
 		// so there are no non-matching rows inserted
 		// into the table using the schema version
 		// before the exchange is made.
 		job.SchemaState = model.StateWriteOnly
-		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
+		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true, ptInfo...)
 	}
 	// From now on, nt (the non-partitioned table) has
 	// ExchangePartitionInfo set, meaning it is restricted
@@ -2527,6 +2538,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	// exchange table meta id
+	pt.ExchangePartitionInfo = nil
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
@@ -2931,15 +2943,17 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 			// Overloading the NewTableID here with the oldTblID instead,
 			// for keeping the old global statistics
 			statisticsPartInfo.NewTableID = oldTblID
-			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
+			// TODO: Handle bundles?
+			// TODO: Add concurrent test!
+			// TODO: Will this result in big gaps?
+			// TODO: How to carrie over AUTO_INCREMENT etc.?
+			// Check if they are carried over in ApplyDiff?!?
+			autoIDs, err := t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Get()
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			// TODO: Handle bundles?
-			// TODO: How to carrie over AUTO_INCREMENT etc.?
-			// Check if they are carried over in ApplyDiff?!?
-			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Del()
+			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -2954,13 +2968,15 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				tblInfo.Partition = nil
 			} else {
 				// ALTER TABLE ... PARTITION BY
-				//tblInfo.Partition.Type = tblInfo.Partition.DDLType
-				//tblInfo.Partition.Expr = tblInfo.Partition.DDLExpr
-				//tblInfo.Partition.Columns = tblInfo.Partition.DDLColumns
 				tblInfo.Partition.DDLType = model.PartitionTypeNone
 				tblInfo.Partition.DDLExpr = ""
 				tblInfo.Partition.DDLColumns = nil
 				tblInfo.Partition.NewTableID = 0
+			}
+			err = t.GetAutoIDAccessors(job.SchemaID, tblInfo.ID).Put(autoIDs)
+			if err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
 			}
 			// TODO: Add failpoint here?
 			err = t.CreateTableOrView(job.SchemaID, tblInfo)
