@@ -148,6 +148,18 @@ func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.
 		logutil.Logger(ctx).Info("min and max key",
 			zap.String("min key", hex.EncodeToString(keys[0])),
 			zap.String("max key", hex.EncodeToString(keys[len(keys)-1])))
+		for i := 1; i < len(keys); i++ {
+			if bytes.Compare(keys[i-1], keys[i]) >= 0 {
+				logutil.Logger(ctx).Info("keys are not sorted",
+					zap.Binary("start", start),
+					zap.Binary("end", end),
+					zap.String("prev key", hex.EncodeToString(keys[i-1])),
+					zap.String("next key", hex.EncodeToString(keys[i])),
+					zap.Strings("data files", e.dataFiles))
+				return nil, errors.Errorf("keys are not sorted: %s, %s",
+					hex.EncodeToString(keys[i-1]), hex.EncodeToString(keys[i]))
+			}
+		}
 	}
 	return &MemoryIngestData{
 		keyAdapter:         e.keyAdapter,

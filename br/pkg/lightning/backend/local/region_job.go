@@ -17,6 +17,7 @@ package local
 import (
 	"container/heap"
 	"context"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"sync"
@@ -189,6 +190,9 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
+	log.FromContext(ctx).Info("will GetFirstAndLastKey in writeToTiKV",
+		zap.Binary("start", j.keyRange.Start),
+		zap.Binary("end", j.keyRange.End))
 	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.Start, j.keyRange.End)
 	if err != nil {
 		return errors.Trace(err)
@@ -220,7 +224,10 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 
 	annotateErr := func(in error, peer *metapb.Peer) error {
 		// annotate the error with peer/store/region info to help debug.
-		return errors.Annotatef(in, "peer %d, store %d, region %d, epoch %s", peer.Id, peer.StoreId, region.Id, region.RegionEpoch.String())
+		return errors.Annotatef(in,
+			"peer %d, store %d, region %d, epoch %s, range [%s, %s)",
+			peer.Id, peer.StoreId, region.Id, region.RegionEpoch.String(),
+			hex.EncodeToString(j.keyRange.Start), hex.EncodeToString(j.keyRange.End))
 	}
 
 	leaderID := j.region.Leader.GetId()

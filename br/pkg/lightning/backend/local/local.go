@@ -1253,6 +1253,9 @@ func (local *Backend) generateJobForRange(
 	})
 
 	start, end := keyRange.Start, keyRange.End
+	log.FromContext(ctx).Info("will GetFirstAndLastKey in generateJobForRange",
+		zap.Binary("start", start),
+		zap.Binary("end", end))
 	pairStart, pairEnd, err := data.GetFirstAndLastKey(start, end)
 	if err != nil {
 		return nil, err
