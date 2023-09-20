@@ -38,6 +38,11 @@ import (
 
 var multiFileStatNum = 500
 
+const (
+	// DefaultMemSizeLimit is the default memory size limit for writer.
+	DefaultMemSizeLimit = 256 * size.MB
+)
+
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -61,8 +66,11 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID           string
-	Seq                int
+	WriterID string
+	Seq      int
+	// Min and Max are the min and max key written by this writer, both are
+	// inclusive, i.e. [Min, Max].
+	// will be empty if no key is written.
 	Min                tidbkv.Key
 	Max                tidbkv.Key
 	TotalSize          uint64
@@ -90,7 +98,7 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    256 * size.MB,
+		memSizeLimit:    DefaultMemSizeLimit,
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
