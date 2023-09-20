@@ -4,6 +4,7 @@ go_test(
     name = "importintotest4_test",
     timeout = "moderate",
     srcs = [
+        "global_sort_test.go",
         "main_test.go",
         "split_file_test.go",
     ],
@@ -14,6 +15,7 @@ go_test(
         "//config",
         "//disttask/framework/storage",
         "//disttask/importinto",
+        "//executor/importer",
         "//kv",
         "//testkit",
         "//tests/realtikvtest",

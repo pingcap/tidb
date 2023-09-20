@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -939,7 +940,11 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		store, err := storage.New(ctx, storeBackend, nil)
+		opt := &storage.ExternalStorageOptions{}
+		if intest.InTest {
+			opt.NoCredentials = true
+		}
+		store, err := storage.New(ctx, storeBackend, opt)
 		if err != nil {
 			return err
 		}
