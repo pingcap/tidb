@@ -473,14 +473,13 @@ func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.So
 		// only part of kv files are merge sorted. we need to merge kv metas that
 		// are not merged into the kvMetasOfMergeSort.
 		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
-			if _, ok := kvMetasOfMergeSort[kvGroup]; !ok {
-				kvMetasOfMergeSort[kvGroup] = kvMeta
-			} else {
+			if _, ok := kvMetasOfMergeSort[kvGroup]; ok {
 				// this should not happen, because we only generate merge sort
 				// subtasks for those kv groups with MaxOverlappingTotal > MergeSortOverlapThreshold
 				logutil.Logger(planCtx.Ctx).Error("kv group of encode step conflict with merge sort step")
 				return nil, errors.New("kv group of encode step conflict with merge sort step")
 			}
+			kvMetasOfMergeSort[kvGroup] = kvMeta
 		}
 	}
 	return kvMetasOfMergeSort, nil
