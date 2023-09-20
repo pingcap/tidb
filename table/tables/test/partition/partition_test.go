@@ -818,6 +818,188 @@ func TestExchangePartitionStates(t *testing.T) {
 	tk.MustExec(`insert into tp values (1000012,"1000012")`)
 }
 
+// Test partition and non-partition both have check constraints.
+func TestExchangePartitionCheckConstraintStates(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create database check_constraint`)
+	tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
+	tk.MustExec(`use check_constraint`)
+	tk.MustExec(`create table nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED)`)
+	tk.MustExec(`create table pt (a int check (a < 75) ENFORCED, b int check (b < 75) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )`)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use check_constraint`)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use check_constraint`)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec(`use check_constraint`)
+	// TODO: error message to check.
+	errMsg := "[table:3819]Check constraint"
+
+	tk2.MustExec("begin")
+	// Get table mdl.
+	tk2.MustQuery(`select * from nt`).Check(testkit.Rows())
+	tk2.MustQuery(`select * from pt`).Check(testkit.Rows())
+	alterChan := make(chan error)
+	go func() {
+		err := tk3.ExecToErr(`alter table pt exchange partition p1 with table nt`)
+		alterChan <- err
+	}()
+	waitFor := func(tableName, s string, pos int) {
+		for {
+			select {
+			case alterErr := <-alterChan:
+				require.Fail(t, "Alter completed unexpectedly", "With error %v", alterErr)
+			default:
+				// Alter still running
+			}
+			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'check_constraint' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
+			if len(res) == 1 && res[0][pos] == s {
+				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				break
+			}
+			gotime.Sleep(50 * gotime.Millisecond)
+		}
+		// Sleep 50ms to wait load InforSchema finish.
+		gotime.Sleep(50 * gotime.Millisecond)
+	}
+	waitFor("nt", "write only", 4)
+
+	tk.MustExec(`insert into nt values (60, 60)`)
+	// violate pt (a < 75)
+	tk.MustContainErrMsg(`insert into nt values (80, 60)`, errMsg)
+	// violate pt (b < 75)
+	tk.MustContainErrMsg(`insert into nt values (60, 80)`, errMsg)
+	// violate pt (a < 75)
+	tk.MustContainErrMsg(`update nt set a = 80 where a = 60`, errMsg)
+	// violate pt (b < 75)
+	tk.MustContainErrMsg(`update nt set b = 80 where b = 60`, errMsg)
+
+	tk.MustExec(`insert into pt values (60, 60)`)
+	// violate nt (b > 50)
+	tk.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
+	// violate nt (b > 50)
+	tk.MustContainErrMsg(`update pt set b = 50 where b = 60`, errMsg)
+	// row in partition p0(less than (50)), is ok.
+	tk.MustExec(`insert into pt values (30, 50)`)
+
+	tk5 := testkit.NewTestKit(t, store)
+	tk5.MustExec(`use check_constraint`)
+	tk5.MustExec("begin")
+	// Let tk5 get mdl of pt with the version of write-only state.
+	tk5.MustQuery(`select * from pt`)
+
+	tk6 := testkit.NewTestKit(t, store)
+	tk6.MustExec(`use check_constraint`)
+	tk6.MustExec("begin")
+	// Let tk6 get mdl of nt with the version of write-only state.
+	tk6.MustQuery(`select * from nt`)
+
+	// Release tk2 mdl, wait ddl enter next state.
+	tk2.MustExec("commit")
+	waitFor("pt", "none", 4)
+
+	// violate nt (b > 50)
+	// Now tk5 handle the sql with MDL: pt version state is write-only, nt version state is none.
+	tk5.MustContainErrMsg(`insert into pt values (60, 50)`, errMsg)
+	// Verify exists row(60, 60) in pt.
+	tk5.MustQuery(`select * from pt where a = 60 and b = 60`).Check(testkit.Rows("60 60"))
+	// Update oldData and newData both in p1, violate nt (b > 50)
+	tk5.MustContainErrMsg(`update pt set b = 50 where a = 60 and b = 60`, errMsg)
+	// Verify exists row(30, 50) in pt.
+	tk5.MustQuery(`select * from pt where a = 30 and b = 50`).Check(testkit.Rows("30 50"))
+	// update oldData in p0, newData in p1, violate nt (b > 50)
+	tk5.MustContainErrMsg(`update pt set a = 60 where a = 30 and b = 50`, errMsg)
+
+	// violate pt (a < 75)
+	tk6.MustContainErrMsg(`insert into nt values (80, 60)`, errMsg)
+	// violate pt (b < 75)
+	tk6.MustContainErrMsg(`insert into nt values (60, 80)`, errMsg)
+	// Verify exists row(60, 60) in nt.
+	tk6.MustQuery(`select * from pt where a = 60 and b = 60`).Check(testkit.Rows("60 60"))
+	// violate pt (a < 75)
+	tk6.MustContainErrMsg(`update nt set a = 80 where a = 60 and b = 60`, errMsg)
+
+	// Let tk5, tk6 release mdl.
+	tk5.MustExec("commit")
+	tk6.MustExec("commit")
+
+	// Wait ddl finish.
+	<-alterChan
+}
+
+// Test partition table has check constraints while non-partition table do not have.
+func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create database check_constraint`)
+	tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
+	tk.MustExec(`use check_constraint`)
+	tk.MustExec(`create table nt (a int, b int)`)
+	tk.MustExec(`create table pt (a int check (a < 75) ENFORCED, b int check (b < 75) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )`)
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(`use check_constraint`)
+	tk3 := testkit.NewTestKit(t, store)
+	tk3.MustExec(`use check_constraint`)
+	tk4 := testkit.NewTestKit(t, store)
+	tk4.MustExec(`use check_constraint`)
+	// TODO: error message to check.
+	errMsg := "[table:3819]Check constraint"
+
+	tk2.MustExec("begin")
+	// Get table mdl.
+	tk2.MustQuery(`select * from nt`).Check(testkit.Rows())
+	alterChan := make(chan error)
+	go func() {
+		err := tk3.ExecToErr(`alter table pt exchange partition p1 with table nt`)
+		alterChan <- err
+	}()
+	waitFor := func(tableName, s string, pos int) {
+		for {
+			select {
+			case alterErr := <-alterChan:
+				require.Fail(t, "Alter completed unexpectedly", "With error %v", alterErr)
+			default:
+				// Alter still running
+			}
+			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'check_constraint' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
+			if len(res) == 1 && res[0][pos] == s {
+				logutil.BgLogger().Info("Got state", zap.String("State", s))
+				break
+			}
+			gotime.Sleep(50 * gotime.Millisecond)
+		}
+		// Sleep 50ms to wait load InforSchema finish.
+		gotime.Sleep(50 * gotime.Millisecond)
+	}
+	waitFor("nt", "write only", 4)
+
+	tk.MustExec(`insert into nt values (60, 60)`)
+	// violate pt (a < 75)
+	tk.MustContainErrMsg(`insert into nt values (80, 60)`, errMsg)
+	// violate pt (b < 75)
+	tk.MustContainErrMsg(`insert into nt values (60, 80)`, errMsg)
+	// violate pt (a < 75)
+	tk.MustContainErrMsg(`update nt set a = 80 where a = 60`, errMsg)
+	// violate pt (b < 75)
+	tk.MustContainErrMsg(`update nt set b = 80 where b = 60`, errMsg)
+
+	tk.MustExec(`insert into pt values (60, 60)`)
+	tk.MustExec(`insert into pt values (60, 50)`)
+	tk.MustExec(`update pt set b = 50 where b = 60`)
+	// row in partition p0(less than (50)), is ok.
+	tk.MustExec(`insert into pt values (30, 50)`)
+
+	// Release tk2 mdl.
+	tk2.MustExec("commit")
+	// Wait ddl finish.
+	<-alterChan
+}
+
 func TestAddKeyPartitionStates(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
