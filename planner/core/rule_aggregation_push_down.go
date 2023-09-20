@@ -559,6 +559,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				}
 				oldAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
 				newAggFuncsArgs := make([][]expression.Expression, 0, len(agg.AggFuncs))
+				newAggOrderByItemExprs := make([][]expression.Expression, 0, len(agg.AggFuncs))
 				if noSideEffects {
 					for _, aggFunc := range agg.AggFuncs {
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
@@ -571,6 +572,16 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							break
 						}
 						newAggFuncsArgs = append(newAggFuncsArgs, newArgs)
+						// we should take group_concat (from which the orderByItem is introduced) into consideration here.
+						newOrderByItemExpr := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
+						for _, obi := range aggFunc.OrderByItems {
+							newOrderByItemExpr = append(newOrderByItemExpr, expression.ColumnSubstitute(obi.Expr, proj.schema, proj.Exprs))
+						}
+						if ExprsHasSideEffects(newArgs) {
+							noSideEffects = false
+							break
+						}
+						newAggOrderByItemExprs = append(newAggOrderByItemExprs, newOrderByItemExpr)
 					}
 				}
 				for i, funcsArgs := range oldAggFuncsArgs {
@@ -588,6 +599,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					agg.GroupByItems = newGbyItems
 					for i, aggFunc := range agg.AggFuncs {
 						aggFunc.Args = newAggFuncsArgs[i]
+						for j := range aggFunc.OrderByItems {
+							agg.AggFuncs[i].OrderByItems[j].Expr = newAggOrderByItemExprs[i][j]
+						}
 					}
 					projChild := proj.children[0]
 					agg.SetChildren(projChild)

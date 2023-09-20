@@ -263,4 +263,28 @@ func TestOnlyFullGroupByOldCases(t *testing.T) {
 	err = tk.ExecToErr("select b from t1 group by a")
 	require.NotNil(t, err)
 	require.Equal(t, err.Error(), "[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.b' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+
+	// fix issue 30554
+	tk.MustExec("drop table if exists t1,t2;")
+	tk.MustExec("create table t1 (a int, c int);")
+	tk.MustExec("insert into t1 values (1, 2), (2, 3), (2, 4), (3, 5);")
+	tk.MustExec("create table t2 (a int, c int);")
+	tk.MustExec("insert into t2 values (1, 5), (2, 4), (3, 3), (3,3);")
+	// here result is different from MySQL
+	// 1: agg child's result has the random sequence(especially when query after creating).
+	// 2: group_concat heap sort has an unstable sort result when encountering numerous rows.
+	tk.MustQuery("select group_concat(c order by (select c from t2 where t2.a=t1.a limit 1)) as grp from t1;").Check(testkit.Rows(
+		"5,3,4,2"))
+	tk.MustQuery("select group_concat(c order by (select mid(group_concat(c order by a),1,5) from t2 where t2.a=t1.a)) as grp from t1;").Check(testkit.Rows(
+		"5,3,4,2"))
+	tk.MustQuery("select group_concat(c order by (select mid(group_concat(c order by a),1,5) from t2 where t2.a=t1.a) desc) as grp from t1;").Check(testkit.Rows(
+		"2,3,4,5"))
+	tk.MustQuery("select t1.a, group_concat(c order by (select mid(group_concat(c order by a),1,5) from t2 where t2.a=t1.a)) as grp from t1 group by 1;").Check(testkit.Rows(
+		"1 2", "2 3,4", "3 5"))
+	tk.MustQuery("select t1.a, group_concat(c order by (select mid(group_concat(c order by a),1,5) from t2 where t2.a=t1.a) desc) as grp from t1 group by 1;").Check(testkit.Rows(
+		"1 2", "2 3,4", "3 5"))
+	tk.MustQuery("select group_concat(c order by (select concat(5-t1.c,group_concat(c order by a)) from t2 where t2.a=t1.a)) as grp from t1;").Check(testkit.Rows(
+		"5,4,3,2"))
+	tk.MustQuery("select group_concat(c order by (select concat(t1.c,group_concat(c)) from t2 where a=t1.a)) as grp from t1;").Check(testkit.Rows(
+		"2,3,4,5"))
 }

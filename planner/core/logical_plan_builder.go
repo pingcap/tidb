@@ -1803,6 +1803,11 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 		// 2: from base-column to select-expr
 		// After that
 		if fds.HasAggBuilt {
+			corCols := proj.ExtractCorrelatedCols()
+			corColSet := fd.NewFastIntSet()
+			for _, cc := range corCols {
+				corColSet.Insert(int(cc.Column.UniqueID))
+			}
 			for offset, expr := range proj.Exprs[:len(fields)] {
 				// skip the auxiliary column in agg appended to select fields, which mainly comes from two kind of cases:
 				// 1: having agg(t.a), this will append t.a to the select fields, if it isn't here.
@@ -1844,7 +1849,13 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				// Rule #4, if select fields are dependencies of Strict FD with determinants in group-by items, it's ok.
 				// lax FD couldn't be done here, eg: for unique key (b), index key NULL & NULL are different rows with
 				// uncertain other column values.
-				strictClosure := fds.ClosureOfStrict(fds.GroupByCols)
+				//
+				// Once we are in the sub-query we should take the correlated column as the part of the determinant of closure.
+				// case1: select group_concat(c order by (select concat(5-t1.c,group_concat(c order by a)) from t2 where t2.a=t1.a)) as grp from t1;
+				// analyze: inside sub-query, we have fd: {correlated t1.c, agg_concat_col} -> {concat_func_col}, {0} -> {agg_concat_col}
+				// 0 means no group-by columns, from what have now {0}, we couldn't derive {concat_func_col} since we miss the determinant of correlated t1.c.
+				// inside sub-query, correlated column are the same for one apply loop, let see it as a group-by column as well.
+				strictClosure := fds.ClosureOfStrict(fds.GroupByCols.Union(corColSet))
 				if item.SubsetOf(strictClosure) {
 					continue
 				}
