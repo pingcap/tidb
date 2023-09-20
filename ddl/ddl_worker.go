@@ -1354,6 +1354,7 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		}
 		affects := make([]*model.AffectedOption, len(newSchemaIDs)-1)
 		for i, newSchemaID := range newSchemaIDs {
+			// Do not add the first table to AffectedOpts. Related issue tidb#47064.
 			if i == 0 {
 				continue
 			}
