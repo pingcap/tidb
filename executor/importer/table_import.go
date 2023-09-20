@@ -22,7 +22,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
@@ -202,30 +200,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		return nil, errors.Trace(err)
 	}
 
-	backendConfig := local.BackendConfig{
-		PDAddr:                 tidbCfg.Path,
-		LocalStoreDir:          dir,
-		MaxConnPerStore:        config.DefaultRangeConcurrency,
-		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:       config.KVWriteBatchSize,
-		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
-		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
-		// enable after we support checkpoint
-		CheckpointEnabled:       false,
-		MemTableSize:            config.DefaultEngineMemCacheSize,
-		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
-		ShouldCheckTiKV:         true,
-		DupeDetectEnabled:       false,
-		DuplicateDetectOpt:      common.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		MaxOpenFiles:            int(util.GenRLimit("table_import")),
-		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
-		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
-	}
-	if e.IsRaftKV2 {
-		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
-	}
+	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
@@ -465,13 +440,12 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
+		Local: backend.LocalEngineConfig{
+			Compact:            true,
+			CompactConcurrency: 4,
+			CompactThreshold:   local.CompactionUpperThreshold,
+		},
 	}
-	// todo: support checking IsRowOrdered later.
-	//if ti.tableMeta.IsRowOrdered {
-	//	dataEngineCfg.Local.Compact = true
-	//	dataEngineCfg.Local.CompactConcurrency = 4
-	//	dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
-	//}
 	mgr := backend.MakeEngineManager(ti.backend)
 	return mgr.OpenEngine(ctx, dataEngineCfg, ti.fullTableName(), engineID)
 }

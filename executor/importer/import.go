@@ -30,11 +30,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
@@ -50,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -1237,6 +1240,35 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 		res = append(res, newExpr)
 	}
 	return res, allWarnings, nil
+}
+
+func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+	backendConfig := local.BackendConfig{
+		PDAddr:                 pdAddr,
+		LocalStoreDir:          dataDir,
+		MaxConnPerStore:        config.DefaultRangeConcurrency,
+		ConnCompressType:       config.CompressionNone,
+		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:       config.KVWriteBatchSize,
+		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
+		// enable after we support checkpoint
+		CheckpointEnabled:           false,
+		MemTableSize:                config.DefaultEngineMemCacheSize,
+		LocalWriterMemCacheSize:     int64(config.DefaultLocalWriterMemCacheSize),
+		ShouldCheckTiKV:             true,
+		DupeDetectEnabled:           false,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
+		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
+		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
+		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
+		DisableAutomaticCompactions: true,
+	}
+	if e.IsRaftKV2 {
+		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+	}
+	return backendConfig
 }
 
 // JobImportParam is the param of the job import.
