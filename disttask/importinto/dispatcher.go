@@ -687,6 +687,7 @@ func cleanUpGlobalSortedData(ctx context.Context, gTask *proto.Task, taskMeta *T
 	// since they might share the same file.
 	// we don't return error here, since the task is already done, we should
 	// return success if the task is success.
+	// TODO: maybe add a way to notify user that there are files left in global sorted storage.
 	logger := logutil.BgLogger().With(zap.Int64("task-id", gTask.ID))
 	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	defer callLog.End(zap.InfoLevel, nil)
