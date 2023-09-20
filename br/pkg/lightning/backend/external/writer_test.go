@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/kv"
@@ -41,10 +42,12 @@ func TestWriter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
-	writer := NewWriterBuilder().
+	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		Build(memStore, "/test", "0")
+
+	writer := NewEngineWriter(w)
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -58,12 +61,9 @@ func TestWriter(t *testing.T) {
 		_, err = rand.Read(kvs[i].Val)
 		require.NoError(t, err)
 	}
-	for _, pair := range kvs {
-		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
-		require.NoError(t, err)
-	}
 
-	err := writer.Close(ctx)
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
@@ -233,6 +233,19 @@ func TestMultiFileStat(t *testing.T) {
 	require.EqualValues(t, []byte{1}, s.MinKey)
 	require.EqualValues(t, []byte{5}, s.MaxKey)
 	require.EqualValues(t, 3, s.MaxOverlappingNum)
+}
+
+func TestMultiFileStatOverlap(t *testing.T) {
+	s1 := MultipleFilesStat{MinKey: dbkv.Key{1}, MaxKey: dbkv.Key{100}, MaxOverlappingNum: 100}
+	s2 := MultipleFilesStat{MinKey: dbkv.Key{5}, MaxKey: dbkv.Key{102}, MaxOverlappingNum: 90}
+	s3 := MultipleFilesStat{MinKey: dbkv.Key{111}, MaxKey: dbkv.Key{200}, MaxOverlappingNum: 200}
+	require.EqualValues(t, 200, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+
+	s3.MaxOverlappingNum = 70
+	require.EqualValues(t, 190, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+
+	s3.MinKey = dbkv.Key{0}
+	require.EqualValues(t, 260, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
 }
 
 func TestWriterMultiFileStat(t *testing.T) {

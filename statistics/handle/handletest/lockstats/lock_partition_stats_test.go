@@ -148,7 +148,7 @@ func TestLockAndUnlockPartitionStatsRepeatedly(t *testing.T) {
 	// Lock the partition again and check the warning.
 	tk.MustExec("lock stats t partition p0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip locking locked table: test.t partition (p0)",
+		"Warning 1105 skip locking locked partition of table test.t: p0",
 	))
 
 	// Unlock the partition.
@@ -160,7 +160,7 @@ func TestLockAndUnlockPartitionStatsRepeatedly(t *testing.T) {
 	// Unlock the partition again and check the warning.
 	tk.MustExec("unlock stats t partition p0")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 skip unlocking unlocked table: test.t partition (p0)",
+		"Warning 1105 skip unlocking unlocked partition of table test.t: p0",
 	))
 }
 
@@ -258,6 +258,28 @@ func TestUnlockTheWholeTableWouldUnlockLockedPartitionsAndGenerateWarning(t *tes
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
 	require.Equal(t, 0, num)
+}
+
+func TestSkipLockALotOfPartitions(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b)) partition by range(a) " +
+		"(partition p0 values less than (10), partition p1 values less than (20), " +
+		"partition a values less than (30), " +
+		"partition b values less than (40), " +
+		"partition g values less than (90), " +
+		"partition h values less than (100))")
+
+	tk.MustExec("lock stats t partition p0, p1, a, b, g, h")
+
+	// Skip locking a lot of partitions.
+	tk.MustExec("lock stats t partition p0, p1, a, b, g, h")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip locking locked partitions of table test.t: a, b, g, h, p0, p1",
+	))
 }
 
 func setupTestEnvironmentWithPartitionedTableT(t *testing.T) (kv.Storage, *testkit.TestKit, *model.TableInfo) {
