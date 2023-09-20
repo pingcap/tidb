@@ -40,7 +40,7 @@ const (
 	// We limit the memory usage of KV deliver to 1GB per concurrency, and data
 	// KV deliver has external.DefaultMemSizeLimit, the rest of memory is for
 	// all index KV deliver.
-	// Note: this size the memory taken by KV, not the size of taken by golang,
+	// Note: this size is the memory taken by KV, not the size of taken by golang,
 	// each KV has additional 24*2 bytes overhead for golang slice.
 	indexKVTotalBufSize = size.GB - external.DefaultMemSizeLimit
 )

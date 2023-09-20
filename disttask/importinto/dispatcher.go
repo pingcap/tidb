@@ -588,16 +588,12 @@ func getLoadedRowCountOnGlobalSort(handle dispatcher.TaskHandle, gTask *proto.Ta
 		return 0, err
 	}
 
-	subtaskMetas := make([]*WriteIngestStepMeta, 0, len(metas))
+	var loadedRowCount uint64
 	for _, bs := range metas {
 		var subtaskMeta WriteIngestStepMeta
 		if err = json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return 0, err
+			return 0, errors.Trace(err)
 		}
-		subtaskMetas = append(subtaskMetas, &subtaskMeta)
-	}
-	var loadedRowCount uint64
-	for _, subtaskMeta := range subtaskMetas {
 		loadedRowCount += subtaskMeta.Result.LoadedRowCnt
 	}
 	return loadedRowCount, nil
