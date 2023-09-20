@@ -351,6 +351,40 @@ func TestDropPartitionShouldCleanUpLockInfo(t *testing.T) {
 	require.Equal(t, 1, num)
 }
 
+func TestTruncatePartitionShouldCleanUpLockInfo(t *testing.T) {
+	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
+
+	handle := dom.StatsHandle()
+	// Get partition stats.
+	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
+	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	for _, col := range partition0Stats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
+	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	for _, col := range partition1Stats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	tk.MustExec("lock stats t partition p0, p1")
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, 2, num)
+
+	// Truncate partition p0.
+	tk.MustExec("alter table t truncate partition p0")
+
+	// GC stats.
+	ddlLease := time.Duration(0)
+	require.Nil(t, handle.GCStats(dom.InfoSchema(), ddlLease))
+
+	// Check the lock info is cleaned up.
+	rows = tk.MustQuery(selectTableLockSQL).Rows()
+	num, _ = strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, 1, num)
+}
+
 func TestExchangePartitionShouldChangeNothing(t *testing.T) {
 	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
 
