@@ -56,7 +56,6 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
 	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/forceMergeSort", `return("data")`)
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
@@ -89,6 +88,17 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.NoError(json.Unmarshal(globalTask.Meta, &taskMeta))
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
+	// merge-sort data kv
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/forceMergeSort", `return("data")`)
+	s.tk.MustExec("truncate table t")
+	result = s.tk.MustQuery(importSQL).Rows()
+	s.Len(result, 1)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(
+		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
+		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
+	))
+
+	// failed task, should clean up all sorted data too.
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
 	s.tk.MustExec("truncate table t")
 	result = s.tk.MustQuery(importSQL + ", detached").Rows()

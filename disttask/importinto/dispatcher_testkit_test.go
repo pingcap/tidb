@@ -91,7 +91,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := dsp.MockDispatcher(task)
 	ext := importinto.ImportDispatcherExt{}
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(d, task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(d, task)
@@ -112,7 +112,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 		require.NoError(t, manager.FinishSubtask(s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(d, task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(d, task)
@@ -122,7 +122,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, task.Step)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, ext.GetNextStep(d, task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(d, task)
