@@ -827,6 +827,15 @@ var defaultSysVars = []*SysVar{
 		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMaxValue, Value: string(DefTiDBGOGCMaxValue), Type: TypeInt, MinValue: 100, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		on := TiDBOptOn(val)
+		gctuner.EnableGOGCTuner.Store(on)
+		if !on {
+			gctuner.SetDefaultGOGC()
+		}
+		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: On, Type: TypeBool, Depended: true},
 	/* tikv gc metrics */
