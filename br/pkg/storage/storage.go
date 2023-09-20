@@ -14,6 +14,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -170,6 +171,15 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 		SendCredentials: sendCreds,
 		HTTPClient:      nil,
 	})
+}
+
+// NewWithDefaultOpt creates ExternalStorage with default options.
+func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
+	var opts ExternalStorageOptions
+	if intest.InTest {
+		opts.NoCredentials = true
+	}
+	return New(ctx, backend, &opts)
 }
 
 // New creates an ExternalStorage with options.

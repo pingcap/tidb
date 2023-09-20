@@ -908,11 +908,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
 	}
 
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
+	s, err := storage.NewWithDefaultOpt(ctx, b)
 	if err != nil {
 		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
 	}

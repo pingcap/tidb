@@ -940,11 +940,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		opt := &storage.ExternalStorageOptions{}
-		if intest.InTest {
-			opt.NoCredentials = true
-		}
-		store, err := storage.New(ctx, storeBackend, opt)
+		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
 		if err != nil {
 			return err
 		}

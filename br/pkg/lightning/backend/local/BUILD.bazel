@@ -57,6 +57,7 @@ go_library(
         "//util/codec",
         "//util/engine",
         "//util/hack",
+        "//util/intest",
         "//util/mathutil",
         "//util/ranger",
         "@com_github_cockroachdb_pebble//:pebble",
