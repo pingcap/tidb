@@ -436,7 +436,7 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	}
 	ruCfg := resourceGroupCtl.GetConfig()
 	if e.WorkloadType == ast.TPCH10 {
-		return e.staticCalibrateTpch10(ctx, req, exec, ruCfg)
+		return staticCalibrateTpch10(ctx, req, exec, ruCfg, e.WorkloadType)
 	}
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
@@ -470,10 +470,10 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	return nil
 }
 
-func (e *Executor) staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig) error {
-	baseCost, ok := workloadBaseRUCostMap[ast.TPCH10]
+func staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig, workloadTp ast.CalibrateResourceType) error {
+	baseCost, ok := workloadBaseRUCostMap[workloadTp]
 	if !ok {
-		return errors.Errorf("unknown workload '%T'", ast.TPCH10)
+		return errors.Errorf("unknown workload '%T'", workloadTp)
 	}
 	ruPerCPU := float64(ruCfg.CPUMsCost)*baseCost.kvCPU + float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes)
 	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
