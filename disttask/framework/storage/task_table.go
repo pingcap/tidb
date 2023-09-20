@@ -325,7 +325,7 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 }
 
 // GetSubtaskInStates gets the subtask in the states.
-func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
+func (stm *TaskManager) GetFirstSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
@@ -647,6 +647,20 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			if err != nil {
 				return err
 			}
+		}
+
+		for _, subtask := range subtasks {
+			rs, err := ExecSQL(stm.ctx, se, `select id from mysql.tidb_background_subtask 
+					where task_key = %? and exec_id = %? and step = %?`,
+				gTask.ID, subtask.SchedulerID, gTask.Step)
+			if err != nil {
+				return err
+			}
+			if len(rs) == 0 {
+				return errors.New("can not find the subtask")
+			}
+			subtask.ID = rs[0].GetInt64(0)
+			subtask.State = subtaskState
 		}
 
 		return nil

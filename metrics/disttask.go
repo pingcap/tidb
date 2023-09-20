@@ -23,6 +23,7 @@ const (
 	WaitingStatus     = "waiting"
 	RunningStatus     = "running"
 	CompletedStatus   = "completed"
+	RevertingStatus   = "reverting"
 )
 
 const (
@@ -38,6 +39,9 @@ var (
 	DistTaskDispatcherGauge          *prometheus.GaugeVec
 	DistTaskDispatcherDurationGauge  *prometheus.GaugeVec
 	DistTaskDispatcherStarttimeGauge *prometheus.GaugeVec
+
+	DistDDLSubTaskCntGauge      *prometheus.GaugeVec
+	DistDDLSubTaskDurationGauge *prometheus.GaugeVec
 )
 
 // InitDistDDLMetrics initializes disttask metrics.
@@ -65,4 +69,20 @@ func InitDistDDLMetrics() {
 			Name:      "dispatcher_duration",
 			Help:      "Gauge of duration time (ms) of distdispatcher.",
 		}, []string{LblTaskType, LblTaskStatus, LblTaskID})
+
+	DistDDLSubTaskCntGauge = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "disttask",
+			Name:      "ddl_subtask_cnt",
+			Help:      "Gauge of ddl subtask count.",
+		}, []string{LblTaskType, LblTaskID, LblSchedulerID, LblTaskStatus})
+
+	DistDDLSubTaskDurationGauge = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "disttask",
+			Name:      "ddl_subtask_duration",
+			Help:      "Gauge of ddl subtask duration.",
+		}, []string{LblTaskType, LblTaskID, LblSchedulerID, LblTaskStatus, LblSubTaskID})
 }
