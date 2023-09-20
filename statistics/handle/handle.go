@@ -518,12 +518,25 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	if !ok {
 		return nil
 	}
+	var hgMeta *statistics.Histogram
+	wrapper := &statsWrapper{}
 	c, ok := tbl.Columns[col.ID]
 	if (!ok && !tbl.ColAndIndexExistenceMap.Has(col.ID, false)) || (ok && !c.IsLoadNeeded()) {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
-	hg, err := statistics.HistogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+	if ok {
+		hgMeta = &c.Histogram
+		wrapper.colInfo = c.Info
+	} else {
+		wrapper.colInfo = tbl.ColAndIndexExistenceMap.GetCol(col.ID)
+		hgMeta, _, _, err = h.readHistFromStorage(&col, wrapper, reader)
+		if hgMeta == nil || err != nil {
+			statistics.HistogramNeededItems.Delete(col)
+			return err
+		}
+	}
+	hg, err := statistics.HistogramFromStorage(reader, col.TableID, col.ID, &wrapper.colInfo.FieldType, hgMeta.NDV, 0, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -550,11 +563,11 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 	colHist := &statistics.Column{
 		PhysicalID: col.TableID,
 		Histogram:  *hg,
-		Info:       c.Info,
+		Info:       wrapper.colInfo,
 		CMSketch:   cms,
 		TopN:       topN,
 		FMSketch:   fms,
-		IsHandle:   c.IsHandle,
+		IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(wrapper.colInfo.GetFlag()),
 		StatsVer:   statsVer,
 	}
 	if colHist.StatsAvailable() {
@@ -568,7 +581,7 @@ func (h *Handle) loadNeededColumnHistograms(reader *statistics.StatsReader, col 
 		return nil
 	}
 	tbl = tbl.Copy()
-	tbl.Columns[c.ID] = colHist
+	tbl.Columns[col.ID] = colHist
 	if h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil) {
 		statistics.HistogramNeededItems.Delete(col)
 	}
@@ -581,12 +594,31 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 	if !ok {
 		return nil
 	}
+	var (
+		hgMeta         *statistics.Histogram
+		flag           int64
+		lastAnalyzePos *types.Datum
+	)
 	index, ok := tbl.Indices[idx.ID]
 	if (!ok && tbl.ColAndIndexExistenceMap.Has(idx.ID, true)) || (ok && index.IsFullLoad()) {
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
-	hg, err := statistics.HistogramFromStorage(reader, idx.TableID, index.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, 1, index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+	wrapper := &statsWrapper{}
+	if ok {
+		hgMeta = &index.Histogram
+		wrapper.idxInfo = index.Info
+		flag = index.Flag
+		lastAnalyzePos = new(types.Datum)
+		lastAnalyzePos.SetUint64(index.LastUpdateVersion)
+	} else {
+		hgMeta, lastAnalyzePos, flag, err = h.readHistFromStorage(&idx, nil, reader)
+		if err != nil {
+			return err
+		}
+		wrapper.idxInfo = tbl.ColAndIndexExistenceMap.GetIndex(idx.ID)
+	}
+	hg, err := statistics.HistogramFromStorage(reader, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -610,10 +642,10 @@ func (h *Handle) loadNeededIndexHistograms(reader *statistics.StatsReader, idx m
 		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", idx.TableID, idx.ID))
 	}
 	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: index.Info, StatsVer: rows[0].GetInt64(0),
-		Flag: index.Flag, PhysicalID: idx.TableID,
+		Info: wrapper.idxInfo, StatsVer: rows[0].GetInt64(0),
+		Flag: flag, PhysicalID: idx.TableID,
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
-	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
+	lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
 	oldCache = h.statsCache.Load()
 	tbl, ok = oldCache.Get(idx.TableID)
