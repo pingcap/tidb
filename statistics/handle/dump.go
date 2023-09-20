@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"sync"
 	"time"
 
 	"github.com/klauspost/compress/gzip"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
+	compressutil "github.com/pingcap/tidb/util/compress"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -533,12 +533,6 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 	return tbl, nil
 }
 
-var gzipWriterPool = sync.Pool{
-	New: func() any {
-		return gzip.NewWriter(io.Discard)
-	},
-}
-
 // JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
 func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 	data, err := json.Marshal(jsTable)
@@ -546,8 +540,8 @@ func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	var gzippedData bytes.Buffer
-	gzipWriter := gzipWriterPool.Get().(*gzip.Writer)
-	defer gzipWriterPool.Put(gzipWriter)
+	gzipWriter := compressutil.GzipWriterPool.Get().(*gzip.Writer)
+	defer compressutil.GzipWriterPool.Put(gzipWriter)
 	gzipWriter.Reset(&gzippedData)
 	if _, err := gzipWriter.Write(data); err != nil {
 		return nil, errors.Trace(err)
@@ -567,12 +561,6 @@ func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 	return blocks, nil
 }
 
-var gzipReaderPool = sync.Pool{
-	New: func() any {
-		return &gzip.Reader{}
-	},
-}
-
 // BlocksToJSONTable convert gzip-compressed blocks to JSONTable
 func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
 	if len(blocks) == 0 {
@@ -583,13 +571,13 @@ func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
 		data = append(data, blocks[i]...)
 	}
 	gzippedData := bytes.NewReader(data)
-	gzipReader := gzipReaderPool.Get().(*gzip.Reader)
+	gzipReader := compressutil.GzipReaderPool.Get().(*gzip.Reader)
 	if err := gzipReader.Reset(gzippedData); err != nil {
-		gzipReaderPool.Put(gzipReader)
+		compressutil.GzipReaderPool.Put(gzipReader)
 		return nil, err
 	}
 	defer func() {
-		gzipReaderPool.Put(gzipReader)
+		compressutil.GzipReaderPool.Put(gzipReader)
 	}()
 	if err := gzipReader.Close(); err != nil {
 		return nil, err

@@ -38,6 +38,7 @@ go_library(
         "//types",
         "//util",
         "//util/chunk",
+        "//util/compress",
         "//util/logutil",
         "//util/mathutil",
         "//util/sqlexec",
