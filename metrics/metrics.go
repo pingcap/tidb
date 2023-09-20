@@ -264,6 +264,9 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
+	prometheus.MustRegister(DistDDLSubTaskCntGauge)
+	prometheus.MustRegister(DistDDLSubTaskDurationGauge)
+
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics

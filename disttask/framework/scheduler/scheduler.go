@@ -17,6 +17,7 @@ package scheduler
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -171,7 +173,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			break
 		}
 
-		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
+		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("GetSubtaskInStates meets error", zap.Error(err))
 			continue
@@ -188,11 +190,13 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			}
 			continue
 		}
-		s.startSubtask(subtask.ID)
+
+		s.startSubtask(subtask)
 		if err := s.getError(); err != nil {
 			logutil.Logger(s.logCtx).Warn("startSubtask meets error", zap.Error(err))
 			continue
 		}
+
 		failpoint.Inject("mockCleanScheduler", func() {
 			v, ok := testContexts.Load(s.id)
 			if ok {
@@ -217,9 +221,9 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()
 		return
@@ -259,6 +263,67 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 			time.Sleep(20 * time.Second)
 		}
 	})
+
+	var minimalTaskWg sync.WaitGroup
+	for _, minimalTask := range minimalTasks {
+		minimalTaskWg.Add(1)
+		j := minimalTask
+		minimalTaskCh <- func() {
+			s.runMinimalTask(ctx, j, subtask.Type, subtask.Step)
+			minimalTaskWg.Done()
+		}
+	}
+	failpoint.Inject("waitUntilError", func() {
+		for i := 0; i < 10; i++ {
+			if s.getError() != nil {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+	})
+	minimalTaskWg.Wait()
+	s.onSubtaskFinished(ctx, scheduler, subtask)
+}
+
+func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
+	var subtaskMeta []byte
+	if err := s.getError(); err == nil {
+		if subtaskMeta, err = scheduler.OnFinished(ctx, subtask.Meta); err != nil {
+			s.onError(err)
+		}
+	}
+	if err := s.getError(); err != nil {
+		if errors.Cause(err) == context.Canceled {
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
+		} else {
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
+		}
+		s.markErrorHandled()
+		return
+	}
+	s.finishSubtask(subtask, subtaskMeta)
+	failpoint.Inject("syncAfterSubtaskFinish", func() {
+		TestSyncChan <- struct{}{}
+		<-TestSyncChan
+	})
+}
+
+func (s *BaseScheduler) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
+	select {
+	case <-minimalTaskCtx.Done():
+		s.onError(minimalTaskCtx.Err())
+		return
+	default:
+	}
+	if s.getError() != nil {
+		return
+	}
+	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Stringer("minimal_task", minimalTask))
+	executor, err := s.GetMiniTaskExecutor(minimalTask, tp, step)
+	if err != nil {
+		s.onError(err)
+		return
+	}
 
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
@@ -321,7 +386,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 
 	// We should cancel all subtasks before rolling back
 	for {
-		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRunning)
+		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			s.onError(err)
 			return s.getError()
@@ -331,7 +396,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 			break
 		}
 
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		if err = s.getError(); err != nil {
 			return err
 		}
@@ -342,7 +407,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		s.onError(err)
 		return s.getError()
 	}
-	subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStateRevertPending)
+	subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStateRevertPending)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -351,17 +416,17 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
-	s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverting, nil)
+	s.updateSubtaskStateAndError(subtask, proto.TaskStateReverting, nil)
 	if err := s.getError(); err != nil {
 		return err
 	}
 
 	err = executor.Rollback(rollbackCtx)
 	if err != nil {
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRevertFailed, nil)
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateRevertFailed, nil)
 		s.onError(err)
 	} else {
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverted, nil)
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateReverted, nil)
 	}
 	return s.getError()
 }
@@ -436,16 +501,100 @@ func (s *BaseScheduler) resetError() {
 	s.mu.handled = false
 }
 
-func (s *BaseScheduler) startSubtask(id int64) {
-	err := s.taskTable.StartSubtask(id)
+func (s *BaseScheduler) startSubtask(subtask *proto.Subtask) {
+	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+	).Dec()
+	metrics.DistDDLSubTaskDurationGauge.DeleteLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+		strconv.Itoa(int(subtask.ID)),
+	)
+	err := s.taskTable.StartSubtask(subtask.ID)
 	if err != nil {
 		s.onError(err)
 	}
+	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+	).Inc()
+	metrics.DistDDLSubTaskDurationGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+		strconv.Itoa(int(subtask.ID)),
+	).SetToCurrentTime()
 }
 
-func (s *BaseScheduler) updateSubtaskStateAndError(subtaskID int64, state string, subTaskErr error) {
-	err := s.taskTable.UpdateSubtaskStateAndError(subtaskID, state, subTaskErr)
+func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {
+	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+	).Dec()
+	metrics.DistDDLSubTaskDurationGauge.DeleteLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+		strconv.Itoa(int(subtask.ID)),
+	)
+	err := s.taskTable.UpdateSubtaskStateAndError(subtask.ID, state, subTaskErr)
 	if err != nil {
 		s.onError(err)
 	}
+	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		state,
+	).Inc()
+	metrics.DistDDLSubTaskDurationGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		state,
+		strconv.Itoa(int(subtask.ID)),
+	).SetToCurrentTime()
+}
+
+func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask, subtaskMeta []byte) {
+	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+	).Dec()
+	metrics.DistDDLSubTaskDurationGauge.DeleteLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+		strconv.Itoa(int(subtask.ID)),
+	)
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+		s.onError(err)
+	}
+	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		proto.TaskStateSucceed,
+	).Inc()
+	metrics.DistDDLSubTaskDurationGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		proto.TaskStateSucceed,
+		strconv.Itoa(int(subtask.ID)),
+	).SetToCurrentTime()
 }

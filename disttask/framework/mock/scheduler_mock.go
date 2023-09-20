@@ -85,7 +85,7 @@ func (mr *MockTaskTableMockRecorder) GetGlobalTasksInStates(arg0 ...interface{})
 }
 
 // GetSubtaskInStates mocks base method.
-func (m *MockTaskTable) GetSubtaskInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) (*proto.Subtask, error) {
+func (m *MockTaskTable) GetFirstSubtaskInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) (*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	varargs := []interface{}{arg0, arg1, arg2}
 	for _, a := range arg3 {
@@ -98,10 +98,10 @@ func (m *MockTaskTable) GetSubtaskInStates(arg0 string, arg1, arg2 int64, arg3 .
 }
 
 // GetSubtaskInStates indicates an expected call of GetSubtaskInStates.
-func (mr *MockTaskTableMockRecorder) GetSubtaskInStates(arg0, arg1, arg2 interface{}, arg3 ...interface{}) *gomock.Call {
+func (mr *MockTaskTableMockRecorder) GetFirstSubtaskInStates(arg0, arg1, arg2 interface{}, arg3 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{arg0, arg1, arg2}, arg3...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskInStates", reflect.TypeOf((*MockTaskTable)(nil).GetSubtaskInStates), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskInStates", reflect.TypeOf((*MockTaskTable)(nil).GetFirstSubtaskInStates), varargs...)
 }
 
 // HasSubtasksInStates mocks base method.
