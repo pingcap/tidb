@@ -292,7 +292,7 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 2)
 	expected := []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	tk.MustExec(`GRANT Index ON test1.* TO  'show'@'localhost';`)
@@ -300,8 +300,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT INDEX ON test1.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT INDEX ON `test1`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add another db privilege to the same db and test again.
@@ -310,8 +310,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT DELETE,INDEX ON test1.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT DELETE,INDEX ON `test1`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	tk.MustExec(`GRANT ALL ON test1.* TO  'show'@'localhost';`)
@@ -319,8 +319,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add table scope privileges
@@ -329,9 +329,9 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 4)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT SELECT ON test.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
+		"GRANT SELECT ON `test`.* TO 'show'@'localhost'",
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'",
+		"GRANT UPDATE ON `test`.`test` TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Revoke the db privilege of `test` and test again. See issue #30855.
@@ -340,8 +340,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT UPDATE ON test.test TO 'show'@'localhost'`}
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'",
+		"GRANT UPDATE ON `test`.`test` TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Add another table privilege and test again.
@@ -350,8 +350,8 @@ func TestShowGrants(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, gs, 3)
 	expected = []string{`GRANT ALL PRIVILEGES ON *.* TO 'show'@'localhost'`,
-		`GRANT ALL PRIVILEGES ON test1.* TO 'show'@'localhost'`,
-		`GRANT SELECT,UPDATE ON test.test TO 'show'@'localhost'`}
+		"GRANT ALL PRIVILEGES ON `test1`.* TO 'show'@'localhost'",
+		"GRANT SELECT,UPDATE ON `test`.`test` TO 'show'@'localhost'"}
 	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
 
 	// Expected behavior: Usage still exists after revoking all privileges
@@ -452,7 +452,7 @@ func TestShowColumnGrants(t *testing.T) {
 	pc := privilege.GetPrivilegeManager(tk.Session())
 	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "column", Hostname: "%"}, nil)
 	require.NoError(t, err)
-	require.Equal(t, "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON test.column_table TO 'column'@'%'", strings.Join(gs, " "))
+	require.Equal(t, "GRANT USAGE ON *.* TO 'column'@'%' GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `test`.`column_table` TO 'column'@'%'", strings.Join(gs, " "))
 }
 
 func TestDropTablePrivileges(t *testing.T) {
@@ -2232,7 +2232,7 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 		Hostname: "localhost",
 	}, nil, nil)
 
-	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON db.* TO 'u1'@'%'"))
+	tk.MustQuery(`SHOW GRANTS FOR u1`).Check(testkit.Rows("GRANT SELECT ON *.* TO 'u1'@'%' WITH GRANT OPTION", "GRANT UPDATE,DELETE ON `db`.* TO 'u1'@'%'"))
 
 	tk.MustExec("GRANT SELECT ON d1.* to u2")
 	tk.MustExec("GRANT SELECT ON d2.* to u2 WITH GRANT OPTION")
@@ -2240,18 +2240,18 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("GRANT SELECT ON d4.* to u2")
 	tk.MustExec("GRANT SELECT ON d5.* to u2")
 	tk.MustQuery(`SHOW GRANTS FOR u2;`).Sort().Check(testkit.Rows(
-		"GRANT SELECT ON d1.* TO 'u2'@'%'",
-		"GRANT SELECT ON d2.* TO 'u2'@'%' WITH GRANT OPTION",
-		"GRANT SELECT ON d3.* TO 'u2'@'%'",
-		"GRANT SELECT ON d4.* TO 'u2'@'%'",
-		"GRANT SELECT ON d5.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d1`.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d2`.* TO 'u2'@'%' WITH GRANT OPTION",
+		"GRANT SELECT ON `d3`.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d4`.* TO 'u2'@'%'",
+		"GRANT SELECT ON `d5`.* TO 'u2'@'%'",
 		"GRANT USAGE ON *.* TO 'u2'@'%'",
 	))
 
 	tk.MustExec("grant all on hchwang.* to u3 with grant option")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT ALL PRIVILEGES ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
 	tk.MustExec("revoke all on hchwang.* from u3")
-	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION"))
+	tk.MustQuery(`SHOW GRANTS FOR u3;`).Check(testkit.Rows("GRANT USAGE ON *.* TO 'u3'@'%'", "GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION"))
 
 	// Same again but with column privileges.
 
@@ -2261,8 +2261,8 @@ func TestGrantOptionAndRevoke(t *testing.T) {
 	tk.MustExec("revoke all on test.testgrant from u3")
 	tk.MustQuery(`SHOW GRANTS FOR u3`).Sort().Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'u3'@'%'",
-		"GRANT USAGE ON hchwang.* TO 'u3'@'%' WITH GRANT OPTION",
-		"GRANT USAGE ON test.testgrant TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON `hchwang`.* TO 'u3'@'%' WITH GRANT OPTION",
+		"GRANT USAGE ON `test`.`testgrant` TO 'u3'@'%' WITH GRANT OPTION",
 	))
 }
 
@@ -2299,8 +2299,8 @@ func TestGrantReferences(t *testing.T) {
 	}, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR referencesUser").Check(testkit.Rows(
 		`GRANT REFERENCES ON *.* TO 'referencesUser'@'%'`,
-		`GRANT REFERENCES ON reftestdb.* TO 'referencesUser'@'%'`,
-		`GRANT REFERENCES ON reftestdb.reftest TO 'referencesUser'@'%'`))
+		"GRANT REFERENCES ON `reftestdb`.* TO 'referencesUser'@'%'",
+		"GRANT REFERENCES ON `reftestdb`.`reftest` TO 'referencesUser'@'%'"))
 	tk.MustExec("DROP USER referencesUser")
 	tk.MustExec("DROP SCHEMA reftestdb")
 }
@@ -2452,7 +2452,7 @@ func TestGrantLockTables(t *testing.T) {
 	}, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
 		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
-		`GRANT LOCK TABLES ON lock_tables_db.* TO 'lock_tables_user'@'%'`))
+		"GRANT LOCK TABLES ON `lock_tables_db`.* TO 'lock_tables_user'@'%'"))
 	tk.MustExec("DROP USER lock_tables_user")
 	tk.MustExec("DROP DATABASE lock_tables_db")
 }
@@ -2493,16 +2493,16 @@ func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 
 	tk.MustQuery("SHOW GRANTS FOR current_user() USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT SELECT ON test.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT ON `test`.* TO 'joe'@'%'",
+		"GRANT UPDATE ON `role`.* TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 	tk.MustQuery("SHOW GRANTS FOR joe USING otherrole;").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'joe'@'%'",
-		"GRANT SELECT ON test.* TO 'joe'@'%'",
-		"GRANT UPDATE ON role.* TO 'joe'@'%'",
-		"GRANT SELECT,DELETE ON mysql.user TO 'joe'@'%'",
+		"GRANT SELECT ON `test`.* TO 'joe'@'%'",
+		"GRANT UPDATE ON `role`.* TO 'joe'@'%'",
+		"GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'",
 		"GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'",
 	))
 }
@@ -2580,7 +2580,7 @@ func TestGrantCreateTmpTables(t *testing.T) {
 	}, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		`GRANT CREATE TEMPORARY TABLES ON *.* TO 'u1'@'%'`,
-		`GRANT CREATE TEMPORARY TABLES ON create_tmp_table_db.* TO 'u1'@'%'`))
+		"GRANT CREATE TEMPORARY TABLES ON `create_tmp_table_db`.* TO 'u1'@'%'"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE create_tmp_table_db")
 }
@@ -2773,7 +2773,7 @@ func TestGrantEvent(t *testing.T) {
 	}, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		`GRANT EVENT ON *.* TO 'u1'@'%'`,
-		`GRANT EVENT ON event_db.* TO 'u1'@'%'`))
+		"GRANT EVENT ON `event_db`.* TO 'u1'@'%'"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE event_db")
 }
@@ -2797,7 +2797,7 @@ func TestGrantRoutine(t *testing.T) {
 	}, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		`GRANT CREATE ROUTINE,ALTER ROUTINE ON *.* TO 'u1'@'%'`,
-		`GRANT CREATE ROUTINE,ALTER ROUTINE ON routine_db.* TO 'u1'@'%'`))
+		"GRANT CREATE ROUTINE,ALTER ROUTINE ON `routine_db`.* TO 'u1'@'%'"))
 	tk.MustExec("DROP USER u1")
 	tk.MustExec("DROP DATABASE routine_db")
 }
@@ -3090,3 +3090,97 @@ func TestPasswordExpireWithSandBoxMode(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, tk.Session().InSandBoxMode())
 }
+<<<<<<< HEAD
+=======
+
+func TestVerificationInfoWithSessionTokenPlugin(t *testing.T) {
+	// prepare signing certs
+	tempDir := t.TempDir()
+	certPath := filepath.Join(tempDir, "test1_cert.pem")
+	keyPath := filepath.Join(tempDir, "test1_key.pem")
+	err := util.CreateCertificates(certPath, keyPath, 4096, x509.RSA, x509.UnknownSignatureAlgorithm)
+	require.NoError(t, err)
+	sessionstates.SetKeyPath(keyPath)
+	sessionstates.SetCertPath(certPath)
+
+	// prepare user
+	store := createStoreAndPrepareDB(t)
+	rootTk := testkit.NewTestKit(t, store)
+	rootTk.MustExec(`CREATE USER 'testuser'@'localhost' PASSWORD EXPIRE`)
+	// prepare session token
+	token, err := sessionstates.CreateSessionToken("testuser")
+	require.NoError(t, err)
+	tokenBytes, err := json.Marshal(token)
+	require.NoError(t, err)
+
+	// Test password expiration without sandbox.
+	user := &auth.UserIdentity{Username: "testuser", Hostname: "localhost", AuthPlugin: mysql.AuthTiDBSessionToken}
+	tk := testkit.NewTestKit(t, store)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Test password expiration with sandbox.
+	variable.IsSandBoxModeEnabled.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.False(t, tk.Session().InSandBoxMode())
+
+	// Enable resource group.
+	variable.EnableResourceControl.Store(true)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "default", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Non-default resource group.
+	rootTk.MustExec("CREATE RESOURCE GROUP rg1 RU_PER_SEC = 999")
+	rootTk.MustExec(`ALTER USER 'testuser'@'localhost' RESOURCE GROUP rg1`)
+	err = tk.Session().Auth(user, tokenBytes, nil, nil)
+	require.NoError(t, err)
+	require.Equal(t, "rg1", tk.Session().GetSessionVars().ResourceGroupName)
+
+	// Wrong token
+	err = tk.Session().Auth(user, nil, nil, nil)
+	require.ErrorContains(t, err, "Access denied")
+}
+
+func TestNilHandleInConnectionVerification(t *testing.T) {
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+	privileges.SkipWithGrant = true
+	defer func() {
+		config.GetGlobalConfig().Security.SkipGrantTable = false
+		privileges.SkipWithGrant = false
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: `%`}, nil, nil, nil))
+}
+
+func testShowGrantsSQLMode(t *testing.T, tk *testkit.TestKit, expected []string) {
+	pc := privilege.GetPrivilegeManager(tk.Session())
+	gs, err := pc.ShowGrants(tk.Session(), &auth.UserIdentity{Username: "show_sql_mode", Hostname: "localhost"}, nil)
+	require.NoError(t, err)
+	require.Len(t, gs, 2)
+	require.True(t, testutil.CompareUnorderedStringSlice(gs, expected), fmt.Sprintf("gs: %v, expected: %v", gs, expected))
+}
+
+func TestShowGrantsSQLMode(t *testing.T) {
+	store := createStoreAndPrepareDB(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ctx, _ := tk.Session().(sessionctx.Context)
+	tk.MustExec(`CREATE USER 'show_sql_mode'@'localhost' identified by '123';`)
+	tk.MustExec(`GRANT Select ON test.* TO 'show_sql_mode'@'localhost';`)
+
+	testShowGrantsSQLMode(t, tk, []string{
+		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
+		"GRANT SELECT ON `test`.* TO 'show_sql_mode'@'localhost'",
+	})
+
+	ctx.GetSessionVars().SQLMode = mysql.SetSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeANSIQuotes)
+	testShowGrantsSQLMode(t, tk, []string{
+		"GRANT USAGE ON *.* TO 'show_sql_mode'@'localhost'",
+		"GRANT SELECT ON \"test\".* TO 'show_sql_mode'@'localhost'",
+	})
+}
+>>>>>>> 6271d1c80b2 (executor: Escape object in show grants output (#46976))
