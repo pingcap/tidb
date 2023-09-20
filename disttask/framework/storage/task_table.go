@@ -374,7 +374,7 @@ func (stm *TaskManager) PrintSubtaskInfo(_ int64) {
 }
 
 // PrintHistorySubtaskInfo log the history subtask info by taskKey. Only used for UT.
-func (stm *TaskManager) PrintSubtaskHistoryInfo(_ int64) {
+func (stm *TaskManager) PrintHistorySubtaskInfo(_ int64) {
 	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask_history")
 

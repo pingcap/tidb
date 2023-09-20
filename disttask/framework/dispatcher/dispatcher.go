@@ -235,6 +235,7 @@ func (d *BaseDispatcher) onPaused() error {
 	return nil
 }
 
+// TestSyncChan is used to sync the test.
 var TestSyncChan = make(chan struct{})
 
 // handle task in resuming state

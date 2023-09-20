@@ -32,7 +32,7 @@ func CheckSubtasksState(t *testing.T, taskID int64, state string, expectedCnt in
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	mgr.PrintSubtaskInfo(taskID)
-	mgr.PrintSubtaskHistoryInfo(taskID)
+	mgr.PrintHistorySubtaskInfo(taskID)
 	cnt, err := mgr.GetSubtaskInStatesCnt(taskID, state)
 	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(mgr)
 
