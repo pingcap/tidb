@@ -1130,6 +1130,7 @@ func TestSampleParquetDataSize(t *testing.T) {
 	pwriter.PageSize = 8 * 1024              //8K
 	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
 	seed := time.Now().Unix()
+	t.Logf("seed: %d", seed)
 	rand.Seed(seed)
 	totalRowSize := 0
 	for i := 0; i < 1000; i++ {
