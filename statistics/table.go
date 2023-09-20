@@ -23,7 +23,9 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/atomic"
 	"golang.org/x/exp/maps"
@@ -670,7 +672,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 // Usually, we don't want to trigger stats loading for pseudo table.
 // But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
 // Such case could possibly happen in getStatsTable().
-func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
+func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHistMeta bool) *Table {
 	pseudoHistColl := HistColl{
 		RealtimeCount:     PseudoRowCount,
 		PhysicalID:        tblInfo.ID,
@@ -691,10 +693,25 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
 		if col.State == model.StatePublic && !col.Hidden {
 			t.ColAndIndexExistenceMap.InsertCol(col.ID, col)
 		}
+		if allowFillHistMeta {
+			t.Columns[col.ID] = &Column{
+				PhysicalID: tblInfo.ID,
+				Info:       col,
+				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
+				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+			}
+		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			t.ColAndIndexExistenceMap.InsertIndex(idx.ID, idx)
+		}
+		if allowFillHistMeta {
+			t.Indices[idx.ID] = &Index{
+				PhysicalID: tblInfo.ID,
+				Info:       idx,
+				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+			}
 		}
 	}
 	return t

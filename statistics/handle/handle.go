@@ -449,14 +449,14 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl = statistics.PseudoTable(tblInfo, false, false)
 		tbl.PhysicalID = pid
 		return tbl
 	}
 	statsCache := h.statsCache.Load()
 	tbl, ok := statsCache.Get(pid)
 	if !ok {
-		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl = statistics.PseudoTable(tblInfo, false, false)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
 			h.updateStatsCache(statsCache, []*statistics.Table{tbl}, nil)
