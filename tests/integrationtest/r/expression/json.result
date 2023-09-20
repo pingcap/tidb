@@ -513,18 +513,18 @@ Error 3144: Cannot create a JSON value from a string with CHARACTER SET 'binary'
 select cast(cast(b'010101' as json) as signed);
 cast(cast(b'010101' as json) as signed)
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '"base64:type253:FQ=="'
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed);
 cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed)
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '"base64:type253:FQ=="'
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);
 cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double)
 0
-show warnings;
 Level	Code	Message
+Warning	1292	Truncated incorrect FLOAT value: '"base64:type253:FQ=="'
 drop table if exists t;
 create table t(a JSON);
 insert into t values ('{}'), ('true'), ('5');

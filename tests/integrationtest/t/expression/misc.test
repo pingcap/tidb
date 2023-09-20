@@ -29,8 +29,9 @@ select time '2017-01-01 00:00:00';
 select time '071231235959.999999';
 -- error 1292
 select time '20171231235959.999999';
+--enable_warnings
 select ADDDATE('2008-01-34', -1);
-Show warnings;
+--disable_warnings
 
 # TestTwoDecimalTruncate
 set sql_mode='';
@@ -164,10 +165,10 @@ select a+0 from t;
 # TestUnknowHintIgnore
 drop table if exists t;
 create table t(a int);
+--enable_warnings
 select /*+ unknown_hint(c1)*/ 1;
-show warnings;
 select 1 from /*+ test1() */ t;
-show warnings;
+--disable_warnings
 
 # TestValuesInNonInsertStmt
 drop table if exists t;
