@@ -420,7 +420,7 @@ func TestExchangePartitionShouldChangeNothing(t *testing.T) {
 	require.Equal(t, 2, num)
 }
 
-func TestNewPartitionShouldLockedIfWholeTableLocked(t *testing.T) {
+func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
 
 	handle := dom.StatsHandle()
