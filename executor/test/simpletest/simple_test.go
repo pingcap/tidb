@@ -264,9 +264,9 @@ func TestPrivilegesAfterDropUser(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
 	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
 		"GRANT USAGE ON *.* TO 'u1'@'%'",
-		"GRANT CREATE ON test.* TO 'u1'@'%'",
-		"GRANT UPDATE ON test.t1 TO 'u1'@'%'",
-		"GRANT SELECT(v), UPDATE(v) ON test.t1 TO 'u1'@'%'",
+		"GRANT CREATE ON `test`.* TO 'u1'@'%'",
+		"GRANT UPDATE ON `test`.`t1` TO 'u1'@'%'",
+		"GRANT SELECT(v), UPDATE(v) ON `test`.`t1` TO 'u1'@'%'",
 		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%'",
 	))
 

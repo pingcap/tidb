@@ -48,6 +48,7 @@ go_library(
         "//util/memory",
         "//util/ranger",
         "//util/sqlexec",
+        "@com_github_dolthub_swiss//:swiss",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",

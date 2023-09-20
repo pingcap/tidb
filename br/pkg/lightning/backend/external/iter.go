@@ -33,6 +33,7 @@ type heapElem interface {
 type sortedReader[T heapElem] interface {
 	path() string
 	next() (T, error)
+	setReadMode(useConcurrency bool)
 	close() error
 }
 
@@ -68,11 +69,13 @@ func (h *mergeHeap[T]) Pop() interface{} {
 }
 
 type mergeIter[T heapElem, R sortedReader[T]] struct {
-	h             mergeHeap[T]
-	readers       []*R
-	curr          T
-	lastReaderIdx int
-	err           error
+	h               mergeHeap[T]
+	readers         []*R
+	curr            T
+	lastReaderIdx   int
+	err             error
+	hotspotMap      map[int]int
+	checkHotspotCnt int
 
 	logger *zap.Logger
 }
@@ -131,6 +134,7 @@ func newMergeIter[
 		h:             make(mergeHeap[T], 0, len(readers)),
 		readers:       readers,
 		lastReaderIdx: -1,
+		hotspotMap:    make(map[int]int),
 		logger:        logger,
 	}
 	for j := range i.readers {
@@ -198,6 +202,19 @@ func (i *mergeIter[T, R]) next() bool {
 	var zeroT T
 	i.curr = zeroT
 	if i.lastReaderIdx >= 0 {
+		i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
+		i.checkHotspotCnt++
+
+		checkPeriod := 1000
+		// check hot point every checkPeriod times
+		if i.checkHotspotCnt == checkPeriod {
+			for idx, cnt := range i.hotspotMap {
+				(*i.readers[idx]).setReadMode(cnt > (checkPeriod / 2))
+			}
+			i.checkHotspotCnt = 0
+			i.hotspotMap = make(map[int]int)
+		}
+
 		rd := *i.readers[i.lastReaderIdx]
 		e, err := rd.next()
 		switch err {
@@ -211,6 +228,7 @@ func (i *mergeIter[T, R]) next() bool {
 					zap.Error(closeErr))
 			}
 			i.readers[i.lastReaderIdx] = nil
+			delete(i.hotspotMap, i.lastReaderIdx)
 		default:
 			i.err = err
 			return false
@@ -253,6 +271,10 @@ func (p kvReaderProxy) next() (kvPair, error) {
 		return kvPair{}, err
 	}
 	return kvPair{key: k, value: v}, nil
+}
+
+func (p kvReaderProxy) setReadMode(useConcurrency bool) {
+	p.r.byteReader.switchReaderMode(useConcurrency)
 }
 
 func (p kvReaderProxy) close() error {
@@ -331,6 +353,10 @@ func (p statReaderProxy) path() string {
 
 func (p statReaderProxy) next() (*rangeProperty, error) {
 	return p.r.nextProp()
+}
+
+func (p statReaderProxy) setReadMode(useConcurrency bool) {
+	p.r.byteReader.switchReaderMode(useConcurrency)
 }
 
 func (p statReaderProxy) close() error {
