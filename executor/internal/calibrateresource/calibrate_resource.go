@@ -363,14 +363,14 @@ func (e *Executor) getTiDBQuota(ctx context.Context, exec sqlexec.RestrictedSQLE
 		tidbCPUs.next()
 		tikvCPUs.next()
 	}
-	quota, err := e.setupQuotas(quotas, lowCount)
+	quota, err := setupQuotas(quotas)
 	if err != nil {
 		return 0, err
 	}
 	return quota, nil
 }
 
-func (e *Executor) setupQuotas(quotas []float64, lowCount int) (float64, error) {
+func setupQuotas(quotas []float64) (float64, error) {
 	if len(quotas) < 2 {
 		return 0, errLowUsage
 	}
@@ -390,27 +390,18 @@ func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedS
 	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
-	tiflashQuotas, tiflashLowCount, err := e.getTiFlashQuotas(ctx, exec, startTime, endTime)
-	if err != nil {
-		return 0, err
-	}
-	return e.setupQuotas(tiflashQuotas, tiflashLowCount)
-}
-
-func (e *Executor) getTiFlashQuotas(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTime string, endTime string) ([]float64, int, error) {
-	lowCount := 0
 	quotas := make([]float64, 0)
 	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
 	if err != nil {
-		return quotas, lowCount, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	tiflashCPUs, err := getTiFlashCPUUsagePerSec(ctx, e.Ctx(), exec, startTime, endTime)
 	if err != nil {
-		return quotas, lowCount, err
+		return 0, err
 	}
 	tiflashRUs, err := getTiFlashRUPerSec(ctx, e.Ctx(), exec, startTime, endTime)
 	if err != nil {
-		return quotas, lowCount, err
+		return 0, err
 	}
 	for {
 		if tiflashRUs.isEnd() || tiflashCPUs.isEnd() {
@@ -425,17 +416,13 @@ func (e *Executor) getTiFlashQuotas(ctx context.Context, exec sqlexec.Restricted
 			continue
 		}
 		tiflashQuota := tiflashCPUs.getValue() / totalTiFlashLogicalCores
-		if tiflashQuota > valuableUsageThreshold {
-			quotas = append(quotas, tiflashRUs.getValue()/tiflashQuota)
-		} else if tiflashQuota < lowUsageThreshold {
-			lowCount++
-		} else {
+		if tiflashQuota > lowUsageThreshold {
 			quotas = append(quotas, tiflashRUs.getValue()/tiflashQuota)
 		}
 		tiflashRUs.next()
 		tiflashCPUs.next()
 	}
-	return quotas, lowCount, nil
+	return setupQuotas(quotas)
 }
 
 func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
