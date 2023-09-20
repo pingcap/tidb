@@ -1,0 +1,93 @@
+CREATE SCHEMA IF NOT EXISTS privilege__privileges;
+USE privilege__privileges;
+CREATE TABLE reftest (a int);
+CREATE USER referencesUser;
+GRANT REFERENCES ON *.* TO referencesUser;
+GRANT REFERENCES ON privilege__privileges.* TO referencesUser;
+GRANT REFERENCES ON privilege__privileges.reftest TO referencesUser;
+SHOW GRANTS FOR referencesUser;
+Grants for referencesUser@%
+GRANT REFERENCES ON *.* TO 'referencesUser'@'%'
+GRANT REFERENCES ON `privilege__privileges`.* TO 'referencesUser'@'%'
+GRANT REFERENCES ON `privilege__privileges`.`reftest` TO 'referencesUser'@'%'
+DROP USER referencesUser;
+CREATE USER tcd1, tcd2;
+GRANT ALL ON *.* to tcd2 WITH GRANT OPTION;
+CREATE USER acdc;
+Error 1227: Access denied; you need (at least one of) the CREATE User privilege(s) for this operation
+DROP USER tcd2;
+Error 1227: Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+DROP USER tcd1;
+CREATE USER tcd1;
+GRANT tcd2 TO tcd1;
+SET ROLE tcd2;
+CREATE USER tcd3;
+DROP USER tcd3;
+CREATE USER usr1;
+SELECT User_attributes FROM mysql.user WHERE User = "usr1";
+User_attributes
+{}
+DROP USER usr1;
+create database db1;
+create database db2;
+create table a(id int);
+use db1;
+create table a(id int primary key,name varchar(20));
+use db2;
+create table b(id int primary key,address varchar(50));
+CREATE USER 'delTest'@'localhost';
+grant all on db1.* to delTest@'localhost';
+grant all on db2.* to delTest@'localhost';
+grant select on privilege__privileges.* to delTest@'localhost';
+use db1;
+delete from db1.a as A where exists(select 1 from db2.b as B where A.id = B.id);
+delete from privilege__privileges.a as A;
+Error 1142: DELETE command denied to user 'delTest'@'localhost' for table 'a'
+CREATE USER unostatus, ustatus;
+GRANT RESTRICTED_STATUS_ADMIN ON *.* to ustatus;
+CREATE USER 'ar1'@'localhost';
+CREATE USER 'ar2'@'localhost';
+GRANT ALL ON *.* to ar1@localhost;
+create role r_test1@localhost;
+create role r_test2@localhost;
+Error 1227: Access denied; you need (at least one of) the CREATE ROLE or CREATE USER privilege(s) for this operation
+drop user 'ar1'@'localhost';
+drop user 'ar2'@'localhost';
+DROP VIEW IF EXISTS privilege__privileges.v;
+create user test_user;
+create view privilege__privileges.v as select 1;
+grant show view on privilege__privileges.v to test_user;
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+count(*)
+0
+desc privilege__privileges.v;
+Error 1142: SELECT command denied to user 'test_user'@'%' for table 'v'
+explain privilege__privileges.v;
+Error 1142: SELECT command denied to user 'test_user'@'%' for table 'v'
+grant update on privilege__privileges.v to test_user;
+grant select on privilege__privileges.v to test_user;
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+count(*)
+1
+select count(*) from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
+count(*)
+1
+select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='v';
+privileges
+select,update
+select privileges from information_schema.columns where table_schema='privilege__privileges' and table_name='V';
+privileges
+select,update
+desc privilege__privileges.v;
+Field	Type	Null	Key	Default	Extra
+1	bigint(1)	NO		NULL	
+explain privilege__privileges.v;
+Field	Type	Null	Key	Default	Extra
+1	bigint(1)	NO		NULL	
+CREATE USER ucorrect1, ucorrect2;
+CREATE TABLE privilege__privileges.trigger_table (a int);
+GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO ucorrect1;
+GRANT TRIGGER ON privilege__privileges.trigger_table TO ucorrect2;
+DROP TABLE privilege__privileges.trigger_table;
+GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO uincorrect;
+Error 1410: You are not allowed to create a user with GRANT
