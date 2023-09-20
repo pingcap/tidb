@@ -1849,7 +1849,7 @@ func TestRenameTablesWithForeignKey(t *testing.T) {
 	// check the schema diff
 	diff := getLatestSchemaDiff(t, tk)
 	require.Equal(t, model.ActionRenameTables, diff.Type)
-	require.Equal(t, 3, len(diff.AffectedOpts))
+	require.Equal(t, 2, len(diff.AffectedOpts))
 
 	// check referred foreign key information.
 	t1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")
