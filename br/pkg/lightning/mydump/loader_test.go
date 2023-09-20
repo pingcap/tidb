@@ -19,9 +19,11 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -1112,8 +1114,9 @@ func TestSampleParquetDataSize(t *testing.T) {
 	require.NoError(t, err)
 
 	type row struct {
-		ID   int64  `parquet:"name=id, type=INT64"`
-		Name string `parquet:"name=name, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
+		ID    int64  `parquet:"name=id, type=INT64"`
+		Key   string `parquet:"name=key, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
+		Value string `parquet:"name=value, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1126,10 +1129,24 @@ func TestSampleParquetDataSize(t *testing.T) {
 	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
 	pwriter.PageSize = 8 * 1024              //8K
 	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
-	for i := 0; i < 2000; i++ {
+	seed := time.Now().Unix()
+	rand.Seed(seed)
+	totalRowSize := 0
+	for i := 0; i < 1000; i++ {
+		kl := rand.Intn(20) + 1
+		key := make([]byte, kl)
+		kl, err = rand.Read(key)
+		require.NoError(t, err)
+		vl := rand.Intn(20) + 1
+		value := make([]byte, vl)
+		vl, err = rand.Read(value)
+		require.NoError(t, err)
+
+		totalRowSize += kl + vl + 8
 		row := row{
-			ID:   int64(i),
-			Name: fmt.Sprintf("row_name_%04d", i),
+			ID:    int64(i),
+			Key:   string(key[:kl]),
+			Value: string(value[:vl]),
 		}
 		err = pwriter.Write(row)
 		require.NoError(t, err)
@@ -1145,9 +1162,6 @@ func TestSampleParquetDataSize(t *testing.T) {
 		Path: fileName,
 	}, store)
 	require.NoError(t, err)
-	//
-	// 42000 = 2000 rows * 21 bytes per row
-	// expected error within 10%, so delta = 42000 * 0.1 = 4200
-	//
-	require.InDelta(t, 42000, size, 4200)
+	// expected error within 10%, so delta = totalRowSize / 10
+	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
 }
