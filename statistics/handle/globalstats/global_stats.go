@@ -247,7 +247,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 		}
 
 		// Merge FMSketch.
-		globalStats.Fms[i] = allFms[i][0].Copy()
+		globalStats.Fms[i] = allFms[i][0]
 		for j := 1; j < len(allFms[i]); j++ {
 			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
 			allFms[i][j].DestroyAndPutToPool()
