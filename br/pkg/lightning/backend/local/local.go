@@ -1277,7 +1277,12 @@ func (local *Backend) generateJobForRange(
 			logutil.Key("endKey", endKey))
 
 		iter := data.NewIter(ctx, nil, nil)
-		defer iter.Close()
+		defer func() {
+			err = iter.Close()
+			if err != nil {
+				log.FromContext(ctx).Error("close iterator failed", log.ShortError(err))
+			}
+		}()
 		var lastKey []byte
 		for iter.First(); iter.Valid(); iter.Next() {
 			if len(lastKey) > 0 {
