@@ -34,8 +34,8 @@ func CheckSubtasksState(t *testing.T, taskID int64, state string, expectedCnt in
 	mgr.PrintSubtaskInfo(taskID)
 	mgr.PrintHistorySubtaskInfo(taskID)
 	cnt, err := mgr.GetSubtaskInStatesCnt(taskID, state)
+	require.NoError(t, err)
 	historySubTasksCnt, err := storage.GetSubtasksFromHistoryByTaskIDForTest(mgr, taskID)
-
 	require.NoError(t, err)
 	require.Equal(t, expectedCnt, cnt+int64(historySubTasksCnt))
 }
@@ -61,6 +61,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	errs, err := mgr.CollectSubTaskError(1)
+	require.NoError(t, err)
 	require.Empty(t, errs)
 
 	// 2. pause pending task.
@@ -77,6 +78,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/syncAfterResume"))
 
 	errs, err = mgr.CollectSubTaskError(1)
+	require.NoError(t, err)
 	require.Empty(t, errs)
 	distContext.Close()
 }
