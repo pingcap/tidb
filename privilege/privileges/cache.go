@@ -1247,7 +1247,7 @@ func (p *MySQLPrivilege) DBIsVisible(user, host, db string) bool {
 	return false
 }
 
-func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentity) []string {
+func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, roles []*auth.RoleIdentity) []string {
 	var gs []string //nolint: prealloc
 	var sortFromIdx int
 	var hasGlobalGrant = false
@@ -1319,7 +1319,10 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 			}
 		}
 	}
+
+	sqlMode := ctx.GetSessionVars().SQLMode
 	for dbName, priv := range dbPrivTable {
+		dbName = stringutil.Escape(dbName, sqlMode)
 		g := dbPrivToString(priv)
 		if len(g) > 0 {
 			var s string
@@ -1342,7 +1345,7 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	sortFromIdx = len(gs)
 	tablePrivTable := make(map[string]mysql.PrivilegeType)
 	for _, record := range p.TablesPriv {
-		recordKey := record.DB + "." + record.TableName
+		recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.TableName, sqlMode)
 		if user == record.User && host == record.Host {
 			tablePrivTable[recordKey] |= record.TablePriv
 		} else {
@@ -1378,9 +1381,9 @@ func (p *MySQLPrivilege) showGrants(user, host string, roles []*auth.RoleIdentit
 	columnPrivTable := make(map[string]privOnColumns)
 	for i := range p.ColumnsPriv {
 		record := p.ColumnsPriv[i]
-		if !collectColumnGrant(&record, user, host, columnPrivTable) {
+		if !collectColumnGrant(&record, user, host, columnPrivTable, sqlMode) {
 			for _, r := range allRoles {
-				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable)
+				collectColumnGrant(&record, r.Username, r.Hostname, columnPrivTable, sqlMode)
 			}
 		}
 	}
@@ -1491,9 +1494,10 @@ func privOnColumnsToString(p privOnColumns) string {
 	return buf.String()
 }
 
-func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPrivTable map[string]privOnColumns) bool {
+func collectColumnGrant(record *columnsPrivRecord, user, host string, columnPrivTable map[string]privOnColumns, sqlMode mysql.SQLMode) bool {
 	if record.baseRecord.match(user, host) {
-		recordKey := record.DB + "." + record.TableName
+		recordKey := stringutil.Escape(record.DB, sqlMode) + "." + stringutil.Escape(record.TableName, sqlMode)
+
 		privColumns, ok := columnPrivTable[recordKey]
 		if !ok {
 			privColumns = make(map[mysql.PrivilegeType]columnStrs)
