@@ -636,11 +636,11 @@ func TestListPartitionInvisibleIdx(t *testing.T) {
 
 	tk.MustExec(`create table tlist (a int, b int, key(a)) partition by list (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))`)
 	tk.MustExec(`alter table tlist alter index a invisible`)
-	tk.HasPlan(`select a from tlist where a>=0 and a<=5`, "TableFullScan")
+	tk.MustHavePlan(`select a from tlist where a>=0 and a<=5`, "TableFullScan")
 
 	tk.MustExec(`create table tcollist (a int, b int, key(a)) partition by list columns (a) (partition p0 values in (0, 1, 2), partition p1 values in (3, 4, 5))`)
 	tk.MustExec(`alter table tcollist alter index a invisible`)
-	tk.HasPlan(`select a from tcollist where a>=0 and a<=5`, "TableFullScan")
+	tk.MustHavePlan(`select a from tcollist where a>=0 and a<=5`, "TableFullScan")
 }
 
 func TestListPartitionCTE(t *testing.T) {

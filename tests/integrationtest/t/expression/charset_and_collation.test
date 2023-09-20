@@ -401,11 +401,13 @@ select /*+ inl_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
 select /*+ hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
 select /*+ merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
 select /*+ inl_hash_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
+--enable_warnings
 select /*+ inl_hash_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
-show warnings;
+--disable_warnings
 select /*+ inl_merge_join(t1) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
+--enable_warnings
 select /*+ inl_merge_join(t2) */ t1.b, t2.b from t1 join t2 where t1.b=t2.b;
-show warnings;
+--disable_warnings
 drop table if exists a, b;
 create table a(i int, k varbinary(40), v int, primary key(i, k) clustered);
 create table b(i int, k varchar(40), v int, primary key(i, k) clustered);

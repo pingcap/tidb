@@ -322,11 +322,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	subTasks := []*proto.Subtask{
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance1",
 			Meta:        []byte("m1"),
 		},
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance2",
 			Meta:        []byte("m2"),
@@ -361,11 +363,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateReverting
 	subTasks = []*proto.Subtask{
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance3",
 			Meta:        []byte("m3"),
 		},
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance4",
 			Meta:        []byte("m4"),

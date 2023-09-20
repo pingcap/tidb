@@ -19,8 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -221,14 +219,19 @@ func TestRemoveLockedTables(t *testing.T) {
 		"COMMIT",
 	)
 
+	tidsAndNames := map[int64]string{
+		1: "test.t1",
+		2: "test.t2",
+		3: "test.t3",
+	}
+	pidAndNames := map[int64]string{
+		4: "p1",
+	}
+
 	msg, err := RemoveLockedTables(
 		exec,
-		[]int64{1, 2, 3},
-		[]int64{4},
-		[]*ast.TableName{
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}},
+		tidsAndNames,
+		pidAndNames,
 	)
 	require.NoError(t, err)
 	require.Equal(t, "skip unlocking unlocked tables: test.t2, test.t3, other tables unlocked successfully", msg)

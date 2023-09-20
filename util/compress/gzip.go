@@ -12,22 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statslock
+package compress
 
 import (
-	"testing"
+	"io"
+	"sync"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
-	"go.uber.org/goleak"
+	"github.com/klauspost/compress/gzip"
 )
 
-func TestMain(m *testing.M) {
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-	}
-	testsetup.SetupForCommonTest()
-	goleak.VerifyTestMain(m, opts...)
+// GzipWriterPool is a sync.Pool of gzip.Writer.
+var GzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
+
+// GzipReaderPool is a sync.Pool of gzip.Reader.
+var GzipReaderPool = sync.Pool{
+	New: func() any {
+		return &gzip.Reader{}
+	},
 }

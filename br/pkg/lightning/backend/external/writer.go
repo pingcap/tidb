@@ -24,6 +24,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -188,10 +191,10 @@ func (b *WriterBuilder) Build(
 // every 500 files). It is used to estimate the data overlapping, and per-file
 // statistic information maybe too big to loaded into memory.
 type MultipleFilesStat struct {
-	MinKey            tidbkv.Key
-	MaxKey            tidbkv.Key
-	Filenames         [][2]string // [dataFile, statFile]
-	MaxOverlappingNum int
+	MinKey            tidbkv.Key  `json:"min-key"`
+	MaxKey            tidbkv.Key  `json:"max-key"`
+	Filenames         [][2]string `json:"filenames"` // [dataFile, statFile]
+	MaxOverlappingNum int64       `json:"max-overlapping-num"`
 }
 
 func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
@@ -217,6 +220,20 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 		points = append(points, Endpoint{Key: k, Tp: InclusiveEnd, Weight: 1})
 	}
 	m.MaxOverlappingNum = GetMaxOverlapping(points)
+}
+
+// GetMaxOverlappingTotal assume the most overlapping case from given stats and
+// returns the overlapping level.
+func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
+	points := make([]Endpoint, 0, len(stats)*2)
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: stat.MaxOverlappingNum})
+	}
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: stat.MaxOverlappingNum})
+	}
+
+	return GetMaxOverlapping(points)
 }
 
 // Writer is used to write data into external storage.
@@ -423,7 +440,44 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
 	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
+		_ = dataWriter.Close(ctx)
 		return "", "", nil, nil, err
 	}
 	return dataPath, statPath, dataWriter, statsWriter, nil
+}
+
+// EngineWriter implements backend.EngineWriter interface.
+type EngineWriter struct {
+	w *Writer
+}
+
+// NewEngineWriter creates a new EngineWriter.
+func NewEngineWriter(w *Writer) *EngineWriter {
+	return &EngineWriter{w: w}
+}
+
+// AppendRows implements backend.EngineWriter interface.
+func (e *EngineWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
+	kvs := kv.Rows2KvPairs(rows)
+	if len(kvs) == 0 {
+		return nil
+	}
+	for _, item := range kvs {
+		err := e.w.WriteRow(ctx, item.Key, item.Val, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// IsSynced implements backend.EngineWriter interface.
+func (e *EngineWriter) IsSynced() bool {
+	// only used when saving checkpoint
+	return true
+}
+
+// Close implements backend.EngineWriter interface.
+func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+	return nil, e.w.Close(ctx)
 }

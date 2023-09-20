@@ -47,24 +47,6 @@ func ProcessChunk(
 	dataWriterCfg := &backend.LocalWriterConfig{
 		IsKVSorted: hasAutoIncrementAutoID,
 	}
-	parser, err := tableImporter.getParser(ctx, chunk)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err2 := parser.Close(); err2 != nil {
-			logger.Warn("close parser failed", zap.Error(err2))
-		}
-	}()
-	encoder, err := tableImporter.getKVEncoder(chunk)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err2 := encoder.Close(); err2 != nil {
-			logger.Warn("close encoder failed", zap.Error(err2))
-		}
-	}()
 	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 	if err != nil {
 		return err
@@ -81,6 +63,37 @@ func ProcessChunk(
 	defer func() {
 		if _, err2 := indexWriter.Close(ctx); err2 != nil {
 			logger.Warn("close index writer failed", zap.Error(err2))
+		}
+	}()
+
+	return ProcessChunkWith(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
+}
+
+// ProcessChunkWith processes a chunk, and write kv pairs to dataWriter and indexWriter.
+func ProcessChunkWith(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	tableImporter *TableImporter,
+	dataWriter, indexWriter backend.EngineWriter,
+	progress *asyncloaddata.Progress,
+	logger *zap.Logger,
+) error {
+	parser, err := tableImporter.getParser(ctx, chunk)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err2 := parser.Close(); err2 != nil {
+			logger.Warn("close parser failed", zap.Error(err2))
+		}
+	}()
+	encoder, err := tableImporter.getKVEncoder(chunk)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err2 := encoder.Close(); err2 != nil {
+			logger.Warn("close encoder failed", zap.Error(err2))
 		}
 	}()
 

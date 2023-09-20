@@ -1959,7 +1959,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	rowCount, err := taskMgr.GetSubtaskRowCount(gTask.ID, proto.StepInit)
+	rowCount, err := taskMgr.GetSubtaskRowCount(gTask.ID, proto.StepOne)
 	if err != nil {
 		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
@@ -2206,8 +2206,9 @@ func (w *worker) updateReorgInfoForPartitions(t table.PartitionedTable, reorg *r
 			if i == len(partitionIDs)-1 {
 				return true, nil
 			}
+			pid = partitionIDs[i+1]
+			break
 		}
-		pid = partitionIDs[i+1]
 	}
 
 	currentVer, err := getValidCurrentVersion(reorg.d.store)

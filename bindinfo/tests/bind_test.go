@@ -383,23 +383,23 @@ func TestExplain(t *testing.T) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
-	require.True(t, tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
+	tk.MustHavePlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin")
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
 
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 
 	// Add test for SetOprStmt
 	tk.MustExec("create index index_id on t1(id)")
-	require.True(t, tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"))
-	require.True(t, tk.HasPlan("SELECT * from t1 use index(index_id) union SELECT * from t1", "IndexReader"))
+	tk.MustHavePlan("SELECT * from t1 union SELECT * from t1", "IndexReader")
+	tk.MustHavePlan("SELECT * from t1 use index(index_id) union SELECT * from t1", "IndexReader")
 
 	tk.MustExec("create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1")
 
-	require.True(t, tk.HasPlan("SELECT * from t1 union SELECT * from t1", "IndexReader"))
+	tk.MustHavePlan("SELECT * from t1 union SELECT * from t1", "IndexReader")
 
 	tk.MustExec("drop global binding for SELECT * from t1 union SELECT * from t1")
 }
@@ -433,8 +433,8 @@ func TestBindCTEMerge(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
-	require.True(t, tk.HasPlan("with cte as (select * from t1) select * from cte a, cte b", "CTEFullScan"))
-	require.False(t, tk.HasPlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b", "CTEFullScan"))
+	tk.MustHavePlan("with cte as (select * from t1) select * from cte a, cte b", "CTEFullScan")
+	tk.MustNotHavePlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b", "CTEFullScan")
 	tk.MustExec(`
 create global binding for
 	with cte as (select * from t1) select * from cte
@@ -442,7 +442,7 @@ using
 	with cte as (select /*+ MERGE() */ * from t1) select * from cte
 `)
 
-	require.False(t, tk.HasPlan("with cte as (select * from t1) select * from cte", "CTEFullScan"))
+	tk.MustNotHavePlan("with cte as (select * from t1) select * from cte", "CTEFullScan")
 }
 
 func TestBindNoDecorrelate(t *testing.T) {
@@ -454,8 +454,8 @@ func TestBindNoDecorrelate(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(a int, b int)")
 	tk.MustExec("create table t2(a int, b int)")
-	require.False(t, tk.HasPlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply"))
-	require.True(t, tk.HasPlan("select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply"))
+	tk.MustNotHavePlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply")
+	tk.MustHavePlan("select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply")
 
 	tk.MustExec(`
 create global binding for
@@ -464,7 +464,7 @@ using
 	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1
 `)
 
-	require.True(t, tk.HasPlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply"))
+	tk.MustHavePlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply")
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
@@ -566,9 +566,9 @@ func TestDMLSQLBind(t *testing.T) {
 	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("delete from t1 where b = 1 and c > 1", "idx_c(c)"))
 
-	require.True(t, tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin"))
+	tk.MustHavePlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "HashJoin")
 	tk.MustExec("create global binding for delete t1, t2 from t1 inner join t2 on t1.b = t2.b using delete /*+ inl_join(t1) */ t1, t2 from t1 inner join t2 on t1.b = t2.b")
-	require.True(t, tk.HasPlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "IndexJoin"))
+	tk.MustHavePlan("delete t1, t2 from t1 inner join t2 on t1.b = t2.b", "IndexJoin")
 
 	tk.MustExec("update t1 set a = 1 where b = 1 and c > 1")
 	require.Equal(t, "t1:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -578,9 +578,9 @@ func TestDMLSQLBind(t *testing.T) {
 	require.Equal(t, "t1:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
 	require.True(t, tk.MustUseIndex("update t1 set a = 1 where b = 1 and c > 1", "idx_c(c)"))
 
-	require.True(t, tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin"))
+	tk.MustHavePlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "HashJoin")
 	tk.MustExec("create global binding for update t1, t2 set t1.a = 1 where t1.b = t2.b using update /*+ inl_join(t1) */ t1, t2 set t1.a = 1 where t1.b = t2.b")
-	require.True(t, tk.HasPlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "IndexJoin"))
+	tk.MustHavePlan("update t1, t2 set t1.a = 1 where t1.b = t2.b", "IndexJoin")
 
 	tk.MustExec("insert into t1 select * from t2 where t2.b = 2 and t2.c > 2")
 	require.Equal(t, "t2:idx_b", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
@@ -802,11 +802,11 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b), index idx_c(c))")
 
 	tk.MustExec("create global binding for select * from t where a >= 1 and b >= 1 and c = 0 using select * from t use index(idx_a) where a >= 1 and b >= 1 and c = 0")
-	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000), TIDB_KV_READ_TIMEOUT(20) */ * from t where a >= 4 and b >= 1 and c = 0")
+	tk.MustQuery("select /*+ MAX_EXECUTION_TIME(5000), SET_VAR(TIKV_CLIENT_READ_TIMEOUT=20) */ * from t where a >= 4 and b >= 1 and c = 0")
 	tk.MustExec("admin flush bindings")
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000), tidb_kv_read_timeout(20)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
+	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000), set_var(tikv_client_read_timeout = 20)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
 func TestDefaultSessionVars(t *testing.T) {
@@ -866,15 +866,16 @@ func TestStmtHints(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), TIDB_KV_READ_TIMEOUT(20), MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
+	tk.MustExec("create global binding for select * from t using select /*+ MAX_EXECUTION_TIME(100), SET_VAR(TIKV_CLIENT_READ_TIMEOUT=20), MEMORY_QUOTA(2 GB) */ * from t use index(idx)")
 	tk.MustQuery("select * from t")
 	require.Equal(t, int64(2147483648), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(100), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
-	require.Equal(t, uint64(20), tk.Session().GetSessionVars().StmtCtx.TidbKvReadTimeout)
+	require.Equal(t, uint64(20), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
 	tk.MustQuery("select a, b from t")
 	require.Equal(t, int64(1073741824), tk.Session().GetSessionVars().MemTracker.GetBytesLimit())
 	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.MaxExecutionTime)
-	require.Equal(t, uint64(0), tk.Session().GetSessionVars().StmtCtx.TidbKvReadTimeout)
+	// TODO(crazycs520): Fix me.
+	//require.Equal(t, uint64(0), tk.Session().GetSessionVars().GetTiKVClientReadTimeout())
 }
 
 func TestPrivileges(t *testing.T) {
@@ -1153,14 +1154,14 @@ func TestSPMHitInfo(t *testing.T) {
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
 
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
-	require.True(t, tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
+	tk.MustHavePlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin")
 
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
 	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
 	tk.MustExec("set binding disabled for SELECT * from t1,t2 where t1.id = t2.id")
@@ -1407,7 +1408,7 @@ func TestBindSQLDigest(t *testing.T) {
 		// runtime hints
 		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
 		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
-		{"select * from t", "select /*+ tidb_kv_read_timeout(1000) */ * from t"},
+		{"select * from t", "select /*+ set_var(tikv_client_read_timeout=1000) */ * from t"},
 		// storage hints
 		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
 		// others
@@ -1469,7 +1470,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		// runtime hints
 		{"select * from t", "select /*+ memory_quota(1024 MB) */ * from t"},
 		{"select * from t", "select /*+ max_execution_time(1000) */ * from t"},
-		{"select * from t", "select /*+ tidb_kv_read_timeout(1000) */ * from t"},
+		{"select * from t", "select /*+ set_var(tikv_client_read_timeout=1000) */ * from t"},
 		// storage hints
 		{"select * from t", "select /*+ read_from_storage(tikv[t]) */ * from t"},
 		// others

@@ -4446,6 +4446,9 @@ var (
 	importIntoSchemaFTypes = []byte{mysql.TypeLonglong, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeString, mysql.TypeString, mysql.TypeString, mysql.TypeLonglong,
 		mysql.TypeString, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeTimestamp, mysql.TypeString}
+
+	// ImportIntoDataSource used in ErrLoadDataInvalidURI.
+	ImportIntoDataSource = "data source"
 )
 
 func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStmt) (Plan, error) {
@@ -4458,7 +4461,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 
 	importFromServer, err = storage.IsLocalPath(ld.Path)
 	if err != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(err.Error())
+		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 	}
 
 	if importFromServer && sem.IsEnabled() {
@@ -4531,8 +4534,12 @@ func (*PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
+// buildLockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
 func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
-	p := &LockStats{Tables: ld.Tables}
+	p := &LockStats{
+		Tables: ld.Tables,
+	}
+
 	b.requireInsertAndSelectPriv(ld.Tables)
 
 	return p
@@ -4540,7 +4547,9 @@ func (b *PlanBuilder) buildLockStats(ld *ast.LockStatsStmt) Plan {
 
 // buildUnlockStats requires INSERT and SELECT privilege for the tables same as buildAnalyze.
 func (b *PlanBuilder) buildUnlockStats(ld *ast.UnlockStatsStmt) Plan {
-	p := &UnlockStats{Tables: ld.Tables}
+	p := &UnlockStats{
+		Tables: ld.Tables,
+	}
 	b.requireInsertAndSelectPriv(ld.Tables)
 
 	return p
