@@ -211,7 +211,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	logger.Info("on next subtasks batch")
 
@@ -331,7 +331,7 @@ func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatche
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	errStrs := make([]string, 0, len(receiveErrs))
 	for _, receiveErr := range receiveErrs {
@@ -364,7 +364,7 @@ func (*ImportDispatcherExt) GetEligibleInstances(ctx context.Context, gTask *pro
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	if len(taskMeta.EligibleInstances) > 0 {
 		return taskMeta.EligibleInstances, nil
@@ -537,7 +537,7 @@ func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *z
 func updateMeta(gTask *proto.Task, taskMeta *TaskMeta) error {
 	bs, err := json.Marshal(taskMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	gTask.Meta = bs
 
@@ -575,7 +575,7 @@ func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *Tas
 	for _, bs := range metas {
 		var subtaskMeta ImportStepMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
@@ -744,7 +744,7 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(gTask.Meta, taskMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 
 	logger.Info("rollback")

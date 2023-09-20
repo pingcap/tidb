@@ -71,7 +71,7 @@ func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(bs, &taskMeta); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	p.JobID = taskMeta.JobID
 	p.Plan = taskMeta.Plan
@@ -200,7 +200,7 @@ func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
 	for _, bs := range planCtx.PreviousSubtaskMetas[encodeStep] {
 		var subtaskMeta ImportStepMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}

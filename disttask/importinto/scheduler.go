@@ -240,7 +240,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
 	return nil
