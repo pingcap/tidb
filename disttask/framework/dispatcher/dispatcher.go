@@ -222,7 +222,7 @@ func (d *BaseDispatcher) onPausing() error {
 		return err
 	}
 	if cnt == 0 {
-		logutil.Logger(d.logCtx).Info("all running tasks paused, update the task to paused state")
+		logutil.Logger(d.logCtx).Info("all running subtasks paused, update the task to paused state")
 		return d.updateTask(proto.TaskStatePaused, nil, RetrySQLTimes)
 	}
 	logutil.Logger(d.logCtx).Debug("on pausing state, this task keeps current state", zap.String("state", d.Task.State))
@@ -235,6 +235,8 @@ func (d *BaseDispatcher) onPaused() error {
 	return nil
 }
 
+var TestSyncChan = make(chan struct{})
+
 // handle task in resuming state
 func (d *BaseDispatcher) onResuming() error {
 	logutil.Logger(d.logCtx).Info("on resuming state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
@@ -245,11 +247,15 @@ func (d *BaseDispatcher) onResuming() error {
 	}
 	if cnt == 0 {
 		// Finish the resuming process.
-		logutil.Logger(d.logCtx).Info("all paused tasks finished, update the task to running state")
-		return d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
+		logutil.Logger(d.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
+		err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
+		failpoint.Inject("syncAfterResume", func() {
+			TestSyncChan <- struct{}{}
+		})
+		return err
 	}
 
-	return d.taskMgr.ResumeAllSubtasks(d.Task.ID)
+	return d.taskMgr.ResumeSubtasks(d.Task.ID)
 }
 
 // handle task in reverting state, check all revert subtasks finished.

@@ -43,7 +43,10 @@ func getPoolRunFn() (*sync.WaitGroup, func(f func()) error) {
 
 func TestManageTask(t *testing.T) {
 	b := NewManagerBuilder()
-	m, err := b.BuildManager(context.Background(), "test", nil)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockTaskTable := mock.NewMockTaskTable(ctrl)
+	m, err := b.BuildManager(context.Background(), "test", mockTaskTable)
 	require.NoError(t, err)
 	tasks := []*proto.Task{{ID: 1}, {ID: 2}}
 	newTasks := m.filterAlreadyHandlingTasks(tasks)
@@ -69,6 +72,7 @@ func TestManageTask(t *testing.T) {
 	m.cancelAllRunningTasks()
 	require.Equal(t, context.Canceled, ctx1.Err())
 
+	// test cancel.
 	m.addHandlingTask(1)
 	ctx2, cancel2 := context.WithCancel(context.Background())
 	m.registerCancelFunc(1, cancel2)
@@ -77,6 +81,14 @@ func TestManageTask(t *testing.T) {
 	m.onCanceledTasks(context.Background(), []*proto.Task{{ID: 1}})
 	require.Equal(t, context.Canceled, ctx2.Err())
 	require.NoError(t, ctx3.Err())
+
+	// test pause.
+	m.addHandlingTask(3)
+	ctx4, cancel4 := context.WithCancel(context.Background())
+	m.registerCancelFunc(1, cancel4)
+	mockTaskTable.EXPECT().PauseSubtasks("test", int64(1)).Return(nil)
+	m.onPausingTasks([]*proto.Task{{ID: 1}})
+	require.Equal(t, context.Canceled, ctx4.Err())
 }
 
 func TestOnRunnableTasks(t *testing.T) {

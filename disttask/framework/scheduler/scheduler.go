@@ -81,7 +81,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				logutil.Logger(s.logCtx).Info("scheduler exits", zap.Error(ctx.Err()))
 				return
 			case <-ticker.C:
-				canceled, err := s.taskTable.IsSchedulerCanceled(s.taskID, s.id)
+				canceled, err := s.taskTable.IsSchedulerCanceled(s.id, s.taskID)
 				if err != nil {
 					continue
 				}

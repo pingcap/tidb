@@ -174,7 +174,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 			}
 			m.onCanceledTasks(ctx, tasks)
 
-			// cancel pausing subtasks, and mark them as paused.
+			// cancel pending/running subtasks, and mark them as paused.
 			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStatePausing)
 			if err != nil {
 				m.onError(err)
@@ -223,7 +223,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	}
 }
 
-// onCanceledTasks cancels the running tasks.
+// onCanceledTasks cancels the running subtasks.
 func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -235,7 +235,7 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	}
 }
 
-// onPausingTasks pauses/cancels the pending/running tasks.
+// onPausingTasks pauses/cancels the pending/running subtasks.
 func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

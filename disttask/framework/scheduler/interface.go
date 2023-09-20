@@ -34,7 +34,7 @@ type TaskTable interface {
 
 	HasSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) (bool, error)
 	UpdateErrorToSubtask(tidbID string, taskID int64, err error) error
-	IsSchedulerCanceled(taskID int64, tidbID string) (bool, error)
+	IsSchedulerCanceled(tidbID string, taskID int64) (bool, error)
 	PauseSubtasks(tidbID string, taskID int64) error
 }
 
