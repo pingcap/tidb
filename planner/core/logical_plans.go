@@ -2056,7 +2056,14 @@ func (fb *FrameBound) Clone() *FrameBound {
 	return cloned
 }
 
-func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) error {
+func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) {
+	// When cmpDataType can't match to any condition, we can ignore it.
+	//
+	// For example:
+	//   `create table test.range_test(p int not null,o text not null,v int not null);`
+	//   `select *, first_value(v) over (partition by p order by o) as a from range_test;`
+	//   The sql's frame type is range, but the cmpDataType is ETString and when the user explicitly use range frame
+	//   the sql will raise error before generating logical plan, so it's ok to ignore it.
 	switch cmpDataType {
 	case types.ETInt:
 		fb.CmpFuncs[0] = expression.CompareInt
@@ -2073,10 +2080,7 @@ func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) e
 	case types.ETDecimal:
 		fb.CmpFuncs[0] = expression.CompareDecimal
 		fb.CmpDataType = tipb.RangeCmpDataType_Decimal
-	default:
-		return expression.ErrIncorrectType.GenWithStackByArgs("Invalid comparison data type for range frame")
 	}
-	return nil
 }
 
 // UpdateCompareCols will update CompareCols.
@@ -2096,10 +2100,7 @@ func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*e
 		}
 
 		cmpDataType := expression.GetAccurateCmpType(fb.CompareCols[0], fb.CalcFuncs[0])
-		err := fb.updateCmpFuncsAndCmpDataType(cmpDataType)
-		if err != nil {
-			return err
-		}
+		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
 	}
 	return nil
 }
