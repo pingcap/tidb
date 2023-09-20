@@ -2255,3 +2255,13 @@ func TestExternalEngine(t *testing.T) {
 	}
 	require.Equal(t, 100, kvIdx)
 }
+
+func TestGetExternalEngineKVStatistics(t *testing.T) {
+	b := Backend{
+		externalEngine: map[uuid.UUID]common.Engine{},
+	}
+	// non existent uuid
+	size, count := b.GetExternalEngineKVStatistics(uuid.New())
+	require.Zero(t, size)
+	require.Zero(t, count)
+}

@@ -25,15 +25,24 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
 	maxWaitDuration = 30 * time.Second
+
+	// We limit the memory usage of KV deliver to 1GB per concurrency, and data
+	// KV deliver has external.DefaultMemSizeLimit, the rest of memory is for
+	// all index KV deliver.
+	// Note: this size is the memory taken by KV, not the size of taken by golang,
+	// each KV has additional 24*2 bytes overhead for golang slice.
+	indexKVTotalBufSize = size.GB - external.DefaultMemSizeLimit
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -60,7 +69,8 @@ var _ operator.Operator = (*encodeAndSortOperator)(nil)
 var _ operator.WithSource[*importStepMinimalTask] = (*encodeAndSortOperator)(nil)
 var _ operator.WithSink[workerpool.None] = (*encodeAndSortOperator)(nil)
 
-func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor, sharedVars *SharedVars, subtaskID int64) *encodeAndSortOperator {
+func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
+	sharedVars *SharedVars, subtaskID int64, indexMemorySizeLimit uint64) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
@@ -77,7 +87,7 @@ func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
 		util.ImportInto,
 		int(executor.taskMeta.Plan.ThreadCnt),
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op)
+			return newChunkWorker(ctx, op, indexMemorySizeLimit)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
@@ -135,7 +145,7 @@ type chunkWorker struct {
 	indexWriter *importer.IndexRouteWriter
 }
 
-func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker {
+func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemorySizeLimit uint64) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
@@ -148,8 +158,9 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
-				})
-			prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
+				}).SetMemorySizeLimit(indexMemorySizeLimit)
+			prefix := subtaskPrefix(op.taskID, op.subtaskID)
+			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
 			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 			return writer
@@ -158,7 +169,8 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
-		prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
+		prefix := subtaskPrefix(op.taskID, op.subtaskID)
+		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
 		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 		w.dataWriter = external.NewEngineWriter(writer)
@@ -200,4 +212,41 @@ func (w *chunkWorker) Close() {
 			w.op.onError(errors.Trace(err))
 		}
 	}
+}
+
+func subtaskPrefix(taskID, subtaskID int64) string {
+	return path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
+}
+
+func getWriterMemorySizeLimit(plan *importer.Plan) uint64 {
+	// min(external.DefaultMemSizeLimit, indexKVTotalBufSize / num-of-index-that-gen-kv)
+	cnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
+	limit := indexKVTotalBufSize
+	if cnt > 0 {
+		limit = limit / uint64(cnt)
+	}
+	if limit > external.DefaultMemSizeLimit {
+		limit = external.DefaultMemSizeLimit
+	}
+	return limit
+}
+
+func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
+	var count int
+	var nonClusteredPK bool
+	for _, idxInfo := range tblInfo.Indices {
+		// all public non-primary index generates index KVs
+		if idxInfo.State != model.StatePublic {
+			continue
+		}
+		if idxInfo.Primary && !tblInfo.HasClusteredIndex() {
+			nonClusteredPK = true
+			continue
+		}
+		count++
+	}
+	if nonClusteredPK {
+		count++
+	}
+	return count
 }
