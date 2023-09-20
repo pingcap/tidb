@@ -1077,77 +1077,6 @@ func TestGeneratedColumnRead(t *testing.T) {
 	}
 }
 
-// TestGeneratedColumnRead tests generated columns using point get and batch point get
-func TestGeneratedColumnPointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tu")
-	tk.MustExec("CREATE TABLE tu(a int, b int, c int GENERATED ALWAYS AS (a + b) VIRTUAL, d int as (a * b) stored, " +
-		"e int GENERATED ALWAYS as (b * 2) VIRTUAL, PRIMARY KEY (a), UNIQUE KEY ukc (c), unique key ukd(d), key ke(e))")
-	tk.MustExec("insert into tu(a, b) values(1, 2)")
-	tk.MustExec("insert into tu(a, b) values(5, 6)")
-	tk.MustQuery("select * from tu for update").Check(testkit.Rows("1 2 3 2 4", "5 6 11 30 12"))
-	tk.MustQuery("select * from tu where a = 1").Check(testkit.Rows("1 2 3 2 4"))
-	tk.MustQuery("select * from tu where a in (1, 2)").Check(testkit.Rows("1 2 3 2 4"))
-	tk.MustQuery("select * from tu where c in (1, 2, 3)").Check(testkit.Rows("1 2 3 2 4"))
-	tk.MustQuery("select * from tu where c = 3").Check(testkit.Rows("1 2 3 2 4"))
-	tk.MustQuery("select d, e from tu where c = 3").Check(testkit.Rows("2 4"))
-	tk.MustQuery("select * from tu where d in (1, 2, 3)").Check(testkit.Rows("1 2 3 2 4"))
-	tk.MustQuery("select * from tu where d = 2").Check(testkit.Rows("1 2 3 2 4"))
-	tk.MustQuery("select c, d from tu where d = 2").Check(testkit.Rows("3 2"))
-	tk.MustQuery("select d, e from tu where e = 4").Check(testkit.Rows("2 4"))
-	tk.MustQuery("select * from tu where e = 4").Check(testkit.Rows("1 2 3 2 4"))
-	tk.MustExec("update tu set a = a + 1, b = b + 1 where c = 11")
-	tk.MustQuery("select * from tu for update").Check(testkit.Rows("1 2 3 2 4", "6 7 13 42 14"))
-	tk.MustQuery("select * from tu where a = 6").Check(testkit.Rows("6 7 13 42 14"))
-	tk.MustQuery("select * from tu where c in (5, 6, 13)").Check(testkit.Rows("6 7 13 42 14"))
-	tk.MustQuery("select b, c, e, d from tu where c = 13").Check(testkit.Rows("7 13 14 42"))
-	tk.MustQuery("select a, e, d from tu where c in (5, 6, 13)").Check(testkit.Rows("6 14 42"))
-	tk.MustExec("drop table if exists tu")
-}
-
-func TestUnionAutoSignedCast(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1,t2")
-	tk.MustExec("create table t1 (id int, i int, b bigint, d double, dd decimal)")
-	tk.MustExec("create table t2 (id int, i int unsigned, b bigint unsigned, d double unsigned, dd decimal unsigned)")
-	tk.MustExec("insert into t1 values(1, -1, -1, -1.1, -1)")
-	tk.MustExec("insert into t2 values(2, 1, 1, 1.1, 1)")
-	tk.MustQuery("select * from t1 union select * from t2 order by id").
-		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
-	tk.MustQuery("select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id").
-		Check(testkit.Rows("1 -1 -1 -1.1 -1", "2 1 1 1.1 1"))
-	tk.MustQuery("select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id").
-		Check(testkit.Rows("1 18446744073709551615", "2 1"))
-	tk.MustQuery("select dd from t2 union all select dd from t2").
-		Check(testkit.Rows("1", "1"))
-
-	tk.MustExec("drop table if exists t3,t4")
-	tk.MustExec("create table t3 (id int, v int)")
-	tk.MustExec("create table t4 (id int, v double unsigned)")
-	tk.MustExec("insert into t3 values (1, -1)")
-	tk.MustExec("insert into t4 values (2, 1)")
-	tk.MustQuery("select id, v from t3 union select id, v from t4 order by id").
-		Check(testkit.Rows("1 -1", "2 1"))
-	tk.MustQuery("select id, v from t4 union select id, v from t3 order by id").
-		Check(testkit.Rows("1 -1", "2 1"))
-
-	tk.MustExec("drop table if exists t5,t6,t7")
-	tk.MustExec("create table t5 (id int, v bigint unsigned)")
-	tk.MustExec("create table t6 (id int, v decimal)")
-	tk.MustExec("create table t7 (id int, v bigint)")
-	tk.MustExec("insert into t5 values (1, 1)")
-	tk.MustExec("insert into t6 values (2, -1)")
-	tk.MustExec("insert into t7 values (3, -1)")
-	tk.MustQuery("select id, v from t5 union select id, v from t6 order by id").
-		Check(testkit.Rows("1 1", "2 -1"))
-	tk.MustQuery("select id, v from t5 union select id, v from t7 union select id, v from t6 order by id").
-		Check(testkit.Rows("1 1", "2 -1", "3 -1"))
-}
-
 func TestUpdateClustered(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1378,27 +1307,6 @@ func TestSelectPartition(t *testing.T) {
 	tk.MustQuery("select * from tscalar where c1 in (-1)").Check(testkit.Rows())
 }
 
-func TestDeletePartition(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`drop table if exists t1`)
-	tk.MustExec(`create table t1 (a int) partition by range (a) (
- partition p0 values less than (10),
- partition p1 values less than (20),
- partition p2 values less than (30),
- partition p3 values less than (40),
- partition p4 values less than MAXVALUE
- )`)
-	tk.MustExec("insert into t1 values (1),(11),(21),(31)")
-	tk.MustExec("delete from t1 partition (p4)")
-	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("1", "11", "21", "31"))
-	tk.MustExec("delete from t1 partition (p0) where a > 10")
-	tk.MustQuery("select * from t1 order by a").Check(testkit.Rows("1", "11", "21", "31"))
-	tk.MustExec("delete from t1 partition (p0,p1,p2)")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("31"))
-}
-
 func TestPrepareLoadData(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1440,19 +1348,6 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	for _, file := range reader.File {
 		require.True(t, checkFileName(file.Name), file.Name)
 	}
-}
-
-func TestAlterTableComment(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_1")
-	tk.MustExec("create table t_1 (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';")
-	tk.MustExec("alter table `t_1` comment 'this is table comment';")
-	tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';").Check(testkit.Rows("this is table comment"))
-	tk.MustExec("alter table `t_1` comment 'table t comment';")
-	tk.MustQuery("select table_comment from information_schema.tables where table_name = 't_1';").Check(testkit.Rows("table t comment"))
 }
 
 func TestTimezonePushDown(t *testing.T) {
@@ -1604,58 +1499,6 @@ func TestExecutorBit(t *testing.T) {
 	tk.MustExec("insert into t values (0xffffffffffffffff)")
 	tk.MustExec("insert into t values ('12345678')")
 	tk.MustQuery("select * from t where c1").Check(testkit.Rows("\xff\xff\xff\xff\xff\xff\xff\xff", "12345678"))
-}
-
-func TestExecutorEnum(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (c enum('a', 'b', 'c'))")
-	tk.MustExec("insert into t values ('a'), (2), ('c')")
-	tk.MustQuery("select * from t where c = 'a'").Check(testkit.Rows("a"))
-
-	tk.MustQuery("select c + 1 from t where c = 2").Check(testkit.Rows("3"))
-
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values ()")
-	tk.MustExec("insert into t values (null), ('1')")
-	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
-
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values(1), (2), (3)")
-	tk.MustQuery("select * from t where c").Check(testkit.Rows("a", "b", "c"))
-}
-
-func TestExecutorSet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (c set('a', 'b', 'c'))")
-	tk.MustExec("insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a')")
-	tk.MustQuery("select * from t where c = 'a'").Check(testkit.Rows("a"))
-	tk.MustQuery("select * from t where c = 'a,b'").Check(testkit.Rows("a,b", "a,b"))
-	tk.MustQuery("select c + 1 from t where c = 2").Check(testkit.Rows("3"))
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values ()")
-	tk.MustExec("insert into t values (null), ('1')")
-	tk.MustQuery("select c + 1 from t where c = 1").Check(testkit.Rows("2"))
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values(3)")
-	tk.MustQuery("select * from t where c").Check(testkit.Rows("a,b"))
-}
-
-func TestSubQueryInValues(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int, name varchar(20))")
-	tk.MustExec("create table t1 (gid int)")
-	tk.MustExec("insert into t1 (gid) value (1)")
-	tk.MustExec("insert into t (id, name) value ((select gid from t1) ,'asd')")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 asd"))
 }
 
 // TestMaxInt64Handle Issue #4810
