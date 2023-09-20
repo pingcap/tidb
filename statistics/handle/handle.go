@@ -56,7 +56,9 @@ import (
 
 // Handle can update stats info periodically.
 type Handle struct {
-	pool sessionPool
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
+	pool  sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
@@ -88,8 +90,6 @@ type Handle struct {
 
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
 	statsUsage *statsUsage
-
-	globalstatushandler *globalstats.GlobalStatusHandler
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -176,9 +176,9 @@ type sessionPool interface {
 // NewHandle creates a Handle for update stats.
 func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
-	gpool := gp.New(math.MaxInt16, time.Minute)
+
 	handle := &Handle{
-		globalstatushandler:     globalstats.NewGlobalStatusHandler(gpool),
+		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		listHead:                NewSessionStatsCollector(),
 		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
@@ -364,7 +364,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
 	histIDs []int64,
 	tablePartitionStats map[int64]*statistics.Table,
 ) (globalStats *globalstats.GlobalStats, err error) {
-	return h.globalstatushandler.MergePartitionStats2GlobalStatsByTableID(sc, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -390,7 +390,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	isIndex bool,
 	histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table,
-) (globalStats *globalstats.GlobalStats, err error) {
+) (*globalstats.GlobalStats, error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return nil, err
@@ -401,7 +401,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	if err := UpdateSCtxVarsForStats(sc); err != nil {
 		return nil, err
 	}
-	return h.globalstatushandler.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
@@ -1797,7 +1797,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.globalstatushandler.Close()
+	h.gpool.Close()
 	h.statsCache.Load().Close()
 }
 
