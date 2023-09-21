@@ -2,28 +2,26 @@
 drop table if exists t;
 create table t (id int, a varchar(20) collate utf8mb4_general_ci);
 insert into t values (0, 'aAÁàãăâ'),(1, 'a'),(2, 'a  '),(3, '中'),(4, '中 ');
-select weight_string(a) from t order by id;
-select weight_string(a as char(1)) from t order by id;
-select weight_string(a as char(3)) from t order by id;
-select weight_string(a as binary(1)) from t order by id;
-select weight_string(a as binary(5)) from t order by id;
-select weight_string(NULL);
-select weight_string(7);
-select weight_string(cast(7 as decimal(5)));
-select weight_string(cast(20190821 as date));
-select weight_string(cast(20190821 as date) as binary(5));
-select weight_string(7.0);
-select weight_string(7 AS BINARY(2));
-select weight_string('中 ' collate utf8mb4_general_ci);
-select weight_string('中 ' collate utf8mb4_bin);
-select weight_string('中 ' collate utf8mb4_unicode_ci);
+select hex(weight_string(a)) from t order by id;
+select hex(weight_string(a as char(1))) from t order by id;
+select hex(weight_string(a as char(3))) from t order by id;
+select hex(weight_string(a as binary(1))) from t order by id;
+select hex(weight_string(a as binary(5))) from t order by id;
+select hex(weight_string(NULL));
+select hex(weight_string(7));
+select hex(weight_string(cast(7 as decimal(5))));
+select hex(weight_string(cast(20190821 as date)));
+select hex(weight_string(cast(20190821 as date) as binary(5)));
+select hex(weight_string(7.0));
+select hex(weight_string(7 AS BINARY(2)));
+select hex(weight_string('中 ' collate utf8mb4_general_ci));
+select hex(weight_string('中 ' collate utf8mb4_bin));
+select hex(weight_string('中 ' collate utf8mb4_unicode_ci));
 select collation(a collate utf8mb4_general_ci) from t order by id;
 select collation('中 ' collate utf8mb4_general_ci);
-select weight_string(a collate utf8mb4_bin) from t order by id;
--- error 1253
+select hex(weight_string(a collate utf8mb4_bin)) from t order by id;
 -- error 1253
 select weight_string(a collate utf8_general_ci) from t order by id;
--- error 1253
 -- error 1253
 select weight_string('中' collate utf8_bin);
 
@@ -799,8 +797,8 @@ drop table if exists t;
 create table t(a int, b double, c datetime, d time, e char(20), f bit(10), g binary(20), h blob(10));
 insert into t values(1, 1.1, "2017-01-01 12:01:01", "12:01:01", "abcdef", 0b10101, "512", "abc");
 select to_base64(a), to_base64(b), to_base64(c), to_base64(d), to_base64(e), to_base64(f), to_base64(g), to_base64(h), to_base64(null) from t;
-select from_base64("abcd"), from_base64("asc");
-select from_base64("MQ=="), from_base64(1234);
+select hex(from_base64("abcd")), hex(from_base64("asc"));
+select hex(from_base64("MQ==")), hex(from_base64(1234));
 drop table if exists t;
 create table t(a char(10), b int, c double, d datetime, e time);
 insert into t values('Sakila', 12345, 123.45, "2017-01-01 12:01:01", "12:01:01");
@@ -855,8 +853,8 @@ select rtrim("   bar   \t"), rtrim("bar\t   "), rtrim("bar   \n"), rtrim("bar   
 DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BINARY(6));
 INSERT INTO t VALUES("中文");
-SELECT a, REVERSE(a), REVERSE("中文"), REVERSE("123 ") FROM t;
-SELECT REVERSE(123), REVERSE(12.09) FROM t;
+SELECT hex(a), hex(REVERSE(a)), hex(REVERSE("中文")), hex(REVERSE("123 ")) FROM t;
+SELECT hex(REVERSE(123)), hex(REVERSE(12.09)) FROM t;
 select trim('   bar   '), trim(leading 'x' from 'xxxbarxxx'), trim(trailing 'xyz' from 'barxxyz'), trim(both 'x' from 'xxxbarxxx');
 select trim('\t   bar\n   '), trim('   \rbar   \t');
 select trim(leading from '   bar'), trim('x' from 'xxxbarxxx'), trim('x' from 'bar'), trim('' from '   bar   ');
@@ -906,7 +904,7 @@ select quote(null) REGEXP 'null';
 select convert("123" using "binary"), convert("中文" using "binary"), convert("中文" using "utf8"), convert("中文" using "utf8mb4"), convert(cast("中文" as binary) using "utf8");
 -- error 1115
 select convert("123" using "866");
-select insert("中文", 1, 1, cast("aaa" as binary)), insert("ba", -1, 1, "aaa"), insert("ba", 1, 100, "aaa"), insert("ba", 100, 1, "aaa");
+select hex(insert("中文", 1, 1, cast("aaa" as binary))), hex(insert("ba", -1, 1, "aaa")), hex(insert("ba", 1, 100, "aaa")), hex(insert("ba", 100, 1, "aaa"));
 select insert("bb", NULL, 1, "aa"), insert("bb", 1, NULL, "aa"), insert(NULL, 1, 1, "aaa"), insert("bb", 1, 1, NULL);
 SELECT INSERT("bb", 0, 1, NULL), INSERT("bb", 0, NULL, "aaa");
 SELECT INSERT("中文", 0, 1, NULL), INSERT("中文", 0, NULL, "aaa");
