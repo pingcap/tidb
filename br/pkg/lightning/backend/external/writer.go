@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/jfcg/sorty/v2"
@@ -91,6 +92,7 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
+	mu              *sync.Mutex
 
 	bufferPool *membuf.Pool
 }
@@ -153,6 +155,11 @@ func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
 	return b
 }
 
+func (b *WriterBuilder) SetMutex(mu *sync.Mutex) *WriterBuilder {
+	b.mu = mu
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -190,6 +197,7 @@ func (b *WriterBuilder) Build(
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		shareMu:        b.mu,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 	return ret
@@ -275,6 +283,7 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
+	shareMu   *sync.Mutex
 }
 
 // WriteRow implements ingest.Writer.
@@ -351,6 +360,10 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if len(w.writeBatch) == 0 {
 		return nil
+	}
+	if w.shareMu != nil {
+		w.shareMu.Lock()
+		defer w.shareMu.Unlock()
 	}
 
 	logger := logutil.Logger(ctx)

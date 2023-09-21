@@ -478,6 +478,7 @@ type Backend struct {
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+	mu           sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -1555,6 +1556,10 @@ func (local *Backend) ImportEngine(
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+}
+
+func (local *Backend) GetMutex() *sync.Mutex {
+	return &local.mu
 }
 
 // expose these variables to unit test.
