@@ -838,7 +838,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			return strconv.FormatInt(int64(gctuner.MaxGCPercent()), 64), nil
+			return strconv.FormatInt(int64(gctuner.MaxGCPercent()), 10), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, origin string, scope ScopeFlag) (string, error) {
 			maxValue := TidbOptInt64(origin, DefTiDBGOGCMaxValue)
@@ -855,7 +855,7 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			return strconv.FormatInt(int64(gctuner.MinGCPercent()), 64), nil
+			return strconv.FormatInt(int64(gctuner.MinGCPercent()), 10), nil
 		},
 		Validation: func(s *SessionVars, normalizedValue string, origin string, scope ScopeFlag) (string, error) {
 			minValue := TidbOptInt64(origin, DefTiDBGOGCMinValue)
