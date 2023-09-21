@@ -34,11 +34,11 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/replayer"
 	"go.uber.org/zap"
 )
 

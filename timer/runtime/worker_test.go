@@ -22,9 +22,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util"
+	mockutil "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/timer/api"
-	"github.com/pingcap/tidb/util"
-	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"

@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

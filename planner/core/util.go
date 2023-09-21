@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/planner/core/internal/base"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/size"
 )
 
 // AggregateFuncExtractor visits Expr tree.

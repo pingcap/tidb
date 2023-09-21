@@ -13,6 +13,7 @@ go_test(
     deps = [
         "//domain",
         "//parser/model",
+        "//pkg/util/collate",
         "//planner/core/internal",
         "//sessionctx/stmtctx",
         "//testkit",
@@ -20,7 +21,6 @@ go_test(
         "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",
-        "//util/collate",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

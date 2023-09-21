@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/tidb-binlog/node"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // ChangeExec represents a change executor.

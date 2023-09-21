@@ -17,9 +17,9 @@ package statistics
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // DatumMapCache is used to store the mapping from the string type to datum type.

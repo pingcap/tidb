@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/testutil"
-	"github.com/pingcap/tidb/util/benchdaily"
 )
 
 func benchCopyAndUpdate(b *testing.B, c *StatsCachePointer) {

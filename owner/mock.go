@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 

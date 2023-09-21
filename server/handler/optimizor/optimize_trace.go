@@ -22,8 +22,8 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/server/handler"
-	"github.com/pingcap/tidb/util"
 )
 
 // OptimizeTraceHandler serve http

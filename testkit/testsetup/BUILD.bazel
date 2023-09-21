@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "testbridge",
     srcs = ["bridge.go"],
-    importpath = "github.com/pingcap/tidb/util/testbridge",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_log//:log",

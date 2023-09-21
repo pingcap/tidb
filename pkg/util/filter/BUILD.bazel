@@ -1,0 +1,28 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "filter",
+    srcs = [
+        "filter.go",
+        "schema.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/filter",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/table-filter",
+        "//pkg/util/table-rule-selector",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "filter_test",
+    timeout = "short",
+    srcs = [
+        "filter_test.go",
+        "schema_test.go",
+    ],
+    embed = [":filter"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

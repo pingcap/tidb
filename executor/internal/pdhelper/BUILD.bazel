@@ -7,10 +7,10 @@ go_library(
     visibility = ["//executor:__subpackages__"],
     deps = [
         "//kv",
+        "//pkg/util",
+        "//pkg/util/sqlexec",
         "//sessionctx",
         "//store/helper",
-        "//util",
-        "//util/sqlexec",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_failpoint//:failpoint",
     ],

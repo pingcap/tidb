@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/keyspace"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/store/gcworker"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )

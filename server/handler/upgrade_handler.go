@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

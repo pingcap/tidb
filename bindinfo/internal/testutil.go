@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/testkit"
-	utilparser "github.com/pingcap/tidb/util/parser"
 	"github.com/stretchr/testify/require"
 )
 

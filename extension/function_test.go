@@ -24,11 +24,11 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 

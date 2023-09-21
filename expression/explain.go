@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // ExplainInfo implements the Expression interface.

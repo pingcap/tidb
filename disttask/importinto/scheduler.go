@@ -39,9 +39,9 @@ import (
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

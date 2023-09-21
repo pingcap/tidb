@@ -18,13 +18,13 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/set"
 )
 
 // SelectionFactor is the factor which is used to estimate the row count of selection.

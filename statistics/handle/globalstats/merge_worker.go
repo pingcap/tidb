@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 // StatsWrapper wrapper stats

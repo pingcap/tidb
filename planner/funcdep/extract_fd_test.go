@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
 )
 

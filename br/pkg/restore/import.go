@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"

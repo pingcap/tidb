@@ -20,8 +20,8 @@ import (
 
 	ddlctrl "github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 )
 
 const dbTestLease = 600 * time.Millisecond

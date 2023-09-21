@@ -18,8 +18,8 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/size"
 )
 
 // ByItems wraps a "by" item.

@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

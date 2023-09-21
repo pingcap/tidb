@@ -29,7 +29,7 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 

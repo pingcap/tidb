@@ -17,7 +17,7 @@ package variable
 import (
 	mysql "github.com/pingcap/tidb/errno"
 	pmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // Error instances.

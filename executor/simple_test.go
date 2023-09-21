@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/globalconn"
 	"github.com/stretchr/testify/require"
 )
 

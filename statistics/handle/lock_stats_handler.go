@@ -16,8 +16,8 @@ package handle
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // LockTables add locked tables id to store.

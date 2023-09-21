@@ -12,9 +12,9 @@ go_library(
     deps = [
         "//kv",
         "//parser/terror",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
         "//statistics/handle/cache",
-        "//util/logutil",
-        "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
@@ -34,9 +34,9 @@ go_test(
     deps = [
         "//kv",
         "//parser/mysql",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec/mock",
         "//types",
-        "//util/chunk",
-        "//util/sqlexec/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",

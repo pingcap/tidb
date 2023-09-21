@@ -19,10 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/copr"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )

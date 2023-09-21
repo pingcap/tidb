@@ -8,10 +8,10 @@ go_test(
     race = "on",
     shard_count = 3,
     deps = [
+        "//pkg/util/set",
+        "//pkg/util/syncutil",
         "//testkit",
         "//testkit/testsetup",
-        "//util/set",
-        "//util/syncutil",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",

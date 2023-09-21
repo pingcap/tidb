@@ -21,8 +21,8 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
 	"gopkg.in/yaml.v2"
 )
 

@@ -51,7 +51,7 @@ package expression
 const newLine = "\n"
 
 const builtinStringImports = `import (
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 `
 

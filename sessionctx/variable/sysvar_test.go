@@ -31,9 +31,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/gctuner"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1019,9 +1019,9 @@ func TestTiDBServerMemoryLimit2(t *testing.T) {
 		require.Equal(t, memory.ServerMemoryLimit.Load(), total/100*75)
 	}
 	// Test can't obtain physical memory
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/GetMemTotalError", `return(true)`))
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/GetMemTotalError", `return(true)`))
 	require.Error(t, mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "75%"))
-	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/GetMemTotalError"))
+	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/GetMemTotalError"))
 
 	// Test byteSize format
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimit, "1234")

@@ -19,7 +19,7 @@ import (
 	"encoding/binary"
 	"slices"
 
-	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 func encodeIntAsUint32(result []byte, value int) []byte {

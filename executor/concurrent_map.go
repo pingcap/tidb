@@ -15,8 +15,8 @@
 package executor
 
 import (
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/syncutil"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 // ShardCount controls the shard maps within the concurrent map

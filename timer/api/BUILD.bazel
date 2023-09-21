@@ -14,9 +14,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/duration",
-        "//util",
-        "//util/logutil",
-        "//util/timeutil",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@com_github_robfig_cron_v3//:cron",
@@ -39,8 +39,8 @@ go_test(
     race = "on",
     shard_count = 13,
     deps = [
+        "//pkg/util/timeutil",
         "//testkit/testsetup",
-        "//util/timeutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

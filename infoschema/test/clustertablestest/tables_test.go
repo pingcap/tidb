@@ -36,15 +36,15 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/session/txninfo"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/gctuner"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1285,7 +1285,7 @@ func TestSimpleStmtSummaryEvictedCount(t *testing.T) {
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=0")
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1")
 	historySize := 24
-	fpPath := "github.com/pingcap/tidb/util/stmtsummary/mockTimeForStatementsSummary"
+	fpPath := "github.com/pingcap/tidb/pkg/util/stmtsummary/mockTimeForStatementsSummary"
 	for i := int64(0); i < 100; i++ {
 		err := failpoint.Enable(fpPath, fmt.Sprintf(`return("%v")`, time.Now().Unix()+interval*i))
 		if err != nil {
@@ -1706,9 +1706,9 @@ func TestTableConstraintsContainForeignKeys(t *testing.T) {
 func TestMemoryUsageAndOpsHistory(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/gctuner/testMemoryLimitTuner", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/gctuner/testMemoryLimitTuner"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/gctuner/testMemoryLimitTuner"))
 	}()
 	gctuner.GlobalMemoryLimitTuner.Start()
 	defer func() {

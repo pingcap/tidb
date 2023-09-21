@@ -18,11 +18,11 @@ import (
 	"context"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // ResultSet is the result set of an query.

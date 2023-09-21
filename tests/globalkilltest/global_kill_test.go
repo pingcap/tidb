@@ -29,7 +29,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -742,7 +742,7 @@ func TestServerIDUpgradeAndDowngrade(t *testing.T) {
 		return s.mustConnectTiDB(t, *tidbStartPort+idx)
 	}
 
-	// MaxTiDB32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32`
+	// MaxTiDB32 is determined by `github.com/pingcap/tidb/pkg/util/globalconn.ldflagServerIDBits32`
 	// See the ldflags in `Makefile`.
 	// Also see `Domain.proposeServerID`.
 	const MaxTiDB32 = 2 // (3^2 -1) x 0.9
@@ -807,7 +807,7 @@ func TestConnIDUpgradeAndDowngrade(t *testing.T) {
 	tidb := s.mustStartTiDBWithPD(t, *tidbStartPort, *tidbStatusPort, *pdClientPath)
 	defer s.stopService("tidb0", tidb, true)
 
-	// MaxConn32 is determined by `github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32`
+	// MaxConn32 is determined by `github.com/pingcap/tidb/pkg/util/globalconn.ldflagLocalConnIDBits32`
 	// See the ldflags in `Makefile`.
 	// Also see `LockFreeCircularPool.Cap`.
 	const MaxConn32 = 1<<4 - 1

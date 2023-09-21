@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/server/internal/testserverclient"
 	"github.com/pingcap/tidb/server/internal/testutil"
 	util2 "github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

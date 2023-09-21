@@ -23,7 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 )
 
 type memStoreWatcher struct {

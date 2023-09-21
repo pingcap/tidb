@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	tidbutil "github.com/pingcap/tidb/util"
 	"go.uber.org/zap"
 )
 

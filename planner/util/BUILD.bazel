@@ -14,11 +14,11 @@ go_library(
         "//kv",
         "//parser/ast",
         "//parser/model",
+        "//pkg/util/collate",
+        "//pkg/util/ranger",
+        "//pkg/util/size",
         "//sessionctx",
         "//types",
-        "//util/collate",
-        "//util/ranger",
-        "//util/size",
     ],
 )
 
@@ -34,11 +34,11 @@ go_test(
     deps = [
         "//domain",
         "//parser/model",
+        "//pkg/util/collate",
+        "//pkg/util/ranger",
         "//planner/core",
         "//testkit/testsetup",
         "//types",
-        "//util/collate",
-        "//util/ranger",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

@@ -24,8 +24,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/store/driver/backoff"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"

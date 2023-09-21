@@ -23,9 +23,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	timerapi "github.com/pingcap/tidb/timer/api"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )

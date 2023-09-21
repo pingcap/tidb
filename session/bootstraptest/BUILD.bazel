@@ -17,15 +17,15 @@ go_test(
         "//meta",
         "//parser/model",
         "//parser/terror",
+        "//pkg/util",
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
         "//server/handler",
         "//session",  #keep
         "//sessionctx",
         "//testkit",  #keep
         "//testkit/testmain",
         "//testkit/testsetup",
-        "//util",
-        "//util/chunk",
-        "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",  #keep

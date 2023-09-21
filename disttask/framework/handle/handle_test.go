@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/backoff"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )

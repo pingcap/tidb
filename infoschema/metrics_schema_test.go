@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/stretchr/testify/require"
 )

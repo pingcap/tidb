@@ -17,6 +17,8 @@ go_library(
         "//kv",
         "//parser/ast",
         "//parser/mysql",
+        "//pkg/util/ranger",
+        "//pkg/util/set",
         "//planner/core",
         "//planner/implementation",
         "//planner/memo",
@@ -24,8 +26,6 @@ go_library(
         "//planner/util",
         "//sessionctx",
         "//types",
-        "//util/ranger",
-        "//util/set",
     ],
 )
 

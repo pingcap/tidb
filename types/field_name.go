@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/size"
+	"github.com/pingcap/tidb/pkg/util/size"
 )
 
 // FieldName records the names used for mysql protocol.

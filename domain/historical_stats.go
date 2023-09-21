@@ -19,9 +19,9 @@ import (
 	"github.com/pingcap/failpoint"
 	domain_metrics "github.com/pingcap/tidb/domain/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

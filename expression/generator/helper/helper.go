@@ -20,14 +20,14 @@ type TypeContext struct {
 	ETName string
 	// Describe the name of "github.com/pingcap/tidb/expression".VecExpr.VecEval{{ .TypeName }} .
 	TypeName string
-	// Describe the name of "github.com/pingcap/tidb/util/chunk".*Column.Append{{ .TypeNameInColumn }},
+	// Describe the name of "github.com/pingcap/tidb/pkg/util/chunk".*Column.Append{{ .TypeNameInColumn }},
 	// Resize{{ .TypeNameInColumn }}, Reserve{{ .TypeNameInColumn }}, Get{{ .TypeNameInColumn }} and
 	// {{ .TypeNameInColumn }}s.
 	// If undefined, it's same as TypeName.
 	TypeNameInColumn string
 	// Describe the type name in golang.
 	TypeNameGo string
-	// Same as "github.com/pingcap/tidb/util/chunk".getFixedLen() .
+	// Same as "github.com/pingcap/tidb/pkg/util/chunk".getFixedLen() .
 	Fixed bool
 }
 

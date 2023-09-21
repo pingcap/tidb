@@ -8,9 +8,9 @@ go_library(
     deps = [
         "//distsql",
         "//kv",
+        "//pkg/util/timeutil",
         "//planner/core",
         "//sessionctx",
-        "//util/timeutil",
         "@com_github_pingcap_tipb//go-tipb",
     ],
 )

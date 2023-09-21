@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 

@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/pingcap/tidb/timer/api"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/mock"
 	"go.uber.org/goleak"
 )

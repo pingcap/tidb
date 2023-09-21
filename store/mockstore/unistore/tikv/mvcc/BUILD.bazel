@@ -10,8 +10,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util/codec",
         "//store/mockstore/unistore/lockstore",
-        "//util/codec",
         "@com_github_pingcap_badger//:badger",
         "@com_github_pingcap_badger//y",
         "@com_github_pingcap_errors//:errors",

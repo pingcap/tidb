@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/pingcap/tidb/sessionctx/binloginfo"
-	"github.com/pingcap/tidb/util/versioninfo"
 )
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.

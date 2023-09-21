@@ -19,8 +19,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
 // Enum is for MySQL enum type.

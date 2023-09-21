@@ -19,7 +19,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 func onLockTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {

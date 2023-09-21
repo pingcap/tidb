@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/tracing"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"

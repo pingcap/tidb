@@ -22,9 +22,9 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/tracing"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous

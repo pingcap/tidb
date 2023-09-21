@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // AssertRecordsKey is used to save failPoint invoke records

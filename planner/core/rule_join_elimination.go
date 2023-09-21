@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 type outerJoinEliminator struct {

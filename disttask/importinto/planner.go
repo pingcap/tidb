@@ -35,8 +35,8 @@ import (
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

@@ -7,10 +7,10 @@ go_library(
     visibility = ["//executor:__subpackages__"],
     deps = [
         "//expression",
+        "//pkg/util/chunk",
+        "//pkg/util/codec",
         "//sessionctx",
         "//types",
-        "//util/chunk",
-        "//util/codec",
     ],
 )
 
@@ -29,10 +29,10 @@ go_test(
         "//expression",
         "//meta/autoid",
         "//parser/mysql",
+        "//pkg/util/chunk",
+        "//pkg/util/mock",
         "//testkit/testsetup",
         "//types",
-        "//util/chunk",
-        "//util/mock",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",

@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 )
 

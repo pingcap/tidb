@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
 

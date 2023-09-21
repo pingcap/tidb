@@ -18,7 +18,7 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // AlterAlgorithm is used to store supported alter algorithm.

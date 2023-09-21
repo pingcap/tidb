@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/breakpoint"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/stretchr/testify/require"
 )
 
@@ -191,7 +191,7 @@ func (tk *SteppedTestKit) steppedCommand(cmd steppedTestKitCommand) *SteppedTest
 
 		tk.tk.Session().SetValue(breakpoint.NotifyBreakPointFuncKey, ctx.notifyBreakPointAndWait)
 		for _, breakPoint := range tk.breakPoints {
-			path := "github.com/pingcap/tidb/util/breakpoint/" + breakPoint
+			path := "github.com/pingcap/tidb/pkg/util/breakpoint/" + breakPoint
 			require.NoError(tk.t, failpoint.Enable(path, "return"))
 			breakPointPaths = append(breakPointPaths, path)
 		}

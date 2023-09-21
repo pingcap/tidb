@@ -25,9 +25,9 @@ import (
 
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/benchdaily"
 	"github.com/stretchr/testify/require"
 )
 

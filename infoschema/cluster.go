@@ -21,11 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sem"
 )
 
 // Cluster table indicates that these tables need to get data from other tidb nodes, which may get from all other nodes, or may get from the ddl owner.

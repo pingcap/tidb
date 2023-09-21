@@ -18,7 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 )
 
 // KeyAdapter is used to encode and decode keys so that duplicate key can be
@@ -28,7 +28,7 @@ type KeyAdapter interface {
 	// key to dst and returns the resulting slice. The encoded key is guaranteed to
 	// be in ascending order for comparison.
 	// rowID must be a coded mem-comparable value, one way to get it is to use
-	// tidb/util/codec package.
+	// tidb/pkg/util/codec package.
 	Encode(dst []byte, key []byte, rowID []byte) []byte
 
 	// Decode decodes the original key to dst. It appends the encoded key to dst and returns the resulting slice.

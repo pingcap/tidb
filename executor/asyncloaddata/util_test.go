@@ -20,8 +20,8 @@ import (
 	"time"
 
 	. "github.com/pingcap/tidb/executor/asyncloaddata"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 

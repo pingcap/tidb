@@ -26,12 +26,12 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	mockutil "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/testkit"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/tablestore"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/ttlworker"
-	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 

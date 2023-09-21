@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
 

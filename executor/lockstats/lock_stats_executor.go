@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 var _ exec.Executor = &LockExec{}

@@ -17,8 +17,8 @@ package aggfuncs
 import (
 	"math"
 
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 type stdDevPop4Float64 struct {

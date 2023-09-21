@@ -11,8 +11,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/ast",
+        "//pkg/util/codec",
         "//tablecodec",
-        "//util/codec",
         "@in_gopkg_yaml_v2//:yaml_v2",
     ],
 )

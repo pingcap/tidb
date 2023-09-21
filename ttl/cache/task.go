@@ -18,10 +18,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 const selectFromTTLTask = `SELECT LOW_PRIORITY

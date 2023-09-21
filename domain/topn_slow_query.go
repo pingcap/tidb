@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 )
 
 type slowQueryHeap struct {

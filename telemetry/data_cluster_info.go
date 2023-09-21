@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 type clusterInfoItem struct {

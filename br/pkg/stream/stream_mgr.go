@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util"
-	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )

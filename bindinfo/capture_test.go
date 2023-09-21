@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/model"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/testkit"
-	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )

@@ -49,6 +49,15 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpuprofile"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	"github.com/pingcap/tidb/pkg/util/topsql"
+	"github.com/pingcap/tidb/pkg/util/topsql/collector"
+	mockTopSQLTraceCPU "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	server2 "github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/server/internal/column"
 	"github.com/pingcap/tidb/server/internal/resultset"
@@ -60,15 +69,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/cpuprofile"
-	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/resourcegrouptag"
-	"github.com/pingcap/tidb/util/topsql"
-	"github.com/pingcap/tidb/util/topsql/collector"
-	mockTopSQLTraceCPU "github.com/pingcap/tidb/util/topsql/collector/mock"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.opencensus.io/stats/view"
@@ -1305,10 +1305,10 @@ func TestTopSQLCatchRunningSQL(t *testing.T) {
 		dbt.MustExec(fmt.Sprintf("insert into t values (%v, %v)", i, i))
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachPlan", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop"))
 	}()
 
@@ -1365,12 +1365,12 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		require.NoError(t, db.Close())
 	}()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL", `return(true)`))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachSQL", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachPlan", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachSQL"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/topsql/mockHighLoadForEachPlan"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachSQL"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/topsql/mockHighLoadForEachPlan"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/skipLoadSysVarCacheLoop"))
 	}()
 

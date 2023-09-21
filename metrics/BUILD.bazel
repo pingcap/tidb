@@ -29,10 +29,10 @@ go_library(
     deps = [
         "//br/pkg/lightning/metric",
         "//parser/terror",
+        "//pkg/util/logutil",
+        "//pkg/util/mathutil",
+        "//pkg/util/promutil",
         "//timer/metrics",
-        "//util/logutil",
-        "//util/mathutil",
-        "//util/promutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_golang//prometheus/collectors",

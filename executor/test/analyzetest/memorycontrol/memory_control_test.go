@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,12 +50,12 @@ func TestGlobalMemoryControlForAnalyze(t *testing.T) {
 		tk0.MustExec("insert into t select * from t") // 256 Lines
 	}
 	sql := "analyze table t with 1.0 samplerate;" // Need about 100MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
 	_, err := tk0.Exec(sql)
 	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
 	runtime.GC()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	tk0.MustExec(sql)
 }
@@ -82,8 +82,8 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 		tk0.MustExec("insert into t select * from t") // 256 Lines
 	}
 	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
-	sqlExecute := "execute stmt;"                                                                                 // Need about 100MB
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
+	sqlExecute := "execute stmt;"                                                                                     // Need about 100MB
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
 	runtime.GC()
 	// won't be killed by tidb_mem_quota_query
@@ -98,7 +98,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 	// Killed and the WarnMsg is WarnMsgSuffixForInstance instead of WarnMsgSuffixForSingleQuery
 	require.True(t, strings.Contains(err1.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
 	runtime.GC()
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	tk0.MustExec(sqlPrepare)
 	tk0.MustExec(sqlExecute)
@@ -165,10 +165,10 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	err := h.Update(dom.InfoSchema())
 	require.NoError(t, err)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/memory/ReadMemStats", `return(536870912)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/memory/ReadMemStats"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	}()
 	tk.MustQuery("select 1")

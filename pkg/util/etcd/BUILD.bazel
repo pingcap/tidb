@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "etcd",
+    srcs = ["etcd.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/etcd",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_client_v3//namespace",
+    ],
+)
+
+go_test(
+    name = "etcd_test",
+    timeout = "short",
+    srcs = ["etcd_test.go"],
+    embed = [":etcd"],
+    flaky = True,
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@io_etcd_go_etcd_client_v3//:client",
+        "@io_etcd_go_etcd_tests_v3//integration",
+    ],
+)

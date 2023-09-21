@@ -21,10 +21,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 )

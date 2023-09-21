@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/tiflash"
+	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/pingcap/tidb/sessionctx/variable/featuretag/disttask"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/paging"
-	"github.com/pingcap/tidb/util/size"
-	"github.com/pingcap/tidb/util/tiflash"
-	"github.com/pingcap/tidb/util/tiflashcompute"
 	"go.uber.org/atomic"
 )
 

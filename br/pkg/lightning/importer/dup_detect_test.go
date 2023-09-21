@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/dbutil"
-	"github.com/pingcap/tidb/util/extsort"
 	"github.com/stretchr/testify/require"
 )
 

@@ -46,7 +46,7 @@ func main() {
 		os.Exit(-3)
 	}
 
-	// github.com/pingcap/tidb/util/topsql.test => util/topsql
+	// github.com/pingcap/tidb/pkg/util/topsql.test => util/topsql
 	pkg = pkg[len(prefix) : len(pkg)-len(".test")]
 
 	_, file := filepath.Split(pkg)

@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

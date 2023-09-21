@@ -21,7 +21,7 @@ import (
 	"io"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -86,8 +86,8 @@ type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 // newMergeIter creates a merge iterator for multiple sorted reader opener
 // functions.
 func newMergeIter[
-	T heapElem,
-	R sortedReader[T],
+T heapElem,
+R sortedReader[T],
 ](ctx context.Context, readerOpeners []readerOpenerFn[T, R]) (*mergeIter[T, R], error) {
 	logger := logutil.Logger(ctx)
 	readers := make([]*R, len(readerOpeners))

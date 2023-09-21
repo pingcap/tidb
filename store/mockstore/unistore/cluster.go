@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	us "github.com/pingcap/tidb/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
