@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 

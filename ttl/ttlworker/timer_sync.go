@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )

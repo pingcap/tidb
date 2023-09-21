@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/filter"
 )
 
 // SourceFile defines a mock source file.

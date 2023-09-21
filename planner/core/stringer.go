@@ -19,7 +19,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // ToString explains a Plan, returns description string.

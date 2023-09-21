@@ -33,6 +33,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/pingcap/tidb/pkg/util/topsql"
 	"github.com/pingcap/tidb/planner/cascades"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
@@ -42,11 +47,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil"
-	utilparser "github.com/pingcap/tidb/util/parser"
-	"github.com/pingcap/tidb/util/topsql"
 	"go.uber.org/zap"
 )
 

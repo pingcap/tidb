@@ -19,8 +19,8 @@ import (
 	"sort"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/texttree"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/texttree"
 	"go.uber.org/zap"
 )
 

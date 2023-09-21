@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 )
 

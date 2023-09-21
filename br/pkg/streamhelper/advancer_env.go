@@ -9,7 +9,7 @@ import (
 	logbackup "github.com/pingcap/kvproto/pkg/logbackuppb"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
 	pd "github.com/tikv/pd/client"

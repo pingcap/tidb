@@ -21,8 +21,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 

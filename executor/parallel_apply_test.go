@@ -20,9 +20,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 

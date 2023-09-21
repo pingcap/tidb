@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

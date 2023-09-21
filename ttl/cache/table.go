@@ -27,13 +27,13 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 )
 

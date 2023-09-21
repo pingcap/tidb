@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 )
 

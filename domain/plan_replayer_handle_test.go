@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/replayer"
 	"github.com/stretchr/testify/require"
 )
 

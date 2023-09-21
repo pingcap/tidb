@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	parsertypes "github.com/pingcap/tidb/parser/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege/privileges"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 

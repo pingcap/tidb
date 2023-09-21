@@ -19,8 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

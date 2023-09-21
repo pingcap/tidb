@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 func onCreateSequence(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {

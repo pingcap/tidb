@@ -25,6 +25,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -33,11 +38,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil/consistency"
-	"github.com/pingcap/tidb/util/rowcodec"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.

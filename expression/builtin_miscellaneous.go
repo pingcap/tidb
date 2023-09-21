@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/vitess"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

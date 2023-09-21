@@ -14,9 +14,9 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )

@@ -39,11 +39,11 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/format"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/format"
 	"go.uber.org/zap"
 )
 

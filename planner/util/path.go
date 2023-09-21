@@ -21,10 +21,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,

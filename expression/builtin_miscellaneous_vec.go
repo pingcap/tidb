@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/vitess"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/vitess"
 )
 
 func (b *builtinInetNtoaSig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {

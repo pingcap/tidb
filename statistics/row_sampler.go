@@ -21,14 +21,14 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

@@ -20,10 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 

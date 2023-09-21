@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"runtime"
 
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/tablecodec"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 

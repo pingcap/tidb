@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // MergeJoinExec implements the merge join algorithm.

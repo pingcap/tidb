@@ -27,6 +27,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/planner/core"
 	servererr "github.com/pingcap/tidb/server/err"
 	"github.com/pingcap/tidb/server/internal/column"
@@ -35,9 +38,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
 )
 
 // TiDBDriver implements IDriver.

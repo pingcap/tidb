@@ -18,10 +18,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
 

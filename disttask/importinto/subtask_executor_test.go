@@ -26,8 +26,8 @@ import (
 	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )

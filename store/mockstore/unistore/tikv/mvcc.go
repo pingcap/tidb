@@ -33,6 +33,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/store/mockstore/unistore/config"
 	"github.com/pingcap/tidb/store/mockstore/unistore/lockstore"
@@ -42,8 +44,6 @@ import (
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/store/mockstore/unistore/util/lockwaiter"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )

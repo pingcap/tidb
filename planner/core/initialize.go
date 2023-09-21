@@ -17,13 +17,13 @@ package core
 import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/planner/core/internal/base"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/size"
 )
 
 // Init initializes LogicalAggregation.

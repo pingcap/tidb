@@ -22,14 +22,14 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/set"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/set"
 )
 
 const (

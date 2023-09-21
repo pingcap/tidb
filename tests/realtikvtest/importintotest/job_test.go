@@ -35,10 +35,10 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 )
 
 func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []interface{}) {

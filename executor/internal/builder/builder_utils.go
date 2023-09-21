@@ -17,9 +17,9 @@ package builder
 import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

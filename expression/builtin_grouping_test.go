@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )

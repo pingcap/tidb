@@ -19,10 +19,10 @@ import (
 	"fmt"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
 )
 
 // VecGroupChecker is used to split a given chunk according to the `group by` expression in a vectorized manner

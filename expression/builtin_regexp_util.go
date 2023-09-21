@@ -17,7 +17,7 @@ package expression
 import (
 	"regexp"
 
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // memorized regexp means the constant pattern.

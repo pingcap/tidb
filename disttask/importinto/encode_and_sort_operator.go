@@ -26,10 +26,10 @@ import (
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/model"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	tidbutil "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )

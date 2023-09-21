@@ -23,11 +23,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 

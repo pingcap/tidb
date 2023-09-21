@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mock"
-	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 )
 

@@ -23,7 +23,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )

@@ -15,7 +15,7 @@
 package metrics
 
 import (
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 )

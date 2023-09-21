@@ -18,7 +18,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
 type fdEdge struct {

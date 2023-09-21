@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )

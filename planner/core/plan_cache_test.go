@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -36,8 +38,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/size"
 	"github.com/stretchr/testify/require"
 )
 

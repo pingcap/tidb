@@ -19,8 +19,8 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (*builtinTimeIsNullSig) vectorized() bool {

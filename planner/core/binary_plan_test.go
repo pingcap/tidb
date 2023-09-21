@@ -25,11 +25,11 @@ import (
 	"github.com/golang/snappy"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/auth"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )

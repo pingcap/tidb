@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 

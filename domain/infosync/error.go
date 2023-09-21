@@ -17,7 +17,7 @@ package infosync
 import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 var (

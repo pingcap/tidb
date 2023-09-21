@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/util/hint"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
 

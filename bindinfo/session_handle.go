@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

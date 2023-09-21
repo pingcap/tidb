@@ -24,8 +24,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	mockutil "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/timer/api"
-	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )

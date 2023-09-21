@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/duration"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/robfig/cron/v3"
 )
 

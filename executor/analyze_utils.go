@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/atomic"
 )
 

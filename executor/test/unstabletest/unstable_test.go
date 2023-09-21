@@ -20,10 +20,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/skip"
 	"github.com/stretchr/testify/require"
 )
 

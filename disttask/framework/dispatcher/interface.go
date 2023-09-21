@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/util/syncutil"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
 
 // Extension is used to control the process operations for each task.

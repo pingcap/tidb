@@ -31,12 +31,12 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/domainutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/domainutil"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 

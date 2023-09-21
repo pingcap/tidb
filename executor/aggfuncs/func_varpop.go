@@ -18,9 +18,9 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/set"
 )
 
 const (

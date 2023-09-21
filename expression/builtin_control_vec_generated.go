@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // NOTE: Control expressions optionally evaluate some branches depending on conditions, but vectorization executes all

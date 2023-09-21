@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/sem"
 	"github.com/stretchr/testify/require"
 )
 

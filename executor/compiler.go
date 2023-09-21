@@ -24,14 +24,14 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/zap"
 )
 

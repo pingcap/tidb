@@ -19,9 +19,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/server/handler/tikvhandler"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

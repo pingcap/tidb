@@ -18,8 +18,8 @@ import (
 	"math"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 const (

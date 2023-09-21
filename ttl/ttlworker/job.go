@@ -20,9 +20,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

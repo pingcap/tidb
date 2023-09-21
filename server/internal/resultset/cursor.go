@@ -14,7 +14,7 @@
 
 package resultset
 
-import "github.com/pingcap/tidb/util/chunk"
+import "github.com/pingcap/tidb/pkg/util/chunk"
 
 // CursorResultSet extends the `ResultSet` to provide the ability to store an iterator
 type CursorResultSet interface {

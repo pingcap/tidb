@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 )
 

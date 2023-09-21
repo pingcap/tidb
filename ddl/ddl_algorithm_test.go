@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 

@@ -21,6 +21,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/core/internal/base"
 	fd "github.com/pingcap/tidb/planner/funcdep"
@@ -28,10 +32,6 @@ import (
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/size"
-	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

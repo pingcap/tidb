@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/config"
-	tidbutils "github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	tidbutils "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/cobra"
 )
 

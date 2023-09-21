@@ -20,10 +20,10 @@ import (
 
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/hint"
 )
 
 const (

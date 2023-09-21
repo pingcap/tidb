@@ -19,10 +19,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

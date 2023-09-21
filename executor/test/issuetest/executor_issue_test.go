@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1416,7 +1416,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustQuery("select /*+ hash_join(t1)*/ * from t1 join t2 on t1.a = t2.a and t1.b = t2.b")
 
 	// try to trigger the kill top1 logic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2", `return(true)`))
 	time.Sleep(1 * time.Second)
 
 	// no error should be returned
@@ -1424,7 +1424,7 @@ func TestIssue42662(t *testing.T) {
 	tk.MustQuery("select count(*) from t1")
 
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue42662_1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/servermemorylimit/issue42662_2"))
 }
 
 func TestIssue41778(t *testing.T) {

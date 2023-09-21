@@ -21,12 +21,12 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/planner/core/internal"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 

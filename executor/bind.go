@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	plannercore "github.com/pingcap/tidb/planner/core"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // SQLBindExec represents a bind executor.

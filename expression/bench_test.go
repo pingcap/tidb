@@ -34,13 +34,13 @@ import (
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/benchdaily"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 

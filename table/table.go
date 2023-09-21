@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/tracing"
 )
 
 // Type is used to distinguish between different tables that store data in different ways.

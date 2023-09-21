@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/deadlockhistory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -401,9 +401,9 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int key, b int)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput", "return(true)"))
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+		err := failpoint.Disable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput")
 		require.NoError(t, err)
 	}()
 
@@ -465,14 +465,14 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test clean last failed transaction information.
-	err := failpoint.Disable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput")
+	err := failpoint.Disable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput")
 	require.NoError(t, err)
 	mustExec("begin")
 	mustExec("insert into t values (1,3),(2,4)")
 	errExec("commit")
 	require.Equal(t, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s", tk.Session().GetTxnWriteThroughputSLI().String())
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/sli/CheckTxnWriteThroughput", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput", "return(true)"))
 	mustExec("begin")
 	mustExec("insert into t values (5, 6)")
 	mustExec("commit")

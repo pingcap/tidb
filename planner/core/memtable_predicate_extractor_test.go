@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/set"
 	"github.com/stretchr/testify/require"
 )
 

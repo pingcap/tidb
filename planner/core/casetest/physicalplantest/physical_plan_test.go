@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/planner"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/core/internal"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/hint"
 	"github.com/stretchr/testify/require"
 )
 

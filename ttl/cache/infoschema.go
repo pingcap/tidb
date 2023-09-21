@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

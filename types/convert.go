@@ -26,8 +26,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/hack"
 )
 
 func truncateStr(str string, flen int) string {

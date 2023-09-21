@@ -10,7 +10,7 @@ import (
 	"syscall"
 
 	"github.com/pingcap/log"
-	tidbutils "github.com/pingcap/tidb/util"
+	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 )
 

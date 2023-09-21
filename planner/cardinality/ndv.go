@@ -18,9 +18,9 @@ import (
 	"math"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"

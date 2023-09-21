@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	_ "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
 	"go.uber.org/zap"
 )
 

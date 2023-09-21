@@ -21,12 +21,12 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/internal"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

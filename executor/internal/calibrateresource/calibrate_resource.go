@@ -31,12 +31,12 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/duration"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 )
 

@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/telemetry"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // AdminShowTelemetryExec is an executor for ADMIN SHOW TELEMETRY.

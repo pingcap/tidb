@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )

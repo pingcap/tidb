@@ -34,9 +34,9 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	tmock "github.com/pingcap/tidb/pkg/util/mock"
+	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/pingcap/tidb/types"
-	tmock "github.com/pingcap/tidb/util/mock"
-	router "github.com/pingcap/tidb/util/table-router"
 	"github.com/stretchr/testify/require"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 )

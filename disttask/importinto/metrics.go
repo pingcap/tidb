@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

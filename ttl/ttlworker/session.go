@@ -22,14 +22,14 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 

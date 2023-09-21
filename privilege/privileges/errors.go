@@ -16,7 +16,7 @@ package privileges
 
 import (
 	mysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // error definitions.

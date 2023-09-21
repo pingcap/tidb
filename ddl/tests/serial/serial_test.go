@@ -37,6 +37,8 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -46,8 +48,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )

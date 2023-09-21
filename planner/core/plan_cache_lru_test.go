@@ -21,10 +21,10 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
+	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/kvcache"
-	utilpc "github.com/pingcap/tidb/util/plancache"
 	"github.com/stretchr/testify/require"
 )
 

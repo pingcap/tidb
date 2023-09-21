@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
 // StreamAggExec deals with all the aggregate functions.

@@ -23,8 +23,8 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/store/mockstore"
-	tmock "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )

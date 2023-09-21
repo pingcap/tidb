@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	tidbconfig "github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 var (

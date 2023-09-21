@@ -38,10 +38,10 @@ import (
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testenv"
-	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )

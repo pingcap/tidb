@@ -50,7 +50,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // NOTE: Control expressions optionally evaluate some branches depending on conditions, but vectorization executes all
@@ -566,12 +566,12 @@ type typeContext struct {
 	// Describe the name of "github.com/pingcap/tidb/expression".VecExpr.VecEval{{ .TypeName }}
 	// If undefined, it's same as ETName.
 	TypeName string
-	// Describe the name of "github.com/pingcap/tidb/util/chunk".*Column.Append{{ .TypeNameInColumn }},
+	// Describe the name of "github.com/pingcap/tidb/pkg/util/chunk".*Column.Append{{ .TypeNameInColumn }},
 	// Resize{{ .TypeNameInColumn }}, Reserve{{ .TypeNameInColumn }}, Get{{ .TypeNameInColumn }} and
 	// {{ .TypeNameInColumn }}s.
 	// If undefined, it's same as TypeName.
 	TypeNameInColumn string
-	// Same as "github.com/pingcap/tidb/util/chunk".getFixedLen()
+	// Same as "github.com/pingcap/tidb/pkg/util/chunk".getFixedLen()
 	Fixed bool
 }
 

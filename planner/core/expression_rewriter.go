@@ -32,6 +32,12 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/opcode"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
@@ -39,12 +45,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/hint"
-	"github.com/pingcap/tidb/util/sem"
-	"github.com/pingcap/tidb/util/stringutil"
 )
 
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.

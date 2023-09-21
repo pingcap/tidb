@@ -23,11 +23,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 

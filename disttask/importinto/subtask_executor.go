@@ -33,10 +33,10 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )

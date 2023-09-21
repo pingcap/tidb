@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/metrics"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"

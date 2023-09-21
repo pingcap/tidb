@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/opcode"
 	"github.com/pingcap/tidb/parser/terror"
 	ast "github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.

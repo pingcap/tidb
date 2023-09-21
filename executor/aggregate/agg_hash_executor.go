@@ -25,16 +25,16 @@ import (
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/channel"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/channel"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/disk"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/set"
 )
 
 // HashAggInput indicates the input of hash agg exec.

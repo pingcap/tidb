@@ -16,7 +16,7 @@ package core
 
 import (
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
 
 // IsTiFlashContained returns whether the plan contains TiFlash related executors.

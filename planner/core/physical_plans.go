@@ -27,6 +27,11 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
@@ -36,11 +41,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/plancodec"
-	"github.com/pingcap/tidb/util/ranger"
-	"github.com/pingcap/tidb/util/size"
-	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

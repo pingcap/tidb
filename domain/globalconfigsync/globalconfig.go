@@ -17,7 +17,7 @@ package globalconfigsync
 import (
 	"context"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )

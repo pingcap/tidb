@@ -47,6 +47,14 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
@@ -61,14 +69,6 @@ import (
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/replayer"
-	"github.com/pingcap/tidb/util/rowcodec"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -6180,9 +6180,9 @@ func TestSignalCheckpointForSort(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/SignalCheckpointForSort"))
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/SignalCheckpointForSort", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/chunk/SignalCheckpointForSort"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/SignalCheckpointForSort"))
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

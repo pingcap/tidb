@@ -23,8 +23,8 @@ import (
 
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"

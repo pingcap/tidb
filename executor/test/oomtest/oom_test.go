@@ -23,10 +23,10 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testsetup"
-	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 	"go.uber.org/zap"

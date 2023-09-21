@@ -19,11 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // ReloadOptRuleBlacklistExec indicates ReloadOptRuleBlacklist executor.

@@ -21,12 +21,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/multierr"

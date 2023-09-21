@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/expression/aggregation"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/plancodec"
 )
 
 // canPullUpAgg checks if an apply can pull an aggregation up.

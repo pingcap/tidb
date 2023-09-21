@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 

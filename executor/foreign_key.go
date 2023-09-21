@@ -26,6 +26,10 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/planner"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
@@ -34,10 +38,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 

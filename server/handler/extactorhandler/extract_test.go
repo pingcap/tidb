@@ -26,6 +26,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	server2 "github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/server/handler/extactorhandler"
 	"github.com/pingcap/tidb/server/internal/testserverclient"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 )
 

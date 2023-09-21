@@ -17,10 +17,10 @@ package aggregate
 import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // AggPartialResultMapper contains aggregate function results

@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/plugin"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // AdminPluginsExec indicates AdminPlugins executor.

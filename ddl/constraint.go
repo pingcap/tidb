@@ -28,10 +28,10 @@ import (
 	"github.com/pingcap/tidb/parser/format"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 func (w *worker) onAddCheckConstraint(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {

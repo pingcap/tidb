@@ -21,7 +21,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 

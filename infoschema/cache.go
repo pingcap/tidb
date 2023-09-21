@@ -19,7 +19,7 @@ import (
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/infoschema/metrics"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

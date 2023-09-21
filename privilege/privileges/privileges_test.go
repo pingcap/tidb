@@ -35,6 +35,10 @@ import (
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/privilege/privileges"
@@ -44,10 +48,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testutil"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/sem"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 

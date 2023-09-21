@@ -21,11 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	timerrt "github.com/pingcap/tidb/timer/runtime"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 

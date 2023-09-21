@@ -22,8 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

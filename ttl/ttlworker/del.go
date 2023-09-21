@@ -22,13 +22,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/metrics"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 	"golang.org/x/time/rate"
 )

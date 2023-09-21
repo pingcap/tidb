@@ -21,9 +21,9 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

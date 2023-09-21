@@ -19,8 +19,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 

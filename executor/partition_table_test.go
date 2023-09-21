@@ -27,11 +27,11 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/memory"
 	"github.com/stretchr/testify/require"
 )
 

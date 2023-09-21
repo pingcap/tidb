@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 

@@ -19,11 +19,11 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 

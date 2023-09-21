@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )

@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/kvcache"
+	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	core_metrics "github.com/pingcap/tidb/planner/core/metrics"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/privilege"
@@ -36,11 +41,6 @@ import (
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/kvcache"
-	utilpc "github.com/pingcap/tidb/util/plancache"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 var (

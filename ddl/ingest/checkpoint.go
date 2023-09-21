@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

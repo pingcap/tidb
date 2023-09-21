@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	utilmock "github.com/pingcap/tidb/util/mock"
+	utilmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"

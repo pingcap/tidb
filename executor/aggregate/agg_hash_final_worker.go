@@ -20,11 +20,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
 )
 

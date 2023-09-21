@@ -21,8 +21,8 @@ import (
 	"runtime/debug"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/skip"
 	"github.com/stretchr/testify/require"
 )
 

@@ -32,11 +32,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/store/mockstore/unistore/cophandler"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/store/mockstore/unistore/tikv/mvcc"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/tikv/client-go/v2/oracle"
 	pdclient "github.com/tikv/pd/client"
 )

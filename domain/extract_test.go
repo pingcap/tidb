@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	"github.com/pingcap/tidb/testkit"
-	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 	"github.com/stretchr/testify/require"
 )
 

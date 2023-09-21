@@ -32,11 +32,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )

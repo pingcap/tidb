@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/sessionctx"
-	disttaskutil "github.com/pingcap/tidb/util/disttask"
-	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

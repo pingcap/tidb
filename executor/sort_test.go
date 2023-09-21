@@ -23,9 +23,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
 )
 

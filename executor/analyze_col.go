@@ -31,14 +31,14 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

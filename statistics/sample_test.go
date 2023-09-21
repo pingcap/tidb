@@ -20,11 +20,11 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/mock"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 

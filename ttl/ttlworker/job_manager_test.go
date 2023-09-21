@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	timerapi "github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/ttl/cache"
 	"github.com/pingcap/tidb/ttl/session"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, result *chunk.Column) error {

@@ -23,16 +23,16 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/topsql"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
-	"github.com/pingcap/tidb/util/tracing"
 )
 
 // Executor is the physical implementation of an algebra operator.

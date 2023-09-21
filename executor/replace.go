@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/memory"
 )
 
 // ReplaceExec represents a replace executor.

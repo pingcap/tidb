@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/external"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/gcutil"
 	"github.com/stretchr/testify/require"
 )
 

@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/session"
 	ttlcient "github.com/pingcap/tidb/ttl/client"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

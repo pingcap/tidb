@@ -18,7 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/benchdaily"
+	"github.com/pingcap/tidb/pkg/util/benchdaily"
 )
 
 func BenchmarkEncodeRowKeyWithHandle(b *testing.B) {

@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/mathutil"
 )
 
 type dataInfo struct {

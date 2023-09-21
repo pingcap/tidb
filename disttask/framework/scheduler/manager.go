@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
 

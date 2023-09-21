@@ -21,13 +21,13 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/execdetails"
-	"github.com/pingcap/tidb/util/set"
-	"github.com/pingcap/tidb/util/stmtsummary"
-	stmtsummaryv2 "github.com/pingcap/tidb/util/stmtsummary/v2"
 )
 
 const (

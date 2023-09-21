@@ -20,8 +20,8 @@ import (
 
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/extension"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/server/internal/resultset"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // IDriver opens IContext.

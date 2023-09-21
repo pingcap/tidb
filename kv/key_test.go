@@ -24,10 +24,10 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	. "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit/testutil"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

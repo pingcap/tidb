@@ -29,9 +29,9 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 

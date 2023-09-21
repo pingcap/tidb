@@ -32,12 +32,12 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/stretchr/testify/require"
 )
 

@@ -23,12 +23,12 @@ import (
 	"github.com/pingcap/tidb/extension"
 	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/privilege"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/sem"
 )
 
 var extensionFuncs sync.Map

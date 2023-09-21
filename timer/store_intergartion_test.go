@@ -23,12 +23,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/timer/api"
 	"github.com/pingcap/tidb/timer/runtime"
 	"github.com/pingcap/tidb/timer/tablestore"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"go.etcd.io/etcd/tests/v3/integration"
 )

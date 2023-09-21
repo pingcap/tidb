@@ -22,11 +22,11 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/metrics"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/server"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/pingcap/tidb/testkit/testsetup"
-	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )

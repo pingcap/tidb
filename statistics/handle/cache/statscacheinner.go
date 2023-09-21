@@ -24,6 +24,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -32,10 +36,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
 

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/meta"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/stretchr/testify/require"
 )
 

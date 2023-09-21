@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
 )
 

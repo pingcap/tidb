@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/pingcap/tidb/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
 

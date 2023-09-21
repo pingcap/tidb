@@ -25,11 +25,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -396,9 +396,9 @@ func TestCutKey(t *testing.T) {
 }
 
 func TestDecodeBadDecical(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/codec/errorInDecodeDecimal"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal"))
 	}()
 	dec := types.NewDecFromStringForTest("0.111")
 	b, err := codec.EncodeDecimal(nil, dec, 0, 0)

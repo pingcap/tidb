@@ -19,10 +19,10 @@ import (
 
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/size"
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
 

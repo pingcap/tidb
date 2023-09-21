@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/auth"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/server/internal"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/arena"
-	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/stretchr/testify/require"
 )
 

@@ -20,9 +20,9 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tidb/store/driver/backoff"
-	"github.com/pingcap/tidb/util/paging"
-	"github.com/pingcap/tidb/util/trxevents"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"

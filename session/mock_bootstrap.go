@@ -22,7 +22,7 @@ import (
 	"flag"
 	"time"
 
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )

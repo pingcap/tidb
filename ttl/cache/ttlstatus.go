@@ -18,9 +18,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/ttl/session"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 // JobStatus represents the current status of a job

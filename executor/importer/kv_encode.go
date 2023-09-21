@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 type kvEncoder interface {

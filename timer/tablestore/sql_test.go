@@ -25,10 +25,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/timer/api"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )

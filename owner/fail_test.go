@@ -26,7 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/terror"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -74,9 +74,9 @@ func TestFailNewSession(t *testing.T) {
 			if cli != nil {
 				_ = cli.Close()
 			}
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/closeClient"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/closeClient"))
 		}()
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/closeClient", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/closeClient", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.
@@ -99,9 +99,9 @@ func TestFailNewSession(t *testing.T) {
 			if cli != nil {
 				_ = cli.Close()
 			}
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/closeGrpc"))
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/closeGrpc"))
 		}()
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/util/closeGrpc", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/closeGrpc", `return(true)`))
 
 		// TODO: It takes more than 2s here in etcd client, the CI takes 5s to run this test.
 		// The config is hard coded, not way to control it outside.

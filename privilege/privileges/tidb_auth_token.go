@@ -27,7 +27,7 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

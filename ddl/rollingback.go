@@ -25,8 +25,8 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/dbterror"
 	"go.uber.org/zap"
 )
 

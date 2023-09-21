@@ -17,8 +17,8 @@ package scheduler
 import (
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/resourcemanager/util"
-	"github.com/pingcap/tidb/util/cpu"
 )
 
 // CPUScheduler is a cpu scheduler

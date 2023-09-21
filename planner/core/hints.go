@@ -18,8 +18,8 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/sessionctx"
-	utilhint "github.com/pingcap/tidb/util/hint"
 )
 
 // GenHintsFromFlatPlan generates hints from a FlatPhysicalPlan.

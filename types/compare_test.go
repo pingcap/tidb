@@ -20,8 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 

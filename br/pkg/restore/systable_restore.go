@@ -14,7 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )

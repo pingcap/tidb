@@ -17,7 +17,7 @@ package types
 import (
 	"math"
 
-	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/pkg/util/collate"
 )
 
 // VecCompareUU returns []int64 comparing the []uint64 x to []uint64 y

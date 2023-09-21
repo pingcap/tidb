@@ -22,7 +22,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 var _ exec.Executor = &UnlockExec{}

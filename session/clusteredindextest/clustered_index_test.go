@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/stretchr/testify/require"
 )
 

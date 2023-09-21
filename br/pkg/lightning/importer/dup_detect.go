@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/extsort"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )

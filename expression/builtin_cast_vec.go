@@ -22,8 +22,8 @@ import (
 	gotime "time"
 
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
 )
 
 func (b *builtinCastIntAsDurationSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Column) error {

@@ -31,7 +31,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

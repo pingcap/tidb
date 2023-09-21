@@ -24,9 +24,9 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 )
 
 // maxMinEliminator tries to eliminate max/min aggregate function.

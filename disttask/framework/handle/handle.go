@@ -21,8 +21,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/util/backoff"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

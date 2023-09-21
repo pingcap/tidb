@@ -20,11 +20,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/paging"
 )
 
 const (

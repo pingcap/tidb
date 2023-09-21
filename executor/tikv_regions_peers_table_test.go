@@ -25,9 +25,9 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/fn"
+	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/pdapi"
 	"github.com/stretchr/testify/require"
 )
 

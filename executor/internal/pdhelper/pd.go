@@ -24,10 +24,10 @@ import (
 	"github.com/jellydator/ttlcache/v3"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // GlobalPDHelper is the global variable for PDHelper.

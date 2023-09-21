@@ -19,13 +19,13 @@ import (
 	"sync/atomic"
 
 	"github.com/dgraph-io/ristretto"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
-	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )

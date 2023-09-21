@@ -20,11 +20,11 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/stringutil"
-	"github.com/pingcap/tidb/util/tracing"
 )
 
 // Plan Should be used as embedded struct in Plan implementations.

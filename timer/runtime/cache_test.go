@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/timer/api"
-	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/require"
 )
