@@ -214,6 +214,30 @@ func TestSchedulerRollback(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestSchedulerPause(t *testing.T) {
+	tp := "test_scheduler_pause"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
+	mockExtension := mock.NewMockExtension(ctrl)
+
+	// pause success.
+	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable)
+	scheduler.Extension = mockExtension
+	mockSubtaskTable.EXPECT().PauseSubtasks("id", int64(1)).Return(nil)
+	require.NoError(t, scheduler.Pause(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp}))
+
+	// pause error.
+	pauseErr := errors.New("pause error")
+	mockSubtaskTable.EXPECT().PauseSubtasks("id", int64(1)).Return(pauseErr)
+	err := scheduler.Pause(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp})
+	require.EqualError(t, err, pauseErr.Error())
+}
+
 func TestScheduler(t *testing.T) {
 	tp := "test_scheduler"
 	var taskID int64 = 1
