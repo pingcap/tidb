@@ -89,8 +89,8 @@ type compressReader struct {
 }
 
 // InterceptDecompressReader intercepts the reader and wraps it with a decompress
-// reader on the given io.ReadSeekCloser. Note that the returned
-// io.ReadSeekCloser does not have the property that Seek(0, io.SeekCurrent)
+// reader on the given ExternalFileReader. Note that the returned
+// ExternalFileReader does not have the property that Seek(0, io.SeekCurrent)
 // equals total bytes Read() if the decompress reader is used.
 func InterceptDecompressReader(
 	fileReader ExternalFileReader,
