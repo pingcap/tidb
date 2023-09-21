@@ -256,3 +256,9 @@ func TestScheduler(t *testing.T) {
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
 }
+
+func TestCancel(t *testing.T) {
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(errors.New("test error"))
+	require.Equal(t, context.Cause(ctx).Error(), "test error")
+}

@@ -64,15 +64,15 @@ func TestManageTask(t *testing.T) {
 	newTasks = m.filterAlreadyHandlingTasks(tasks)
 	require.Equal(t, []*proto.Task{{ID: 1}}, newTasks)
 
-	ctx1, cancel1 := context.WithCancel(context.Background())
+	ctx1, cancel1 := context.WithCancelCause(context.Background())
 	m.registerCancelFunc(2, cancel1)
 	m.cancelAllRunningTasks()
 	require.Equal(t, context.Canceled, ctx1.Err())
 
 	m.addHandlingTask(1)
-	ctx2, cancel2 := context.WithCancel(context.Background())
+	ctx2, cancel2 := context.WithCancelCause(context.Background())
 	m.registerCancelFunc(1, cancel2)
-	ctx3, cancel3 := context.WithCancel(context.Background())
+	ctx3, cancel3 := context.WithCancelCause(context.Background())
 	m.registerCancelFunc(2, cancel3)
 	m.onCanceledTasks(context.Background(), []*proto.Task{{ID: 1}})
 	require.Equal(t, context.Canceled, ctx2.Err())
