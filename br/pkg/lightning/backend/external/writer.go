@@ -409,7 +409,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 
-	sorty.MaxGor = max(8, uint64(variable.GetDDLReorgWorkerCounter()))
+	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
 	sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
 		if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
 			if r != s {
