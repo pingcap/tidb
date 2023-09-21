@@ -6831,10 +6831,8 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		orderByCols[i] = item.Col
 	}
 
-	err = bound.UpdateCompareCols(b.ctx, orderByCols)
-	if err != nil {
-		return nil, err
-	}
+	cmpDataType := expression.GetAccurateCmpType(orderByCols[0], bound.CalcFuncs[0])
+	bound.updateCmpFuncsAndCmpDataType(cmpDataType)
 	return bound, nil
 }
 

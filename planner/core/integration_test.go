@@ -5288,8 +5288,8 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test.first_range;")
-	tk.MustExec("create table test.first_range(p int not null, o int not null, v int not null, o_datetime datetime not null);")
-	tk.MustExec("insert into test.first_range (p, o, v, o_datetime) values (0, 0, 0, '2023-9-20 11:17:10');")
+	tk.MustExec("create table test.first_range(p int not null, o int not null, v int not null, o_datetime datetime not null, o_time time not null);")
+	tk.MustExec("insert into test.first_range (p, o, v, o_datetime, o_time) values (0, 0, 0, '2023-9-20 11:17:10', '11:17:10');")
 
 	tk.MustExec("drop table if exists test.first_range_d64;")
 	tk.MustExec("create table test.first_range_d64(p int not null, o decimal(17,1) not null, v int not null);")
@@ -5316,7 +5316,7 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
 		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#7 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
+		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
 		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
 		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
@@ -5325,7 +5325,7 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9E0 following) as a from test.first_range;").Check(testkit.Rows(
 		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#7 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
+		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
 		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
 		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
@@ -5343,11 +5343,19 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o_datetime range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
 		"TableReader_23 10000.00 root  MppVersion: 2, data:ExchangeSender_22",
 		"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#7 over(partition by test.first_range.p order by test.first_range.o_datetime range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following), stream_count: 20",
+		"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o_datetime range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following), stream_count: 20",
 		"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o_datetime, stream_count: 20",
 		"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
 		"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
 		"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+
+	tk.MustQuery("explain select *, first_value(v) over (partition by p order by o_time range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
+		"Shuffle_13 10000.00 root  execution info: concurrency:5, data sources:[TableReader_11]",
+		"└─Window_8 10000.00 root  first_value(test.first_range.v)->Column#8 over(partition by test.first_range.p order by test.first_range.o_time range between interval 1 \"DAY\" preceding and interval 1 \"DAY\" following)",
+		"  └─Sort_12 10000.00 root  test.first_range.p, test.first_range.o_time",
+		"    └─TableReader_11 10000.00 root  MppVersion: 2, data:ExchangeSender_10",
+		"      └─ExchangeSender_10 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"        └─TableFullScan_9 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 }
 
 func TestIssue46298(t *testing.T) {
