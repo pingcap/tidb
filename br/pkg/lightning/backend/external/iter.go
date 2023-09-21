@@ -213,6 +213,7 @@ func (i *mergeIter[T, R]) next() bool {
 					continue
 				}
 				(*r).setReadMode(i.hotspotMap[idx] > (checkPeriod / 2))
+				logutil.BgLogger().Info("set read mode", zap.Any("idx", idx), zap.Any("hotspotMap", i.hotspotMap[idx]), zap.Any("mode", i.hotspotMap[idx] > (checkPeriod/2)))
 			}
 			i.checkHotspotCnt = 0
 			i.hotspotMap = make(map[int]int)
@@ -230,6 +231,7 @@ func (i *mergeIter[T, R]) next() bool {
 					zap.String("path", rd.path()),
 					zap.Error(closeErr))
 			}
+			logutil.BgLogger().Info("delete reader", zap.Any("idx", i.lastReaderIdx))
 			i.readers[i.lastReaderIdx] = nil
 			delete(i.hotspotMap, i.lastReaderIdx)
 		default:
