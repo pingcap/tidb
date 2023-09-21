@@ -48,6 +48,7 @@ explain format='brief' SELECT * from t1 use index(index_id) union SELECT * from 
 create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1;
 explain format='brief' SELECT * from t1 union SELECT * from t1;
 drop global binding for SELECT * from t1 union SELECT * from t1;
+set tidb_cost_model_version=default;
 
 # TestBindSemiJoinRewrite
 drop table if exists t1;

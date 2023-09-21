@@ -121,6 +121,7 @@ HashAgg	16000.00	root		group by:Column#5, funcs:firstrow(Column#5)->Column#5
   └─IndexReader	10000.00	root		index:IndexFullScan
     └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
 drop global binding for SELECT * from t1 union SELECT * from t1;
+set tidb_cost_model_version=default;
 drop table if exists t1;
 drop table if exists t2;
 create table t1(id int);
