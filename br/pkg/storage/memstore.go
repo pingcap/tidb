@@ -145,12 +145,9 @@ func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) 
 
 // Open opens a Reader by file path.
 // It implements the `ExternalStorage` interface
-func (s *MemStorage) Open(ctx context.Context, filePath string) (ExternalFileReader, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	default:
-		// continue on
+func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (ExternalFileReader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, errors.Trace(err)
 	}
 	if !path.IsAbs(filePath) {
 		return nil, errors.Errorf("file name is not an absolute path: %s", filePath)
@@ -160,7 +157,18 @@ func (s *MemStorage) Open(ctx context.Context, filePath string) (ExternalFileRea
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
 	data := theFile.GetData()
-	r := bytes.NewReader(data)
+	// just for simplicity, different from other implementation, MemStorage can't
+	// seek beyond [o.StartOffset, o.EndOffset)
+	start, end := 0, len(data)
+	if o != nil {
+		if o.StartOffset != nil {
+			start = int(*o.StartOffset)
+		}
+		if o.EndOffset != nil {
+			end = int(*o.EndOffset)
+		}
+	}
+	r := bytes.NewReader(data[start:end])
 	return &memFileReader{
 		br:   r,
 		size: int64(len(data)),

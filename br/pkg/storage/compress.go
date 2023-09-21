@@ -29,25 +29,21 @@ func WithCompression(inner ExternalStorage, compressionType CompressType, cfg De
 	}
 }
 
-func (w *withCompression) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
-	var (
-		writer ExternalFileWriter
-		err    error
-	)
-	if s3Storage, ok := w.ExternalStorage.(*S3Storage); ok {
-		writer, err = s3Storage.CreateUploader(ctx, name)
-	} else {
-		writer, err = w.ExternalStorage.Create(ctx, name, nil)
-	}
+func (w *withCompression) Create(ctx context.Context, name string, o *WriterOption) (ExternalFileWriter, error) {
+	writer, err := w.ExternalStorage.Create(ctx, name, o)
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	// some implementation already wrap the writer, so we need to unwrap it
+	if bw, ok := writer.(*bufferedWriter); ok {
+		writer = bw.writer
 	}
 	compressedWriter := newBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType)
 	return compressedWriter, nil
 }
 
-func (w *withCompression) Open(ctx context.Context, path string) (ExternalFileReader, error) {
-	fileReader, err := w.ExternalStorage.Open(ctx, path)
+func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+	fileReader, err := w.ExternalStorage.Open(ctx, path, o)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -148,7 +144,7 @@ func (c *compressReader) Close() error {
 }
 
 func (c *compressReader) GetFileSize() (int64, error) {
-	return 0, errors.Annotatef(berrors.ErrStorageUnknown, "compressReader doesn't support GetFileSize now")
+	return 0, errors.Annotatef(berrors.ErrUnsupportedOperation, "compressReader doesn't support GetFileSize now")
 }
 
 type flushStorageWriter struct {

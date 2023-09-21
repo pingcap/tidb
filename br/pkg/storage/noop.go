@@ -29,7 +29,7 @@ func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 }
 
 // Open a Reader by file path.
-func (*noopStorage) Open(_ context.Context, _ string) (ExternalFileReader, error) {
+func (*noopStorage) Open(_ context.Context, _ string, _ *ReaderOption) (ExternalFileReader, error) {
 	return noopReader{}, nil
 }
 

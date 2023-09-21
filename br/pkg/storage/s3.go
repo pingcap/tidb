@@ -651,8 +651,18 @@ func (rs *S3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *S3Storage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
-	reader, r, err := rs.open(ctx, path, 0, 0)
+func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+	start := int64(0)
+	end := int64(0)
+	if o != nil {
+		if o.StartOffset != nil {
+			start = *o.StartOffset
+		}
+		if o.EndOffset != nil {
+			end = *o.EndOffset
+		}
+	}
+	reader, r, err := rs.open(ctx, path, start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -890,8 +900,8 @@ func (r *s3ObjectReader) GetFileSize() (int64, error) {
 	return r.rangeInfo.Size, nil
 }
 
-// CreateUploader create multi upload request.
-func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
+// createUploader create multi upload request.
+func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -946,7 +956,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	var uploader ExternalFileWriter
 	var err error
 	if option == nil || option.Concurrency <= 1 {
-		uploader, err = rs.CreateUploader(ctx, name)
+		uploader, err = rs.createUploader(ctx, name)
 		if err != nil {
 			return nil, err
 		}

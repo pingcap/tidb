@@ -33,24 +33,24 @@ type singeFileReader struct {
 	bufferReadOffset  int64
 	bufferMaxOffset   int64
 
-	maxFileOffset int64
-	name          string
+	fileSize int64
+	name     string
 
 	storage storage.ExternalStorage
 	buffer  []byte
 }
 
 // newSingeFileReader creates a new singeFileReader.
-func newSingeFileReader(ctx context.Context, st storage.ExternalStorage, name string, concurrency int, readBufferSize int) (*singeFileReader, error) {
+func newSingeFileReader(
+	ctx context.Context,
+	st storage.ExternalStorage,
+	name string,
+	fileSize int64,
+	concurrency int,
+	readBufferSize int,
+) (*singeFileReader, error) {
 	if st == nil {
 		return nil, nil
-	}
-	if _, ok := st.(*storage.S3Storage); !ok {
-		return nil, nil
-	}
-	maxOffset, err := storage.GetMaxOffset(ctx, st, name)
-	if err != nil {
-		return nil, err
 	}
 	return &singeFileReader{
 		ctx:               ctx,
@@ -58,7 +58,7 @@ func newSingeFileReader(ctx context.Context, st storage.ExternalStorage, name st
 		readBufferSize:    readBufferSize,
 		currentFileOffset: 0,
 		bufferReadOffset:  0,
-		maxFileOffset:     maxOffset,
+		fileSize:          fileSize,
 		name:              name,
 		storage:           st,
 		buffer:            nil,
@@ -67,7 +67,7 @@ func newSingeFileReader(ctx context.Context, st storage.ExternalStorage, name st
 
 // reload reloads the buffer.
 func (r *singeFileReader) reload() error {
-	if r.currentFileOffset >= r.maxFileOffset {
+	if r.currentFileOffset >= r.fileSize {
 		return io.EOF
 	}
 
@@ -78,8 +78,8 @@ func (r *singeFileReader) reload() error {
 			bufStart := i * r.readBufferSize
 			fileStart := r.currentFileOffset + int64(bufStart)
 			fileEnd := fileStart + int64(r.readBufferSize)
-			if fileEnd > r.maxFileOffset {
-				fileEnd = r.maxFileOffset
+			if fileEnd > r.fileSize {
+				fileEnd = r.fileSize
 			}
 			if fileStart > fileEnd {
 				return nil
@@ -109,9 +109,9 @@ func (r *singeFileReader) reload() error {
 		return err
 	}
 
-	if r.currentFileOffset+int64(r.readBufferSize*r.concurrency) > r.maxFileOffset {
-		r.bufferMaxOffset = r.maxFileOffset - r.currentFileOffset
-		r.currentFileOffset = r.maxFileOffset
+	if r.currentFileOffset+int64(r.readBufferSize*r.concurrency) > r.fileSize {
+		r.bufferMaxOffset = r.fileSize - r.currentFileOffset
+		r.currentFileOffset = r.fileSize
 	} else {
 		r.bufferMaxOffset = int64(r.readBufferSize * r.concurrency)
 		r.currentFileOffset += int64(r.readBufferSize * r.concurrency)

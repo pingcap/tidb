@@ -5,6 +5,7 @@ package storage
 import (
 	"bufio"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -132,11 +134,25 @@ func (l *LocalStorage) URI() string {
 }
 
 // Open a Reader by file path, path is a relative path to base path.
-func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader, error) {
+func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	//nolint: gosec
 	f, err := os.Open(filepath.Join(l.base, path))
 	if err != nil {
 		return nil, errors.Trace(err)
+	}
+	if o != nil {
+		if o.EndOffset != nil {
+			return nil, errors.Annotatef(
+				berrors.ErrUnsupportedOperation,
+				"currently LocalStorage backend does not support EndOffset")
+		}
+		if o.StartOffset != nil {
+			_, err = f.Seek(*o.StartOffset, io.SeekStart)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
 	}
 	return localFile{f}, nil
 }

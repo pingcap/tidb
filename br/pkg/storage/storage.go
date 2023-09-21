@@ -89,8 +89,10 @@ type WriterOption struct {
 }
 
 type ReaderOption struct {
-	StartOffset int64
-	EndOffset   int64 // exclusive
+	// StartOffset is inclusive. And it's incompatible with Seek.
+	StartOffset *int64
+	// EndOffset is exclusive. And it's incompatible with Seek.
+	EndOffset *int64
 }
 
 // ExternalStorage represents a kind of file system storage.
@@ -105,7 +107,7 @@ type ExternalStorage interface {
 	DeleteFile(ctx context.Context, name string) error
 	// Open a Reader by file path. path is relative path to storage base path.
 	// Some implementation will use the given ctx as the inner context of the reader.
-	Open(ctx context.Context, path string) (ExternalFileReader, error)
+	Open(ctx context.Context, path string, option *ReaderOption) (ExternalFileReader, error)
 	// WalkDir traverse all the files in a dir.
 	//
 	// fn is the function called for each regular file visited by WalkDir.
@@ -240,11 +242,11 @@ func ReadDataInRange(
 	start int64,
 	p []byte,
 ) (n int, err error) {
-	s3storage, ok := storage.(*S3Storage)
-	if !ok {
-		return 0, errors.New("only support s3 storage")
-	}
-	rd, _, err := s3storage.open(ctx, name, start, start+int64(len(p)))
+	end := start + int64(len(p))
+	rd, err := storage.Open(ctx, name, &ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
 	if err != nil {
 		return 0, err
 	}

@@ -169,7 +169,7 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 }
 
 // Open a Reader by file path.
-func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
+func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	object := s.objectName(path)
 	handle := s.bucket.Object(object)
 
@@ -184,6 +184,16 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 			"failed to get gcs file attribute, file info: input.bucket='%s', input.key='%s'",
 			s.gcs.Bucket, path)
 	}
+	pos := int64(0)
+	endPos := attrs.Size
+	if o != nil {
+		if o.StartOffset != nil {
+			pos = *o.StartOffset
+		}
+		if o.EndOffset != nil {
+			endPos = *o.EndOffset
+		}
+	}
 
 	return &gcsObjectReader{
 		storage:   s,
@@ -191,6 +201,8 @@ func (s *GCSStorage) Open(ctx context.Context, path string) (ExternalFileReader,
 		objHandle: handle,
 		reader:    nil, // lazy create
 		ctx:       ctx,
+		pos:       pos,
+		endPos:    endPos,
 		totalSize: attrs.Size,
 	}, nil
 }
@@ -356,6 +368,7 @@ type gcsObjectReader struct {
 	objHandle *storage.ObjectHandle
 	reader    io.ReadCloser
 	pos       int64
+	endPos    int64
 	totalSize int64
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
@@ -366,7 +379,11 @@ type gcsObjectReader struct {
 // Read implement the io.Reader interface.
 func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 	if r.reader == nil {
-		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, -1)
+		length := int64(-1)
+		if r.endPos != r.totalSize {
+			length = r.endPos - r.pos
+		}
+		rc, err := r.objHandle.NewRangeReader(r.ctx, r.pos, length)
 		if err != nil {
 			return 0, errors.Annotatef(err,
 				"failed to read gcs file, file info: input.bucket='%s', input.key='%s'",
