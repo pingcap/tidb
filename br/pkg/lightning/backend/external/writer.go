@@ -164,6 +164,7 @@ func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
 	return b
 }
 
+// SetMutex sets the mutex of the writer.
 func (b *WriterBuilder) SetMutex(mu *sync.Mutex) *WriterBuilder {
 	b.mu = mu
 	return b
