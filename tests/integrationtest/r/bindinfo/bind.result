@@ -313,13 +313,6 @@ IndexLookUp_6	10000.00	19517254.40	root
 Level	Code	Message
 Note	1105	Using the bindSQL: SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)
 drop global binding for select * from t using select * from t use index(a);
-set @@tidb_evolve_plan_baselines=0;
-set @@TiDB_Evolve_pLan_baselines=1;
-Error 1105: Cannot enable baseline evolution feature, it is not generally available now
-set @@TiDB_Evolve_pLan_baselines=oN;
-Error 1105: Cannot enable baseline evolution feature, it is not generally available now
-admin evolve bindings;
-Error 1105: Cannot enable baseline evolution feature, it is not generally available now
 drop table if exists t;
 create table t(id int, value decimal(5,2));
 table t;
