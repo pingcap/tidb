@@ -1,0 +1,1248 @@
+select 1 + 2*3;
+1 + 2*3
+7
+select _utf8"string";
+string
+string
+select 1 order by 1;
+1
+1
+SELECT  'a' as f1 having f1 = 'a';
+f1
+a
+SELECT (SELECT * FROM (SELECT 'a') t) AS f1 HAVING (f1 = 'a' OR TRUE);
+f1
+a
+SELECT (SELECT * FROM (SELECT 'a') t) + 1 AS f1 HAVING (f1 = 'a' OR TRUE);
+f1
+1
+create table t (c1 int, c2 int, c3 varchar(20));
+insert into t values (1, 2, 'abc'), (2, 1, 'bcd');
+select c1 as a, c1 as b from t order by c1;
+a	b
+1	1
+2	2
+select c1 as a, t.c1 as a from t order by a desc;
+a	a
+2	2
+1	1
+select c1 as c2 from t order by c2;
+c2
+1
+2
+select sum(c1) from t order by sum(c1);
+sum(c1)
+3
+select c1 as c2 from t order by c2 + 1;
+c2
+2
+1
+select * from t order by 1;
+c1	c2	c3
+1	2	abc
+2	1	bcd
+select * from t order by 2;
+c1	c2	c3
+2	1	bcd
+1	2	abc
+select c1, c3 from t order by binary c1 desc;
+c1	c3
+2	bcd
+1	abc
+select c1, c2 from t order by binary c3;
+c1	c2
+1	2
+2	1
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 value(1, 1), (2, 2);
+insert into t2 value(1, 1), (2, 2);
+select sum(c) from (select t1.a as a, t1.a as c, length(t1.b) from t1  union select a, b, b from t2) t;
+sum(c)
+5
+drop table if exists t;
+create table t(a bigint, b bigint, c bigint);
+insert into t values(1, 1, 1), (2, 2, 2), (3, 3, 3);
+select cast(count(a) as signed), a as another, a from t group by a order by cast(count(a) as signed), a limit 10;
+cast(count(a) as signed)	another	a
+1	1	1
+1	2	2
+1	3	3
+drop table if exists t;
+create table t (a int primary key auto_increment, b int, index idx (b));
+insert t (b) values (0), (1), (2), (3), (4), (5), (6), (7), (8), (9);
+select b from t order by b desc;
+b
+9
+8
+7
+6
+5
+4
+3
+2
+1
+0
+select b from t where b <3 or (b >=6 and b < 8) order by b desc;
+b
+7
+6
+2
+1
+0
+drop table if exists t;
+create table t (a int, b int, index idx (b, a));
+insert t values (0, 2), (1, 2), (2, 2), (0, 1), (1, 1), (2, 1), (0, 0), (1, 0), (2, 0);
+select b, a from t order by b, a desc;
+b	a
+0	2
+0	1
+0	0
+1	2
+1	1
+1	0
+2	2
+2	1
+2	0
+drop table if exists t;
+create table t (a int primary key auto_increment, b int);
+insert t (b) values (1), (2), (3), (4), (5), (6), (7), (8), (9);
+select b from t order by a desc;
+b
+9
+8
+7
+6
+5
+4
+3
+2
+1
+select a from t where a <3 or (a >=6 and a < 8) order by a desc;
+a
+7
+6
+2
+1
+drop table if exists t;
+create table t (a int unsigned primary key, b int, c int, key idx_ba (b, c, a));
+insert t values (1, 1, 1);
+select * from t;
+a	b	c
+1	1	1
+update t set c=2 where a=1;
+select * from t where b=1;
+a	b	c
+1	1	2
+CREATE TABLE test_mu (a int primary key, b int, c int);
+INSERT INTO test_mu VALUES (1, 2, 3), (4, 5, 6), (7, 8, 9);
+INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE b = 3, c = b;
+SELECT * FROM test_mu ORDER BY a;
+a	b	c
+1	3	3
+4	5	6
+7	8	9
+INSERT INTO test_mu VALUES (1, 2, 3) ON DUPLICATE KEY UPDATE c = 2, b = c+5;
+SELECT * FROM test_mu ORDER BY a;
+a	b	c
+1	7	2
+4	5	6
+7	8	9
+UPDATE test_mu SET b = 0, c = b WHERE a = 4;
+SELECT * FROM test_mu ORDER BY a;
+a	b	c
+1	7	2
+4	0	5
+7	8	9
+UPDATE test_mu SET c = 8, b = c WHERE a = 4;
+SELECT * FROM test_mu ORDER BY a;
+a	b	c
+1	7	2
+4	5	8
+7	8	9
+UPDATE test_mu SET c = b, b = c WHERE a = 7;
+SELECT * FROM test_mu ORDER BY a;
+a	b	c
+1	7	2
+4	5	8
+7	9	8
+drop table if exists tu;
+CREATE TABLE tu(a int, b int, c int GENERATED ALWAYS AS (a + b) VIRTUAL, d int as (a * b) stored, e int GENERATED ALWAYS as (b * 2) VIRTUAL, PRIMARY KEY (a), UNIQUE KEY ukc (c), unique key ukd(d), key ke(e));
+insert into tu(a, b) values(1, 2);
+insert into tu(a, b) values(5, 6);
+select * from tu for update;
+a	b	c	d	e
+1	2	3	2	4
+5	6	11	30	12
+select * from tu where a = 1;
+a	b	c	d	e
+1	2	3	2	4
+select * from tu where a in (1, 2);
+a	b	c	d	e
+1	2	3	2	4
+select * from tu where c in (1, 2, 3);
+a	b	c	d	e
+1	2	3	2	4
+select * from tu where c = 3;
+a	b	c	d	e
+1	2	3	2	4
+select d, e from tu where c = 3;
+d	e
+2	4
+select * from tu where d in (1, 2, 3);
+a	b	c	d	e
+1	2	3	2	4
+select * from tu where d = 2;
+a	b	c	d	e
+1	2	3	2	4
+select c, d from tu where d = 2;
+c	d
+3	2
+select d, e from tu where e = 4;
+d	e
+2	4
+select * from tu where e = 4;
+a	b	c	d	e
+1	2	3	2	4
+update tu set a = a + 1, b = b + 1 where c = 11;
+select * from tu for update;
+a	b	c	d	e
+1	2	3	2	4
+6	7	13	42	14
+select * from tu where a = 6;
+a	b	c	d	e
+6	7	13	42	14
+select * from tu where c in (5, 6, 13);
+a	b	c	d	e
+6	7	13	42	14
+select b, c, e, d from tu where c = 13;
+b	c	e	d
+7	13	14	42
+select a, e, d from tu where c in (5, 6, 13);
+a	e	d
+6	14	42
+drop table if exists tu;
+drop table if exists t1,t2;
+create table t1 (id int, i int, b bigint, d double, dd decimal);
+create table t2 (id int, i int unsigned, b bigint unsigned, d double unsigned, dd decimal unsigned);
+insert into t1 values(1, -1, -1, -1.1, -1);
+insert into t2 values(2, 1, 1, 1.1, 1);
+select * from t1 union select * from t2 order by id;
+id	i	b	d	dd
+1	-1	-1	-1.1	-1
+2	1	1	1.1	1
+select id, i, b, d, dd from t2 union select id, i, b, d, dd from t1 order by id;
+id	i	b	d	dd
+1	-1	-1	-1.1	-1
+2	1	1	1.1	1
+select id, i from t2 union select id, cast(i as unsigned int) from t1 order by id;
+id	i
+1	18446744073709551615
+2	1
+select dd from t2 union all select dd from t2;
+dd
+1
+1
+drop table if exists t3,t4;
+create table t3 (id int, v int);
+create table t4 (id int, v double unsigned);
+insert into t3 values (1, -1);
+insert into t4 values (2, 1);
+select id, v from t3 union select id, v from t4 order by id;
+id	v
+1	-1
+2	1
+select id, v from t4 union select id, v from t3 order by id;
+id	v
+1	-1
+2	1
+drop table if exists t5,t6,t7;
+create table t5 (id int, v bigint unsigned);
+create table t6 (id int, v decimal);
+create table t7 (id int, v bigint);
+insert into t5 values (1, 1);
+insert into t6 values (2, -1);
+insert into t7 values (3, -1);
+select id, v from t5 union select id, v from t6 order by id;
+id	v
+1	1
+2	-1
+select id, v from t5 union select id, v from t7 union select id, v from t6 order by id;
+id	v
+1	1
+2	-1
+3	-1
+drop table if exists t1;
+create table t1 (a int) partition by range (a) (
+partition p0 values less than (10),
+partition p1 values less than (20),
+partition p2 values less than (30),
+partition p3 values less than (40),
+partition p4 values less than MAXVALUE
+);
+insert into t1 values (1),(11),(21),(31);
+delete from t1 partition (p4);
+select * from t1 order by a;
+a
+1
+11
+21
+31
+delete from t1 partition (p0) where a > 10;
+select * from t1 order by a;
+a
+1
+11
+21
+31
+delete from t1 partition (p0,p1,p2);
+select * from t1;
+a
+31
+drop table if exists t_1;
+create table t_1 (c1 int, c2 int, c3 int default 1, index (c1)) comment = 'test table';
+alter table `t_1` comment 'this is table comment';
+select table_comment from information_schema.tables where table_name = 't_1';
+table_comment
+this is table comment
+alter table `t_1` comment 'table t comment';
+select table_comment from information_schema.tables where table_name = 't_1';
+table_comment
+table t comment
+drop table if exists t;
+create table t (c enum('a', 'b', 'c'));
+insert into t values ('a'), (2), ('c');
+select * from t where c = 'a';
+c
+a
+select c + 1 from t where c = 2;
+c + 1
+3
+delete from t;
+insert into t values ();
+insert into t values (null), ('1');
+select c + 1 from t where c = 1;
+c + 1
+2
+delete from t;
+insert into t values(1), (2), (3);
+select * from t where c;
+c
+a
+b
+c
+drop table if exists t;
+create table t (c set('a', 'b', 'c'));
+insert into t values ('a'), (2), ('c'), ('a,b'), ('b,a');
+select * from t where c = 'a';
+c
+a
+select * from t where c = 'a,b';
+c
+a,b
+a,b
+select c + 1 from t where c = 2;
+c + 1
+3
+delete from t;
+insert into t values ();
+insert into t values (null), ('1');
+select c + 1 from t where c = 1;
+c + 1
+2
+delete from t;
+insert into t values(3);
+select * from t where c;
+c
+a,b
+drop table if exists t;
+create table t (id int, name varchar(20));
+drop table if exists t1;
+create table t1 (gid int);
+insert into t1 (gid) value (1);
+insert into t (id, name) value ((select gid from t1) ,'asd');
+select * from t;
+id	name
+1	asd
+drop table if exists t;
+create table t (a int primary key, b int);
+insert into t values(1, 2), (2, 1);
+select * from t where (a = 1 and b = 2) or (a = 2 and b = 1);
+a	b
+1	2
+2	1
+select * from t where (a = 1 and b = 1) or (a = 2 and b = 2);
+a	b
+drop table if exists t;
+create table t(id int, PRIMARY KEY (id));
+insert into t values(1), (5), (10);
+select * from t where id in(1, 2, 10);
+id
+1
+10
+drop table if exists admin_test;
+create table admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));
+insert admin_test (c1, c2) values (1, 1), (2, 2), (NULL, NULL);
+admin check table admin_test;
+
+drop table if exists t;
+create table t(a bigint, b bigint);
+insert into t values(1, 1), (2, 2), (3, 30), (4, 40), (5, 5), (6, 6);
+select * from t order by a limit 1, 1;
+a	b
+2	2
+select * from t order by a limit 1, 2;
+a	b
+2	2
+3	30
+select * from t order by a limit 1, 3;
+a	b
+2	2
+3	30
+4	40
+select * from t order by a limit 1, 4;
+a	b
+2	2
+3	30
+4	40
+5	5
+select a from t where a > 0 limit 1, 1;
+a
+2
+select a from t where a > 0 limit 1, 2;
+a
+2
+3
+select b from t where a > 0 limit 1, 3;
+b
+2
+30
+40
+select b from t where a > 0 limit 1, 4;
+b
+2
+30
+40
+5
+set @@tidb_init_chunk_size=2;
+select * from t where a > 0 limit 2, 1;
+a	b
+3	30
+select * from t where a > 0 limit 2, 2;
+a	b
+3	30
+4	40
+select * from t where a > 0 limit 2, 3;
+a	b
+3	30
+4	40
+5	5
+select * from t where a > 0 limit 2, 4;
+a	b
+3	30
+4	40
+5	5
+6	6
+select a from t order by a limit 2, 1;
+a
+3
+select b from t order by a limit 2, 2;
+b
+30
+40
+select a from t order by a limit 2, 3;
+a
+3
+4
+5
+select b from t order by a limit 2, 4;
+b
+30
+40
+5
+6
+set @@tidb_init_chunk_size = default;
+drop table if exists t;
+create table t (a int unique);
+insert t values (-1), (2), (3), (5), (6), (7), (8), (9);
+select a from t where a < 0 or (a >= 2.1 and a < 5.1) or ( a > 5.9 and a <= 7.9) or a > '8.1';
+a
+-1
+3
+5
+6
+7
+9
+drop table if exists t;
+create table t (a int unique);
+insert t values (0);
+select NULL from t ;
+NULL
+NULL
+drop table if exists t;
+create table t (a int unique, b int);
+insert t values (5, 0);
+insert t values (4, 0);
+insert t values (3, 0);
+insert t values (2, 0);
+insert t values (1, 0);
+insert t values (0, 0);
+select * from t order by a limit 3;
+a	b
+0	0
+1	0
+2	0
+drop table if exists t;
+create table t (a int unique, b int);
+insert t values (0, 1);
+insert t values (1, 2);
+insert t values (2, 1);
+insert t values (3, 2);
+insert t values (4, 1);
+insert t values (5, 2);
+select * from t where a < 5 and b = 1 limit 2;
+a	b
+0	1
+2	1
+drop table if exists tab1;
+CREATE TABLE tab1(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col3 INTEGER, col4 FLOAT);
+CREATE INDEX idx_tab1_0 on tab1 (col0);
+CREATE INDEX idx_tab1_1 on tab1 (col1);
+CREATE INDEX idx_tab1_3 on tab1 (col3);
+CREATE INDEX idx_tab1_4 on tab1 (col4);
+INSERT INTO tab1 VALUES(1,37,20.85,30,10.69);
+SELECT pk FROM tab1 WHERE ((col3 <= 6 OR col3 < 29 AND (col0 < 41)) OR col3 > 42) AND col1 >= 96.1 AND col3 = 30 AND col3 > 17 AND (col0 BETWEEN 36 AND 42);
+pk
+drop table if exists tab1;
+CREATE TABLE tab1(pk INTEGER PRIMARY KEY, a INTEGER, b INTEGER);
+CREATE INDEX idx_tab1_0 on tab1 (a);
+INSERT INTO tab1 VALUES(1,1,1);
+INSERT INTO tab1 VALUES(2,2,1);
+INSERT INTO tab1 VALUES(3,1,2);
+INSERT INTO tab1 VALUES(4,2,2);
+SELECT * FROM tab1 WHERE pk <= 3 AND a = 1;
+pk	a	b
+1	1	1
+3	1	2
+SELECT * FROM tab1 WHERE pk <= 4 AND a = 1 AND b = 2;
+pk	a	b
+3	1	2
+CREATE INDEX idx_tab1_1 on tab1 (b, a);
+SELECT pk FROM tab1 WHERE b > 1;
+pk
+3
+4
+drop table if exists t;
+CREATE TABLE t (a varchar(3), index(a));
+insert t values('aaa'), ('aab');
+select * from t where a >= 'aaaa' and a < 'aabb';
+a
+aab
+drop table if exists t;
+CREATE TABLE t (a int primary key, b int, c int, index(c));
+insert t values(1, 1, 1), (2, 2, 2), (4, 4, 4), (3, 3, 3), (5, 5, 5);
+select a from t where c >= 2 order by b desc limit 1;
+a
+5
+drop table if exists t;
+create table t(a varchar(50) primary key, b int, c int, index idx(b));
+insert into t values('aa', 1, 1);
+select * from t use index(idx) where a > 'a';
+a	b	c
+aa	1	1
+drop table if exists t;
+CREATE TABLE `t` (a int, KEY (a));
+SELECT * FROM (SELECT * FROM (SELECT a as d FROM t WHERE a IN ('100')) AS x WHERE x.d < "123" ) tmp_count;
+d
+drop table if exists t1;
+drop table if exists t2;
+drop table if exists t3;
+drop table if exists t4;
+drop table if exists t5;
+create table t1(k int, v int);
+create table t2(k int, v int);
+create table t3(id int auto_increment, k int, v int, primary key(id));
+create table t4(k int, v int);
+create table t5(v int, k int, primary key(k));
+insert into t1 values (1, 1);
+insert into t4 values (3, 3);
+drop table if exists t6;
+drop table if exists t7;
+create table t6 (id int, v longtext);
+create table t7 (x int, id int, v longtext, primary key(id));
+update t1 set v = 0 where k = 1;
+select k, v from t1 where k = 1;
+k	v
+1	0
+update t1 left join t3 on t1.k = t3.k set t1.v = 1;
+select k, v from t1;
+k	v
+1	1
+select id, k, v from t3;
+id	k	v
+update t1 left join t2 on t1.k = t2.k set t1.v = t2.v, t2.v = 3;
+select k, v from t1;
+k	v
+1	NULL
+select k, v from t2;
+k	v
+update t1 left join t2 on t1.k = t2.k set t2.v = 3, t1.v = t2.v;
+select k, v from t1;
+k	v
+1	NULL
+select k, v from t2;
+k	v
+update t2 right join t1 on t2.k = t1.k set t2.v = 4, t1.v = 0;
+select k, v from t1;
+k	v
+1	0
+select k, v from t2;
+k	v
+update t1 left join t2 on t1.k = t2.k right join t4 on t4.k = t2.k set t1.v = 4, t2.v = 4, t4.v = 4;
+select k, v from t1;
+k	v
+1	0
+select k, v from t2;
+k	v
+select k, v from t4;
+k	v
+3	4
+insert t2 values (1, 10);
+update t1 left join t2 on t1.k = t2.k set t2.v = 11;
+select k, v from t2;
+k	v
+1	11
+update t1 t11 left join t2 on t11.k = t2.k left join t1 t12 on t2.v = t12.k set t12.v = 233, t11.v = 111;
+select k, v from t1;
+k	v
+1	111
+select k, v from t2;
+k	v
+1	11
+delete from t1;
+delete from t2;
+insert into t1 values (null, null);
+update t1 left join t2 on t1.k = t2.k set t1.v = 1;
+select k, v from t1;
+k	v
+NULL	1
+insert t5 values(0, 0);
+update t1 left join t5 on t1.k = t5.k set t1.v = 2;
+select k, v from t1;
+k	v
+NULL	2
+select k, v from t5;
+k	v
+0	0
+insert into t6 values (1, NULL);
+insert into t7 values (5, 1, 'a');
+update t6, t7 set t6.v = t7.v where t6.id = t7.id and t7.x = 5;
+select v from t6;
+v
+a
+drop table if exists t1, t2;
+create table t1(id int primary key, v int, gv int GENERATED ALWAYS AS (v * 2) STORED);
+create table t2(id int, v int);
+update t1 tt1 inner join (select count(t1.id) a, t1.id from t1 left join t2 on t1.id = t2.id group by t1.id) x on tt1.id = x.id set tt1.v = tt1.v + x.a;
+drop table if exists t;
+create table t(a int primary key, b int, c int, index idx_b(b));
+insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3);
+select (select count(1) k from t s where s.b = t1.c) from t t1;
+(select count(1) k from t s where s.b = t1.c)
+3
+3
+1
+0
+drop table if exists t;
+create table t(a int primary key, b int, c int);
+insert into t values (1, 1, 1), (2, 1, 1), (3, 1, 2), (4, 2, 3);
+select a from t;
+a
+1
+2
+3
+4
+select * from t where a = 4;
+a	b	c
+4	2	3
+select a from t limit 1;
+a
+1
+select a from t order by a desc;
+a
+4
+3
+2
+1
+select a from t order by a desc limit 1;
+a
+4
+select a from t order by b desc limit 1;
+a
+4
+select a from t where a < 3;
+a
+1
+2
+select a from t where b > 1;
+a
+4
+select a from t where b > 1 and a < 3;
+a
+select count(*) from t where b > 1 and a < 3;
+count(*)
+0
+select count(*) from t;
+count(*)
+4
+select count(*), c from t group by c order by c;
+count(*)	c
+2	1
+1	2
+1	3
+select sum(c) as s from t group by b order by s;
+s
+3
+4
+select avg(a) as s from t group by b order by s;
+s
+2.0000
+4.0000
+select sum(distinct c) from t group by b;
+sum(distinct c)
+3
+3
+create index i on t(c,b);
+select a from t where c = 1;
+a
+1
+2
+select a from t where c = 1 and a < 2;
+a
+1
+select a from t where c = 1 order by a limit 1;
+a
+1
+select count(*) from t where c = 1 ;
+count(*)
+2
+create index i1 on t(b);
+select c from t where b = 2;
+c
+3
+select * from t where b = 2;
+a	b	c
+4	2	3
+select count(*) from t where b = 1;
+count(*)
+3
+select * from t where b = 1 and a > 1 limit 1;
+a	b	c
+2	1	1
+drop table if exists t;
+create table t (id int, c1 datetime);
+insert into t values (1, '2015-06-07 12:12:12');
+select id from t where c1 = '2015-06-07 12:12:12';
+id
+1
+drop table if exists t0;
+CREATE TABLE t0(c0 INT);
+INSERT INTO t0 VALUES (100000);
+SELECT * FROM t0 WHERE NOT SPACE(t0.c0);
+c0
+100000
+drop table if exists t;
+create table t(a int, primary key(a));
+insert into t(a) values(1);
+alter table t add column b int default 1;
+alter table t alter b set default 2;
+select b from t where a = 1;
+b
+1
+drop table if exists t1;
+create table t1 (a int, b int as (a + 1) virtual not null, unique index idx(b));
+REPLACE INTO `t1` (`a`) VALUES (2);
+REPLACE INTO `t1` (`a`) VALUES (2);
+select * from t1;
+a	b
+2	3
+insert into `t1` (`a`) VALUES (2) on duplicate key update a = 3;
+select * from t1;
+a	b
+3	4
+drop table if exists t1;
+create table t1 (c_int int, c_str varchar(40), key(c_str));
+drop table if exists t2;
+create table t2 like t1;
+insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');
+insert into t2 select * from t1;
+select (select t2.c_str from t2 where t2.c_str <= t1.c_str and t2.c_int in (1, 2) order by t2.c_str limit 1) x from t1 order by c_int;
+x
+a
+a
+a
+drop table if exists t1, t2;
+create table t1 (c1 int);
+create table t2 (c1 int primary key, c2 int);
+insert into t1 values(3);
+insert into t2 values(2, 2);
+insert into t2 values(0, 0);
+delete from t1, t2 using t1 left join t2 on t1.c1 = t2.c2;
+select * from t1 order by c1;
+c1
+select * from t2 order by c1;
+c1	c2
+0	0
+2	2
+drop table if exists t1, t2;
+create table t1 (c1 int);
+create table t2 (c2 int);
+insert into t1 values(null);
+insert into t2 values(null);
+delete from t1, t2 using t1 join t2 where t1.c1 is null;
+select * from t1;
+c1
+select * from t2;
+c2
+drop table if exists t1, t2;
+create table t1 (pk int(11) primary key, a int(11) not null, b int(11), key idx_b(b), key idx_a(a));
+insert into `t1` values (1,1,0),(2,7,6),(3,2,null),(4,1,null),(5,4,5);
+create table t2 (a int);
+insert into t2 values (1),(null);
+select (select a from t1 use index(idx_a) where b >= t2.a order by a limit 1) as field from t2;
+field
+4
+NULL
+drop table if exists t, s;
+create table t(a date, b float);
+create table s(b float);
+insert into t values(NULL,-37), ("2011-11-04",105), ("2013-03-02",-22), ("2006-07-02",-56), (NULL,124), (NULL,111), ("2018-03-03",-5);
+insert into s values(-37),(105),(-22),(-56),(124),(105),(111),(-5);
+select count(distinct t.a, t.b) from t join s on t.b= s.b;
+count(distinct t.a, t.b)
+4
+drop table if exists t;
+create table t (a decimal(10,6), b decimal, index idx_b (b));
+set sql_mode = '';
+insert t values (1.1, 1.1);
+insert t values (2.4, 2.4);
+insert t values (3.3, 2.7);
+select * from t where a < 2.399999;
+a	b
+1.100000	1
+select * from t where a > 1.5;
+a	b
+2.400000	2
+3.300000	3
+select * from t where a <= 1.1;
+a	b
+1.100000	1
+select * from t where b >= 3;
+a	b
+3.300000	3
+select * from t where not (b = 1);
+a	b
+2.400000	2
+3.300000	3
+select * from t where b&1 = a|1;
+a	b
+1.100000	1
+select * from t where b != 2 and b <=> 3;
+a	b
+3.300000	3
+select * from t where b in (3);
+a	b
+3.300000	3
+select * from t where b not in (1, 2);
+a	b
+3.300000	3
+drop table if exists t;
+create table t (a varchar(255), b int);
+insert t values ('abc123', 1);
+insert t values ('ab123', 2);
+select * from t where a like 'ab%';
+a	b
+abc123	1
+ab123	2
+select * from t where a like 'ab_12';
+a	b
+drop table if exists t;
+create table t (a int primary key);
+insert t values (1);
+insert t values (2);
+select * from t where not (a = 1);
+a
+2
+select * from t where not(not (a = 1));
+a
+1
+select * from t where not(a != 1 and a != 2);
+a
+1
+2
+set @@sql_mode = default;
+drop table if exists t;
+create table t (a decimal(10,6), b decimal, index idx_b (b));
+set sql_mode = '';
+insert t values (1.1, 1.1);
+insert t values (2.2, 2.2);
+insert t values (3.3, 2.7);
+select * from t where a > 1.5;
+a	b
+2.200000	2
+3.300000	3
+select * from t where b > 1.5;
+a	b
+2.200000	2
+3.300000	3
+drop table if exists t;
+create table t (a time(3), b time, index idx_a (a));
+insert t values ('11:11:11', '11:11:11');
+insert t values ('11:11:12', '11:11:12');
+insert t values ('11:11:13', '11:11:13');
+select * from t where a > '11:11:11.5';
+a	b
+11:11:12.000	11:11:12
+11:11:13.000	11:11:13
+select * from t where b > '11:11:11.5';
+a	b
+11:11:12.000	11:11:12
+11:11:13.000	11:11:13
+set @@sql_mode = default;
+Select 1;
+1
+1
+Select 1 from dual;
+1
+1
+Select count(*) from dual;
+count(*)
+1
+Select 1 from dual where 1;
+1
+1
+drop table if exists t;
+create table t(a int primary key);
+select t1.* from t t1, t t2 where t1.a=t2.a and 1=0;
+a
+drop table if exists t;
+create table t (c int, d int);
+insert t values (1, 1);
+insert t values (1, 3);
+insert t values (2, 1);
+insert t values (2, 3);
+select * from t where (c, d) < (2,2);
+c	d
+1	1
+1	3
+2	1
+select * from t where (1,2,3) > (3,2,1);
+c	d
+select * from t where row(1,2,3) > (3,2,1);
+c	d
+select * from t where (c, d) = (select * from t where (c,d) = (1,1));
+c	d
+1	1
+select * from t where (c, d) = (select * from t k where (t.c,t.d) = (c,d));
+c	d
+1	1
+1	3
+2	1
+2	3
+select (1, 2, 3) < (2, 3, 4);
+(1, 2, 3) < (2, 3, 4)
+1
+select (2, 3, 4) <= (2, 3, 3);
+(2, 3, 4) <= (2, 3, 3)
+0
+select (2, 3, 4) <= (2, 3, 4);
+(2, 3, 4) <= (2, 3, 4)
+1
+select (2, 3, 4) <= (2, 1, 4);
+(2, 3, 4) <= (2, 1, 4)
+0
+select (2, 3, 4) >= (2, 3, 4);
+(2, 3, 4) >= (2, 3, 4)
+1
+select (2, 3, 4) = (2, 3, 4);
+(2, 3, 4) = (2, 3, 4)
+1
+select (2, 3, 4) != (2, 3, 4);
+(2, 3, 4) != (2, 3, 4)
+0
+select row(1, 1) in (row(1, 1));
+row(1, 1) in (row(1, 1))
+1
+select row(1, 0) in (row(1, 1));
+row(1, 0) in (row(1, 1))
+0
+select row(1, 1) in (select 1, 1);
+row(1, 1) in (select 1, 1)
+1
+select row(1, 1) > row(1, 0);
+row(1, 1) > row(1, 0)
+1
+select row(1, 1) > (select 1, 0);
+row(1, 1) > (select 1, 0)
+1
+select 1 > (select 1);
+1 > (select 1)
+0
+select (select 1);
+(select 1)
+1
+drop table if exists t1;
+create table t1 (a int, b int);
+insert t1 values (1,2),(1,null);
+drop table if exists t2;
+create table t2 (c int, d int);
+insert t2 values (0,0);
+select * from t2 where (1,2) in (select * from t1);
+c	d
+0	0
+select * from t2 where (1,2) not in (select * from t1);
+c	d
+select * from t2 where (1,1) not in (select * from t1);
+c	d
+select * from t2 where (1,null) in (select * from t1);
+c	d
+select * from t2 where (null,null) in (select * from t1);
+c	d
+delete from t1 where a=1 and b=2;
+select (1,1) in (select * from t2) from t1;
+(1,1) in (select * from t2)
+0
+select (1,1) not in (select * from t2) from t1;
+(1,1) not in (select * from t2)
+1
+select (1,1) in (select 1,1 from t2) from t1;
+(1,1) in (select 1,1 from t2)
+1
+select (1,1) not in (select 1,1 from t2) from t1;
+(1,1) not in (select 1,1 from t2)
+0
+select (1,null) not in (select 1,1 from t2) from t1;
+(1,null) not in (select 1,1 from t2)
+NULL
+select (t1.a,null) not in (select 1,1 from t2) from t1;
+(t1.a,null) not in (select 1,1 from t2)
+NULL
+select (1,null) in (select * from t1);
+(1,null) in (select * from t1)
+NULL
+select (1,null) not in (select * from t1);
+(1,null) not in (select * from t1)
+NULL
+select str_to_date('20190101','%Y%m%d%!') from dual;
+str_to_date('20190101','%Y%m%d%!')
+2019-01-01
+select str_to_date('20190101','%Y%m%d%f') from dual;
+str_to_date('20190101','%Y%m%d%f')
+2019-01-01 00:00:00.000000
+select str_to_date('20190101','%Y%m%d%H%i%s') from dual;
+str_to_date('20190101','%Y%m%d%H%i%s')
+2019-01-01 00:00:00
+select str_to_date('18/10/22','%y/%m/%d') from dual;
+str_to_date('18/10/22','%y/%m/%d')
+2018-10-22
+select str_to_date('a18/10/22','%y/%m/%d') from dual;
+str_to_date('a18/10/22','%y/%m/%d')
+NULL
+select str_to_date('69/10/22','%y/%m/%d') from dual;
+str_to_date('69/10/22','%y/%m/%d')
+2069-10-22
+select str_to_date('70/10/22','%y/%m/%d') from dual;
+str_to_date('70/10/22','%y/%m/%d')
+1970-10-22
+select str_to_date('8/10/22','%y/%m/%d') from dual;
+str_to_date('8/10/22','%y/%m/%d')
+2008-10-22
+select str_to_date('8/10/22','%Y/%m/%d') from dual;
+str_to_date('8/10/22','%Y/%m/%d')
+2008-10-22
+select str_to_date('18/10/22','%Y/%m/%d') from dual;
+str_to_date('18/10/22','%Y/%m/%d')
+2018-10-22
+select str_to_date('a18/10/22','%Y/%m/%d') from dual;
+str_to_date('a18/10/22','%Y/%m/%d')
+NULL
+select str_to_date('69/10/22','%Y/%m/%d') from dual;
+str_to_date('69/10/22','%Y/%m/%d')
+2069-10-22
+select str_to_date('70/10/22','%Y/%m/%d') from dual;
+str_to_date('70/10/22','%Y/%m/%d')
+1970-10-22
+select str_to_date('018/10/22','%Y/%m/%d') from dual;
+str_to_date('018/10/22','%Y/%m/%d')
+0018-10-22
+select str_to_date('2018/10/22','%Y/%m/%d') from dual;
+str_to_date('2018/10/22','%Y/%m/%d')
+2018-10-22
+select str_to_date('018/10/22','%y/%m/%d') from dual;
+str_to_date('018/10/22','%y/%m/%d')
+NULL
+select str_to_date('18/10/22','%y0/%m/%d') from dual;
+str_to_date('18/10/22','%y0/%m/%d')
+NULL
+select str_to_date('18/10/22','%Y0/%m/%d') from dual;
+str_to_date('18/10/22','%Y0/%m/%d')
+NULL
+select str_to_date('18a/10/22','%y/%m/%d') from dual;
+str_to_date('18a/10/22','%y/%m/%d')
+NULL
+select str_to_date('18a/10/22','%Y/%m/%d') from dual;
+str_to_date('18a/10/22','%Y/%m/%d')
+NULL
+select str_to_date('20188/10/22','%Y/%m/%d') from dual;
+str_to_date('20188/10/22','%Y/%m/%d')
+NULL
+select str_to_date('2018510522','%Y5%m5%d') from dual;
+str_to_date('2018510522','%Y5%m5%d')
+2018-10-22
+select str_to_date('2018^10^22','%Y^%m^%d') from dual;
+str_to_date('2018^10^22','%Y^%m^%d')
+2018-10-22
+select str_to_date('2018@10@22','%Y@%m@%d') from dual;
+str_to_date('2018@10@22','%Y@%m@%d')
+2018-10-22
+select str_to_date('2018%10%22','%Y%%m%%d') from dual;
+str_to_date('2018%10%22','%Y%%m%%d')
+NULL
+select str_to_date('2018(10(22','%Y(%m(%d') from dual;
+str_to_date('2018(10(22','%Y(%m(%d')
+2018-10-22
+select str_to_date('2018\10\22','%Y\%m\%d') from dual;
+str_to_date('2018\10\22','%Y\%m\%d')
+NULL
+select str_to_date('2018=10=22','%Y=%m=%d') from dual;
+str_to_date('2018=10=22','%Y=%m=%d')
+2018-10-22
+select str_to_date('2018+10+22','%Y+%m+%d') from dual;
+str_to_date('2018+10+22','%Y+%m+%d')
+2018-10-22
+select str_to_date('2018_10_22','%Y_%m_%d') from dual;
+str_to_date('2018_10_22','%Y_%m_%d')
+2018-10-22
+select str_to_date('69510522','%y5%m5%d') from dual;
+str_to_date('69510522','%y5%m5%d')
+2069-10-22
+select str_to_date('69^10^22','%y^%m^%d') from dual;
+str_to_date('69^10^22','%y^%m^%d')
+2069-10-22
+select str_to_date('18@10@22','%y@%m@%d') from dual;
+str_to_date('18@10@22','%y@%m@%d')
+2018-10-22
+select str_to_date('18%10%22','%y%%m%%d') from dual;
+str_to_date('18%10%22','%y%%m%%d')
+NULL
+select str_to_date('18(10(22','%y(%m(%d') from dual;
+str_to_date('18(10(22','%y(%m(%d')
+2018-10-22
+select str_to_date('18\10\22','%y\%m\%d') from dual;
+str_to_date('18\10\22','%y\%m\%d')
+NULL
+select str_to_date('18+10+22','%y+%m+%d') from dual;
+str_to_date('18+10+22','%y+%m+%d')
+2018-10-22
+select str_to_date('18=10=22','%y=%m=%d') from dual;
+str_to_date('18=10=22','%y=%m=%d')
+2018-10-22
+select str_to_date('18_10_22','%y_%m_%d') from dual;
+str_to_date('18_10_22','%y_%m_%d')
+2018-10-22
+SELECT STR_TO_DATE('2020-07-04 11:22:33 PM', '%Y-%m-%d %r');
+STR_TO_DATE('2020-07-04 11:22:33 PM', '%Y-%m-%d %r')
+2020-07-04 23:22:33
+SELECT STR_TO_DATE('2020-07-04 12:22:33 AM', '%Y-%m-%d %r');
+STR_TO_DATE('2020-07-04 12:22:33 AM', '%Y-%m-%d %r')
+2020-07-04 00:22:33
+SELECT STR_TO_DATE('2020-07-04 12:22:33', '%Y-%m-%d %T');
+STR_TO_DATE('2020-07-04 12:22:33', '%Y-%m-%d %T')
+2020-07-04 12:22:33
+SELECT STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T');
+STR_TO_DATE('2020-07-04 00:22:33', '%Y-%m-%d %T')
+2020-07-04 00:22:33
+drop table if exists pt;
+create table pt (a int, b int, index i_b(b)) partition by range (a) (partition p1 values less than (2), partition p2 values less than (4), partition p3 values less than (6));
+insert into pt values(0, 0);
+insert into pt values(1, 1);
+insert into pt values(2, 2);
+insert into pt values(3, 3);
+insert into pt values(4, 4);
+insert into pt values(5, 5);
+select * from pt order by a;
+a	b
+0	0
+1	1
+2	2
+3	3
+4	4
+5	5
+select b from pt where b = 3;
+b
+3
+select a from pt where b = 3;
+a
+3
+drop table if exists t1;
+create table t1(i int, j int, k int);
+insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4);
+INSERT INTO t1 SELECT 10*i,j,5*j FROM t1 UNION SELECT 20*i,j,5*j FROM t1 UNION SELECT 30*i,j,5*j FROM t1;
+set @@session.tidb_enable_window_function=1;
+SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w;
+SUM(i) OVER W
+1
+2
+3
+4
+11
+22
+31
+33
+44
+61
+62
+93
+122
+124
+183
+244
+set @@session.tidb_enable_window_function=default;
+drop table if exists a;
+create table a (f1 int, f2 varchar(32), primary key (f1));
+insert into a (f1,f2) values (1,'a'), (2,'b'), (3,'c');
+select /*+ inl_merge_join(a) */ a.* from a inner join (select 1 as k1,'k2-1' as k2) as k on a.f1=k.k1;
+f1	f2
+1	a
+drop table if exists t1, t2;
+create table t1(a int);
+create table t2(a int);
+insert into t1(a) select 1;
+select b.n from t1 left join (select a as a, null as n from t2) b on b.a = t1.a order by t1.a;
+n
+NULL
+drop table if exists t;
+drop table if exists s;
+CREATE TABLE `t` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);
+CREATE TABLE `s` (  `a` int(11) DEFAULT NULL,  `b` int(11) DEFAULT NULL);
+insert into t values(1,1),(2,2);
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into s values(3,3),(4,4),(1,null),(2,null),(null,null);
+insert into s select * from s;
+insert into s select * from s;
+insert into s select * from s;
+insert into s select * from s;
+insert into s select * from s;
+set @@tidb_max_chunk_size=32;
+set @@tidb_enable_null_aware_anti_join=true;
+select * from t where (a,b) not in (select a, b from s);
+a	b
+set @@tidb_max_chunk_size=default;
+set @@tidb_enable_null_aware_anti_join=default;
