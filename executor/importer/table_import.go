@@ -441,6 +441,13 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
 	}
+	// todo: support checking IsRowOrdered later.
+	// also see test result here: https://github.com/pingcap/tidb/pull/47147
+	//if ti.tableMeta.IsRowOrdered {
+	//	dataEngineCfg.Local.Compact = true
+	//	dataEngineCfg.Local.CompactConcurrency = 4
+	//	dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
+	//}
 	mgr := backend.MakeEngineManager(ti.backend)
 	return mgr.OpenEngine(ctx, dataEngineCfg, ti.fullTableName(), engineID)
 }
