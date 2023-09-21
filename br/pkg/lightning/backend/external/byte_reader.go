@@ -109,7 +109,12 @@ func (r *byteReader) switchToConcurrentReaderImpl() error {
 	r.conReader.currentFileOffset = currOffset
 	r.conReader.bufferReadOffset = 0
 
-	r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
+	if r.conReader.buffPool == nil {
+		r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
+	} else {
+		r.conReader.poolBuffer = r.conReader.buffPool.NewBuffer()
+		r.conReader.buffer = r.conReader.poolBuffer.AllocBytes(r.conReader.concurrency * r.conReader.readBufferSize)
+	}
 	r.useConcurrentReaderCurrent = true
 	return nil
 }
@@ -117,7 +122,12 @@ func (r *byteReader) switchToConcurrentReaderImpl() error {
 func (r *byteReader) switchToNormalReaderImpl() error {
 	r.useConcurrentReaderCurrent = false
 	r.currFileOffset = r.conReader.currentFileOffset
-	r.conReader.buffer = nil
+	if r.conReader.buffPool == nil {
+		r.conReader.buffer = nil
+	} else {
+		r.conReader.poolBuffer.Destroy()
+		r.conReader.buffer = nil
+	}
 	_, err := r.storageReader.Seek(r.currFileOffset, io.SeekStart)
 	return err
 }

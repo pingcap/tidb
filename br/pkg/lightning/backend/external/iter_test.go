@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"io"
 	"testing"
 	"time"
@@ -320,6 +321,10 @@ func (p kvReaderPointerProxy) next() (*kvPair, error) {
 
 func (p kvReaderPointerProxy) setReadMode(useConcurrency bool) {
 	p.r.byteReader.switchReaderMode(useConcurrency)
+}
+
+func (p kvReaderPointerProxy) setPool(pool *membuf.Pool) {
+	p.r.byteReader.conReader.buffPool = pool
 }
 
 func (p kvReaderPointerProxy) close() error {

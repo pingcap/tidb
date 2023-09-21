@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"io"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -36,8 +37,10 @@ type singeFileReader struct {
 	maxFileOffset int64
 	name          string
 
-	storage storage.ExternalStorage
-	buffer  []byte
+	storage    storage.ExternalStorage
+	buffer     []byte
+	poolBuffer *membuf.Buffer
+	buffPool   *membuf.Pool
 }
 
 // newSingeFileReader creates a new singeFileReader.

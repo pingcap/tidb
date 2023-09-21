@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"io"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -34,6 +35,7 @@ type sortedReader[T heapElem] interface {
 	path() string
 	next() (T, error)
 	setReadMode(useConcurrency bool)
+	setPool(pool *membuf.Pool)
 	close() error
 }
 
@@ -76,6 +78,7 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 	err             error
 	hotspotMap      map[int]int
 	checkHotspotCnt int
+	bufferPool      *membuf.Pool
 
 	logger *zap.Logger
 }
@@ -136,12 +139,14 @@ func newMergeIter[
 		lastReaderIdx: -1,
 		hotspotMap:    make(map[int]int),
 		logger:        logger,
+		bufferPool:    membuf.NewPool(membuf.WithBlockSize(ConcurrentReaderBufferSize)),
 	}
 	for j := range i.readers {
 		if i.readers[j] == nil {
 			continue
 		}
 		rd := *i.readers[j]
+		rd.setPool(i.bufferPool)
 		e, err := rd.next()
 		if err == io.EOF {
 			closeErr := rd.close()
@@ -270,6 +275,10 @@ func (p kvReaderProxy) path() string {
 	return p.p
 }
 
+func (p kvReaderProxy) setPool(pool *membuf.Pool) {
+	p.r.byteReader.conReader.buffPool = pool
+}
+
 func (p kvReaderProxy) next() (kvPair, error) {
 	k, v, err := p.r.nextKV()
 	if err != nil {
@@ -362,6 +371,10 @@ func (p statReaderProxy) next() (*rangeProperty, error) {
 
 func (p statReaderProxy) setReadMode(useConcurrency bool) {
 	p.r.byteReader.switchReaderMode(useConcurrency)
+}
+
+func (p statReaderProxy) setPool(pool *membuf.Pool) {
+	p.r.byteReader.conReader.buffPool = pool
 }
 
 func (p statReaderProxy) close() error {
