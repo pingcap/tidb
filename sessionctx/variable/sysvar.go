@@ -827,24 +827,26 @@ var defaultSysVars = []*SysVar{
 		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
 		return nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMaxValue, Value: strconv.Itoa(DefTiDBGOGCMaxValue), Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		maxValue := TidbOptInt64(val, DefTiDBGOGCMaxValue)
-		if maxValue > int64(gctuner.MinGCPercent()) {
-			errors.New("tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value")
-		}
-		gctuner.SetMaxGCPercent(uint32(maxValue))
-		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
-		return nil
-	}},
-	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMinValue, Value: strconv.Itoa(DefTiDBGOGCMinValue), Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		minValue := TidbOptInt64(val, DefTiDBGOGCMinValue)
-		if minValue < int64(gctuner.MaxGCPercent()) {
-			errors.New("tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value")
-		}
-		gctuner.SetMinGCPercent(uint32(minValue))
-		gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
-		return nil
-	}},
+	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMaxValue, Value: strconv.Itoa(DefTiDBGOGCMaxValue),
+		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			maxValue := TidbOptInt64(val, DefTiDBGOGCMaxValue)
+			if maxValue > int64(gctuner.MinGCPercent()) {
+				return errors.New("tidb_gogc_tuner_max_value should be more than tidb_gogc_tuner_min_value")
+			}
+			gctuner.SetMaxGCPercent(uint32(maxValue))
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+			return nil
+		}},
+	{Scope: ScopeGlobal, Name: TiDBGOGCTunerMinValue, Value: strconv.Itoa(DefTiDBGOGCMinValue),
+		Type: TypeInt, MinValue: 10, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			minValue := TidbOptInt64(val, DefTiDBGOGCMinValue)
+			if minValue < int64(gctuner.MaxGCPercent()) {
+				return errors.New("tidb_gogc_tuner_min_value should be less than tidb_gogc_tuner_max_value")
+			}
+			gctuner.SetMinGCPercent(uint32(minValue))
+			gctuner.GlobalMemoryLimitTuner.UpdateMemoryLimit()
+			return nil
+		}},
 	{Scope: ScopeGlobal, Name: TiDBEnableTelemetry, Value: BoolToOnOff(DefTiDBEnableTelemetry), Type: TypeBool},
 	{Scope: ScopeGlobal, Name: TiDBEnableHistoricalStats, Value: On, Type: TypeBool, Depended: true},
 	/* tikv gc metrics */
