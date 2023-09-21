@@ -212,8 +212,7 @@ func (i *mergeIter[T, R]) next() bool {
 				if r == nil {
 					continue
 				}
-				rd := *i.readers[i.lastReaderIdx]
-				rd.setReadMode(i.hotspotMap[idx] > (checkPeriod / 2))
+				(*r).setReadMode(i.hotspotMap[idx] > (checkPeriod / 2))
 			}
 			i.checkHotspotCnt = 0
 			i.hotspotMap = make(map[int]int)
