@@ -149,7 +149,10 @@ func NewAddIndexIngestPipeline(
 }
 
 // NewWriteIndexToExternalStoragePipeline creates a pipeline for writing index to external storage.
-func NewWriteIndexToExternalStoragePipeline(ctx *OperatorCtx, store kv.Storage, extStoreURI string, sessPool opSessPool, sessCtx sessionctx.Context, jobID, subtaskID int64, tbl table.PhysicalTable, idxInfo *model.IndexInfo, startKey, endKey kv.Key, totalRowCount *atomic.Int64, metricCounter prometheus.Counter, onClose external.OnCloseFunc, bcctx ingest.BackendCtx) (*operator.AsyncPipeline, error) {
+func NewWriteIndexToExternalStoragePipeline(ctx *OperatorCtx, store kv.Storage, extStoreURI string, sessPool opSessPool,
+	sessCtx sessionctx.Context, jobID, subtaskID int64, tbl table.PhysicalTable, idxInfo *model.IndexInfo, startKey,
+	endKey kv.Key, totalRowCount *atomic.Int64, metricCounter prometheus.Counter, onClose external.OnCloseFunc,
+	bcctx ingest.BackendCtx) (*operator.AsyncPipeline, error) {
 	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 	copCtx, err := NewCopContext(tbl.Meta(), idxInfo, sessCtx)
 	if err != nil {
@@ -444,7 +447,9 @@ type WriteExternalStoreOperator struct {
 }
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
-func NewWriteExternalStoreOperator(ctx *OperatorCtx, copCtx *CopContext, sessPool opSessPool, jobID int64, subtaskID int64, tbl table.PhysicalTable, index table.Index, store storage.ExternalStorage, srcChunkPool chan *chunk.Chunk, concurrency int, onClose external.OnCloseFunc, shareMu *sync.Mutex) *WriteExternalStoreOperator {
+func NewWriteExternalStoreOperator(ctx *OperatorCtx, copCtx *CopContext, sessPool opSessPool, jobID int64,
+	subtaskID int64, tbl table.PhysicalTable, index table.Index, store storage.ExternalStorage, srcChunkPool chan *chunk.Chunk,
+	concurrency int, onClose external.OnCloseFunc, shareMu *sync.Mutex) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
