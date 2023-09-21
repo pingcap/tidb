@@ -122,21 +122,27 @@ func CancelGlobalTask(taskKey string) error {
 	return taskManager.CancelGlobalTask(task.ID)
 }
 
+// PauseTask pauses a task.
+func PauseTask(taskKey string) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	found, err := taskManager.PauseTask(taskKey)
+	if !found {
+		logutil.BgLogger().Info("task not pausable", zap.String("taskKey", taskKey))
+		return nil
+	}
+	return err
+}
+
 // ResumeTask resumes a task.
 func ResumeTask(taskKey string) error {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	task, err := taskManager.GetGlobalTaskByKey(taskKey)
-	if err != nil {
-		return err
-	}
-	if task == nil {
-		logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
-		return nil
-	}
-	found, err := taskManager.ResumeTask(task.ID)
+	found, err := taskManager.ResumeTask(taskKey)
 	if !found {
 		logutil.BgLogger().Info("task not resumable", zap.String("taskKey", taskKey))
 		return nil

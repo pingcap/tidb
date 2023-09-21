@@ -63,6 +63,7 @@ func TestHandle(t *testing.T) {
 
 	task, err = handle.SubmitGlobalTask("2", proto.TaskTypeExample, 2, []byte("byte"))
 	require.NoError(t, err)
+	require.NoError(t, handle.PauseTask("2"))
 	require.NoError(t, handle.ResumeTask("2"))
 }
 

@@ -355,28 +355,10 @@ func (stm *TaskManager) UpdateErrorToSubtask(tidbID string, taskID int64, err er
 // PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
 func (stm *TaskManager) PrintSubtaskInfo(taskID int64) {
 	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
+		"select * from mysql.tidb_background_subtask_history where task_key = %?", taskID)
+	rs2, _ := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_background_subtask where task_key = %?", taskID)
-
-	for _, r := range rs {
-		errBytes := r.GetBytes(13)
-		var err error
-		if len(errBytes) > 0 {
-			stdErr := errors.Normalize("")
-			err1 := stdErr.UnmarshalJSON(errBytes)
-			if err1 != nil {
-				err = err1
-			} else {
-				err = stdErr
-			}
-		}
-		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
-	}
-}
-
-// PrintHistorySubtaskInfo log the history subtask info by taskKey. Only used for UT.
-func (stm *TaskManager) PrintHistorySubtaskInfo(_ int64) {
-	rs, _ := stm.executeSQLWithNewSession(stm.ctx,
-		"select * from mysql.tidb_background_subtask_history")
+	rs = append(rs, rs2...)
 
 	for _, r := range rs {
 		errBytes := r.GetBytes(13)
@@ -627,20 +609,14 @@ func (stm *TaskManager) UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[
 func (stm *TaskManager) PauseSubtasks(tidbID string, taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx,
 		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, taskID, tidbID)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // ResumeSubtasks update all paused subtasks to pending state.
 func (stm *TaskManager) ResumeSubtasks(taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx,
 		`update mysql.tidb_background_subtask set state = "pending", error = null where task_key = %? and state = "paused"`, taskID)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
 // UpdateGlobalTaskAndAddSubTasks update the global task and add new subtasks
@@ -758,23 +734,36 @@ func (stm *TaskManager) IsGlobalTaskCancelling(taskID int64) (bool, error) {
 }
 
 // PauseTask pauses the task.
-func (stm *TaskManager) PauseTask(taskID int64) error {
-	_, err := stm.executeSQLWithNewSession(stm.ctx,
-		"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
-			"where id=%? and state in (%?, %?)",
-		proto.TaskStatePausing, taskID, proto.TaskStatePending, proto.TaskStateRunning,
-	)
-	return err
-}
-
-// ResumeTask resumes the task.
-func (stm *TaskManager) ResumeTask(taskID int64) (bool, error) {
+func (stm *TaskManager) PauseTask(taskKey string) (bool, error) {
 	found := false
 	err := stm.WithNewSession(func(se sessionctx.Context) error {
 		_, err := ExecSQL(stm.ctx, se,
 			"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
-				"where id=%? and state = %?",
-			proto.TaskStateResuming, taskID, proto.TaskStatePaused,
+				"where task_key = %? and state in (%?, %?)",
+			proto.TaskStatePausing, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
+		)
+		if err != nil {
+			return err
+		}
+		if se.GetSessionVars().StmtCtx.AffectedRows() != 0 {
+			found = true
+		}
+		return err
+	})
+	if err != nil {
+		return found, err
+	}
+	return found, nil
+}
+
+// ResumeTask resumes the task.
+func (stm *TaskManager) ResumeTask(taskKey string) (bool, error) {
+	found := false
+	err := stm.WithNewSession(func(se sessionctx.Context) error {
+		_, err := ExecSQL(stm.ctx, se,
+			"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
+				"where task_key = %? and state = %?",
+			proto.TaskStateResuming, taskKey, proto.TaskStatePaused,
 		)
 		if err != nil {
 			return err

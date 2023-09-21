@@ -170,7 +170,7 @@ func (d *BaseDispatcher) scheduleTask() {
 
 			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStatePending {
-					err := d.taskMgr.PauseTask(d.Task.ID)
+					_, err := d.taskMgr.PauseTask(d.Task.Key)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
 					}
@@ -180,7 +180,7 @@ func (d *BaseDispatcher) scheduleTask() {
 
 			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
-					err := d.taskMgr.PauseTask(d.Task.ID)
+					_, err := d.taskMgr.PauseTask(d.Task.Key)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
 					}
@@ -239,7 +239,6 @@ func (d *BaseDispatcher) onCancelling() error {
 func (d *BaseDispatcher) onPausing() error {
 	logutil.Logger(d.logCtx).Info("on pausing state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
 	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending) // ywq todo remove
-	d.taskMgr.PrintSubtaskInfo(d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
