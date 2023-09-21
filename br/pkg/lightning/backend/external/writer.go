@@ -100,7 +100,8 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
-	mu              *sync.Mutex
+	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
+	mu *sync.Mutex
 
 	bufferPool *membuf.Pool
 }
@@ -291,7 +292,8 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
-	shareMu   *sync.Mutex
+	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
+	shareMu *sync.Mutex
 }
 
 // WriteRow implements ingest.Writer.
