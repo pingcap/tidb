@@ -2157,3 +2157,10 @@ func TestSetMppExchangeCompressionModeVariable(t *testing.T) {
 		require.Equal(t, warnings[0].Err.Error(), "mpp exchange compression won't work under current mpp version 0")
 	}
 }
+
+func TestDeprecateEnableTiFlashPipelineModel(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@global.tiflash_enable_pipeline_model = 1`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1681 tiflash_enable_pipeline_model is deprecated and setting it will not have any effect."))
+}
