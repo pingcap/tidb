@@ -15,12 +15,19 @@
 package lockstats
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
-func TestGenerateDuplicateTablesMessage(t *testing.T) {
+func TestGenerateSkippedTablesMessage(t *testing.T) {
 	tests := []struct {
 		name          string
 		totalTableIDs []int64
@@ -72,8 +79,165 @@ func TestGenerateDuplicateTablesMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := generateSkippedTablesMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
+			msg := generateStableSkippedTablesMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
 			require.Equal(t, tt.expectedMsg, msg)
 		})
 	}
+}
+
+func TestGenerateSkippedPartitionsMessage(t *testing.T) {
+	tests := []struct {
+		name              string
+		tableName         string
+		totalPartitionIDs []int64
+		partitions        []string
+		action            string
+		status            string
+		expectedMsg       string
+	}{
+		{
+			name:              "no duplicate partitions when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "",
+		},
+		{
+			name:              "one duplicate table when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1},
+			partitions:        []string{"t1"},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "skip locking locked partition of table test.t: t1",
+		},
+		{
+			name:              "multiple duplicate partitions when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3, 4},
+			partitions:        []string{"t1", "t2", "t3"},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "skip locking locked partitions of table test.t: t1, t2, t3, other partitions locked successfully",
+		},
+		{
+			name:              "all partitions are duplicate when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3, 4},
+			partitions:        []string{"t1", "t2", "t3", "t4"},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "skip locking locked partitions of table test.t: t1, t2, t3, t4",
+		},
+		{
+			name:              "all partitions are duplicate when unlocking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3, 4},
+			partitions:        []string{"t1", "t2", "t3", "t4"},
+			action:            unlockAction,
+			status:            unlockedStatus,
+			expectedMsg:       "skip unlocking unlocked partitions of table test.t: t1, t2, t3, t4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := generateStableSkippedPartitionsMessage(tt.totalPartitionIDs, tt.tableName, tt.partitions, tt.action, tt.status)
+			require.Equal(t, tt.expectedMsg, msg)
+		})
+	}
+}
+
+func TestInsertIntoStatsTableLocked(t *testing.T) {
+	ctx := context.Background()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.Eq(ctx),
+		useCurrentSession,
+		gomock.Eq(insertSQL),
+		gomock.Eq([]interface{}{int64(1), int64(1)}),
+	)
+	err := insertIntoStatsTableLocked(ctx, exec, 1)
+	require.NoError(t, err)
+
+	// Error should be returned when ExecRestrictedSQL returns error.
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Any(),
+		gomock.Any(),
+	).Return(nil, nil, errors.New("test error"))
+
+	err = insertIntoStatsTableLocked(ctx, exec, 1)
+	require.Equal(t, "test error", err.Error())
+}
+
+func TestAddLockedTables(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		gomock.Eq("BEGIN PESSIMISTIC"),
+	)
+	// Return table 1 is locked.
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	c.AppendInt64(0, int64(1))
+	rows := []chunk.Row{c.GetRow(0)}
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		selectSQL,
+	).Return(rows, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(2), int64(2)}),
+	)
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(3), int64(3)}),
+	)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(4), int64(4)}),
+	)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		"COMMIT",
+	)
+
+	tidsAndNames := map[int64]string{
+		1: "test.t1",
+		2: "test.t2",
+		3: "test.t3",
+	}
+	pidAndNames := map[int64]string{
+		4: "p1",
+	}
+
+	msg, err := AddLockedTables(
+		exec,
+		tidsAndNames,
+		pidAndNames,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "skip locking locked tables: test.t1, other tables locked successfully", msg)
 }

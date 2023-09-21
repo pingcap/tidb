@@ -16,12 +16,12 @@ package handle
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
 	"time"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
@@ -30,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/types"
+	compressutil "github.com/pingcap/tidb/util/compress"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -195,16 +197,18 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 	}
 	// dump its global-stats if existed
 	if tbl != nil {
-		jsonTbl.Partitions[TiDBGlobalStats] = tbl
+		jsonTbl.Partitions[globalstats.TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, fallbackTbls, nil
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error) {
-	h.mu.Lock()
-	isDynamicMode := variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load()) == variable.Dynamic
-	h.mu.Unlock()
+	pruneMode, err := h.GetCurrentPruneMode()
+	if err != nil {
+		return nil, err
+	}
+	isDynamicMode := variable.PartitionPruneMode(pruneMode) == variable.Dynamic
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
@@ -233,7 +237,7 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 		return nil, errors.Trace(err)
 	}
 	if tbl != nil {
-		jsonTbl.Partitions[TiDBGlobalStats] = tbl
+		jsonTbl.Partitions[globalstats.TiDBGlobalStats] = tbl
 	}
 	return jsonTbl, nil
 }
@@ -396,7 +400,7 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 			}
 		}
 		// load global-stats if existed
-		if globalStats, ok := jsonTbl.Partitions[TiDBGlobalStats]; ok {
+		if globalStats, ok := jsonTbl.Partitions[globalstats.TiDBGlobalStats]; ok {
 			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
 				return errors.Trace(err)
 			}
@@ -536,7 +540,9 @@ func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 		return nil, errors.Trace(err)
 	}
 	var gzippedData bytes.Buffer
-	gzipWriter := gzip.NewWriter(&gzippedData)
+	gzipWriter := compressutil.GzipWriterPool.Get().(*gzip.Writer)
+	defer compressutil.GzipWriterPool.Put(gzipWriter)
+	gzipWriter.Reset(&gzippedData)
 	if _, err := gzipWriter.Write(data); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -565,10 +571,14 @@ func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
 		data = append(data, blocks[i]...)
 	}
 	gzippedData := bytes.NewReader(data)
-	gzipReader, err := gzip.NewReader(gzippedData)
-	if err != nil {
+	gzipReader := compressutil.GzipReaderPool.Get().(*gzip.Reader)
+	if err := gzipReader.Reset(gzippedData); err != nil {
+		compressutil.GzipReaderPool.Put(gzipReader)
 		return nil, err
 	}
+	defer func() {
+		compressutil.GzipReaderPool.Put(gzipReader)
+	}()
 	if err := gzipReader.Close(); err != nil {
 		return nil, err
 	}

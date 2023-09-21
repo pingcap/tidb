@@ -389,3 +389,146 @@ func TestIndexQueryBytes(t *testing.T) {
 	// Repeat
 	require.Equal(t, idx.QueryBytes(nil, high), uint64(10))
 }
+
+type histogramInputAndOutput struct {
+	inputHist       *Histogram
+	inputHistToStr  string
+	outputHistToStr string
+}
+
+func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
+	// 1. prepare expected input and output histograms (in string)
+	testData := []*histogramInputAndOutput{
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 2",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 34567 upper_bound: 5 repeats: 0 ndv: 0",
+			outputHistToStr: "index:0 ndv:6",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 876 upper_bound: 876 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 990 upper_bound: 990 repeats: 0 ndv: 0",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 5 repeats: 3 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 111 upper_bound: 111 repeats: 10 ndv: 1\n" +
+				"num: 12 lower_bound: 123 upper_bound: 34567 repeats: 4 ndv: 20\n" +
+				"num: 10 lower_bound: 5 upper_bound: 990 repeats: 6 ndv: 2",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 111 upper_bound: 111 repeats: 10 ndv: 0\n" +
+				"num: 12 lower_bound: 123 upper_bound: 34567 repeats: 4 ndv: 0\n" +
+				"num: 10 lower_bound: 5 upper_bound: 990 repeats: 6 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 5 upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 876 upper_bound: 876 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 2\n" +
+				"num: 10 lower_bound: 95 upper_bound: 95 repeats: 3 ndv: 2",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 95 upper_bound: 95 repeats: 3 ndv: 0",
+		},
+		{
+			inputHistToStr: "index:0 ndv:6\n" +
+				"num: 0 lower_bound: 111 upper_bound: 111 repeats: 0 ndv: 0\n" +
+				"num: 0 lower_bound: 123 upper_bound: 123 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 5 upper_bound: 5 repeats: 0 ndv: 0\n" +
+				"num: 10 lower_bound: 876 upper_bound: 876 repeats: 3 ndv: 2\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 2\n" +
+				"num: 0 lower_bound: 95 upper_bound: 95 repeats: 0 ndv: 0",
+			outputHistToStr: "index:0 ndv:6\n" +
+				"num: 10 lower_bound: 34567 upper_bound: 34567 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 876 upper_bound: 876 repeats: 3 ndv: 0\n" +
+				"num: 10 lower_bound: 990 upper_bound: 990 repeats: 3 ndv: 0",
+		},
+	}
+	// 2. prepare the actual Histogram input
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	val0, err := codec.EncodeKey(sc, nil, types.NewIntDatum(111))
+	require.NoError(t, err)
+	val1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(123))
+	require.NoError(t, err)
+	val2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(34567))
+	require.NoError(t, err)
+	val3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
+	require.NoError(t, err)
+	val4, err := codec.EncodeKey(sc, nil, types.NewIntDatum(876))
+	require.NoError(t, err)
+	val5, err := codec.EncodeKey(sc, nil, types.NewIntDatum(990))
+	require.NoError(t, err)
+	val6, err := codec.EncodeKey(sc, nil, types.NewIntDatum(95))
+	require.NoError(t, err)
+	val0Bytes := types.NewBytesDatum(val0)
+	val1Bytes := types.NewBytesDatum(val1)
+	val2Bytes := types.NewBytesDatum(val2)
+	val3Bytes := types.NewBytesDatum(val3)
+	val4Bytes := types.NewBytesDatum(val4)
+	val5Bytes := types.NewBytesDatum(val5)
+	val6Bytes := types.NewBytesDatum(val6)
+	hist0 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist0.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist0.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist0.AppendBucketWithNDV(&val2Bytes, &val3Bytes, 10, 3, 2)
+	testData[0].inputHist = hist0
+	hist1 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist1.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist1.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist1.AppendBucketWithNDV(&val2Bytes, &val3Bytes, 0, 0, 0)
+	testData[1].inputHist = hist1
+	hist2 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist2.AppendBucketWithNDV(&val2Bytes, &val3Bytes, 10, 3, 2)
+	hist2.AppendBucketWithNDV(&val4Bytes, &val4Bytes, 10, 0, 0)
+	hist2.AppendBucketWithNDV(&val5Bytes, &val5Bytes, 10, 0, 0)
+	testData[2].inputHist = hist2
+	hist3 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist3.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 10, 10, 1)
+	hist3.AppendBucketWithNDV(&val1Bytes, &val2Bytes, 22, 4, 20)
+	hist3.AppendBucketWithNDV(&val3Bytes, &val5Bytes, 32, 6, 2)
+	testData[3].inputHist = hist3
+	hist4 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist4.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist4.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist4.AppendBucketWithNDV(&val2Bytes, &val2Bytes, 10, 3, 2)
+	hist4.AppendBucketWithNDV(&val3Bytes, &val3Bytes, 10, 0, 0)
+	hist4.AppendBucketWithNDV(&val4Bytes, &val4Bytes, 10, 0, 0)
+	hist4.AppendBucketWithNDV(&val5Bytes, &val5Bytes, 20, 3, 2)
+	hist4.AppendBucketWithNDV(&val6Bytes, &val6Bytes, 30, 3, 2)
+	testData[4].inputHist = hist4
+	hist5 := NewHistogram(0, 6, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
+	hist5.AppendBucketWithNDV(&val0Bytes, &val0Bytes, 0, 0, 0)
+	hist5.AppendBucketWithNDV(&val1Bytes, &val1Bytes, 0, 0, 0)
+	hist5.AppendBucketWithNDV(&val2Bytes, &val2Bytes, 10, 3, 2)
+	hist5.AppendBucketWithNDV(&val3Bytes, &val3Bytes, 10, 0, 0)
+	hist5.AppendBucketWithNDV(&val4Bytes, &val4Bytes, 20, 3, 2)
+	hist5.AppendBucketWithNDV(&val5Bytes, &val5Bytes, 30, 3, 2)
+	hist5.AppendBucketWithNDV(&val6Bytes, &val6Bytes, 30, 0, 0)
+	testData[5].inputHist = hist5
+
+	// 3. the actual test
+	for i, test := range testData {
+		require.Equal(t, test.inputHistToStr, test.inputHist.ToString(1))
+		test.inputHist.StandardizeForV2AnalyzeIndex()
+		require.Equal(t, test.outputHistToStr, test.inputHist.ToString(1),
+			fmt.Sprintf("testData[%d].inputHist:%s", i, test.inputHistToStr))
+	}
+}
