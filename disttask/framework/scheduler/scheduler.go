@@ -166,16 +166,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		wg.Wait()
 	}()
 
-	minimalTaskCh := make(chan func(), task.Concurrency)
-	defer close(minimalTaskCh)
-
-	err = s.pool.RunWithConcurrency(minimalTaskCh, uint32(task.Concurrency))
-	if err != nil {
-		s.onError(err)
-		return s.getError()
-	}
-
-	subtasks, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
+	subtasks, err := s.taskTable.GetSubtasksInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -239,7 +230,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, s.getError())
 		} else {
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
 		}
@@ -282,67 +273,6 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 		}
 	})
 
-	var minimalTaskWg sync.WaitGroup
-	for _, minimalTask := range minimalTasks {
-		minimalTaskWg.Add(1)
-		j := minimalTask
-		minimalTaskCh <- func() {
-			s.runMinimalTask(ctx, j, subtask.Type, subtask.Step)
-			minimalTaskWg.Done()
-		}
-	}
-	failpoint.Inject("waitUntilError", func() {
-		for i := 0; i < 10; i++ {
-			if s.getError() != nil {
-				break
-			}
-			time.Sleep(500 * time.Millisecond)
-		}
-	})
-	minimalTaskWg.Wait()
-	s.onSubtaskFinished(ctx, scheduler, subtask)
-}
-
-func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
-	var subtaskMeta []byte
-	if err := s.getError(); err == nil {
-		if subtaskMeta, err = scheduler.OnFinished(ctx, subtask.Meta); err != nil {
-			s.onError(err)
-		}
-	}
-	if err := s.getError(); err != nil {
-		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
-		} else {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
-		}
-		s.markErrorHandled()
-		return
-	}
-	s.finishSubtask(subtask, subtaskMeta)
-	failpoint.Inject("syncAfterSubtaskFinish", func() {
-		TestSyncChan <- struct{}{}
-		<-TestSyncChan
-	})
-}
-
-func (s *BaseScheduler) runMinimalTask(minimalTaskCtx context.Context, minimalTask proto.MinimalTask, tp string, step int64) {
-	select {
-	case <-minimalTaskCtx.Done():
-		s.onError(minimalTaskCtx.Err())
-		return
-	default:
-	}
-	if s.getError() != nil {
-		return
-	}
-	logutil.Logger(s.logCtx).Info("scheduler run a minimalTask", zap.Any("step", step), zap.Stringer("minimal_task", minimalTask))
-	executor, err := s.GetMiniTaskExecutor(minimalTask, tp, step)
-	if err != nil {
-		s.onError(err)
-		return
-	}
-
 	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(errors.New("MockExecutorRunErr"))
@@ -377,9 +307,9 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 	})
 	if err := s.getError(); err != nil {
 		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()
 		return

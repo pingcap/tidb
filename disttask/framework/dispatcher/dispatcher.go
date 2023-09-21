@@ -351,7 +351,6 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 		}
 		time.Sleep(RetrySQLInterval)
 	}
-
 	if err != nil && retryTimes != nonRetrySQLTime {
 		logutil.Logger(d.logCtx).Warn("updateTask failed",
 			zap.String("from", prevState), zap.String("to", d.Task.State), zap.Int("retry times", retryTimes), zap.Error(err))
