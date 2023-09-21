@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -408,8 +409,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 
-	// TODO: set maxGoroutines according to the available CPU count.
-	sorty.MaxGor = 8
+	sorty.MaxGor = max(8, uint64(variable.GetDDLReorgWorkerCounter()))
 	sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
 		if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
 			if r != s {
