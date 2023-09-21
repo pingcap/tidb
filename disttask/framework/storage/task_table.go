@@ -324,8 +324,7 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 	return nil
 }
 
-// GetSubtaskInStates gets the subtask in the states.
-func (stm *TaskManager) GetFirstSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
+func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) ([]*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
@@ -334,10 +333,24 @@ func (stm *TaskManager) GetFirstSubtaskInStates(tidbID string, taskID int64, ste
 	if err != nil {
 		return nil, err
 	}
-	if len(rs) == 0 {
+
+	subtasks := make([]*proto.Subtask, len(rs))
+	for i, row := range rs {
+		subtasks[i] = row2SubTask(row)
+	}
+	return subtasks, nil
+}
+
+// GetSubtaskInStates gets the subtask in the states.
+func (stm *TaskManager) GetFirstSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
+	subtasks, err := stm.GetSubtaskInStates(tidbID, taskID, step, states...)
+	if err != nil {
+		return nil, err
+	}
+	if len(subtasks) == 0 {
 		return nil, nil
 	}
-	return row2SubTask(rs[0]), nil
+	return subtasks[0], nil
 }
 
 // UpdateErrorToSubtask updates the error to subtask.
