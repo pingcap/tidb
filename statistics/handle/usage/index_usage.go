@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package indexusage
+package usage
 
 import (
 	"context"
@@ -42,6 +42,7 @@ type GlobalIndexID struct {
 type indexUsageMap map[GlobalIndexID]IndexUsageInformation
 
 // SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
+// TODO: use a third-party thread-safe list implementation instead of maintaining the list manually.
 /*
                             [session1]                [session2]                        [sessionN]
                                 |                         |                                 |
