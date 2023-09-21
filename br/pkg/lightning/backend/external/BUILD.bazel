@@ -28,6 +28,7 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/utils",
         "//kv",
+        "//sessionctx/variable",
         "//util/hack",
         "//util/logutil",
         "//util/mathutil",
