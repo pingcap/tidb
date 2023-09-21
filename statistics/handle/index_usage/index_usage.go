@@ -56,7 +56,7 @@ type indexUsageMap map[GlobalIndexID]IndexUsageInformation
                                                           |
                                                           v
                                                       [storage]
- */
+*/
 type SessionIndexUsageCollector struct {
 	mapper indexUsageMap
 	next   *SessionIndexUsageCollector
