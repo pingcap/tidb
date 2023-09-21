@@ -125,27 +125,34 @@ func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string
 		}
 		lexp, rexp := args[0], args[1]
 		lhs, rhs := lexp.GetType(), rexp.GetType()
-		if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
-			types.SetBinChsClnFlag(resultFieldType)
-		} else if types.IsNonBinaryStr(lhs) || types.IsNonBinaryStr(rhs) {
+		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
 				return err
 			}
 			resultFieldType.SetCollate(ec.Collation)
 			resultFieldType.SetCharset(ec.Charset)
-			if types.IsNonBinaryStr(lhs) {
-				if mysql.HasBinaryFlag(lhs.GetFlag()) || !types.IsNonBinaryStr(rhs) {
-					resultFieldType.AddFlag(mysql.BinaryFlag)
-				}
-			} else {
-				if mysql.HasBinaryFlag(rhs.GetFlag()) || !types.IsNonBinaryStr(lhs) {
-					resultFieldType.AddFlag(mysql.BinaryFlag)
-				}
+			resultFieldType.SetFlag(0)
+			if mysql.HasBinaryFlag(lhs.GetFlag()) || !types.IsNonBinaryStr(rhs) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
 			}
+		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
+			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
+			if err != nil {
+				return err
+			}
+			resultFieldType.SetCollate(ec.Collation)
+			resultFieldType.SetCharset(ec.Charset)
+			resultFieldType.SetFlag(0)
+			if mysql.HasBinaryFlag(rhs.GetFlag()) || !types.IsNonBinaryStr(lhs) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
+			}
+		} else if types.IsBinaryStr(lhs) || types.IsBinaryStr(rhs) || !evalType.IsStringKind() {
+			types.SetBinChsClnFlag(resultFieldType)
 		} else {
 			resultFieldType.SetCharset(mysql.DefaultCharset)
 			resultFieldType.SetCollate(mysql.DefaultCollationName)
+			resultFieldType.SetFlag(0)
 		}
 	case ast.Case:
 		if len(args) == 0 {
