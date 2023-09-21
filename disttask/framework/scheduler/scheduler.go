@@ -220,7 +220,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 		s.onError(err)
 		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
-		} else {
+		} else if errors.Cause(err) != context.Canceled {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()
@@ -295,9 +295,9 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 		}
 	})
 	if err := s.getError(); err != nil {
-		if ctx.Err() != nil && context.Cause(ctx) == errors.New("cancel subtasks") {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
-		} else {
+		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
+			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
+		} else if errors.Cause(err) != context.Canceled {
 			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()
