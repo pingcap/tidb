@@ -17,7 +17,6 @@ package scheduler
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync"
 	"time"
 
@@ -162,6 +161,16 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 	if err != nil {
 		s.onError(err)
 		return s.getError()
+	}
+
+	subtasks, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
+	if err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	for _, subtask := range subtasks {
+		metrics.IncDistDDLSubTaskCnt(subtask)
+		metrics.StartDistDDLSubTask(subtask)
 	}
 
 	for {
@@ -456,99 +465,36 @@ func (s *BaseScheduler) resetError() {
 }
 
 func (s *BaseScheduler) startSubtask(subtask *proto.Subtask) {
-	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-	).Dec()
-	metrics.DistDDLSubTaskDurationGauge.DeleteLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-		strconv.Itoa(int(subtask.ID)),
-	)
+	metrics.DecDistDDLSubTaskCnt(subtask)
+	metrics.EndDistDDLSubTask(subtask)
 	err := s.taskTable.StartSubtask(subtask.ID)
 	if err != nil {
 		s.onError(err)
 	}
-	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-	).Inc()
-	metrics.DistDDLSubTaskDurationGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-		strconv.Itoa(int(subtask.ID)),
-	).SetToCurrentTime()
+	subtask.State = proto.TaskStateRunning
+	metrics.IncDistDDLSubTaskCnt(subtask)
+	metrics.StartDistDDLSubTask(subtask)
 }
 
 func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {
-	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-	).Dec()
-	metrics.DistDDLSubTaskDurationGauge.DeleteLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-		strconv.Itoa(int(subtask.ID)),
-	)
+	metrics.DecDistDDLSubTaskCnt(subtask)
+	metrics.EndDistDDLSubTask(subtask)
 	err := s.taskTable.UpdateSubtaskStateAndError(subtask.ID, state, subTaskErr)
 	if err != nil {
 		s.onError(err)
 	}
-	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		state,
-	).Inc()
-	metrics.DistDDLSubTaskDurationGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		state,
-		strconv.Itoa(int(subtask.ID)),
-	).SetToCurrentTime()
+	subtask.State = state
+	metrics.IncDistDDLSubTaskCnt(subtask)
+	metrics.StartDistDDLSubTask(subtask)
 }
 
 func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask, subtaskMeta []byte) {
-	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-	).Dec()
-	metrics.DistDDLSubTaskDurationGauge.DeleteLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		subtask.State,
-		strconv.Itoa(int(subtask.ID)),
-	)
+	metrics.DecDistDDLSubTaskCnt(subtask)
+	metrics.EndDistDDLSubTask(subtask)
 	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
 		s.onError(err)
 	}
-	metrics.DistDDLSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		proto.TaskStateSucceed,
-	).Inc()
-	metrics.DistDDLSubTaskDurationGauge.WithLabelValues(
-		subtask.Type,
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.SchedulerID,
-		proto.TaskStateSucceed,
-		strconv.Itoa(int(subtask.ID)),
-	).SetToCurrentTime()
+	subtask.State = proto.TaskStateSucceed
+	metrics.IncDistDDLSubTaskCnt(subtask)
+	metrics.StartDistDDLSubTask(subtask)
 }

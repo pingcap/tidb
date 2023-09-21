@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/intest"
@@ -329,22 +327,6 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 	if err != nil && retryTimes != nonRetrySQLTime {
 		logutil.Logger(d.logCtx).Warn("updateTask failed",
 			zap.String("from", prevState), zap.String("to", d.task.State), zap.Int("retry times", retryTimes), zap.Error(err))
-	}
-
-	for _, subTask := range newSubTasks {
-		metrics.DistDDLSubTaskCntGauge.WithLabelValues(
-			d.task.Type,
-			strconv.Itoa(int(d.task.ID)),
-			subTask.SchedulerID,
-			subTask.State,
-		).Inc()
-		metrics.DistDDLSubTaskDurationGauge.WithLabelValues(
-			d.task.Type,
-			strconv.Itoa(int(d.task.ID)),
-			subTask.SchedulerID,
-			subTask.State,
-			strconv.Itoa(int(subTask.ID)),
-		).SetToCurrentTime()
 	}
 	return err
 }

@@ -97,6 +97,11 @@ type Subtask struct {
 	Summary    string
 }
 
+func (t *Subtask) IsFinished() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted || t.State == TaskStateCanceled ||
+		t.State == TaskStateFailed || t.State == TaskStateRevertFailed
+}
+
 // NewSubtask create a new subtask.
 func NewSubtask(taskID int64, tp, schedulerID string, meta []byte) *Subtask {
 	return &Subtask{

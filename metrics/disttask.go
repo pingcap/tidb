@@ -15,6 +15,9 @@
 package metrics
 
 import (
+	"strconv"
+
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -40,8 +43,8 @@ var (
 	DistTaskDispatcherDurationGauge  *prometheus.GaugeVec
 	DistTaskDispatcherStarttimeGauge *prometheus.GaugeVec
 
-	DistDDLSubTaskCntGauge      *prometheus.GaugeVec
-	DistDDLSubTaskDurationGauge *prometheus.GaugeVec
+	DistDDLSubTaskCntGauge       *prometheus.GaugeVec
+	DistDDLSubTaskStartTimeGauge *prometheus.GaugeVec
 )
 
 // InitDistDDLMetrics initializes disttask metrics.
@@ -78,11 +81,52 @@ func InitDistDDLMetrics() {
 			Help:      "Gauge of ddl subtask count.",
 		}, []string{LblTaskType, LblTaskID, LblSchedulerID, LblTaskStatus})
 
-	DistDDLSubTaskDurationGauge = NewGaugeVec(
+	DistDDLSubTaskStartTimeGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
-			Name:      "ddl_subtask_duration",
-			Help:      "Gauge of ddl subtask duration.",
+			Name:      "ddl_subtask_start_time",
+			Help:      "Gauge of ddl subtask start time.",
 		}, []string{LblTaskType, LblTaskID, LblSchedulerID, LblTaskStatus, LblSubTaskID})
+}
+
+func IncDistDDLSubTaskCnt(subtask *proto.Subtask) {
+	DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+	).Inc()
+}
+
+func DecDistDDLSubTaskCnt(subtask *proto.Subtask) {
+	DistDDLSubTaskCntGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+	).Dec()
+}
+
+func StartDistDDLSubTask(subtask *proto.Subtask) {
+	if subtask.IsFinished() {
+		return
+	}
+	DistDDLSubTaskStartTimeGauge.WithLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+		strconv.Itoa(int(subtask.ID)),
+	).SetToCurrentTime()
+}
+
+func EndDistDDLSubTask(subtask *proto.Subtask) {
+	DistDDLSubTaskStartTimeGauge.DeleteLabelValues(
+		subtask.Type,
+		strconv.Itoa(int(subtask.TaskID)),
+		subtask.SchedulerID,
+		subtask.State,
+		strconv.Itoa(int(subtask.ID)),
+	)
 }
