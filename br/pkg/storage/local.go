@@ -152,7 +152,6 @@ func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (Ex
 				return nil, errors.Trace(err)
 			}
 		}
-
 	}
 	return localFile{f}, nil
 }
