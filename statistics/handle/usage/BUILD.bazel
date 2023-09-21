@@ -1,9 +1,9 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
-    name = "indexusage",
+    name = "usage",
     srcs = ["index_usage.go"],
-    importpath = "github.com/pingcap/tidb/statistics/handle/indexusage",
+    importpath = "github.com/pingcap/tidb/statistics/handle/usage",
     visibility = ["//visibility:public"],
     deps = [
         "//kv",

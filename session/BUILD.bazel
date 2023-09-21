@@ -61,7 +61,7 @@ go_library(
         "//sessiontxn/isolation",
         "//sessiontxn/staleread",
         "//statistics/handle",
-        "//statistics/handle/indexusage",
+        "//statistics/handle/usage",
         "//store/driver/error",
         "//store/driver/txn",
         "//store/helper",
