@@ -586,13 +586,6 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 			jobID = job.ID
 			times = 1
 		}
-		// Make sure we do jobID first, then do jobID+1.
-		if job.ID == jobID && job.SchemaState == model.StateWriteReorganization && job.State == model.JobStateQueueing && times == 1 {
-			times = 2
-		}
-		if job.ID == jobID+1 && job.SchemaState == model.StateNone && job.State == model.JobStateQueueing && times == 2 {
-			times = 3
-		}
 		if job.ID == jobID && job.State == model.JobStateDone && job.SchemaState == model.StatePublic {
 			wg.Done()
 		}
@@ -621,7 +614,6 @@ func TestUpgradeVersionForResumeJob(t *testing.T) {
 	require.Equal(t, session.CurrentBootstrapVersion, ver)
 
 	wg.Wait()
-	require.Equal(t, 3, times)
 	// Make sure the second add index operation is successful.
 	sql := fmt.Sprintf("select job_meta from mysql.tidb_ddl_history where job_id=%d or job_id=%d order by job_id", jobID, jobID+1)
 	rows, err := execute(context.Background(), seLatestV, sql)
@@ -717,6 +709,23 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		}()
 		<-ch
 	}
+	checkDDLJobState := func(s session.Session) {
+		rows, err := execute(context.Background(), s, sql)
+		require.NoError(t, err)
+		for _, row := range rows {
+			jobBinary := row.GetBytes(0)
+			runJob := model.Job{}
+			err := runJob.Decode(jobBinary)
+			require.NoError(t, err)
+			cmt := fmt.Sprintf("job: %s", runJob.String())
+			isPause := runJob.IsPausedBySystem() || runJob.IsPausing()
+			if tidb_util.IsSysDB(runJob.SchemaName) {
+				require.False(t, isPause, cmt)
+			} else {
+				require.True(t, isPause, cmt)
+			}
+		}
+	}
 	// Before every test bootstrap(DDL operation), we add a user and a system DB's DDL operations.
 	tc.OnBootstrapExported = func(s session.Session) {
 		var query1, query2 string
@@ -733,37 +742,11 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		asyncExecDDL(query1)
 		asyncExecDDL(query2)
 
-		rows, err := execute(context.Background(), s, sql)
-		require.NoError(t, err)
-		for _, row := range rows {
-			jobBinary := row.GetBytes(0)
-			runJob := model.Job{}
-			err := runJob.Decode(jobBinary)
-			require.NoError(t, err)
-			cmt := fmt.Sprintf("job: %s", runJob.String())
-			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				require.True(t, runJob.IsPausedBySystem(), cmt)
-			} else {
-				require.False(t, !runJob.IsPausedBySystem(), cmt)
-			}
-		}
+		checkDDLJobState(s)
 	}
-	tc.OnBootstrapAfterExported = func(s session.Session) {
-		rows, err := execute(context.Background(), s, sql)
-		require.NoError(t, err)
 
-		for _, row := range rows {
-			jobBinary := row.GetBytes(0)
-			runJob := model.Job{}
-			err := runJob.Decode(jobBinary)
-			require.NoError(t, err)
-			cmt := fmt.Sprintf("job: %s", runJob.String())
-			if !tidb_util.IsSysDB(runJob.SchemaName) {
-				require.True(t, runJob.IsPausedBySystem(), cmt)
-			} else {
-				require.False(t, !runJob.IsPausedBySystem(), cmt)
-			}
-		}
+	tc.OnBootstrapAfterExported = func(s session.Session) {
+		checkDDLJobState(s)
 	}
 	session.TestHook = tc
 
@@ -887,4 +870,41 @@ func TestDDLBackgroundSubtaskTableSummary(t *testing.T) {
 	}
 	r := tk.MustQuery("select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;")
 	r.Check(testkit.Rows("54"))
+}
+
+func TestDDLBackgroundSubtaskHistoryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	ver, err := session.GetBootstrapVersion(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	tk.MustExec("use mysql")
+	tk.MustQuery("show create table mysql.tidb_background_subtask_history").Check(testkit.Rows(
+		"tidb_background_subtask_history CREATE TABLE `tidb_background_subtask_history` (\n" +
+			"  `id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
+			"  `step` int(11) DEFAULT NULL,\n" +
+			"  `namespace` varchar(256) DEFAULT NULL,\n" +
+			"  `task_key` varchar(256) DEFAULT NULL,\n" +
+			"  `ddl_physical_tid` bigint(20) DEFAULT NULL,\n" +
+			"  `type` int(11) DEFAULT NULL,\n" +
+			"  `exec_id` varchar(256) DEFAULT NULL,\n" +
+			"  `exec_expired` timestamp NULL DEFAULT NULL,\n" +
+			"  `state` varchar(64) NOT NULL,\n" +
+			"  `checkpoint` longblob NOT NULL,\n" +
+			"  `start_time` bigint(20) DEFAULT NULL,\n" +
+			"  `state_update_time` bigint(20) DEFAULT NULL,\n" +
+			"  `meta` longblob DEFAULT NULL,\n" +
+			"  `error` blob DEFAULT NULL,\n" +
+			"  `summary` json DEFAULT NULL,\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
+			"  KEY `idx_task_key` (`task_key`),\n" +
+			"  KEY `idx_state_update_time` (`state_update_time`)\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+	tk.MustExec(`insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");`)
+	tk.MustExec(`insert into tidb_background_subtask_history select * from tidb_background_subtask;`)
+	r := tk.MustQuery("select * from tidb_background_subtask_history;")
+	r.Check(testkit.Rows("1 <nil> <nil> <nil> <nil> <nil> <nil> <nil> 0  <nil> <nil> <nil> <nil> <nil>"))
 }

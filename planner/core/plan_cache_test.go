@@ -2357,8 +2357,8 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
 		"skip non-prepared plan-cache: queries that have hints, having-clause, window-function are not supported",
 		"skip non-prepared plan-cache: queries that have sub-queries are not supported",
-		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
-		"skip non-prepared plan-cache: queries that access partitioning table are not supported",
+		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
+		"skip non-prepared plan-cache: query accesses partitioned tables is un-cacheable",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
@@ -2368,8 +2368,8 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: query has some filters with JSON, Enum, Set or Bit columns",
 		"skip non-prepared plan-cache: access tables in system schema",
-		"skip non-prepared plan-cache: queries that have generated columns are not supported",
-		"skip non-prepared plan-cache: queries that have generated columns are not supported",
+		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
+		"skip non-prepared plan-cache: query accesses generated columns is un-cacheable",
 		"skip non-prepared plan-cache: queries that access views are not supported",
 		"skip non-prepared plan-cache: query has null constants",
 		"skip non-prepared plan-cache: some parameters may be overwritten when constant propagation",
@@ -2753,6 +2753,18 @@ func TestIssue46159(t *testing.T) {
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range"))
+}
+
+func TestIssue47008(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set @@time_zone='UTC';`)
+	tk.MustExec(`set @@collation_connection='utf8_general_ci';`)
+	tk.MustExec(`prepare s from 'select DATE_FORMAT("2020-01-01","%W") = "wednesday"';`)
+	tk.MustQuery(`execute s;`).Check(testkit.Rows(`1`))
+	tk.MustExec(`set @@collation_connection='utf8_bin';`)
+	tk.MustQuery(`execute s;`).Check(testkit.Rows(`0`))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows(`0`))
 }
 
 func TestBuiltinFuncFlen(t *testing.T) {

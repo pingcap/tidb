@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,7 +33,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	job := &model.Job{
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
@@ -44,12 +43,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:       NewDDLReorgMeta(ctx),
 	}
 	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
 	if err != nil {

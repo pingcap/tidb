@@ -374,6 +374,8 @@ var tokenMap = map[string]int{
 	"FIXED":                    fixed,
 	"FLASHBACK":                flashback,
 	"FLOAT":                    floatType,
+	"FLOAT4":                   float4Type,
+	"FLOAT8":                   float8Type,
 	"FLUSH":                    flush,
 	"FOLLOWER":                 follower,
 	"FOLLOWERS":                followers,
@@ -517,6 +519,7 @@ var tokenMap = map[string]int{
 	"MERGE":                    merge,
 	"METADATA":                 metadata,
 	"MICROSECOND":              microsecond,
+	"MIDDLEINT":                middleIntType,
 	"MIN_ROWS":                 minRows,
 	"MIN":                      min,
 	"MINUTE_MICROSECOND":       minuteMicrosecond,
@@ -1040,7 +1043,6 @@ var hintTokenMap = map[string]int{
 	"LEADING":                 hintLeading,
 	"SEMI_JOIN_REWRITE":       hintSemiJoinRewrite,
 	"NO_DECORRELATE":          hintNoDecorrelate,
-	"TIDB_KV_READ_TIMEOUT":    hintTidbKvReadTimeout,
 
 	// TiDB hint aliases
 	"TIDB_HJ":   hintHashJoin,

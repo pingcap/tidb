@@ -409,7 +409,13 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 	slices.Sort(ids)
 	for _, id := range ids {
 		idx := coll.Indices[id]
-		if idx != nil && idx.IsFullLoad() {
+		if idx == nil {
+			continue
+		}
+		if idx.Info != nil && idx.Info.MVIndex {
+			continue
+		}
+		if idx.IsFullLoad() {
 			return idx.TotalRowCount()
 		}
 	}
@@ -497,6 +503,18 @@ func (t *Table) IsOutdated() bool {
 		return true
 	}
 	return false
+}
+
+// ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
+func (t *Table) ReleaseAndPutToPool() {
+	for _, col := range t.Columns {
+		col.FMSketch.DestroyAndPutToPool()
+	}
+	maps.Clear(t.Columns)
+	for _, idx := range t.Indices {
+		idx.FMSketch.DestroyAndPutToPool()
+	}
+	maps.Clear(t.Indices)
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.

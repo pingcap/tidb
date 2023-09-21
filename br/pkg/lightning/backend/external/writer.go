@@ -36,6 +36,21 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	multiFileStatNum = 500
+
+	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
+	// if the overlap ratio is greater than this threshold, we will merge the files.
+	MergeSortOverlapThreshold int64 = 1000
+	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
+	MergeSortFileCountStep = 1000
+)
+
+const (
+	// DefaultMemSizeLimit is the default memory size limit for writer.
+	DefaultMemSizeLimit = 256 * size.MB
+)
+
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
 // first.
@@ -59,27 +74,31 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID  int
-	Seq       int
-	Min       tidbkv.Key
-	Max       tidbkv.Key
-	TotalSize uint64
+	WriterID string
+	Seq      int
+	// Min and Max are the min and max key written by this writer, both are
+	// inclusive, i.e. [Min, Max].
+	// will be empty if no key is written.
+	Min                tidbkv.Key
+	Max                tidbkv.Key
+	TotalSize          uint64
+	MultipleFilesStats []MultipleFilesStat
 }
 
 // OnCloseFunc is the callback function when a writer is closed.
 type OnCloseFunc func(summary *WriterSummary)
 
-// DummyOnCloseFunc is a dummy OnCloseFunc.
-func DummyOnCloseFunc(*WriterSummary) {}
+// dummyOnCloseFunc is a dummy OnCloseFunc.
+func dummyOnCloseFunc(*WriterSummary) {}
 
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
-	memSizeLimit      uint64
-	writeBatchCount   uint64
-	propSizeDist      uint64
-	propKeysDist      uint64
-	onClose           OnCloseFunc
-	dupeDetectEnabled bool
+	memSizeLimit    uint64
+	writeBatchCount uint64
+	propSizeDist    uint64
+	propKeysDist    uint64
+	onClose         OnCloseFunc
+	keyDupeEncoding bool
 
 	bufferPool *membuf.Pool
 }
@@ -87,11 +106,11 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    256 * size.MB,
+		memSizeLimit:    DefaultMemSizeLimit,
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
-		onClose:         DummyOnCloseFunc,
+		onClose:         dummyOnCloseFunc,
 	}
 }
 
@@ -123,6 +142,9 @@ func (b *WriterBuilder) SetPropKeysDistance(dist uint64) *WriterBuilder {
 
 // SetOnCloseFunc sets the callback function when a writer is closed.
 func (b *WriterBuilder) SetOnCloseFunc(onClose OnCloseFunc) *WriterBuilder {
+	if onClose == nil {
+		onClose = dummyOnCloseFunc
+	}
 	b.onClose = onClose
 	return b
 }
@@ -133,9 +155,9 @@ func (b *WriterBuilder) SetBufferPool(bufferPool *membuf.Pool) *WriterBuilder {
 	return b
 }
 
-// EnableDuplicationDetection enables the duplication detection of the writer.
-func (b *WriterBuilder) EnableDuplicationDetection() *WriterBuilder {
-	b.dupeDetectEnabled = true
+// SetKeyDuplicationEncoding sets if the writer can distinguish duplicate key.
+func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
+	b.keyDupeEncoding = val
 	return b
 }
 
@@ -144,18 +166,18 @@ func (b *WriterBuilder) EnableDuplicationDetection() *WriterBuilder {
 func (b *WriterBuilder) Build(
 	store storage.ExternalStorage,
 	prefix string,
-	writerID int,
+	writerID string,
 ) *Writer {
 	bp := b.bufferPool
 	if bp == nil {
 		bp = membuf.NewPool()
 	}
-	filenamePrefix := filepath.Join(prefix, strconv.Itoa(writerID))
+	filenamePrefix := filepath.Join(prefix, writerID)
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
-	if b.dupeDetectEnabled {
+	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
-	return &Writer{
+	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
 			currProp:     &rangeProperty{},
@@ -173,13 +195,67 @@ func (b *WriterBuilder) Build(
 		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
+		multiFileStats: make([]MultipleFilesStat, 1),
+		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 	}
+	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
+	return ret
+}
+
+// MultipleFilesStat is the statistic information of multiple files (currently
+// every 500 files). It is used to estimate the data overlapping, and per-file
+// statistic information maybe too big to loaded into memory.
+type MultipleFilesStat struct {
+	MinKey            tidbkv.Key  `json:"min-key"`
+	MaxKey            tidbkv.Key  `json:"max-key"`
+	Filenames         [][2]string `json:"filenames"` // [dataFile, statFile]
+	MaxOverlappingNum int64       `json:"max-overlapping-num"`
+}
+
+func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
+	if len(startKeys) == 0 {
+		return
+	}
+	m.MinKey = startKeys[0]
+	m.MaxKey = endKeys[0]
+	for i := 1; i < len(startKeys); i++ {
+		if m.MinKey.Cmp(startKeys[i]) > 0 {
+			m.MinKey = startKeys[i]
+		}
+		if m.MaxKey.Cmp(endKeys[i]) < 0 {
+			m.MaxKey = endKeys[i]
+		}
+	}
+
+	points := make([]Endpoint, 0, len(startKeys)*2)
+	for _, k := range startKeys {
+		points = append(points, Endpoint{Key: k, Tp: InclusiveStart, Weight: 1})
+	}
+	for _, k := range endKeys {
+		points = append(points, Endpoint{Key: k, Tp: InclusiveEnd, Weight: 1})
+	}
+	m.MaxOverlappingNum = GetMaxOverlapping(points)
+}
+
+// GetMaxOverlappingTotal assume the most overlapping case from given stats and
+// returns the overlapping level.
+func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
+	points := make([]Endpoint, 0, len(stats)*2)
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MinKey, Tp: InclusiveStart, Weight: stat.MaxOverlappingNum})
+	}
+	for _, stat := range stats {
+		points = append(points, Endpoint{Key: stat.MaxKey, Tp: InclusiveEnd, Weight: stat.MaxOverlappingNum})
+	}
+
+	return GetMaxOverlapping(points)
 }
 
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
-	writerID       int
+	writerID       string
 	currentSeq     int
 	filenamePrefix string
 	keyAdapter     common.KeyAdapter
@@ -198,66 +274,76 @@ type Writer struct {
 	// Statistic information per batch.
 	batchSize uint64
 
+	// Statistic information per 500 batches.
+	multiFileStats []MultipleFilesStat
+	fileMinKeys    []tidbkv.Key
+	fileMaxKeys    []tidbkv.Key
+
 	// Statistic information per writer.
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
 }
 
-// AppendRows appends rows to the external storage.
-// Note that this method is NOT thread-safe.
-func (w *Writer) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
-	kvs := kv.Rows2KvPairs(rows)
+// WriteRow implements ingest.Writer.
+func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
-	for _, pair := range kvs {
-		w.batchSize += uint64(len(pair.Key) + len(pair.Val))
+	w.batchSize += uint64(len(idxKey) + len(idxVal))
 
-		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(pair.Key, pair.RowID))
-		key := keyAdapter.Encode(buf[:0], pair.Key, pair.RowID)
-		val := w.kvBuffer.AddBytes(pair.Val)
+	var rowID []byte
+	if handle != nil {
+		rowID = handle.Encoded()
+	}
+	buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
+	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
+	val := w.kvBuffer.AddBytes(idxVal)
 
-		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
-		if w.batchSize >= w.memSizeLimit {
-			if err := w.flushKVs(ctx); err != nil {
-				return err
-			}
+	w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
+	if w.batchSize >= w.memSizeLimit {
+		if err := w.flushKVs(ctx, false); err != nil {
+			return err
 		}
 	}
 	return nil
 }
 
-// IsSynced implements the backend.EngineWriter interface.
-func (w *Writer) IsSynced() bool {
-	return false
+// LockForWrite implements ingest.Writer.
+// Since flushKVs is thread-safe in external storage writer,
+// this is implemented as noop.
+func (w *Writer) LockForWrite() func() {
+	return func() {}
 }
 
 // Close closes the writer.
-func (w *Writer) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+func (w *Writer) Close(ctx context.Context) error {
 	if w.closed {
-		return status(false), errors.Errorf("writer %d has been closed", w.writerID)
+		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
 	w.closed = true
 	defer w.kvBuffer.Destroy()
-	err := w.flushKVs(ctx)
+	err := w.flushKVs(ctx, true)
 	if err != nil {
-		return status(false), err
+		return err
 	}
+	// remove the trailing empty MultipleFilesStat
+	w.multiFileStats = w.multiFileStats[:len(w.multiFileStats)-1]
 
 	logutil.Logger(ctx).Info("close writer",
-		zap.Int("writerID", w.writerID),
+		zap.String("writerID", w.writerID),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
 	w.writeBatch = nil
 
 	w.onClose(&WriterSummary{
-		WriterID:  w.writerID,
-		Seq:       w.currentSeq,
-		Min:       w.minKey,
-		Max:       w.maxKey,
-		TotalSize: w.totalSize,
+		WriterID:           w.writerID,
+		Seq:                w.currentSeq,
+		Min:                w.minKey,
+		Max:                w.maxKey,
+		TotalSize:          w.totalSize,
+		MultipleFilesStats: w.multiFileStats,
 	})
-	return status(true), nil
+	return nil
 }
 
 func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
@@ -270,20 +356,13 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 	w.totalSize += size
 }
 
-type status bool
-
-// Flushed implements the backend.ChunkFlushStatus interface.
-func (s status) Flushed() bool {
-	return bool(s)
-}
-
-func (w *Writer) flushKVs(ctx context.Context) (err error) {
+func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if len(w.writeBatch) == 0 {
 		return nil
 	}
 
 	logger := logutil.Logger(ctx)
-	dataWriter, statWriter, err := w.createStorageWriter(ctx)
+	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
 	if err != nil {
 		return err
 	}
@@ -298,12 +377,12 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 			return
 		}
 		if err1 != nil {
-			logger.Error("close data writer failed", zap.Error(err))
+			logger.Error("close data writer failed", zap.Error(err1))
 			err = err1
 			return
 		}
 		if err2 != nil {
-			logger.Error("close stat writer failed", zap.Error(err))
+			logger.Error("close stat writer failed", zap.Error(err2))
 			err = err2
 			return
 		}
@@ -317,7 +396,7 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
-	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.writerID, w.currentSeq)
+	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.currentSeq)
 	if err != nil {
 		return err
 	}
@@ -339,6 +418,23 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 
 	w.recordMinMax(w.writeBatch[0].Key, w.writeBatch[len(w.writeBatch)-1].Key, kvSize)
 
+	// maintain 500-batch statistics
+
+	l := len(w.multiFileStats)
+	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
+		[2]string{dataFile, statFile},
+	)
+	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(w.writeBatch[0].Key).Clone())
+	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(w.writeBatch[len(w.writeBatch)-1].Key).Clone())
+	if fromClose || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
+		w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
+		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
+			Filenames: make([][2]string, 0, multiFileStatNum),
+		})
+		w.fileMinKeys = w.fileMinKeys[:0]
+		w.fileMaxKeys = w.fileMaxKeys[:0]
+	}
+
 	w.writeBatch = w.writeBatch[:0]
 	w.rc.reset()
 	w.kvBuffer.Reset()
@@ -347,16 +443,57 @@ func (w *Writer) flushKVs(ctx context.Context) (err error) {
 	return nil
 }
 
-func (w *Writer) createStorageWriter(ctx context.Context) (data, stats storage.ExternalFileWriter, err error) {
+func (w *Writer) createStorageWriter(ctx context.Context) (
+	dataFile, statFile string,
+	data, stats storage.ExternalFileWriter,
+	err error,
+) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, nil)
+	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
-		return nil, nil, err
+		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, nil)
+	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20})
 	if err != nil {
-		return nil, nil, err
+		_ = dataWriter.Close(ctx)
+		return "", "", nil, nil, err
 	}
-	return dataWriter, statsWriter, nil
+	return dataPath, statPath, dataWriter, statsWriter, nil
+}
+
+// EngineWriter implements backend.EngineWriter interface.
+type EngineWriter struct {
+	w *Writer
+}
+
+// NewEngineWriter creates a new EngineWriter.
+func NewEngineWriter(w *Writer) *EngineWriter {
+	return &EngineWriter{w: w}
+}
+
+// AppendRows implements backend.EngineWriter interface.
+func (e *EngineWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
+	kvs := kv.Rows2KvPairs(rows)
+	if len(kvs) == 0 {
+		return nil
+	}
+	for _, item := range kvs {
+		err := e.w.WriteRow(ctx, item.Key, item.Val, nil)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// IsSynced implements backend.EngineWriter interface.
+func (e *EngineWriter) IsSynced() bool {
+	// only used when saving checkpoint
+	return true
+}
+
+// Close implements backend.EngineWriter interface.
+func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+	return nil, e.w.Close(ctx)
 }

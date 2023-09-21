@@ -676,6 +676,13 @@ func TestSkipSysvarCache(t *testing.T) {
 	require.False(t, GetSysVar(TiDBEnableAsyncCommit).SkipSysvarCache())
 }
 
+func TestTiFlashEnablePipeline(t *testing.T) {
+	require.True(t, GetSysVar(TiDBEnableTiFlashPipelineMode).HasGlobalScope())
+	require.False(t, GetSysVar(TiDBEnableTiFlashPipelineMode).HasSessionScope())
+	require.False(t, GetSysVar(TiDBEnableTiFlashPipelineMode).HasInstanceScope())
+	require.False(t, GetSysVar(TiDBEnableTiFlashPipelineMode).HasNoneScope())
+}
+
 func TestTimeValidationWithTimezone(t *testing.T) {
 	sv := SysVar{Scope: ScopeSession, Name: "mynewsysvar", Value: "23:59 +0000", Type: TypeTime}
 	vars := NewSessionVars(nil)

@@ -25,6 +25,8 @@ import (
 // Operator is the basic operation unit in the task execution.
 type Operator interface {
 	Open() error
+	// Close wait task done and close the operator.
+	// TODO: the wait part should be separated from the close part.
 	Close() error
 	String() string
 }
@@ -68,7 +70,7 @@ func (c *AsyncOperator[T, R]) Open() error {
 func (c *AsyncOperator[T, R]) Close() error {
 	// Wait all tasks done.
 	// We don't need to close the task channel because
-	// it is closed by the workerpool.
+	// it is maintained outside this operator, see SetSource.
 	c.pool.Wait()
 	c.pool.Release()
 	return nil

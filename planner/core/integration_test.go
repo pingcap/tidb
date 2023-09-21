@@ -620,6 +620,20 @@ func TestINLJHintSmallTable(t *testing.T) {
 	tk.MustExec("explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
 }
 
+func TestIssue46580(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`CREATE TABLE t0(c0 INT);`)
+	tk.MustExec(`CREATE TABLE t1(c0 BOOL, c1 BOOL);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (false, true);`)
+	tk.MustExec(`INSERT INTO t1 VALUES (true, true);`)
+	tk.MustExec(`CREATE definer='root'@'localhost'  VIEW v0(c0, c1, c2) AS SELECT t1.c0, LOG10(t0.c0), t1.c0 FROM t0, t1;`)
+	tk.MustExec(`INSERT INTO t0(c0) VALUES (3);`)
+	tk.MustQuery(`SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;`).Sort().Check(
+		testkit.Rows(`0 0`, `0 1`, `1 0`, `1 1`))
+}
+
 func TestInvisibleIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -904,14 +918,6 @@ func TestIndexMergePartialScansClusteredIndex(t *testing.T) {
 		expected  []string
 	}{
 		{
-			// 3 table scans
-			"a < 2 or a < 10 or a > 11", []string{"1", "100"},
-		},
-		{
-			// 3 index scans
-			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
-		},
-		{
 			// 1 table scan + 1 index scan
 			"a < 2 or c > 10000", []string{"1"},
 		},
@@ -931,7 +937,7 @@ func TestIndexMergePartialScansClusteredIndex(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -957,10 +963,6 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 		expected  []string
 	}{
 		{
-			// 3 index scans
-			"c < 10 or c < 11 or c > 50", []string{"1", "10", "100"},
-		},
-		{
 			// 2 index scans
 			"c < 10 or a < 2", []string{"1"},
 		},
@@ -984,7 +986,7 @@ func TestIndexMergePartialScansTiDBRowID(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -1033,7 +1035,7 @@ func TestIndexMergePartialScansPKIsHandle(t *testing.T) {
 	for _, p := range projections {
 		for _, ca := range cases {
 			query := fmt.Sprintf(queryTemplate, strings.Join(p, ","), ca.condition)
-			tk.HasPlan(query, "IndexMerge")
+			tk.MustHavePlan(query, "IndexMerge")
 			expected := make([]string, 0, len(ca.expected))
 			for _, datum := range ca.expected {
 				row := strings.Repeat(datum+" ", len(p))
@@ -2188,7 +2190,7 @@ func TestQueryBlockTableAliasInHint(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	require.True(t, tk.HasPlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin"))
+	tk.MustHavePlan("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2", "HashJoin")
 	tk.MustQuery("select /*+ HASH_JOIN(@sel_1 t2) */ * FROM (select 1) t1 NATURAL LEFT JOIN (select 2) t2").Check(testkit.Rows(
 		"1 2",
 	))
@@ -2917,7 +2919,7 @@ func TestIssue25799(t *testing.T) {
 	tk.MustExec(`insert into t1 values (1, 1)`)
 	tk.MustExec(`create table t2 (a float default null, b tinyint(4) DEFAULT NULL, key b (b))`)
 	tk.MustExec(`insert into t2 values (null, 1)`)
-	tk.HasPlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
+	tk.MustHavePlan(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`, `IndexJoin`)
 	tk.MustQuery(`select /*+ TIDB_INLJ(t2@sel_2) */ t1.a, t1.b from t1 where t1.a not in (select t2.a from t2 where t1.b=t2.b)`).Check(testkit.Rows())
 }
 
@@ -5278,4 +5280,16 @@ func TestIssue45033(t *testing.T) {
 				                from   (select distinct alias3.c4 as c2
 				                        from   t3 alias3) alias4
 				                where  alias4.c2 = alias2.alias_col1);`).Check(testkit.Rows("0"))
+}
+
+func TestIssue46298(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.first_range;")
+	tk.MustExec("create table test.first_range(p int not null, o tinyint not null, v int not null);")
+	tk.MustExec("insert into test.first_range (p, o, v) values (0, 0, 0), (1, 1, 1), (1, 2, 2), (1, 4, 4), (1, 8, 8), (2, 0, 0), (2, 3, 3), (2, 10, 10), (2, 13, 13), (2, 15, 15), (3, 1, 1), (3, 3, 3), (3, 5, 5), (3, 9, 9), (3, 15, 15), (3, 20, 20), (3, 31, 31);")
+	tk.MustQuery("select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from test.first_range;")
+	tk.MustExec(`set @@tidb_enable_pipelined_window_function=0`)
+	tk.MustQuery("select *, first_value(v) over (partition by p order by o range between 3.1 preceding and 2.9 following) as a from test.first_range;")
 }
