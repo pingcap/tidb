@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//ddl/util",
-        "//util/logutil",
+        "//pkg/util/logutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
         "@io_etcd_go_etcd_client_v3//:client",

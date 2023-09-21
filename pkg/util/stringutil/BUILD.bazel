@@ -3,11 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "stringutil",
     srcs = ["string_util.go"],
-    importpath = "github.com/pingcap/tidb/util/stringutil",
+    importpath = "github.com/pingcap/tidb/pkg/util/stringutil",
     visibility = ["//visibility:public"],
     deps = [
         "//parser/mysql",
-        "//util/hack",
+        "//pkg/util/hack",
         "@com_github_pingcap_errors//:errors",
     ],
 )

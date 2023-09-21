@@ -3,10 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "kvcache",
     srcs = ["simple_lru.go"],
-    importpath = "github.com/pingcap/tidb/util/kvcache",
+    importpath = "github.com/pingcap/tidb/pkg/util/kvcache",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/memory",
+        "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -21,8 +21,8 @@ go_test(
     embed = [":kvcache"],
     flaky = True,
     deps = [
+        "//pkg/util/memory",
         "//testkit/testsetup",
-        "//util/memory",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

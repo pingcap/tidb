@@ -6,7 +6,7 @@ go_library(
         "event.go",
         "watcher.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/watcher",
+    importpath = "github.com/pingcap/tidb/pkg/util/watcher",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_errors//:errors",

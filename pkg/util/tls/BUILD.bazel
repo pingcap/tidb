@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "tls",
     srcs = ["tls.go"],
-    importpath = "github.com/pingcap/tidb/util/tls",
+    importpath = "github.com/pingcap/tidb/pkg/util/tls",
     visibility = ["//visibility:public"],
     deps = ["@org_uber_go_atomic//:atomic"],
 )

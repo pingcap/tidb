@@ -18,6 +18,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//errno",
-        "//util/dbterror",
+        "//pkg/util/dbterror",
     ],
 )

@@ -7,10 +7,10 @@ go_library(
         "kv_exec_count.go",
         "stmtstats.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/topsql/stmtstats",
+    importpath = "github.com/pingcap/tidb/pkg/util/topsql/stmtstats",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/topsql/state",
+        "//pkg/util/topsql/state",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//tikvrpc/interceptor",
         "@org_uber_go_atomic//:atomic",
@@ -29,8 +29,8 @@ go_test(
     embed = [":stmtstats"],
     flaky = True,
     deps = [
+        "//pkg/util/topsql/state",
         "//testkit/testsetup",
-        "//util/topsql/state",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikvrpc",

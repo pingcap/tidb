@@ -7,7 +7,7 @@ go_library(
         "math.go",
         "rand.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/mathutil",
+    importpath = "github.com/pingcap/tidb/pkg/util/mathutil",
     visibility = ["//visibility:public"],
     deps = ["@org_golang_x_exp//constraints"],
 )

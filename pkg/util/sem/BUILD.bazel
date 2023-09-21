@@ -3,12 +3,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sem",
     srcs = ["sem.go"],
-    importpath = "github.com/pingcap/tidb/util/sem",
+    importpath = "github.com/pingcap/tidb/pkg/util/sem",
     visibility = ["//visibility:public"],
     deps = [
         "//parser/mysql",
+        "//pkg/util/logutil",
         "//sessionctx/variable",
-        "//util/logutil",
     ],
 )
 

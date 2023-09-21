@@ -7,10 +7,10 @@ go_library(
     visibility = ["//planner/core:__subpackages__"],
     deps = [
         "//expression",
+        "//pkg/util/stringutil",
+        "//pkg/util/tracing",
         "//planner/property",
         "//sessionctx",
         "//types",
-        "//util/stringutil",
-        "//util/tracing",
     ],
 )

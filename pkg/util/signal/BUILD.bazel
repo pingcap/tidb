@@ -7,55 +7,55 @@ go_library(
         "signal_wasm.go",
         "signal_windows.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/signal",
+    importpath = "github.com/pingcap/tidb/pkg/util/signal",
     visibility = ["//visibility:public"],
     deps = select({
         "@io_bazel_rules_go//go/platform:aix": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:android": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:darwin": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:dragonfly": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:freebsd": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:illumos": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:ios": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:linux": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:netbsd": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:openbsd": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:solaris": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "@io_bazel_rules_go//go/platform:windows": [
-            "//util/logutil",
+            "//pkg/util/logutil",
             "@org_uber_go_zap//:zap",
         ],
         "//conditions:default": [],

@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "benchdaily",
     srcs = ["bench_daily.go"],
-    importpath = "github.com/pingcap/tidb/util/benchdaily",
+    importpath = "github.com/pingcap/tidb/pkg/util/benchdaily",
     visibility = ["//visibility:public"],
 )
 

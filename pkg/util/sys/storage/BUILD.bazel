@@ -7,7 +7,7 @@ go_library(
         "sys_posix.go",
         "sys_windows.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/sys/storage",
+    importpath = "github.com/pingcap/tidb/pkg/util/sys/storage",
     visibility = ["//visibility:public"],
     deps = select({
         "@io_bazel_rules_go//go/platform:windows": [

@@ -9,11 +9,11 @@ go_library(
         "set_with_memory_usage.go",
         "string_set.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/set",
+    importpath = "github.com/pingcap/tidb/pkg/util/set",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/hack",
-        "//util/memory",
+        "//pkg/util/hack",
+        "//pkg/util/memory",
         "@org_golang_x_exp//maps",
     ],
 )

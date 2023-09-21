@@ -12,6 +12,8 @@ go_test(
     deps = [
         "//parser/model",
         "//parser/mysql",
+        "//pkg/util/collate",
+        "//pkg/util/ranger",
         "//planner/cardinality",
         "//sessionctx",
         "//sessionctx/variable",
@@ -20,8 +22,6 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//types",
-        "//util/collate",
-        "//util/ranger",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",

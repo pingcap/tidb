@@ -12,11 +12,11 @@ go_test(
     deps = [
         "//config",
         "//executor",
+        "//pkg/util",
+        "//pkg/util/memory",
         "//sessionctx/variable",
         "//statistics/handle",
         "//testkit",
-        "//util",
-        "//util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

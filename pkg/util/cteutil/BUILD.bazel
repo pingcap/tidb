@@ -3,13 +3,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "cteutil",
     srcs = ["storage.go"],
-    importpath = "github.com/pingcap/tidb/util/cteutil",
+    importpath = "github.com/pingcap/tidb/pkg/util/cteutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util/chunk",
+        "//pkg/util/disk",
+        "//pkg/util/memory",
         "//types",
-        "//util/chunk",
-        "//util/disk",
-        "//util/memory",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -25,9 +25,9 @@ go_test(
     flaky = True,
     deps = [
         "//parser/mysql",
+        "//pkg/util/chunk",
         "//testkit/testsetup",
         "//types",
-        "//util/chunk",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

@@ -10,9 +10,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/tidb-binlog/pump_client",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util",
+        "//pkg/util/etcd",
         "//tidb-binlog/node",
-        "//util",
-        "//util/etcd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-binlog",

@@ -13,8 +13,8 @@ go_library(
         "//infoschema",
         "//kv",
         "//parser/ast",
+        "//pkg/util/stringutil",
         "//sessionctx",
-        "//util/stringutil",
     ],
 )
 

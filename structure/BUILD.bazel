@@ -14,8 +14,8 @@ go_library(
     deps = [
         "//errno",
         "//kv",
-        "//util/codec",
-        "//util/dbterror",
+        "//pkg/util/codec",
+        "//pkg/util/dbterror",
         "@com_github_pingcap_errors//:errors",
     ],
 )

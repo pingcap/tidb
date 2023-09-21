@@ -6,10 +6,10 @@ go_library(
         "globalconn.go",
         "pool.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/globalconn",
+    importpath = "github.com/pingcap/tidb/pkg/util/globalconn",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/logutil",
+        "//pkg/util/logutil",
         "@com_github_cznic_mathutil//:mathutil",
         "@com_github_ngaut_sync2//:sync2",
         "@org_uber_go_zap//:zap",

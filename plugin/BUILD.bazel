@@ -15,10 +15,10 @@ go_library(
     deps = [
         "//domain",
         "//errno",
+        "//pkg/util",
+        "//pkg/util/dbterror",
+        "//pkg/util/logutil",
         "//sessionctx/variable",
-        "//util",
-        "//util/dbterror",
-        "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@io_etcd_go_etcd_client_v3//:client",

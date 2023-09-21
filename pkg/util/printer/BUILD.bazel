@@ -3,14 +3,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "printer",
     srcs = ["printer.go"],
-    importpath = "github.com/pingcap/tidb/util/printer",
+    importpath = "github.com/pingcap/tidb/pkg/util/printer",
     visibility = ["//visibility:public"],
     deps = [
         "//config",
         "//parser/mysql",
-        "//util/israce",
-        "//util/logutil",
-        "//util/versioninfo",
+        "//pkg/util/israce",
+        "//pkg/util/logutil",
+        "//pkg/util/versioninfo",
         "@org_uber_go_zap//:zap",
     ],
 )

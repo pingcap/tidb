@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "paging",
     srcs = ["paging.go"],
-    importpath = "github.com/pingcap/tidb/util/paging",
+    importpath = "github.com/pingcap/tidb/pkg/util/paging",
     visibility = ["//visibility:public"],
 )
 

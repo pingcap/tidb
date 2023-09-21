@@ -11,7 +11,7 @@ go_library(
     deps = [
         "//disttask/framework/proto",
         "//disttask/framework/storage",
-        "//util/logutil",
+        "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
     ],
 )

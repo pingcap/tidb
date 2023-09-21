@@ -10,7 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/planner/funcdep",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/logutil",
+        "//pkg/util/logutil",
         "@org_golang_x_tools//container/intsets",
     ],
 )
@@ -33,12 +33,12 @@ go_test(
         "//domain",
         "//infoschema",
         "//parser",
+        "//pkg/util/hint",
         "//planner/core",
         "//sessionctx",
         "//sessiontxn",
         "//testkit",
         "//testkit/testsetup",
-        "//util/hint",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_exp//maps",
         "@org_golang_x_tools//container/intsets",

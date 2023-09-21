@@ -11,11 +11,11 @@ go_test(
     flaky = True,
     deps = [
         "//config",
+        "//pkg/util/logutil",
         "//testkit",
         "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",
-        "//util/logutil",
         "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",

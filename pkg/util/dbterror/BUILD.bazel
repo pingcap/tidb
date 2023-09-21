@@ -6,7 +6,7 @@ go_library(
         "ddl_terror.go",
         "terror.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/dbterror",
+    importpath = "github.com/pingcap/tidb/pkg/util/dbterror",
     visibility = ["//visibility:public"],
     deps = [
         "//errno",

@@ -7,7 +7,7 @@ go_library(
         "sys_other.go",
         "sys_windows.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/sys/linux",
+    importpath = "github.com/pingcap/tidb/pkg/util/sys/linux",
     visibility = ["//visibility:public"],
     deps = select({
         "@io_bazel_rules_go//go/platform:aix": [

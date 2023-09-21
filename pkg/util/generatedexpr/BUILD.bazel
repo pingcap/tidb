@@ -3,14 +3,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "generatedexpr",
     srcs = ["generated_expr.go"],
-    importpath = "github.com/pingcap/tidb/util/generatedexpr",
+    importpath = "github.com/pingcap/tidb/pkg/util/generatedexpr",
     visibility = ["//visibility:public"],
     deps = [
         "//parser",
         "//parser/ast",
         "//parser/charset",
         "//parser/model",
-        "//util",
+        "//pkg/util",
         "@com_github_pingcap_errors//:errors",
     ],
 )

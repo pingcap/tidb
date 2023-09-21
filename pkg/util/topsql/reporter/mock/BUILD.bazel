@@ -6,10 +6,10 @@ go_library(
         "pubsub.go",
         "server.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/topsql/reporter/mock",
+    importpath = "github.com/pingcap/tidb/pkg/util/topsql/reporter/mock",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/logutil",
+        "//pkg/util/logutil",
         "@com_github_pingcap_tipb//go-tipb",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_zap//:zap",

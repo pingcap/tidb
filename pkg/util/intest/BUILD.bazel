@@ -6,6 +6,6 @@ go_library(
         "common.go",
         "intest.go",  #keep
     ],
-    importpath = "github.com/pingcap/tidb/util/intest",
+    importpath = "github.com/pingcap/tidb/pkg/util/intest",
     visibility = ["//visibility:public"],
 )

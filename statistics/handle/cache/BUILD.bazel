@@ -12,6 +12,10 @@ go_library(
         "//config",
         "//kv",
         "//parser/model",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "//pkg/util/syncutil",
         "//sessionctx",
         "//sessionctx/variable",
         "//statistics",
@@ -20,10 +24,6 @@ go_library(
         "//statistics/handle/cache/internal/mapcache",
         "//statistics/handle/cache/internal/metrics",
         "//types",
-        "//util/chunk",
-        "//util/logutil",
-        "//util/sqlexec",
-        "//util/syncutil",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -36,8 +36,8 @@ go_test(
     flaky = True,
     deps = [
         "//config",
+        "//pkg/util/benchdaily",
         "//statistics",
         "//statistics/handle/cache/internal/testutil",
-        "//util/benchdaily",
     ],
 )

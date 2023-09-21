@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "slice",
     srcs = ["slice.go"],
-    importpath = "github.com/pingcap/tidb/util/slice",
+    importpath = "github.com/pingcap/tidb/pkg/util/slice",
     visibility = ["//visibility:public"],
 )
 

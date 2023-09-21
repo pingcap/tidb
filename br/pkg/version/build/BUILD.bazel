@@ -7,8 +7,8 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/mysql",
-        "//util/israce",
-        "//util/versioninfo",
+        "//pkg/util/israce",
+        "//pkg/util/versioninfo",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],

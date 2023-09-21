@@ -13,10 +13,10 @@ go_test(
     deps = [
         "//config",
         "//meta/autoid",
+        "//pkg/util",
+        "//pkg/util/memory",
+        "//pkg/util/skip",
         "//testkit",
-        "//util",
-        "//util/memory",
-        "//util/skip",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@io_opencensus_go//stats/view",

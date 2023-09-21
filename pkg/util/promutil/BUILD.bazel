@@ -6,7 +6,7 @@ go_library(
         "factory.go",
         "registry.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/promutil",
+    importpath = "github.com/pingcap/tidb/pkg/util/promutil",
     visibility = ["//visibility:public"],
     deps = ["@com_github_prometheus_client_golang//prometheus"],
 )

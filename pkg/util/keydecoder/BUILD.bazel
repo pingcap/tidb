@@ -3,14 +3,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "keydecoder",
     srcs = ["keydecoder.go"],
-    importpath = "github.com/pingcap/tidb/util/keydecoder",
+    importpath = "github.com/pingcap/tidb/pkg/util/keydecoder",
     visibility = ["//visibility:public"],
     deps = [
         "//infoschema",
         "//kv",
         "//parser/model",
+        "//pkg/util/logutil",
         "//tablecodec",
-        "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
@@ -28,6 +28,7 @@ go_test(
     deps = [
         "//infoschema",
         "//parser/model",
+        "//pkg/util/codec",
         "//planner/core",
         "//sessionctx/stmtctx",
         "//table",
@@ -35,7 +36,6 @@ go_test(
         "//testkit/testsetup",
         "//testkit/testutil",
         "//types",
-        "//util/codec",
         "@com_github_stretchr_testify//assert",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",

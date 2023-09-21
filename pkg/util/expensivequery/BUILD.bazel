@@ -3,13 +3,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "expensivequery",
     srcs = ["expensivequery.go"],
-    importpath = "github.com/pingcap/tidb/util/expensivequery",
+    importpath = "github.com/pingcap/tidb/pkg/util/expensivequery",
     visibility = ["//visibility:public"],
     deps = [
         "//metrics",
+        "//pkg/util",
+        "//pkg/util/logutil",
         "//sessionctx/variable",
-        "//util",
-        "//util/logutil",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",

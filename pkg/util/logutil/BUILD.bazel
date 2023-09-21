@@ -7,7 +7,7 @@ go_library(
         "log.go",
         "slow_query_logger.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/logutil",
+    importpath = "github.com/pingcap/tidb/pkg/util/logutil",
     visibility = ["//visibility:public"],
     deps = [
         "//parser/model",

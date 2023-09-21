@@ -14,8 +14,8 @@ go_library(
         "//infoschema",
         "//parser/ast",
         "//parser/model",
+        "//pkg/util/chunk",
         "//table/tables",
-        "//util/chunk",
         "@com_github_pingcap_errors//:errors",
     ],
 )

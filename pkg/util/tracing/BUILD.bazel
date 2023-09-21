@@ -6,7 +6,7 @@ go_library(
         "opt_trace.go",
         "util.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/tracing",
+    importpath = "github.com/pingcap/tidb/pkg/util/tracing",
     visibility = ["//visibility:public"],
     deps = [
         "//parser/model",

@@ -3,6 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "skip",
     srcs = ["skip.go"],
-    importpath = "github.com/pingcap/tidb/util/skip",
+    importpath = "github.com/pingcap/tidb/pkg/util/skip",
     visibility = ["//visibility:public"],
 )

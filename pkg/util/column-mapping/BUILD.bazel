@@ -3,10 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "column-mapping",
     srcs = ["column.go"],
-    importpath = "github.com/pingcap/tidb/util/column-mapping",
+    importpath = "github.com/pingcap/tidb/pkg/util/column-mapping",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/table-rule-selector",
+        "//pkg/util/table-rule-selector",
         "@com_github_pingcap_errors//:errors",
     ],
 )

@@ -7,9 +7,9 @@ go_library(
     visibility = ["//sessiontxn:__subpackages__"],
     deps = [
         "//kv",
+        "//pkg/util/logutil",
         "//sessionctx",
         "//sessionctx/variable",
-        "//util/logutil",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@org_uber_go_zap//:zap",
     ],

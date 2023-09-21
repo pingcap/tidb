@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/domain/resourcegroup",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/dbterror/exeerrors",
-        "//util/logutil",
+        "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/logutil",
         "@com_github_jellydator_ttlcache_v3//:ttlcache",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
         "@com_github_tikv_client_go_v2//tikv",

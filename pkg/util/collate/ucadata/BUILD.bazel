@@ -7,7 +7,7 @@ go_library(
         "unicode_0900_ai_ci_data_generated.go",
         "unicode_ci_data_generated.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/collate/ucadata",
+    importpath = "github.com/pingcap/tidb/pkg/util/collate/ucadata",
     visibility = ["//visibility:public"],
 )
 

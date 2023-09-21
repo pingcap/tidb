@@ -4,7 +4,7 @@ go_library(
     name = "ucaimpl_lib",
     srcs = ["main.go"],
     embedsrcs = ["unicode_ci.go.tpl"],
-    importpath = "github.com/pingcap/tidb/util/collate/ucaimpl",
+    importpath = "github.com/pingcap/tidb/pkg/util/collate/ucaimpl",
     visibility = ["//visibility:private"],
 )
 

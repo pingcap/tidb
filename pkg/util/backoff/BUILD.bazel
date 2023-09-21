@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "backoff",
     srcs = ["backoff.go"],
-    importpath = "github.com/pingcap/tidb/util/backoff",
+    importpath = "github.com/pingcap/tidb/pkg/util/backoff",
     visibility = ["//visibility:public"],
 )
 

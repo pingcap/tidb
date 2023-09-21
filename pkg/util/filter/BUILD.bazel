@@ -6,11 +6,11 @@ go_library(
         "filter.go",
         "schema.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/filter",
+    importpath = "github.com/pingcap/tidb/pkg/util/filter",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/table-filter",
-        "//util/table-rule-selector",
+        "//pkg/util/table-filter",
+        "//pkg/util/table-rule-selector",
         "@com_github_pingcap_errors//:errors",
     ],
 )

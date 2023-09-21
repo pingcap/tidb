@@ -3,10 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "systimemon",
     srcs = ["systime_mon.go"],
-    importpath = "github.com/pingcap/tidb/util/systimemon",
+    importpath = "github.com/pingcap/tidb/pkg/util/systimemon",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/logutil",
+        "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
     ],
 )

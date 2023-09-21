@@ -7,9 +7,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//metrics",
+        "//pkg/util",
+        "//pkg/util/syncutil",
         "//resourcemanager/util",
-        "//util",
-        "//util/syncutil",
         "@org_uber_go_atomic//:atomic",
     ],
 )
@@ -26,9 +26,9 @@ go_test(
     race = "on",
     shard_count = 4,
     deps = [
+        "//pkg/util/logutil",
         "//resourcemanager/util",
         "//testkit/testsetup",
-        "//util/logutil",
         "@com_github_stretchr_testify//require",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_goleak//:goleak",

@@ -9,7 +9,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/tidb-binlog/node",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/etcd",
+        "//pkg/util/etcd",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_client_go_v2//oracle",
@@ -26,7 +26,7 @@ go_test(
     flaky = True,
     shard_count = 3,
     deps = [
-        "//util/etcd",
+        "//pkg/util/etcd",
         "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_tests_v3//integration",
     ],

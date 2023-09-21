@@ -3,11 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "password-validation",
     srcs = ["password_validation.go"],
-    importpath = "github.com/pingcap/tidb/util/password-validation",
+    importpath = "github.com/pingcap/tidb/pkg/util/password-validation",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/util/hack",
         "//sessionctx/variable",
-        "//util/hack",
     ],
 )
 

@@ -3,15 +3,15 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "memoryusagealarm",
     srcs = ["memoryusagealarm.go"],
-    importpath = "github.com/pingcap/tidb/util/memoryusagealarm",
+    importpath = "github.com/pingcap/tidb/pkg/util/memoryusagealarm",
     visibility = ["//visibility:public"],
     deps = [
         "//config",
+        "//pkg/util",
+        "//pkg/util/disk",
+        "//pkg/util/logutil",
+        "//pkg/util/memory",
         "//sessionctx/variable",
-        "//util",
-        "//util/disk",
-        "//util/logutil",
-        "//util/memory",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
     ],
@@ -25,10 +25,10 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
+        "//pkg/util",
+        "//pkg/util/memory",
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
-        "//util",
-        "//util/memory",
         "@com_github_stretchr_testify//assert",
     ],
 )

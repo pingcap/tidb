@@ -9,7 +9,7 @@ go_library(
         "//errno",
         "//kv",
         "//parser/terror",
-        "//util/dbterror",
+        "//pkg/util/dbterror",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//error",
         "@com_github_tikv_pd_client//errs",

@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "metricsutil",
     srcs = ["common.go"],
-    importpath = "github.com/pingcap/tidb/util/metricsutil",
+    importpath = "github.com/pingcap/tidb/pkg/util/metricsutil",
     visibility = ["//visibility:public"],
     deps = [
         "//config",
@@ -12,6 +12,8 @@ go_library(
         "//infoschema/metrics",
         "//keyspace",
         "//metrics",
+        "//pkg/util",
+        "//pkg/util/topsql/reporter/metrics",
         "//planner/core/metrics",
         "//server/metrics",
         "//session/metrics",
@@ -22,8 +24,6 @@ go_library(
         "//store/copr/metrics",
         "//store/mockstore/unistore/metrics",
         "//ttl/metrics",
-        "//util",
-        "//util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",

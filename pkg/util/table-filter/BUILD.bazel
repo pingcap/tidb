@@ -9,7 +9,7 @@ go_library(
         "parser.go",
         "table_filter.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/table-filter",
+    importpath = "github.com/pingcap/tidb/pkg/util/table-filter",
     visibility = ["//visibility:public"],
     deps = ["@com_github_pingcap_errors//:errors"],
 )

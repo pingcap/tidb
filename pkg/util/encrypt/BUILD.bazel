@@ -7,7 +7,7 @@ go_library(
         "aes_layer.go",
         "crypt.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/encrypt",
+    importpath = "github.com/pingcap/tidb/pkg/util/encrypt",
     visibility = ["//visibility:public"],
     deps = ["@com_github_pingcap_errors//:errors"],
 )
@@ -24,8 +24,8 @@ go_test(
     embed = [":encrypt"],
     flaky = True,
     deps = [
+        "//pkg/util/checksum",
         "//testkit/testsetup",
-        "//util/checksum",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

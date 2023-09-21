@@ -6,7 +6,7 @@ go_library(
         "mutex_deadlock.go",  #keep
         "mutex_sync.go",
     ],
-    importpath = "github.com/pingcap/tidb/util/syncutil",
+    importpath = "github.com/pingcap/tidb/pkg/util/syncutil",
     visibility = ["//visibility:public"],
     deps = ["@com_github_sasha_s_go_deadlock//:go-deadlock"],  #keep
 )

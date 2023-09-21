@@ -11,7 +11,7 @@ go_library(
         "allkeys-9.0.0.txt",
         "data.go.tpl",
     ],
-    importpath = "github.com/pingcap/tidb/util/collate/ucadata/generator",
+    importpath = "github.com/pingcap/tidb/pkg/util/collate/ucadata/generator",
     visibility = ["//visibility:private"],
 )
 

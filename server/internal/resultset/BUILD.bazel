@@ -9,10 +9,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/server/internal/resultset",
     visibility = ["//server:__subpackages__"],
     deps = [
+        "//pkg/util/chunk",
+        "//pkg/util/sqlexec",
         "//planner/core",
         "//server/internal/column",
         "//types",
-        "//util/chunk",
-        "//util/sqlexec",
     ],
 )
