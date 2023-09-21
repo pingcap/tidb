@@ -377,10 +377,12 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	}
 
 	// TODO some agg functions' spill is not supported, set it.
-	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+	vars := e.Ctx().GetSessionVars()
+	e.spillHelper.isTrackerEnabled = e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
+	if e.spillHelper.isTrackerEnabled {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
-		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
+		e.spillHelper.diskTracker = e.diskTracker
 		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 	e.parallelExecValid = true

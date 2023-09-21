@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -35,12 +36,14 @@ const spilledPartitionNum = 256
 const spillTasksDoneFlag = -1
 
 type parallelHashAggSpillHelper struct {
-	lock            sync.Mutex
-	spilledChunksIO [][]*chunk.ListInDisk
-	spillTriggered  int32
-	isSpilling      int32
-	isPartialStage  int32
-	hasError        int32
+	lock             sync.Mutex
+	diskTracker      *disk.Tracker
+	isTrackerEnabled bool
+	spilledChunksIO  [][]*chunk.ListInDisk
+	spillTriggered   int32
+	isSpilling       int32
+	isPartialStage   int32
+	hasError         int32
 
 	runningPartialWorkerNum int32
 

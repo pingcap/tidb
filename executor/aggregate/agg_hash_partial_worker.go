@@ -265,6 +265,9 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.getNewTmpChunkFunc()
 			w.spilledChunksIO[i] = chunk.NewListInDisk(w.getSpillChunkFieldTypesFunc())
+			if w.spillHelper.isTrackerEnabled {
+				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
+			}
 		}
 	}
 }
