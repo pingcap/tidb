@@ -372,6 +372,10 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			err = mgr.PauseTask(int64(i))
 			require.NoError(t, err)
 		}
+		for i := 1; i <= subtaskCnt*taskCnt; i++ {
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStatePaused, nil)
+			require.NoError(t, err)
+		}
 		checkGetTaskState(proto.TaskStatePaused)
 		for i := 1; i <= taskCnt; i++ {
 			found, err := mgr.ResumeTask(int64(i))
