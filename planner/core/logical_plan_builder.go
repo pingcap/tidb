@@ -6741,7 +6741,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // For type `Range`, the bound expr must be temporal or numeric types.
 func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
-	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
+	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded, IsExplicitRange: false}
 	if bound.UnBounded {
 		return bound, nil
 	}
@@ -6789,6 +6789,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		}
 	}
 
+	bound.IsExplicitRange = true
 	desc := orderByItems[0].Desc
 	var funcName string
 	if boundClause.Unit != ast.TimeUnitInvalid {

@@ -2040,6 +2040,8 @@ type FrameBound struct {
 	CmpFuncs []expression.CompareFunc
 	// This field is used for passing information to tiflash
 	CmpDataType tipb.RangeCmpDataType
+	// IsExplicitRange marks if this range explicitly appears in the sql
+	IsExplicitRange bool
 }
 
 // Clone copies a frame bound totally.
