@@ -184,3 +184,14 @@ func DumpIndexUsageToKV(exec sqlexec.RestrictedSQLExecutor, listHead *SessionInd
 	}
 	return nil
 }
+
+// GCIndexUsageOnKV will delete the usage information of non-existent indexes.
+func GCIndexUsageOnKV(exec sqlexec.RestrictedSQLExecutor) error {
+	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
+	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
+	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
+	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	_, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, sql)
+	return err
+}
