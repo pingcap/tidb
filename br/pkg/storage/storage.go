@@ -101,6 +101,8 @@ type ExternalStorage interface {
 	FileExists(ctx context.Context, name string) (bool, error)
 	// DeleteFile delete the file in storage
 	DeleteFile(ctx context.Context, name string) error
+	// DeleteFiles delete the files in storage
+	DeleteFiles(ctx context.Context, names []string) error
 	// Open a Reader by file path. path is relative path to storage base path
 	Open(ctx context.Context, path string) (ExternalFileReader, error)
 	// WalkDir traverse all the files in a dir.
