@@ -46,6 +46,7 @@ run_sql "analyze table $DB.$TABLE;"
 # the stats looks like
 #
 #{
+# "columns":
 #  "ol_amount": {
 #    "histogram": {
 #      "ndv": 829568,
@@ -82,9 +83,13 @@ run_sql "analyze table $DB.$TABLE;"
 #  "ol_quantity": { similar value },
 #  "ol_supply_w_id": { similar value },
 #  "ol_w_id": { similar value },
+#  },
+# "indices": {
+#   similar value
+#  }
 # }
 
-run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '.columns | with_entries(del(.value.last_update_version, .value.fm_sketch, .value.correlation))' > $BACKUP_STAT
+run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $BACKUP_STAT
 
 # ensure buckets in stats
 cat $BACKUP_STAT | grep buckets 
@@ -137,7 +142,7 @@ fi
 
 echo "restore full without stats..."
 run_br restore full -s "local://$TEST_DIR/${DB}_disable_stats" --pd $PD_ADDR
-curl $TIDB_IP:10080/stats/dump/$DB/$TABLE | jq '.columns | with_entries(del(.value.last_update_version, .value.fm_sketch, .value.correlation))' > $RESOTRE_STAT
+curl $TIDB_IP:10080/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $RESOTRE_STAT
 
 # stats should not be equal because we disable stats by default.
 if diff -q $BACKUP_STAT $RESOTRE_STAT > /dev/null
@@ -191,7 +196,7 @@ if [ "${skip_count}" -gt "2" ];then
     exit 1
 fi
 
-run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '.columns | with_entries(del(.value.last_update_version, .value.fm_sketch, .value.correlation))' > $RESOTRE_STAT
+run_curl https://$TIDB_STATUS_ADDR/stats/dump/$DB/$TABLE | jq '{columns,indices} | map_values(with_entries(del(.value.last_update_version, .value.correlation)))' > $RESOTRE_STAT
 
 if diff -q $BACKUP_STAT $RESOTRE_STAT > /dev/null
 then
