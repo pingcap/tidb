@@ -191,6 +191,7 @@ func (dm *Manager) dispatchTaskLoop() {
 					dm.startDispatcher(task, startTime)
 					cnt++
 					metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
+					metrics.DistTaskDispatcherStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
 					metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 					continue
 				}
@@ -199,8 +200,9 @@ func (dm *Manager) dispatchTaskLoop() {
 				}
 				dm.startDispatcher(task, startTime)
 				cnt++
-				metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 				metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
+				metrics.DistTaskDispatcherStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
+				metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 			}
 		}
 	}
@@ -222,6 +224,7 @@ func (dm *Manager) startDispatcher(task *proto.Task, startTime time.Time) {
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		dm.setRunningTask(task, dispatcher)
 		metrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(startTime)).Microseconds()))
+		metrics.DistTaskDispatcherStarttimeGauge.DeleteLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID))
 		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Dec()
 		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.RunningStatus).Inc()
 		dispatcher.ExecuteTask()
