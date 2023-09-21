@@ -79,36 +79,6 @@ func TestCheckDBPrivilege(t *testing.T) {
 	require.True(t, pc.RequestVerification(activeRoles, "test", "", "", mysql.UpdatePriv))
 }
 
-// func TestCheckExchangePartitionDBPrivilege(t *testing.T) {
-// 	store := createStoreAndPrepareDB(t)
-// 	rootTk := testkit.NewTestKit(t, store)
-
-// 	rootTk.MustExec(`CREATE USER 'tester'@'localhost';`)
-// 	rootTk.MustExec(`GRANT SELECT ON test.* TO  'tester'@'localhost';`)
-// 	rootTk.MustExec("use test")
-// 	rootTk.MustExec(`create table pt (a varchar(3)) partition by range columns (a) (
-// 		partition p0 values less than ('3'),
-// 		partition p1 values less than ('6')
-// 	);`)
-// 	rootTk.MustExec(`create table nt (a varchar(3));`)
-
-// 	tk := testkit.NewTestKit(t, store)
-// 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "tester", Hostname: "localhost"}, nil, nil, nil))
-// 	tk.MustExec("use test")
-
-// 	rootTk.MustExec(`GRANT CREATE ON test.* TO  'tester'@'localhost';`)
-// 	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
-
-// 	rootTk.MustExec(`GRANT ALTER ON test.* TO  'tester'@'localhost';`)
-// 	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
-
-// 	rootTk.MustExec(`GRANT INSERT ON test.* TO  'tester'@'localhost';`)
-// 	tk.MustGetErrCode("alter table pt exchange partition p0 with table nt", mysql.ErrTableaccessDenied)
-
-// 	rootTk.MustExec(`GRANT DROP ON test.* TO  'tester'@'localhost';`)
-// 	tk.MustExec("alter table pt exchange partition p0 with table nt")
-// }
-
 func TestCheckTablePrivilege(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -485,27 +455,6 @@ func TestShowViewPriv(t *testing.T) {
 		tk.MustQuery("select count(*) from information_schema.columns where table_schema='test' and table_name='v'").Check(testkit.Rows(test.columnsNum))
 	}
 }
-
-// func TestRoleAdminSecurity(t *testing.T) {
-// 	store := createStoreAndPrepareDB(t)
-
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.MustExec(`CREATE USER 'ar1'@'localhost';`)
-// 	tk.MustExec(`CREATE USER 'ar2'@'localhost';`)
-// 	tk.MustExec(`GRANT ALL ON *.* to ar1@localhost`)
-// 	defer func() {
-// 		require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-// 		tk.MustExec("drop user 'ar1'@'localhost'")
-// 		tk.MustExec("drop user 'ar2'@'localhost'")
-// 	}()
-
-// 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "ar1", Hostname: "localhost"}, nil, nil, nil))
-// 	tk.MustExec(`create role r_test1@localhost`)
-
-// 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "ar2", Hostname: "localhost"}, nil, nil, nil))
-// 	err := tk.ExecToErr(`create role r_test2@localhost`)
-// 	require.True(t, terror.ErrorEqual(err, core.ErrSpecificAccessDenied))
-// }
 
 func TestCheckCertBasedAuth(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
@@ -2063,28 +2012,6 @@ func TestShowGrantsWithRolesAndDynamicPrivs(t *testing.T) {
 	))
 }
 
-// func TestGrantLockTables(t *testing.T) {
-// 	store := createStoreAndPrepareDB(t)
-
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.MustExec("CREATE DATABASE lock_tables_db")
-// 	tk.MustExec("USE lock_tables_db")
-// 	tk.MustExec("CREATE TABLE lock_tables_table (a int)")
-// 	tk.MustExec("CREATE USER lock_tables_user")
-// 	tk.MustExec("GRANT LOCK TABLES ON *.* TO lock_tables_user")
-// 	tk.MustExec("GRANT LOCK TABLES ON lock_tables_db.* TO lock_tables_user")
-// 	// Must set a session user to avoid null pointer dereferencing
-// 	tk.Session().Auth(&auth.UserIdentity{
-// 		Username: "root",
-// 		Hostname: "localhost",
-// 	}, nil, nil, nil)
-// 	tk.MustQuery("SHOW GRANTS FOR lock_tables_user").Check(testkit.Rows(
-// 		`GRANT LOCK TABLES ON *.* TO 'lock_tables_user'@'%'`,
-// 		"GRANT LOCK TABLES ON `lock_tables_db`.* TO 'lock_tables_user'@'%'"))
-// 	tk.MustExec("DROP USER lock_tables_user")
-// 	tk.MustExec("DROP DATABASE lock_tables_db")
-// }
-
 // https://github.com/pingcap/tidb/issues/27560
 func TestShowGrantsForCurrentUserUsingRole(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
@@ -2338,21 +2265,6 @@ func TestCreateTmpTablesPriv(t *testing.T) {
 	}
 }
 
-// func TestRevokeSecondSyntax(t *testing.T) {
-// 	store := createStoreAndPrepareDB(t)
-
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.Session().Auth(&auth.UserIdentity{
-// 		Username: "root",
-// 		Hostname: "localhost",
-// 	}, nil, nil, nil)
-
-// 	tk.MustExec(`drop user if exists ss1;`)
-// 	tk.MustExec(`create user ss1;`)
-// 	tk.MustExec(`revoke all privileges, grant option from ss1;`)
-// 	tk.MustQuery("show grants for ss1").Check(testkit.Rows("GRANT USAGE ON *.* TO 'ss1'@'%'"))
-// }
-
 func TestGrantEvent(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 
@@ -2443,46 +2355,6 @@ func TestIssue29823(t *testing.T) {
 	err = tk2.QueryToErr("show tables from test")
 	require.EqualError(t, err, "[executor:1044]Access denied for user 'u1'@'%' to database 'test'")
 }
-
-// func TestCheckPreparePrivileges(t *testing.T) {
-// 	store := createStoreAndPrepareDB(t)
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.MustExec("use test")
-// 	tk.MustExec("drop table if exists t")
-// 	tk.MustExec("create user u1")
-// 	tk.MustExec("create table t (a int)")
-// 	tk.MustExec("insert into t values(1)")
-
-// 	tk2 := testkit.NewTestKit(t, store)
-// 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u1", Hostname: "%"}, nil, nil, nil))
-
-// 	// sql
-// 	err := tk2.ExecToErr("prepare s from 'select * from test.t'")
-// 	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't'")
-// 	err = tk2.ExecToErr("execute s")
-// 	require.EqualError(t, err, "[planner:8111]Prepared statement not found")
-
-// 	// binary proto
-// 	stmtID, _, _, err := tk2.Session().PrepareStmt("select * from test.t")
-// 	require.EqualError(t, err, "[planner:1142]SELECT command denied to user 'u1'@'%' for table 't'")
-// 	require.Zero(t, stmtID)
-
-// 	// grant
-// 	tk.MustExec("grant SELECT ON test.t TO  'u1'@'%';")
-
-// 	// should success after grant
-// 	tk2.MustExec("prepare s from 'select * from test.t'")
-// 	tk2.MustQuery("execute s").Check(testkit.Rows("1"))
-// 	stmtID, _, _, err = tk2.Session().PrepareStmt("select * from test.t")
-// 	require.NoError(t, err)
-// 	require.NotZero(t, stmtID)
-// 	rs, err := tk2.Session().ExecutePreparedStmt(context.TODO(), stmtID, nil)
-// 	require.NoError(t, err)
-// 	defer func() {
-// 		require.NoError(t, rs.Close())
-// 	}()
-// 	tk2.ResultSetToResult(rs, "").Check(testkit.Rows("1"))
-// }
 
 func TestIssue37488(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
