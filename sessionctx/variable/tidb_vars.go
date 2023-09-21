@@ -17,7 +17,6 @@ package variable
 import (
 	"context"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/pingcap/tidb/config"
@@ -1240,7 +1239,7 @@ const (
 	DefTiDBRedactLog                               = false
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
-	DefTiDBShardAllocateStep                       = math.MaxInt64
+	DefTiDBShardAllocateStep                       = 64
 	DefTiDBEnableTelemetry                         = false
 	DefTiDBEnableParallelApply                     = false
 	DefTiDBPartitionPruneMode                      = "dynamic"
