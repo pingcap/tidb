@@ -51,7 +51,7 @@ func openStoreReaderAndSeek(
 	store storage.ExternalStorage,
 	name string,
 	initFileOffset uint64,
-) (storage.ReadSeekCloser, error) {
+) (storage.ExternalFileReader, error) {
 	storageReader, err := store.Open(ctx, name, nil)
 	if err != nil {
 		return nil, err
