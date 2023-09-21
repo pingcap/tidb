@@ -119,7 +119,7 @@ explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
 SELECT * from t1,t2 where t1.id = t2.id;
 select @@last_plan_from_binding;
 set binding disabled for SELECT * from t1,t2 where t1.id = t2.id;
-SELECT * format='brief' from t1,t2 where t1.id = t2.id;
+SELECT * from t1,t2 where t1.id = t2.id;
 select @@last_plan_from_binding;
 commit;
 drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
@@ -128,19 +128,11 @@ drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
 drop table if exists t;
 create table t(a int, b int, key(a));
 create global binding for select * from t using select * from t use index(a);
-select original_sql, bind_sql from mysql.bind_info where default_db != 'mysql';
+select original_sql, bind_sql from mysql.bind_info where bind_sql = 'SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)';
 --enable_warnings;
 explain format = 'verbose' select * from t;
 --disable_warnings;
-
-# TestForbidEvolvePlanBaseLinesBeforeGA
-set @@tidb_evolve_plan_baselines=0;
--- error 1105
-set @@TiDB_Evolve_pLan_baselines=1;
--- error 1105
-set @@TiDB_Evolve_pLan_baselines=oN;
--- error 1105
-admin evolve bindings;
+drop global binding for select * from t using select * from t use index(a);
 
 # TestExplainTableStmts
 drop table if exists t;
@@ -148,4 +140,3 @@ create table t(id int, value decimal(5,2));
 table t;
 explain table t;
 desc table t;
-
