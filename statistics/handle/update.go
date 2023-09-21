@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
-	"github.com/pingcap/tidb/statistics/handle/index_usage"
+	"github.com/pingcap/tidb/statistics/handle/indexusage"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -214,8 +214,8 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 // NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
 // idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
 // points to new item. It's helpful to sweepIdxUsageList.
-func (h *Handle) NewSessionIndexUsageCollector() *index_usage.SessionIndexUsageCollector {
-	return index_usage.NewSessionIndexUsageCollector(h.idxUsageListHead)
+func (h *Handle) NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector {
+	return indexusage.NewSessionIndexUsageCollector(h.idxUsageListHead)
 }
 
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
@@ -227,7 +227,7 @@ const maxInsertLength = 1024 * 1024
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	return h.callWithExec(func(exec sqlexec.RestrictedSQLExecutor) error {
-		return index_usage.DumpIndexUsageToKV(exec, h.idxUsageListHead)
+		return indexusage.DumpIndexUsageToKV(exec, h.idxUsageListHead)
 	})
 }
 
