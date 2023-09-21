@@ -37,13 +37,16 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
 type backfillingDispatcherExt struct {
-	d *ddl
+	d                    *ddl
+	previousSchedulerIDs []string
 }
 
 var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
@@ -63,68 +66,91 @@ func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-// OnNextSubtasksBatch generate batch of next stage's plan.
-func (h *backfillingDispatcherExt) OnNextSubtasksBatch(ctx context.Context,
+// OnNextSubtasksBatch generate batch of next step's plan.
+func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
+	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
+	step int64,
 ) (taskMeta [][]byte, err error) {
 	var gTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &gTaskMeta); err != nil {
 		return nil, err
 	}
 
+	job := &gTaskMeta.Job
 	useExtStore := len(gTaskMeta.CloudStorageURI) > 0
 	defer func() {
 		// Only redact when the task is complete.
 		if len(taskMeta) == 0 && useExtStore {
 			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
-			if err := taskHandle.UpdateTask(gTask.State, nil, dispatcher.RetrySQLTimes); err != nil {
-				logutil.Logger(ctx).Error("failed to UpdateTask", zap.Error(err))
-			}
 		}
 	}()
 
-	job := &gTaskMeta.Job
 	tblInfo, err := getTblInfo(h.d, job)
 	if err != nil {
 		return nil, err
 	}
-	// generate partition table's plan.
-	if tblInfo.Partition != nil {
-		switch gTask.Step {
-		case proto.StepInit:
-			return generatePartitionPlan(tblInfo)
-		case proto.StepOne:
-			if useExtStore {
-				return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
-			}
-			return nil, nil
-		default:
-			return nil, nil
-		}
-	}
-	// generate non-partition table's plan.
-	switch gTask.Step {
-	case proto.StepInit:
-		return generateNonPartitionPlan(h.d, tblInfo, job)
+
+	switch step {
 	case proto.StepOne:
+		if tblInfo.Partition != nil {
+			return generatePartitionPlan(tblInfo)
+		}
+		return generateNonPartitionPlan(h.d, tblInfo, job)
+	case proto.StepTwo:
+		return generateMergePlan(taskHandle, gTask)
+	case proto.StepThree:
 		if useExtStore {
 			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
 		}
-		return generateIngestTaskPlan(ctx)
+		if tblInfo.Partition != nil {
+			return nil, nil
+		}
+		return generateIngestTaskPlan(ctx, h, taskHandle, gTask)
 	default:
 		return nil, nil
 	}
 }
 
-// StageFinished check if current stage finished.
-func (*backfillingDispatcherExt) StageFinished(_ *proto.Task) bool {
-	return true
-}
-
-// Finished check if current task finished.
-func (*backfillingDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepOne
+func (*backfillingDispatcherExt) GetNextStep(
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		// when in tests
+		if taskHandle == nil {
+			return proto.StepThree
+		}
+		// if data files overlaps too much, we need a merge step.
+		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
+		if err != nil {
+			// TODO(lance6716): should we return error?
+			return proto.StepTwo
+		}
+		multiStats := make([]external.MultipleFilesStat, 0, 100)
+		for _, bs := range subTaskMetas {
+			var subtask BackfillSubTaskMeta
+			err = json.Unmarshal(bs, &subtask)
+			if err != nil {
+				// TODO(lance6716): should we return error?
+				return proto.StepThree
+			}
+			multiStats = append(multiStats, subtask.MultipleFilesStats...)
+		}
+		if external.GetMaxOverlappingTotal(multiStats) > external.MergeSortOverlapThreshold {
+			return proto.StepTwo
+		}
+		return proto.StepThree
+	case proto.StepTwo:
+		return proto.StepThree
+	default:
+		// current step should be proto.StepThree
+		return proto.StepDone
+	}
 }
 
 // OnErrStage generate error handling stage's plan.
@@ -136,8 +162,22 @@ func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (*backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
-	return dispatcher.GenerateSchedulerNodes(ctx)
+func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(h.previousSchedulerIDs) > 0 {
+		// Only the nodes that executed step one can have step two.
+		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
+		for _, id := range h.previousSchedulerIDs {
+			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
+				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
+			}
+		}
+		return involvedServerInfos, nil
+	}
+	return serverInfos, nil
 }
 
 // IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
@@ -243,20 +283,37 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 	return subTaskMetas, nil
 }
 
-func generateIngestTaskPlan(ctx context.Context) ([][]byte, error) {
+func generateIngestTaskPlan(
+	ctx context.Context,
+	h *backfillingDispatcherExt,
+	taskHandle dispatcher.TaskHandle,
+	gTask *proto.Task,
+) ([][]byte, error) {
 	// We dispatch dummy subtasks because the rest data in local engine will be imported
 	// in the initialization of subtask executor.
-	serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-	if err != nil {
-		return nil, err
+	var ingestSubtaskCnt int
+	if intest.InTest && taskHandle == nil {
+		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		ingestSubtaskCnt = len(serverNodes)
+	} else {
+		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
+		if err != nil {
+			return nil, err
+		}
+		h.previousSchedulerIDs = schedulerIDs
+		ingestSubtaskCnt = len(schedulerIDs)
 	}
-	subTaskMetas := make([][]byte, 0, len(serverNodes))
+
+	subTaskMetas := make([][]byte, 0, ingestSubtaskCnt)
 	dummyMeta := &BackfillSubTaskMeta{}
 	metaBytes, err := json.Marshal(dummyMeta)
 	if err != nil {
 		return nil, err
 	}
-	for range serverNodes {
+	for i := 0; i < ingestSubtaskCnt; i++ {
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
@@ -310,12 +367,14 @@ func generateMergeSortPlan(
 				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
 		m := &BackfillSubTaskMeta{
-			MinKey:         startKey,
-			MaxKey:         endKey,
-			DataFiles:      dataFiles,
-			StatFiles:      statFiles,
+			SortedKVMeta: external.SortedKVMeta{
+				MinKey:      startKey,
+				MaxKey:      endKey,
+				DataFiles:   dataFiles,
+				StatFiles:   statFiles,
+				TotalKVSize: totalSize / uint64(len(instanceIDs)),
+			},
 			RangeSplitKeys: rangeSplitKeys,
-			TotalKVSize:    totalSize / uint64(len(instanceIDs)),
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -327,6 +386,39 @@ func generateMergeSortPlan(
 		}
 		startKey = endKey
 	}
+}
+
+func generateMergePlan(
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+) ([][]byte, error) {
+	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	start := 0
+	step := external.MergeSortFileCountStep
+	metaArr := make([][]byte, 0, 16)
+	for start < len(dataFiles) {
+		end := start + step
+		if end > len(dataFiles) {
+			end = len(dataFiles)
+		}
+		m := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				DataFiles: dataFiles[start:end],
+			},
+		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
+
+		start = end
+	}
+	return metaArr, nil
 }
 
 func getRangeSplitter(
@@ -372,7 +464,7 @@ func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepInit)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
@@ -387,12 +479,16 @@ func getSummaryFromLastStep(
 		}
 		// Skip empty subtask.MinKey/MaxKey because it means
 		// no records need to be written in this subtask.
-		minKey = notNilMin(minKey, subtask.MinKey)
-		maxKey = notNilMax(maxKey, subtask.MaxKey)
+		minKey = external.NotNilMin(minKey, subtask.MinKey)
+		maxKey = external.NotNilMax(maxKey, subtask.MaxKey)
 		totalKVSize += subtask.TotalKVSize
 
-		allDataFiles = append(allDataFiles, subtask.DataFiles...)
-		allStatFiles = append(allStatFiles, subtask.StatFiles...)
+		for _, stat := range subtask.MultipleFilesStats {
+			for i := range stat.Filenames {
+				allDataFiles = append(allDataFiles, stat.Filenames[i][0])
+				allStatFiles = append(allStatFiles, stat.Filenames[i][1])
+			}
+		}
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
 }
@@ -409,32 +505,4 @@ func redactCloudStorageURI(
 		return
 	}
 	gTask.Meta = metaBytes
-}
-
-// notNilMin returns the smaller of a and b, ignoring nil values.
-func notNilMin(a, b []byte) []byte {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	if bytes.Compare(a, b) < 0 {
-		return a
-	}
-	return b
-}
-
-// notNilMax returns the larger of a and b, ignoring nil values.
-func notNilMax(a, b []byte) []byte {
-	if len(a) == 0 {
-		return b
-	}
-	if len(b) == 0 {
-		return a
-	}
-	if bytes.Compare(a, b) > 0 {
-		return a
-	}
-	return b
 }

@@ -1,21 +1,16 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "statslock_test",
+    name = "multivaluedindex_test",
     timeout = "short",
     srcs = [
         "main_test.go",
-        "stats_lock_test.go",
+        "multi_valued_index_test.go",
     ],
     flaky = True,
-    shard_count = 5,
     deps = [
-        "//config",
-        "//domain",
-        "//kv",
-        "//parser/auth",
+        "//infoschema",
         "//parser/model",
-        "//session",
         "//testkit",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

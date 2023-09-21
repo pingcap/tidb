@@ -58,6 +58,7 @@ type readIndexSummary struct {
 	totalSize uint64
 	dataFiles []string
 	statFiles []string
+	stats     []external.MultipleFilesStat
 	mu        sync.Mutex
 }
 
@@ -84,14 +85,15 @@ func newReadIndexExecutor(
 }
 
 func (*readIndexExecutor) Init(_ context.Context) error {
-	logutil.BgLogger().Info("read index stage init subtask exec env",
+	logutil.BgLogger().Info("read index executor init subtask exec env",
 		zap.String("category", "ddl"))
 	return nil
 }
 
 func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	logutil.BgLogger().Info("read index stage run subtask",
-		zap.String("category", "ddl"))
+	logutil.BgLogger().Info("read index executor run subtask",
+		zap.String("category", "ddl"),
+		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
@@ -147,7 +149,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 }
 
 func (*readIndexExecutor) Cleanup(ctx context.Context) error {
-	logutil.Logger(ctx).Info("read index stage cleanup subtask exec env",
+	logutil.Logger(ctx).Info("read index executor cleanup subtask exec env",
 		zap.String("category", "ddl"))
 	return nil
 }
@@ -178,6 +180,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	subtaskMeta.TotalKVSize = s.totalSize
 	subtaskMeta.DataFiles = s.dataFiles
 	subtaskMeta.StatFiles = s.statFiles
+	subtaskMeta.MultipleFilesStats = s.stats
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("min", hex.EncodeToString(s.minKey)),
 		zap.String("max", hex.EncodeToString(s.maxKey)),
@@ -192,7 +195,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 }
 
 func (r *readIndexExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("read index stage rollback backfill add index task",
+	logutil.Logger(ctx).Info("read index executor rollback backfill add index task",
 		zap.String("category", "ddl"), zap.Int64("jobID", r.job.ID))
 	return nil
 }
@@ -260,6 +263,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 			s.maxKey = summary.Max.Clone()
 		}
 		s.totalSize += summary.TotalSize
+		s.stats = append(s.stats, summary.MultipleFilesStats...)
 		for _, f := range summary.MultipleFilesStats {
 			for _, filename := range f.Filenames {
 				s.dataFiles = append(s.dataFiles, filename[0])
@@ -268,7 +272,9 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		}
 		s.mu.Unlock()
 	}
+	counter := metrics.BackfillTotalCounter.WithLabelValues(
+		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.index, start, end, totalRowCount, onClose)
+		tbl, r.index, start, end, totalRowCount, counter, onClose)
 }

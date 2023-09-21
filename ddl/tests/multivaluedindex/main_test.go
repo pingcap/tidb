@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package statslock
+package multivaluedindex
 
 import (
 	"testing"
@@ -22,12 +22,14 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	testsetup.SetupForCommonTest()
+
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
-	testsetup.SetupForCommonTest()
+
 	goleak.VerifyTestMain(m, opts...)
 }

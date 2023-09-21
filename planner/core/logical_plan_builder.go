@@ -162,8 +162,6 @@ const (
 	HintNoIndexMerge = "no_index_merge"
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
-	// HintTidbKvReadTimeout specifies timeout value for any readonly kv request in milliseconds
-	HintTidbKvReadTimeout = "tidb_kv_read_timeout"
 )
 
 const (
@@ -6825,6 +6823,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	if err != nil {
 		return nil, err
 	}
+
 	bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
 	return bound, nil
 }
