@@ -2162,5 +2162,5 @@ func TestDeprecateEnableTiFlashPipelineModel(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set @@global.tiflash_enable_pipeline_model = 1`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1681 tiflash_enable_pipeline_model is deprecated and setting it will not have any effect."))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1681 tidb_enable_tiflash_pipeline_model is deprecated and setting it will not have any effect."))
 }
