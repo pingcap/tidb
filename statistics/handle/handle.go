@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/statistics/handle/index_usage"
 	"math"
 	"slices"
 	"strconv"
@@ -76,7 +77,7 @@ type Handle struct {
 	ddlEventCh chan *ddlUtil.Event
 
 	// idxUsageListHead contains all the index usage collectors required by session.
-	idxUsageListHead *SessionIndexUsageCollector
+	idxUsageListHead *index_usage.SessionIndexUsageCollector
 
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
@@ -181,7 +182,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool ses
 		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		listHead:                NewSessionStatsCollector(),
-		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		idxUsageListHead:        index_usage.NewSessionIndexUsageCollector(nil),
 		pool:                    pool,
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
