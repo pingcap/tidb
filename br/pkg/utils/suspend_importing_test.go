@@ -23,7 +23,7 @@ type ImportTargetStore struct {
 	Id                  uint64
 	LastSuccessDenyCall time.Time
 	SuspendImportFor    time.Duration
-	DeniedImport        bool
+	SuspendedImport     bool
 
 	ErrGen func() error
 }
@@ -56,7 +56,7 @@ func (s *ImportTargetStores) GetAllStores(ctx context.Context) ([]*metapb.Store,
 	return stores, nil
 }
 
-func (s *ImportTargetStores) GetDenyLightningClient(ctx context.Context, storeID uint64) (utils.DenyLightningClient, error) {
+func (s *ImportTargetStores) GetDenyLightningClient(ctx context.Context, storeID uint64) (utils.SuspendLightningClient, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -79,16 +79,16 @@ func (s *ImportTargetStore) SuspendImportRPC(ctx context.Context, in *import_sst
 		}
 	}
 
-	denied := s.DeniedImport
+	suspended := s.SuspendedImport
 	if in.ShouldSuspendImports {
-		s.DeniedImport = true
-		s.SuspendImportFor = time.Duration(in.DurationSecs) * time.Second
+		s.SuspendedImport = true
+		s.SuspendImportFor = time.Duration(in.DurationInSecs) * time.Second
 		s.LastSuccessDenyCall = time.Now()
 	} else {
-		s.DeniedImport = false
+		s.SuspendedImport = false
 	}
 	return &import_sstpb.SuspendImportRPCResponse{
-		AlreadyDeniedImports: denied,
+		AlreadySuspended: suspended,
 	}, nil
 }
 
@@ -101,7 +101,7 @@ func (s *ImportTargetStores) assertAllStoresDenied(t *testing.T) {
 			store.mu.Lock()
 			defer store.mu.Unlock()
 
-			require.True(t, store.DeniedImport, "ID = %d", store.Id)
+			require.True(t, store.SuspendedImport, "ID = %d", store.Id)
 			require.Less(t, time.Since(store.LastSuccessDenyCall), store.SuspendImportFor, "ID = %d", store.Id)
 		}()
 	}
@@ -118,7 +118,7 @@ func TestBasic(t *testing.T) {
 	req.NoError(err)
 	req.Error(deny.ConsistentWithPrev(res))
 	for id, inner := range ss.items {
-		req.True(inner.DeniedImport, "at %d", id)
+		req.True(inner.SuspendedImport, "at %d", id)
 		req.Equal(inner.SuspendImportFor, 10*time.Second, "at %d", id)
 	}
 

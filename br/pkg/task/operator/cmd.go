@@ -37,12 +37,12 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 	return mgr, nil
 }
 
-func cleanUpWith(f func(ctx context.Context)) {
-	cleanUpWithErr(func(ctx context.Context) error { f(ctx); return nil })
+func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWith(f func(ctx context.Context)) {
+	cx.cleanUpWithErr(func(ctx context.Context) error { f(ctx); return nil })
 }
 
-func cleanUpWithErr(f func(ctx context.Context) error) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
 	defer cancel()
 	return f(ctx)
 }
@@ -110,23 +110,31 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
-func goPauseImporting(ctx *AdaptEnvForSnapshotBackupContext) error {
-	denyLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", ctx.kvMgr)
-	if _, err := denyLightning.DenyAllStores(ctx, ctx.cfg.TTL); err != nil {
+func goPauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
+	denyLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
+	if _, err := denyLightning.DenyAllStores(cx, cx.cfg.TTL); err != nil {
 		return errors.Trace(err)
 	}
-	ctx.ReadyL("pause_lightning")
-	ctx.runGrp.Go(func() error {
-		err := denyLightning.Keeper(ctx, ctx.cfg.TTL)
+	cx.ReadyL("pause_lightning")
+	cx.runGrp.Go(func() error {
+		err := denyLightning.Keeper(cx, cx.cfg.TTL)
 		if errors.Cause(err) != context.Canceled {
 			log.Warn("keeper encounters error.", logutil.ShortError(err))
 		}
-		return cleanUpWithErr(func(ctx context.Context) error {
-			res, err := denyLightning.AllowAllStores(ctx)
-			if err != nil {
-				return err
+		return cx.cleanUpWithErr(func(ctx context.Context) error {
+			for {
+				if ctx.Err() != nil {
+					return errors.Annotate(ctx.Err(), "cleaning up timed out")
+				}
+				res, err := denyLightning.AllowAllStores(ctx)
+				if err != nil {
+					log.Warn("Failed to restore lightning, will retry.", logutil.ShortError(err))
+					// Retry for 10 times.
+					time.Sleep(cx.cfg.TTL / 10)
+					continue
+				}
+				return denyLightning.ConsistentWithPrev(res)
 			}
-			return denyLightning.ConsistentWithPrev(res)
 		})
 	})
 	return nil
@@ -162,7 +170,7 @@ func pauseGCKeeper(ctx *AdaptEnvForSnapshotBackupContext) error {
 func pauseSchedulerKeeper(ctx *AdaptEnvForSnapshotBackupContext) error {
 	undo, err := ctx.pdMgr.RemoveAllPDSchedulers(ctx)
 	if undo != nil {
-		defer cleanUpWith(func(ctx context.Context) {
+		defer ctx.cleanUpWith(func(ctx context.Context) {
 			if err := undo(ctx); err != nil {
 				log.Warn("failed to restore pd scheduler.", logutil.ShortError(err))
 			}

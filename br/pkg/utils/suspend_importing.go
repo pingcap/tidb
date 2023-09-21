@@ -21,7 +21,7 @@ func (mgr *StoreManager) GetAllStores(ctx context.Context) ([]*metapb.Store, err
 	return mgr.PDClient().GetAllStores(ctx)
 }
 
-func (mgr *StoreManager) GetDenyLightningClient(ctx context.Context, storeID uint64) (DenyLightningClient, error) {
+func (mgr *StoreManager) GetDenyLightningClient(ctx context.Context, storeID uint64) (SuspendLightningClient, error) {
 	var cli import_sstpb.ImportSSTClient
 	err := mgr.WithConn(ctx, storeID, func(cc *grpc.ClientConn) {
 		cli = import_sstpb.NewImportSSTClient(cc)
@@ -34,10 +34,10 @@ func (mgr *StoreManager) GetDenyLightningClient(ctx context.Context, storeID uin
 
 type SuspendImportingEnv interface {
 	GetAllStores(ctx context.Context) ([]*metapb.Store, error)
-	GetDenyLightningClient(ctx context.Context, storeID uint64) (DenyLightningClient, error)
+	GetDenyLightningClient(ctx context.Context, storeID uint64) (SuspendLightningClient, error)
 }
 
-type DenyLightningClient interface {
+type SuspendLightningClient interface {
 	// Temporarily disable ingest / download / write for data listeners don't support catching import data.
 	SuspendImportRPC(ctx context.Context, in *import_sstpb.SuspendImportRPCRequest, opts ...grpc.CallOption) (*import_sstpb.SuspendImportRPCResponse, error)
 }
