@@ -19,8 +19,8 @@ package expression
 import (
 	"cmp"
 
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/types"
 )
 
 func (b *builtinLTRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {

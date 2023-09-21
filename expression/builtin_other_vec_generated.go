@@ -20,9 +20,9 @@ import (
 	"cmp"
 
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/types"
 )
 
 func (b *builtinInIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {

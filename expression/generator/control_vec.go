@@ -49,8 +49,8 @@ package expression
 import (
 	"time"
 
-	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/types"
 )
 
 // NOTE: Control expressions optionally evaluate some branches depending on conditions, but vectorization executes all
