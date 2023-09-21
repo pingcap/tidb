@@ -3131,6 +3131,7 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		tableVer, err := t.CheckDDLTableVersion()
+		logutil.BgLogger().Warn("xxx------------------------------------------- init DDL tables", zap.Int("current ver", int(tableVer)), zap.Int("targetVer", int(targetVer)))
 		if err != nil || tableVer >= targetVer {
 			return errors.Trace(err)
 		}
@@ -3138,9 +3139,11 @@ func InitDDLJobTables(store kv.Storage, targetVer meta.DDLTableVersion) error {
 		if err != nil {
 			return err
 		}
+		logutil.BgLogger().Warn("xxx------------------------------------------- init DDL tables 111", zap.Int("current ver", int(tableVer)), zap.Int("targetVer", int(targetVer)))
 		if err = createAndSplitTables(store, t, dbID, targetTables); err != nil {
 			return err
 		}
+		logutil.BgLogger().Warn("xxx------------------------------------------- init DDL tables 222", zap.Int("current ver", int(tableVer)), zap.Int("targetVer", int(targetVer)))
 		return t.SetDDLTables(targetVer)
 	})
 }
@@ -3177,6 +3180,7 @@ func InitMDLTable(store kv.Storage) error {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ver, err := t.CheckDDLTableVersion()
+		logutil.BgLogger().Warn("xxx------------------------------------------- init MDL table", zap.Int("current ver", int(ver)))
 		if err != nil || ver >= meta.MDLTableVersion {
 			return errors.Trace(err)
 		}
@@ -3184,6 +3188,7 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return err
 		}
+		logutil.BgLogger().Warn("xxx------------------------------------------- init MDL table 000", zap.Int("current ver", int(ver)))
 		splitAndScatterTable(store, []int64{ddl.MDLTableID})
 		p := parser.New()
 		stmt, err := p.ParseOneStmt(mdlTable, "", "")
@@ -3194,6 +3199,7 @@ func InitMDLTable(store kv.Storage) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+		logutil.BgLogger().Warn("xxx------------------------------------------- init MDL table 111", zap.Int("current ver", int(ver)))
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = ddl.MDLTableID
 		tblInfo.UpdateTS = t.StartTS
@@ -3202,6 +3208,7 @@ func InitMDLTable(store kv.Storage) error {
 			return errors.Trace(err)
 		}
 
+		logutil.BgLogger().Warn("xxx------------------------------------------- init MDL table 222", zap.Int("current ver", int(ver)))
 		return t.SetDDLTables(meta.MDLTableVersion)
 	})
 }
