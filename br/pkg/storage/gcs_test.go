@@ -92,7 +92,7 @@ func TestGCS(t *testing.T) {
 		err = stg.WalkDir(ctx, opt, func(name string, size int64) error {
 			totalSize += size
 			// also test can use this path open file
-			_, err := stg.Open(ctx, name)
+			_, err := stg.Open(ctx, name, nil)
 			require.NoError(t, err)
 			return nil
 		})
@@ -182,7 +182,7 @@ func TestGCS(t *testing.T) {
 		require.True(t, ok)
 	}
 
-	efr, err := stg.Open(ctx, "key2")
+	efr, err := stg.Open(ctx, "key2", nil)
 	require.NoError(t, err)
 
 	p := make([]byte, 10)
