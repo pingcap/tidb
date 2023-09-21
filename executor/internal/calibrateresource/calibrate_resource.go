@@ -35,12 +35,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn/staleread"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	resourceControlClient "github.com/tikv/pd/client/resource_group/controller"
-	"go.uber.org/zap"
 )
 
 var (
@@ -259,12 +257,6 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 	tiflashQuota, err2 := e.getTiFlashQuota(ctx, exec, startTs, endTs)
 	if err1 != nil && err2 != nil {
 		return err1
-	}
-	if err1 != nil {
-		logutil.BgLogger().Error("get tidb/tikv ru quota failed", zap.Error(err1))
-	}
-	if err2 != nil {
-		logutil.BgLogger().Error("get tiflash ru quota failed", zap.Error(err2))
 	}
 	req.AppendUint64(0, uint64(tidbQuota+tiflashQuota))
 	return nil

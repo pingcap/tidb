@@ -652,7 +652,6 @@ func TestCalibrateResource(t *testing.T) {
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'").Check(testkit.Rows("5492"))
 
 	// tiflash
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/mockTiFlashServersForCalibrateResource", "return"))
 	mockData["resource_manager_resource_unit"] = [][]types.Datum{
 		types.MakeDatums(datetime("2023-09-19 19:50:39.322000"), 465919.8102127319),
 		types.MakeDatums(datetime("2023-09-19 19:51:39.322000"), 819764.9742611333),
@@ -767,7 +766,6 @@ func TestCalibrateResource(t *testing.T) {
 		types.MakeDatums(datetime("2023-09-19 20:00:39.502000"), "127.0.0.1:8234 ", 20.0),
 	}
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2023-09-19 19:50:39' DURATION '10m'").Check(testkit.Rows("729439"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/mockTiFlashServersForCalibrateResource"))
 
 	delete(mockData, "process_cpu_usage")
 	tk.MustQueryWithContext(ctx, "CALIBRATE RESOURCE START_TIME '2020-02-12 10:35:00' END_TIME '2020-02-12 10:45:00'").Check(testkit.Rows("729439"))
