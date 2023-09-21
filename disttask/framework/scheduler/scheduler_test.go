@@ -184,7 +184,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, updateSubtaskErr.Error())
 
-	// rollback failed
+	// 5. rollback failed
 	rollbackErr := errors.New("rollback error")
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil)
@@ -196,7 +196,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, rollbackErr.Error())
 
-	// rollback success
+	// 6. rollback success
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(&proto.Subtask{ID: 1}, nil)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(int64(1), proto.TaskStateCanceled, nil).Return(nil)
