@@ -440,11 +440,6 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	dataEngineCfg := &backend.EngineConfig{
 		TableInfo: ti.tableInfo,
-		Local: backend.LocalEngineConfig{
-			Compact:            true,
-			CompactConcurrency: 4,
-			CompactThreshold:   local.CompactionUpperThreshold,
-		},
 	}
 	mgr := backend.MakeEngineManager(ti.backend)
 	return mgr.OpenEngine(ctx, dataEngineCfg, ti.fullTableName(), engineID)
