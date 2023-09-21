@@ -996,7 +996,7 @@ const (
 	// TiDBGOGCTunerMaxValue is the max value of GOGC that GOGC tuner can change to.
 	TiDBGOGCTunerMaxValue = "tidb_gogc_tuner_max_value"
 	// TiDBGOGCTunerMinValue is the min value of GOGC that GOGC tuner can change to.
-	TIDBGOGCTunerMinValue = "tidb_gogc_tuner_min_value"
+	TiDBGOGCTunerMinValue = "tidb_gogc_tuner_min_value"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
 	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
