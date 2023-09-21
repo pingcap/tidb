@@ -6826,12 +6826,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		}
 	}
 
-	orderByCols := make([]*expression.Column, len(orderByItems))
-	for i, item := range orderByItems {
-		orderByCols[i] = item.Col
-	}
-
-	cmpDataType := expression.GetAccurateCmpType(orderByCols[0], bound.CalcFuncs[0])
+	cmpDataType := expression.GetAccurateCmpType(col, bound.CalcFuncs[0])
 	bound.updateCmpFuncsAndCmpDataType(cmpDataType)
 	return bound, nil
 }
