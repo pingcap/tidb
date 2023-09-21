@@ -886,6 +886,10 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	return realOffset, nil
 }
 
+func (r *s3ObjectReader) GetFileSize() (int64, error) {
+	return r.rangeInfo.Size, nil
+}
+
 // CreateUploader create multi upload request.
 func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
 	input := &s3.CreateMultipartUploadInput{

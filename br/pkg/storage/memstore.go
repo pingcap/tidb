@@ -159,9 +159,11 @@ func (s *MemStorage) Open(ctx context.Context, filePath string) (ExternalFileRea
 	if !ok {
 		return nil, errors.Errorf("cannot find the file: %s", filePath)
 	}
-	r := bytes.NewReader(theFile.GetData())
+	data := theFile.GetData()
+	r := bytes.NewReader(data)
 	return &memFileReader{
-		br: r,
+		br:   r,
+		size: int64(len(data)),
 	}, nil
 }
 
@@ -267,6 +269,7 @@ func (s *MemStorage) Rename(ctx context.Context, oldFileName, newFileName string
 // memFileReader is the struct to read data from an opend mem storage file
 type memFileReader struct {
 	br       *bytes.Reader
+	size     int64
 	isClosed atomic.Bool
 }
 
@@ -286,13 +289,17 @@ func (r *memFileReader) Close() error {
 	return nil
 }
 
-// Seeker seekds the offset inside the mem storage file
+// Seek seeks the offset inside the mem storage file
 // It implements the `io.Seeker` interface
 func (r *memFileReader) Seek(offset int64, whence int) (int64, error) {
 	if r.isClosed.Load() {
 		return 0, errors.New("reader closed")
 	}
 	return r.br.Seek(offset, whence)
+}
+
+func (r *memFileReader) GetFileSize() (int64, error) {
+	return r.size, nil
 }
 
 // memFileReader is the struct to write data into the opened mem storage file

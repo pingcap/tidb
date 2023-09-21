@@ -70,6 +70,10 @@ func (noopReader) Seek(offset int64, _ int) (int64, error) {
 	return offset, nil
 }
 
+func (noopReader) GetFileSize() (int64, error) {
+	return 0, nil
+}
+
 type noopWriter struct{}
 
 func (noopWriter) Write(_ context.Context, p []byte) (int, error) {

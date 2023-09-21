@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -31,17 +30,6 @@ import (
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
-
-// prettyFileNames removes the directory prefix except the last level from the
-// file names.
-func prettyFileNames(files []string) []string {
-	names := make([]string, 0, len(files))
-	for _, f := range files {
-		dir, file := filepath.Split(f)
-		names = append(names, fmt.Sprintf("%s/%s", filepath.Base(dir), file))
-	}
-	return names
-}
 
 // seekPropsOffsets seeks the statistic files to find the largest offset of
 // sorted data file offsets such that the key at offset is less than or equal to

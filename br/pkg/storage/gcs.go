@@ -433,3 +433,7 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 
 	return realOffset, nil
 }
+
+func (r *gcsObjectReader) GetFileSize() (int64, error) {
+	return r.totalSize, nil
+}

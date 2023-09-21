@@ -632,6 +632,10 @@ func (r *azblobObjectReader) Seek(offset int64, whence int) (int64, error) {
 	return r.pos, nil
 }
 
+func (r *azblobObjectReader) GetFileSize() (int64, error) {
+	return r.totalSize, nil
+}
+
 type nopCloser struct {
 	io.ReadSeeker
 }

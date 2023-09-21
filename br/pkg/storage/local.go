@@ -134,7 +134,23 @@ func (l *LocalStorage) URI() string {
 // Open a Reader by file path, path is a relative path to base path.
 func (l *LocalStorage) Open(_ context.Context, path string) (ExternalFileReader, error) {
 	//nolint: gosec
-	return os.Open(filepath.Join(l.base, path))
+	f, err := os.Open(filepath.Join(l.base, path))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return localFile{f}, nil
+}
+
+type localFile struct {
+	*os.File
+}
+
+func (f localFile) GetFileSize() (int64, error) {
+	stat, err := f.Stat()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return stat.Size(), nil
 }
 
 // Create implements ExternalStorage interface.

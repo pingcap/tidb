@@ -7,9 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/request"
-	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -90,6 +88,11 @@ type WriterOption struct {
 	Concurrency int
 }
 
+type ReaderOption struct {
+	StartOffset int64
+	EndOffset   int64 // exclusive
+}
+
 // ExternalStorage represents a kind of file system storage.
 type ExternalStorage interface {
 	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
@@ -100,7 +103,8 @@ type ExternalStorage interface {
 	FileExists(ctx context.Context, name string) (bool, error)
 	// DeleteFile delete the file in storage
 	DeleteFile(ctx context.Context, name string) error
-	// Open a Reader by file path. path is relative path to storage base path
+	// Open a Reader by file path. path is relative path to storage base path.
+	// Some implementation will use the given ctx as the inner context of the reader.
 	Open(ctx context.Context, path string) (ExternalFileReader, error)
 	// WalkDir traverse all the files in a dir.
 	//
@@ -122,6 +126,8 @@ type ExternalStorage interface {
 // ExternalFileReader represents the streaming external file reader.
 type ExternalFileReader interface {
 	io.ReadSeekCloser
+	// GetFileSize returns the file size.
+	GetFileSize() (int64, error)
 }
 
 // ExternalFileWriter represents the streaming external file writer.
@@ -226,24 +232,14 @@ func CloneDefaultHttpTransport() (*http.Transport, bool) {
 	return transport.Clone(), ok
 }
 
-// GetMaxOffset returns the max offset of the file.
-func GetMaxOffset(ctx context.Context, storage ExternalStorage, name string) (n int64, err error) {
-	s3storage, ok := storage.(*S3Storage)
-	if !ok {
-		return 0, errors.New("only support s3 storage")
-	}
-	output, err := s3storage.svc.HeadObjectWithContext(ctx, &s3.HeadObjectInput{
-		Bucket: aws.String(s3storage.options.Bucket),
-		Key:    aws.String(s3storage.options.Prefix + name),
-	})
-	if err != nil {
-		return 0, err
-	}
-	return *output.ContentLength, nil
-}
-
 // ReadDataInRange reads data from storage in range [start, start+len(p)).
-func ReadDataInRange(ctx context.Context, storage ExternalStorage, name string, start int64, p []byte) (n int, err error) {
+func ReadDataInRange(
+	ctx context.Context,
+	storage ExternalStorage,
+	name string,
+	start int64,
+	p []byte,
+) (n int, err error) {
 	s3storage, ok := storage.(*S3Storage)
 	if !ok {
 		return 0, errors.New("only support s3 storage")

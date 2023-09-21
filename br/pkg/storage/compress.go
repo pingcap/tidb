@@ -96,8 +96,11 @@ type compressReader struct {
 // reader on the given io.ReadSeekCloser. Note that the returned
 // io.ReadSeekCloser does not have the property that Seek(0, io.SeekCurrent)
 // equals total bytes Read() if the decompress reader is used.
-func InterceptDecompressReader(fileReader io.ReadSeekCloser, compressType CompressType,
-	cfg DecompressConfig) (io.ReadSeekCloser, error) {
+func InterceptDecompressReader(
+	fileReader ExternalFileReader,
+	compressType CompressType,
+	cfg DecompressConfig,
+) (ExternalFileReader, error) {
 	if compressType == NoCompression {
 		return fileReader, nil
 	}
@@ -112,7 +115,12 @@ func InterceptDecompressReader(fileReader io.ReadSeekCloser, compressType Compre
 	}, nil
 }
 
-func NewLimitedInterceptReader(fileReader ExternalFileReader, compressType CompressType, cfg DecompressConfig, n int64) (ExternalFileReader, error) {
+func NewLimitedInterceptReader(
+	fileReader ExternalFileReader,
+	compressType CompressType,
+	cfg DecompressConfig,
+	n int64,
+) (ExternalFileReader, error) {
 	newFileReader := fileReader
 	if n < 0 {
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
@@ -137,6 +145,10 @@ func (c *compressReader) Seek(offset int64, whence int) (int64, error) {
 func (c *compressReader) Close() error {
 	err := c.Closer.Close()
 	return err
+}
+
+func (c *compressReader) GetFileSize() (int64, error) {
+	return 0, errors.Annotatef(berrors.ErrStorageUnknown, "compressReader doesn't support GetFileSize now")
 }
 
 type flushStorageWriter struct {

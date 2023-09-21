@@ -75,18 +75,30 @@ func (r *singeFileReader) reload() error {
 	for i := 0; i < r.concurrency; i++ {
 		i := i
 		eg.Go(func() error {
-			startOffset := r.currentFileOffset + int64(i*r.readBufferSize)
-			endOffset := startOffset + int64(r.readBufferSize)
-			if endOffset > r.maxFileOffset {
-				endOffset = r.maxFileOffset
+			bufStart := i * r.readBufferSize
+			fileStart := r.currentFileOffset + int64(bufStart)
+			fileEnd := fileStart + int64(r.readBufferSize)
+			if fileEnd > r.maxFileOffset {
+				fileEnd = r.maxFileOffset
 			}
-			if startOffset > endOffset {
+			if fileStart > fileEnd {
 				return nil
 			}
 
-			_, err := storage.ReadDataInRange(r.ctx, r.storage, r.name, startOffset, r.buffer[i*r.readBufferSize:i*r.readBufferSize+int(endOffset-startOffset)])
+			_, err := storage.ReadDataInRange(
+				r.ctx,
+				r.storage,
+				r.name,
+				fileStart,
+				r.buffer[bufStart:bufStart+int(fileEnd-fileStart)],
+			)
 			if err != nil {
-				log.FromContext(r.ctx).Warn("read meet error", zap.Any("startOffset", startOffset), zap.Any("endOffset", endOffset), zap.Error(err))
+				log.FromContext(r.ctx).Warn(
+					"read meet error",
+					zap.Int64("fileStart", fileStart),
+					zap.Int64("fileEnd", fileEnd),
+					zap.Error(err),
+				)
 				return err
 			}
 			return nil
