@@ -376,8 +376,13 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
 	}
 
-	// TODO set action when out of quota happens.
 	// TODO some agg functions' spill is not supported, set it.
+	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
+		e.diskTracker = disk.NewTracker(e.ID(), -1)
+		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
+		e.listInDisk.GetDiskTracker().AttachTo(e.diskTracker)
+		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+	}
 	e.parallelExecValid = true
 }
 
