@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -37,8 +38,9 @@ import (
 
 const gcLastTSVarName = "tidb_stats_gc_last_ts"
 
-// GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
-// other tidb could know that table is deleted.
+// GCStats will garbage collect the useless stats' info.
+// For dropped tables, we will first update their version
+// so that other tidb could know that table is deleted.
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	ctx := context.Background()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
@@ -49,6 +51,8 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 	if now < offset {
 		return nil
 	}
+
+	// Get the last gc time.
 	gcVer := now - offset
 	lastGC, err := h.GetLastGCTimestamp(ctx)
 	if err != nil {
@@ -60,6 +64,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 		}
 		err = h.writeGCTimestampToKV(ctx, gcVer)
 	}()
+
 	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
 	if err != nil {
 		return errors.Trace(err)
@@ -75,11 +80,13 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 			}
 		}
 	}
+
 	if err := h.ClearOutdatedHistoryStats(); err != nil {
 		logutil.BgLogger().Warn("failed to gc outdated historical stats",
 			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
 			zap.Error(err))
 	}
+
 	return h.removeDeletedExtendedStats(gcVer)
 }
 
@@ -351,6 +358,9 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 			return err
 		}
 		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.analyze_options where table_id = %?", statsID); err != nil {
+			return err
+		}
+		if _, err = exec.ExecuteInternal(ctx, lockstats.DeleteLockSQL, statsID); err != nil {
 			return err
 		}
 	}

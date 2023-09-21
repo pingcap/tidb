@@ -423,6 +423,12 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 	if forIndex {
 		// Use array type for read the multi-valued index.
 		pc.Tp = int32(c.FieldType.ArrayType().GetType())
+		if c.FieldType.IsArray() {
+			// Use "binary" collation for read the multi-valued index. Most of the time, the `Collation` of this hidden
+			// column should already been set to "binary". However, in old versions, the collation is set to the default
+			// value. See https://github.com/pingcap/tidb/issues/46717
+			pc.Collation = int32(mysql.CollationNames["binary"])
+		}
 	} else {
 		pc.Tp = int32(c.GetType())
 	}

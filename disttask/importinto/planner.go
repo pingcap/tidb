@@ -30,7 +30,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/disttask/framework/planner"
-	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -72,7 +71,7 @@ func (p *LogicalPlan) ToTaskMeta() ([]byte, error) {
 func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(bs, &taskMeta); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	p.JobID = taskMeta.JobID
 	p.Plan = taskMeta.Plan
@@ -86,39 +85,7 @@ func (p *LogicalPlan) FromTaskMeta(bs []byte) error {
 func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.PhysicalPlan, error) {
 	physicalPlan := &planner.PhysicalPlan{}
 	inputLinks := make([]planner.LinkSpec, 0)
-	// physical plan only needs to be generated once.
-	// However, our current implementation requires generating it for each step.
-	// we only generate needed plans for the next step.
-	switch planCtx.CurrTaskStep {
-	case proto.StepInit:
-		importSpecs, err := generateImportSpecs(planCtx.Ctx, p)
-		if err != nil {
-			return nil, err
-		}
-
-		for i, importSpec := range importSpecs {
-			physicalPlan.AddProcessor(planner.ProcessorSpec{
-				ID:       i,
-				Pipeline: importSpec,
-				Output: planner.OutputSpec{
-					Links: []planner.LinkSpec{
-						{
-							ProcessorID: len(importSpecs),
-						},
-					},
-				},
-				Step: planCtx.NextTaskStep,
-			})
-			inputLinks = append(inputLinks, planner.LinkSpec{
-				ProcessorID: i,
-			})
-		}
-	case StepEncodeAndSort:
-		specs, err := generateWriteIngestSpecs(planCtx, p)
-		if err != nil {
-			return nil, err
-		}
-
+	addSpecs := func(specs []planner.PipelineSpec) {
 		for i, spec := range specs {
 			physicalPlan.AddProcessor(planner.ProcessorSpec{
 				ID:       i,
@@ -136,7 +103,33 @@ func (p *LogicalPlan) ToPhysicalPlan(planCtx planner.PlanCtx) (*planner.Physical
 				ProcessorID: i,
 			})
 		}
-	case StepImport, StepWriteAndIngest:
+	}
+	// physical plan only needs to be generated once.
+	// However, our current implementation requires generating it for each step.
+	// we only generate needed plans for the next step.
+	switch planCtx.NextTaskStep {
+	case StepImport, StepEncodeAndSort:
+		specs, err := generateImportSpecs(planCtx.Ctx, p)
+		if err != nil {
+			return nil, err
+		}
+
+		addSpecs(specs)
+	case StepMergeSort:
+		specs, err := generateMergeSortSpecs(planCtx)
+		if err != nil {
+			return nil, err
+		}
+
+		addSpecs(specs)
+	case StepWriteAndIngest:
+		specs, err := generateWriteIngestSpecs(planCtx, p)
+		if err != nil {
+			return nil, err
+		}
+
+		addSpecs(specs)
+	case StepPostProcess:
 		physicalPlan.AddProcessor(planner.ProcessorSpec{
 			ID: len(inputLinks),
 			Input: planner.InputSpec{
@@ -183,6 +176,16 @@ func (s *WriteIngestSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
 	return json.Marshal(s.WriteIngestStepMeta)
 }
 
+// MergeSortSpec is the specification of a merge-sort pipeline.
+type MergeSortSpec struct {
+	*MergeSortStepMeta
+}
+
+// ToSubtaskMeta converts the merge-sort spec to subtask meta.
+func (s *MergeSortSpec) ToSubtaskMeta(planner.PlanCtx) ([]byte, error) {
+	return json.Marshal(s.MergeSortStepMeta)
+}
+
 // PostProcessSpec is the specification of a post process pipeline.
 type PostProcessSpec struct {
 	// for checksum request
@@ -192,11 +195,12 @@ type PostProcessSpec struct {
 
 // ToSubtaskMeta converts the post process spec to subtask meta.
 func (*PostProcessSpec) ToSubtaskMeta(planCtx planner.PlanCtx) ([]byte, error) {
+	encodeStep := getStepOfEncode(planCtx.GlobalSort)
 	subtaskMetas := make([]*ImportStepMeta, 0, len(planCtx.PreviousSubtaskMetas))
-	for _, bs := range planCtx.PreviousSubtaskMetas {
+	for _, bs := range planCtx.PreviousSubtaskMetas[encodeStep] {
 		var subtaskMeta ImportStepMeta
 		if err := json.Unmarshal(bs, &subtaskMeta); err != nil {
-			return nil, err
+			return nil, errors.Trace(err)
 		}
 		subtaskMetas = append(subtaskMetas, &subtaskMeta)
 	}
@@ -245,7 +249,7 @@ func buildController(plan *importer.Plan, stmt string) (*importer.LoadDataContro
 	return controller, nil
 }
 
-func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]*ImportSpec, error) {
+func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	var chunkMap map[int32][]Chunk
 	if len(p.ChunkMap) > 0 {
 		chunkMap = p.ChunkMap
@@ -264,7 +268,7 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]*ImportSpec, er
 		}
 		chunkMap = toChunkMap(engineCheckpoints)
 	}
-	importSpecs := make([]*ImportSpec, 0, len(chunkMap))
+	importSpecs := make([]planner.PipelineSpec, 0, len(chunkMap))
 	for id := range chunkMap {
 		if id == common.IndexEngineID {
 			continue
@@ -279,7 +283,48 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]*ImportSpec, er
 	return importSpecs, nil
 }
 
-func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*WriteIngestSpec, error) {
+func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
+	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
+		in := val.(string)
+		if in == kvGroup || in == "*" {
+			failpoint.Return(false)
+		}
+	})
+	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+}
+
+func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
+	step := external.MergeSortFileCountStep
+	result := make([]planner.PipelineSpec, 0, 16)
+	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[StepEncodeAndSort])
+	if err != nil {
+		return nil, err
+	}
+	for kvGroup, kvMeta := range kvMetas {
+		length := len(kvMeta.DataFiles)
+		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+			logutil.Logger(planCtx.Ctx).Info("skip merge sort for kv group",
+				zap.Int64("task-id", planCtx.TaskID),
+				zap.String("kv-group", kvGroup))
+			continue
+		}
+		for start := 0; start < length; start += step {
+			end := start + step
+			if end > length {
+				end = length
+			}
+			result = append(result, &MergeSortSpec{
+				MergeSortStepMeta: &MergeSortStepMeta{
+					KVGroup:   kvGroup,
+					DataFiles: kvMeta.DataFiles[start:end],
+				},
+			})
+		}
+	}
+	return result, nil
+}
+
+func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planner.PipelineSpec, error) {
 	ctx := planCtx.Ctx
 	controller, err2 := buildControllerForPlan(p)
 	if err2 != nil {
@@ -291,25 +336,25 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*Write
 	// kvMetas contains data kv meta and all index kv metas.
 	// each kvMeta will be split into multiple range group individually,
 	// i.e. data and index kv will NOT be in the same subtask.
-	kvMetas, err := getSortedKVMetas(planCtx.PreviousSubtaskMetas)
+	kvMetas, err := getSortedKVMetasForIngest(planCtx)
 	if err != nil {
 		return nil, err
 	}
 	failpoint.Inject("mockWriteIngestSpecs", func() {
-		failpoint.Return([]*WriteIngestSpec{
-			{
+		failpoint.Return([]planner.PipelineSpec{
+			&WriteIngestSpec{
 				WriteIngestStepMeta: &WriteIngestStepMeta{
 					KVGroup: dataKVGroup,
 				},
 			},
-			{
+			&WriteIngestSpec{
 				WriteIngestStepMeta: &WriteIngestStepMeta{
 					KVGroup: "1",
 				},
 			},
 		}, nil)
 	})
-	specs := make([]*WriteIngestSpec, 0, 16)
+	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
 		if err1 != nil {
@@ -371,7 +416,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]*Write
 	return specs, nil
 }
 
-func getSortedKVMetas(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
+func getSortedKVMetasOfEncodeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
 	dataKVMeta := &external.SortedKVMeta{}
 	indexKVMetas := make(map[int64]*external.SortedKVMeta)
 	for _, subTaskMeta := range subTaskMetas {
@@ -395,6 +440,49 @@ func getSortedKVMetas(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta,
 		res[strconv.Itoa(int(indexID))] = item
 	}
 	return res, nil
+}
+
+func getSortedKVMetasOfMergeStep(subTaskMetas [][]byte) (map[string]*external.SortedKVMeta, error) {
+	result := make(map[string]*external.SortedKVMeta, len(subTaskMetas))
+	for _, subTaskMeta := range subTaskMetas {
+		var stepMeta MergeSortStepMeta
+		err := json.Unmarshal(subTaskMeta, &stepMeta)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		meta, ok := result[stepMeta.KVGroup]
+		if !ok {
+			result[stepMeta.KVGroup] = &stepMeta.SortedKVMeta
+			continue
+		}
+		meta.Merge(&stepMeta.SortedKVMeta)
+	}
+	return result, nil
+}
+
+func getSortedKVMetasForIngest(planCtx planner.PlanCtx) (map[string]*external.SortedKVMeta, error) {
+	kvMetasOfMergeSort, err := getSortedKVMetasOfMergeStep(planCtx.PreviousSubtaskMetas[StepMergeSort])
+	if err != nil {
+		return nil, err
+	}
+	kvMetasOfEncodeStep, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[StepEncodeAndSort])
+	if err != nil {
+		return nil, err
+	}
+	for kvGroup, kvMeta := range kvMetasOfEncodeStep {
+		// only part of kv files are merge sorted. we need to merge kv metas that
+		// are not merged into the kvMetasOfMergeSort.
+		if skipMergeSort(kvGroup, kvMeta.MultipleFilesStats) {
+			if _, ok := kvMetasOfMergeSort[kvGroup]; ok {
+				// this should not happen, because we only generate merge sort
+				// subtasks for those kv groups with MaxOverlappingTotal > MergeSortOverlapThreshold
+				logutil.Logger(planCtx.Ctx).Error("kv group of encode step conflict with merge sort step")
+				return nil, errors.New("kv group of encode step conflict with merge sort step")
+			}
+			kvMetasOfMergeSort[kvGroup] = kvMeta
+		}
+	}
+	return kvMetasOfMergeSort, nil
 }
 
 func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta *external.SortedKVMeta) (

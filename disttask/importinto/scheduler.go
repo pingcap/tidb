@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -39,7 +41,9 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // importStepExecutor is a executor for import step.
@@ -108,14 +112,18 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	logger := s.logger.With(zap.Int64("subtask-id", subtask.ID))
+	task := log.BeginTask(logger, "run subtask")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
 	bs := subtask.Meta
 	var subtaskMeta ImportStepMeta
-	err := json.Unmarshal(bs, &subtaskMeta)
+	err = json.Unmarshal(bs, &subtaskMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
-	s.logger.Info("split and run subtask", zap.Int32("engine-id", subtaskMeta.ID))
 
 	var dataEngine, indexEngine *backend.OpenedEngine
 	if s.tableImporter.IsLocalSort() {
@@ -176,7 +184,7 @@ outer:
 func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	s.logger.Info("on subtask finished", zap.Int32("engine-id", subtaskMeta.ID))
 
@@ -232,7 +240,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
 	return nil
@@ -251,8 +259,85 @@ func (s *importStepExecutor) Rollback(context.Context) error {
 	return nil
 }
 
-type writeAndIngestStepExecutor struct {
+type mergeSortStepExecutor struct {
 	scheduler.EmptySubtaskExecutor
+	taskID     int64
+	taskMeta   *TaskMeta
+	logger     *zap.Logger
+	controller *importer.LoadDataController
+	// subtask of a task is run in serial now, so we don't need lock here.
+	// change to SyncMap when we support parallel subtask in the future.
+	subtaskSortedKVMeta *external.SortedKVMeta
+}
+
+var _ execute.SubtaskExecutor = &mergeSortStepExecutor{}
+
+func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
+	controller, err := buildController(&m.taskMeta.Plan, m.taskMeta.Stmt)
+	if err != nil {
+		return err
+	}
+	if err = controller.InitDataStore(ctx); err != nil {
+		return err
+	}
+	m.controller = controller
+	return nil
+}
+
+func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	logger := m.logger.With(zap.Int64("subtask-id", subtask.ID))
+	task := log.BeginTask(logger, "run subtask")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
+
+	sm := &MergeSortStepMeta{}
+	err = json.Unmarshal(subtask.Meta, sm)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	var mu sync.Mutex
+	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
+	onClose := func(summary *external.WriterSummary) {
+		mu.Lock()
+		defer mu.Unlock()
+		m.subtaskSortedKVMeta.MergeSummary(summary)
+	}
+
+	writerID := uuid.New().String()
+	prefix := subtaskPrefix(m.taskID, subtask.ID)
+
+	return external.MergeOverlappingFiles(
+		ctx,
+		sm.DataFiles,
+		m.controller.GlobalSortStore,
+		64*1024,
+		prefix,
+		writerID,
+		256*size.MB,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose)
+}
+
+func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+	var subtaskMeta MergeSortStepMeta
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	m.subtaskSortedKVMeta = nil
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	subtask.Meta = newMeta
+	return nil
+}
+
+type writeAndIngestStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
 	logger        *zap.Logger
@@ -270,14 +355,20 @@ func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
-	e.logger.Info("write and ingest kv", zap.Int64("subtask-id", subtask.ID))
-
+func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
 	sm := &WriteIngestStepMeta{}
-	err := json.Unmarshal(subtask.Meta, sm)
+	err = json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	logger := e.logger.With(zap.Int64("subtask-id", subtask.ID),
+		zap.String("kv-group", sm.KVGroup))
+	task := log.BeginTask(logger, "run subtask")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
+
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
 	localBackend := e.tableImporter.Backend()
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
@@ -301,7 +392,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if subtaskMeta.KVGroup != dataKVGroup {
 		return nil
@@ -315,7 +406,7 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	subtask.Meta = newMeta
 	return nil
@@ -340,15 +431,20 @@ type postStepExecutor struct {
 
 var _ execute.SubtaskExecutor = &postStepExecutor{}
 
-func (p *postStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (p *postStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) (err error) {
+	logger := p.logger.With(zap.Int64("subtask-id", subtask.ID))
+	task := log.BeginTask(logger, "run subtask")
+	defer func() {
+		task.End(zapcore.ErrorLevel, err)
+	}()
 	stepMeta := PostProcessStepMeta{}
-	if err := json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
-		return err
+	if err = json.Unmarshal(subtask.Meta, &stepMeta); err != nil {
+		return errors.Trace(err)
 	}
 	failpoint.Inject("waitBeforePostProcess", func() {
 		time.Sleep(5 * time.Second)
 	})
-	return postProcess(ctx, p.taskMeta, &stepMeta, p.logger)
+	return postProcess(ctx, p.taskMeta, &stepMeta, logger)
 }
 
 type importScheduler struct {
@@ -373,7 +469,7 @@ func (s *importScheduler) Run(ctx context.Context, task *proto.Task) error {
 func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	logger := logutil.BgLogger().With(
 		zap.String("type", proto.ImportInto),
@@ -385,6 +481,12 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 	switch task.Step {
 	case StepImport, StepEncodeAndSort:
 		return &importStepExecutor{
+			taskID:   task.ID,
+			taskMeta: &taskMeta,
+			logger:   logger,
+		}, nil
+	case StepMergeSort:
+		return &mergeSortStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
