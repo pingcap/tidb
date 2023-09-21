@@ -208,8 +208,12 @@ func (i *mergeIter[T, R]) next() bool {
 		checkPeriod := 1000
 		// check hot point every checkPeriod times
 		if i.checkHotspotCnt == checkPeriod {
-			for idx, cnt := range i.hotspotMap {
-				(*i.readers[idx]).setReadMode(cnt > (checkPeriod / 2))
+			for idx, r := range i.readers {
+				if r == nil {
+					continue
+				}
+				rd := *i.readers[i.lastReaderIdx]
+				rd.setReadMode(i.hotspotMap[idx] > (checkPeriod / 2))
 			}
 			i.checkHotspotCnt = 0
 			i.hotspotMap = make(map[int]int)
