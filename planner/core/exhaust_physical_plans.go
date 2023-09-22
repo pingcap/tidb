@@ -454,7 +454,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 		}
 	}
 
-	forced = forceLeftToBuild || forceRightToBuild
+	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
 	if !forced && p.shouldSkipHashJoin() {
 		return nil, false
 	} else if forced && p.shouldSkipHashJoin() {
