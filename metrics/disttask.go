@@ -67,6 +67,7 @@ func UpdateMetricsForAddTask(task *proto.Task) {
 }
 
 func UpdateMetricsForDisptchTask(task *proto.Task) {
+	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Set(float64(300))
 	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Dec()
 	DistTaskStarttimeGauge.DeleteLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID))
 	DistTaskStarttimeGauge.WithLabelValues(task.Type, DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()

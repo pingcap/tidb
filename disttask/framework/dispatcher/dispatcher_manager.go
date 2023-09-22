@@ -166,7 +166,6 @@ func (dm *Manager) dispatchTaskLoop() {
 			if len(tasks) == 0 {
 				break
 			}
-
 			for _, task := range tasks {
 				// This global task is running, so no need to reprocess it.
 				if dm.isRunningTask(task.ID) {
@@ -183,21 +182,20 @@ func (dm *Manager) dispatchTaskLoop() {
 					dm.failTask(task, errors.New("unknown task type"))
 					continue
 				}
-
 				// the task is not in runningTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
+					metrics.UpdateMetricsForDisptchTask(task)
 					dm.startDispatcher(task)
 					cnt++
-					metrics.UpdateMetricsForDisptchTask(task)
 					continue
 				}
 				if dm.checkConcurrencyOverflow(cnt) {
 					break
 				}
+				metrics.UpdateMetricsForDisptchTask(task)
 				dm.startDispatcher(task)
 				cnt++
-				metrics.UpdateMetricsForDisptchTask(task)
 			}
 		}
 	}
