@@ -1,60 +1,64 @@
-# Proposal: MySQL compatible `AUTO_INCREMENT`
+# Proposal: MySQL-Compatible `AUTO_INCREMENT`
 
-- Author(s): [tiancaiamao](https://github.com/tiancaiamao)
-- Discussion PR: https://github.com/pingcap/tidb/pull/38449
-- Tracking Issue: https://github.com/pingcap/tidb/issues/38442
+- **Author(s)**: [tiancaiamao](https://github.com/tiancaiamao)
+- **Discussion PR**: [Link to PR](https://github.com/pingcap/tidb/pull/38449)
+- **Tracking Issue**: [Link to Issue](https://github.com/pingcap/tidb/issues/38442)
 
 ## Abstract
 
-This proposes an implementation of making the `AUTO_INCREMENT` behaviour compatible with MySQL.
+This proposal outlines the implementation of a feature to align the behavior of `AUTO_INCREMENT` in TiDB with MySQL, ensuring compatibility.
 
 ## Background
 
-MySQL deploys on a single-machine, and it provides the [`AUTO_INCREMENT`](https://dev.mysql.com/doc/refman/8.0/en/example-auto-increment.html) table attribute to generate a unique identity for new rows.
+MySQL operates as a single-machine database(for the most cases) and offers the [`AUTO_INCREMENT`](https://dev.mysql.com/doc/refman/8.0/en/example-auto-increment.html) table attribute to generate unique identifiers for new rows.
 
-In TiDB, we support generating `AUTO_INCREMENT` IDs that are **unique**, **monotone increasing**, but the IDs may **not be consecutive**.
+In TiDB, we support the generation of `AUTO_INCREMENT` IDs that are **unique** and **monotonically increasing**, but they may **not be consecutive**.
 
-The current behaviour in TiDB is not fully-compatible with MySQL.
+The current behavior in TiDB does not fully align with MySQL.
 
-TiDB is a distributed database, each TiDB instance caches a batch of IDs for local allocating. When it exhaust its local cached IDs, it ask for another batch. For example, TiDB instance A may get ID range [0-20000), and instance B takes away range [20000, 40000), the next batch for TiDB instance A could be [40000, 60000), that's why the IDs are not **consecutive**. The ID sequence from instance A might be ...19998, 19999, [a hole here], 40000, 40001...
+TiDB is a distributed database, where each TiDB instance caches a batch of IDs for local allocation. When it exhausts its local cached IDs, it requests another batch. For example, TiDB instance A may be allocated the ID range [0-20000), and instance B takes the range [20000, 40000). Consequently, the next batch for TiDB instance A could be [40000, 60000), resulting in non-consecutive IDs. The ID sequence from instance A might appear as ...19998, 19999, [a gap here], 40000, 40001...
 
 ## Proposal
 
-This proposes that we introduce a centralized auto ID allocating service, the `AUTO_INCREMENT` ID is allocated from the centralized service and there is no caching mechanism on the TiDB layer, so the behaviour can be MySQL compatible.
+This proposal suggests the introduction of a centralized auto ID allocation service. `AUTO_INCREMENT` IDs will be allocated from this centralized service without any caching mechanism at the TiDB layer. This change ensures compatibility with MySQL's behavior.
 
 ## Syntax
 
-The old implementation can still be kept, its performance is better and might meet some user's needs.
+The old implementation can still be retained as it offers better performance and may continue to meet the needs of some users.
 
-There are several ways to handle the compatibility.
+There are several ways to handle compatibility:
 
-The first one is, we can rename the syntax for the old implementation, such as `AUTO_INCREMENT_FAST` or `AUTO_INCREMENT_OLD` or `DEFICIT_AUTO_INCREMENT`. The upside of this approach is that we can make the default syntax MySQL-compatible. The downside is that the new `AUTO_INCREMENT` behaviour is still a compatibility-breaker between old and new versioned TiDB.
+1. **Option 1**: We can rename the syntax for the old implementation, for instance, using names like `AUTO_INCREMENT_FAST`, `AUTO_INCREMENT_OLD`, or `DEFICIT_AUTO_INCREMENT`. The advantage of this approach is that we can make the default syntax MySQL-compatible. However, the downside is that the new `AUTO_INCREMENT` behavior remains a compatibility breaker between old and new versions of TiDB.
 
-The second one is, we can keep the old things unchanged, and introduce a new syntax. The benefit of this approach is that our users will never get into trouble when they upgrade TiDB.
+2. **Option 2**: Alternatively, we can keep the old implementation unchanged and introduce a new syntax. The benefit of this approach is that our users will not encounter issues when upgrading TiDB.
 
-And another way, we can reuse the `AUTO_ID_CACHE 1` table option for it:
+3. **Option 3**: Another viable option is to reuse the `AUTO_ID_CACHE 1` table option, like this:
 
-```
-CREATE TABLE t (id int key AUTO_INCREMENT) AUTO_ID_CACHE 1;
-```
+   ```sql
+   CREATE TABLE t (id int key AUTO_INCREMENT) AUTO_ID_CACHE 1;
+   ```
 
-TiDB extends the syntax to control the AUTO ID CACHE size use the `AUTO_ID_CACHE` table option. `AUTO_ID_CACHE 1` is equivalent to no caching. Now it's of the same semantic, just that the implementation is changed. I think the this approach is the best.
+TiDB extends the syntax to control the AUTO ID CACHE size using the AUTO_ID_CACHE table option. Setting AUTO_ID_CACHE 1 is equivalent to no caching. This approach maintains the same semantics while changing the implementation. We believe this is the most optimal approach.
 
 ## Implementation
 
-### Centralized auto ID allocating service
+### Centralized Auto ID Allocation Service
 
-This is the core part of the implementation. There will be a single-point process, responsible for allocating auto IDs.
+The core of this implementation revolves around the introduction of a centralized auto ID allocation service. This service will consist of a single-point process responsible for the allocation of auto IDs.
 
-(To be exact, the allocating service will be embeded into the TiDB process currently for simplicity, maybe in the future it can be moved to a standalone process. But wherever it is, the idea is the same)
+(To be precise, the allocation service will be embedded within the TiDB process initially, possibly transitioning to a standalone process in the future. However, the fundamental concept remains the same.)
 
-For every `AUTO_INCREMENT` ID allocation, TiDB send a request to this process. The process will `+1` internally, so the ID is **unique**, **monotone increasing**, and **consecutive**.
+For every `AUTO_INCREMENT` ID allocation, TiDB will send a request to this central process. Internally, the process will increment the ID by one, ensuring that the generated IDs are **unique**, **monotonically increasing**, and **consecutive**.
 
-Here `+1` is conceptual, one request can allocate more than 1 IDs. Multiple auto_increment IDs within one statement correspond to a `+n` operation. For example, `INSERT INTO t VALUES (null),(null),(null)` requests 3 new values within one request.
+### Handling Multiple Auto_INCREMENT IDs and Communication Protocol
 
-gRPC is used for the communication protocol. This part is relatively easy so I would not go to much details in this document.
+In this implementation, the `+1` operation is conceptual, and a single request can allocate more than one ID. Multiple `AUTO_INCREMENT` IDs within one statement correspond to a `+n` operation. For instance, when executing a statement like `INSERT INTO t VALUES (null),(null),(null)`, it requests the allocation of 3 new values within one request.
 
-```
+For communication between components, gRPC is employed as the communication protocol. While this aspect is relatively straightforward, we won't delve into intricate details in this document.
+
+Below is a brief overview of the gRPC message structures used:
+
+```protobuf
 message AutoIDRequest {
     int64 dbID = 1;
     int64 tblID = 2;
@@ -73,46 +77,50 @@ service AutoIDAlloc {
 }
 ```
 
-`increment` / `offset` have no special meaning here, they are just used to make the behaviour compatible with MySQL after setting  `@@auto_increment_increment` / `@@auto_increment_offset`. I personally do not think people will use two TiDB cluster and set up master-master (bidirectional) replication via this. See also https://github.com/pingcap/tidb/issues/14245
+The fields increment and offset may seem to have no special significance here, but they are used to ensure compatibility with MySQL's behavior after setting @@auto_increment_increment and @@auto_increment_offset. It is worth noting that configuring two TiDB clusters for bidirectional master-master replication via this mechanism is not a common use case. Additional details can be found at [#14245](https://github.com/pingcap/tidb/issues/14245).
 
-### HA of the service
+### High Availability (HA) of the Service
 
-To overcome the SPOF(single-point-of-failure) issue, the centralized auto ID allocating service should have at least a primary and a backup process. [Etcd](https://etcd.io/) is used for that.
+To address the issue of Single Point of Failure (SPOF), the centralized auto ID allocation service should have at least a primary and a backup process, and [etcd](https://etcd.io/) is used for managing this HA setup.
 
-Both the primary and backup regist themself in the etcd, the elected primay process serves the workload. When it's gone (crash, quit or anything), the backup take up the role and provide the service. We can just use the pd embedded etcd, this is quite convenient.
+Both the primary and backup processes register themselves in etcd. The elected primary process serves the workload. In the event of a primary process failure (due to a crash, termination, or other reasons), the backup process takes over and continues providing the service. We can conveniently utilize the embedded etcd within TiDB, specifically the PD embedded etcd.
 
-When the switch happen, the current max allocated ID information is required so as to guarantee the uniqueness. The new primary process allocate IDs begin from the max allocated ID plus one.
+During a switch from the primary to the backup process, it is essential to preserve the information about the current maximum allocated ID. This ensures the uniqueness of IDs. The new primary process allocates IDs starting from the maximum allocated ID plus one.
 
-We can persist the max allocated ID every time, but that's costly. Another choice is persisting it periodically, it's safe to allocate IDs in range `[base, max persisted)`. When the primary process crash abnormally, the backup process gets the max persisted ID as its base. Etcd is also used as the storage for the max persisted ID. This optimization could still make the ID not be consecutive, but it's not so common, so this is not a big issue.
+While one approach could be to persist the maximum allocated ID every time, this can be resource-intensive. An alternative is to periodically persist the maximum allocated ID, and it is safe to allocate IDs in the range `[base, max persisted)`. In cases of abnormal crashes of the primary process, the backup process retrieves the max persisted ID as its base. This optimization may still result in non-consecutive IDs, but such occurrences are infrequent and considered acceptable.
 
-NOTE: MySQL 8.0 can survive crash recovery: https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
+**Note**: MySQL 8.0 has [introduced changes to auto-increment handling](https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html), making the current maximum auto-increment counter value persistent across server restarts, thus ensuring similar crash recovery behavior:
 
 > In MySQL 8.0, this behavior is changed. The current maximum auto-increment counter value is written to the redo log each time it changes and saved to the data dictionary on each checkpoint. These changes make the current maximum auto-increment counter value persistent across server restarts.
 
-### Client side
+### Client-Side Implementation
 
-In TiDB side, the client should support service discovering, so as to always access the primary process and handle primary-backup switch automatically.
+On the TiDB client side, support for service discovery is essential to ensure that clients always access the primary process and handle primary-backup switches automatically.
 
-This is done with the help of etcd. All the auto ID service processes regist their address in etcd, so the client can find the information and connect to the primary.
+Service discovery is facilitated through etcd. All auto ID service processes register their addresses in etcd, allowing clients to retrieve this information and connect to the primary process seamlessly.
 
-## Performance evaluation
+## Performance Evaluation
 
-A network round-trip is involved, so the performance is not as good as the old way. But it should still be acceptable. Within the same data center, the latency is below 500 microsecond on average.
+The introduction of a network round-trip in the auto ID allocation process does impact performance, although it remains acceptable. Within the same data center, the average latency is below 500 microseconds.
 
-Some preliminary test shows that to get getting 20-40K QPS, it cost about 100-200% CPU on my local machine, this should be enough for the basic usage.
-`AUTO_INCREMENT` is not of high performance, and is not scalable compare to TiDB alternatives like `AUTO_RANDOM` and `SHARD_ROW_ID`.
+Preliminary testing indicates that to achieve a throughput of 20-40K QPS, it consumes approximately 100-200% CPU utilization on a local machine. This level of performance should be sufficient for typical usage scenarios.
 
-| worker count | qps    | avg latency (ms) | server cpu |
-| -----        | --     | ---              | ---        |
-| 1            | 13484  | 0.074192         | 115        |
-| 2            | 21525  | 0.085926         | 135        |
-| 4            | 33984  | 0.11579          | 160        |
-| 8            | 54488  | 0.133927         | 203        |
-| 16           | 77359  | 0.207223         | 248        |
-| 32           | 100893 | 0.332895         | 310        |
-| 64           | 118471 | 0.470853         | 357        |
-| 128          | 125215 | 0.977818         | 368        |
-| 256          | 125901 | 2.335869         | 379        |
+## Performance Comparison
 
-![image](https://user-images.githubusercontent.com/1420062/195541033-8ec9405e-a309-43c8-baae-392cce1c4df2.png)
+`AUTO_INCREMENT` demonstrates lower performance and scalability compared to TiDB alternatives such as `AUTO_RANDOM` and `SHARD_ROW_ID`. The following table provides performance metrics for different worker counts:
+
+| Worker Count | QPS    | Average Latency (ms) | Server CPU Usage (%) |
+| ------------ | ------ | --------------------- | -------------------- |
+| 1            | 13,484 | 0.074192              | 115                  |
+| 2            | 21,525 | 0.085926              | 135                  |
+| 4            | 33,984 | 0.11579               | 160                  |
+| 8            | 54,488 | 0.133927              | 203                  |
+| 16           | 77,359 | 0.207223              | 248                  |
+| 32           | 100,893| 0.332895              | 310                  |
+| 64           | 118,471| 0.470853              | 357                  |
+| 128          | 125,215| 0.977818              | 368                  |
+| 256          | 125,901| 2.335869              | 379                  |
+
+![Performance Chart](https://user-images.githubusercontent.com/1420062/195541033-8ec9405e-a309-43c8-baae-392cce1c4df2.png)
+
 
