@@ -1,0 +1,276 @@
+drop table if exists cache_point;
+create table cache_point (id int primary key auto_increment, u int unique, v int);
+insert into cache_point values(1, 11, 101);
+insert into cache_point values(2, 12, 102);
+alter table cache_point cache;
+select * from cache_point where id=1;
+id	u	v
+1	11	101
+select * from cache_point where u=11;
+id	u	v
+1	11	101
+select * from cache_point where id=2;
+id	u	v
+2	12	102
+select * from cache_point where u=12;
+id	u	v
+2	12	102
+select * from cache_point where u > 10 and u < 12;
+id	u	v
+1	11	101
+begin;
+select * from cache_point where id=1;
+id	u	v
+1	11	101
+select * from cache_point where u=11;
+id	u	v
+1	11	101
+select * from cache_point where id=2;
+id	u	v
+2	12	102
+select * from cache_point where u=12;
+id	u	v
+2	12	102
+insert into cache_point values(3, 13, 103);
+select * from cache_point where id=3;
+id	u	v
+3	13	103
+select * from cache_point where u=13;
+id	u	v
+3	13	103
+select * from cache_point where u > 12 and u < 14;
+id	u	v
+3	13	103
+update cache_point set v=999 where id=2;
+select * from cache_point where id=2;
+id	u	v
+2	12	999
+commit;
+select * from cache_point where id=3;
+id	u	v
+3	13	103
+select * from cache_point where u=13;
+id	u	v
+3	13	103
+select * from cache_point where id=2;
+id	u	v
+2	12	999
+alter table cache_point nocache;
+drop table cache_point;
+drop table if exists bp_cache_tmp1;
+create  table bp_cache_tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into bp_cache_tmp1 values(1, 11, 101);
+insert into bp_cache_tmp1 values(2, 12, 102);
+insert into bp_cache_tmp1 values(3, 13, 103);
+insert into bp_cache_tmp1 values(4, 14, 104);
+alter table bp_cache_tmp1 cache;
+select * from bp_cache_tmp1 where id in (1, 3);
+id	u	v
+1	11	101
+3	13	103
+select * from bp_cache_tmp1 where u in (11, 13);
+id	u	v
+1	11	101
+3	13	103
+select * from bp_cache_tmp1 where id in (1, 3, 5);
+id	u	v
+1	11	101
+3	13	103
+select * from bp_cache_tmp1 where u in (11, 13, 15);
+id	u	v
+1	11	101
+3	13	103
+select * from bp_cache_tmp1 where u in (11, 13) and u in (12, 13);
+id	u	v
+3	13	103
+begin;
+select * from bp_cache_tmp1 where id in (1, 3);
+id	u	v
+1	11	101
+3	13	103
+select * from bp_cache_tmp1 where u in (11, 13);
+id	u	v
+1	11	101
+3	13	103
+select * from bp_cache_tmp1 where id in (1, 3, 5);
+id	u	v
+1	11	101
+3	13	103
+select * from bp_cache_tmp1 where u in (11, 13, 15);
+id	u	v
+1	11	101
+3	13	103
+insert into bp_cache_tmp1 values(6, 16, 106);
+select * from bp_cache_tmp1 where id in (1, 6);
+id	u	v
+1	11	101
+6	16	106
+select * from bp_cache_tmp1 where u in (11, 16);
+id	u	v
+1	11	101
+6	16	106
+update bp_cache_tmp1 set v=999 where id=3;
+select * from bp_cache_tmp1 where id in (1, 3);
+id	u	v
+1	11	101
+3	13	999
+select * from bp_cache_tmp1 where u in (11, 13);
+id	u	v
+1	11	101
+3	13	999
+select * from bp_cache_tmp1 where u in (11, 13) and u in (12, 13);
+id	u	v
+3	13	999
+delete from bp_cache_tmp1 where id=4;
+select * from bp_cache_tmp1 where id in (1, 4);
+id	u	v
+1	11	101
+select * from bp_cache_tmp1 where u in (11, 14);
+id	u	v
+1	11	101
+commit;
+select * from bp_cache_tmp1 where id in (1, 3, 6);
+id	u	v
+1	11	101
+3	13	999
+6	16	106
+select * from bp_cache_tmp1 where u in (11, 13, 16);
+id	u	v
+1	11	101
+3	13	999
+6	16	106
+select * from bp_cache_tmp1 where id in (1, 4);
+id	u	v
+1	11	101
+select * from bp_cache_tmp1 where u in (11, 14);
+id	u	v
+1	11	101
+alter table bp_cache_tmp1 nocache;
+drop table bp_cache_tmp1;
+drop table if exists cache_add_column;
+create table cache_add_column (f1 int, index k(f1));
+insert into cache_add_column (f1) values (1);
+alter table cache_add_column add column f2 int not null, add column f3 int default 3, add column f4 int default null;
+alter table cache_add_column cache;
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+select sleep(0.1);
+sleep(0.1)
+0
+select * from cache_add_column use index(k) where f1 = 1;
+f1	f2	f3	f4
+1	0	3	NULL
+alter table cache_add_column nocache;
+drop table cache_add_column;
