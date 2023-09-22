@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/config"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/etcd"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -53,7 +55,13 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, conn sqlexec
 	if err := e.checkTableEmpty(ctx, conn); err != nil {
 		return err
 	}
-	return e.checkCDCPiTRTasks(ctx)
+	if err := e.checkCDCPiTRTasks(ctx); err != nil {
+		return err
+	}
+	if e.IsGlobalSort() {
+		return e.checkGlobalSortStorePrivilege(ctx)
+	}
+	return nil
 }
 
 func (e *LoadDataController) checkTotalFileSize() error {
@@ -110,6 +118,41 @@ func (*LoadDataController) checkCDCPiTRTasks(ctx context.Context) error {
 
 	if !nameSet.Empty() {
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs(nameSet.MessageToUser())
+	}
+	return nil
+}
+
+func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) error {
+	// we need read/put/delete/list privileges on global sort store.
+	// only support S3 now.
+	target := "cloud storage"
+	cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+	if err3 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err3.Error())
+	}
+	b, err2 := storage.ParseBackendFromURL(cloudStorageURL, nil)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+	}
+
+	if b.GetS3() == nil && b.GetGcs() == nil {
+		// we only support S3 now, but in test we are using GCS.
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
+	}
+
+	opt := &storage.ExternalStorageOptions{
+		CheckPermissions: []storage.Permission{
+			storage.GetObject,
+			storage.ListObjects,
+			storage.PutAndDeleteObject,
+		},
+	}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	_, err := storage.New(ctx, b, opt)
+	if err != nil {
+		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("check cloud storage uri access: " + err.Error())
 	}
 	return nil
 }

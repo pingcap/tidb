@@ -30,6 +30,9 @@ const (
 	GetObject Permission = "GetObject"
 	// PutObject represents PutObject permission
 	PutObject Permission = "PutObject"
+	// PutAndDeleteObject represents PutAndDeleteObject permission
+	// we cannot check DeleteObject permission alone, so we use PutAndDeleteObject instead.
+	PutAndDeleteObject Permission = "PutAndDeleteObject"
 
 	DefaultRequestConcurrency uint = 128
 )
