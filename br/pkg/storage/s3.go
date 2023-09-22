@@ -66,7 +66,7 @@ const (
 )
 
 var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
-	AccessBuckets:      checkS3BucketCheck,
+	AccessBuckets:      s3BucketExistenceCheck,
 	ListObjects:        listObjectsCheck,
 	GetObject:          getObjectCheck,
 	PutAndDeleteObject: PutAndDeleteObjectCheck,
@@ -430,7 +430,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 }
 
 // checkBucket checks if a bucket exists.
-func checkS3BucketCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+func s3BucketExistenceCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
 	}
