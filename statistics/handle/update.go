@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
@@ -42,9 +43,40 @@ import (
 	"go.uber.org/zap"
 )
 
-type tableDeltaMap map[int64]variable.TableDelta
+// tableDelta is used to collect tables' change information.
+// All methods of it are thread-safe.
+type tableDelta struct {
+	delta map[int64]variable.TableDelta // map[tableID]delta
+	lock  sync.Mutex
+}
 
-func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[int64]int64) {
+func newTableDelta() *tableDelta {
+	return &tableDelta{
+		delta: make(map[int64]variable.TableDelta),
+	}
+}
+
+func (m *tableDelta) reset() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.delta = make(map[int64]variable.TableDelta)
+}
+
+func (m *tableDelta) getDeltaAndReset() map[int64]variable.TableDelta {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	ret := m.delta
+	m.delta = make(map[int64]variable.TableDelta)
+	return ret
+}
+
+func (m *tableDelta) update(id int64, delta int64, count int64, colSize *map[int64]int64) {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	updateTableDeltaMap(m.delta, id, delta, count, colSize)
+}
+
+func updateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64, colSize *map[int64]int64) {
 	item := m[id]
 	item.Delta += delta
 	item.Count += count
@@ -59,35 +91,67 @@ func (m tableDeltaMap) update(id int64, delta int64, count int64, colSize *map[i
 	m[id] = item
 }
 
-func (m tableDeltaMap) merge(deltaMap tableDeltaMap) {
+func (m *tableDelta) merge(deltaMap map[int64]variable.TableDelta) {
+	if len(deltaMap) == 0 {
+		return
+	}
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	for id, item := range deltaMap {
-		m.update(id, item.Delta, item.Count, &item.ColSize)
+		updateTableDeltaMap(m.delta, id, item.Delta, item.Count, &item.ColSize)
 	}
 }
 
-// colStatsUsageMap maps (tableID, columnID) to the last time when the column stats are used(needed).
-type colStatsUsageMap map[model.TableItemID]time.Time
+// statsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).
+// All methods of it are thread-safe.
+type statsUsage struct {
+	usage map[model.TableItemID]time.Time
+	lock  sync.RWMutex
+}
 
-func (m colStatsUsageMap) merge(other colStatsUsageMap) {
+func newStatsUsage() *statsUsage {
+	return &statsUsage{
+		usage: make(map[model.TableItemID]time.Time),
+	}
+}
+
+func (m *statsUsage) reset() {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	m.usage = make(map[model.TableItemID]time.Time)
+}
+
+func (m *statsUsage) getUsageAndReset() map[model.TableItemID]time.Time {
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	ret := m.usage
+	m.usage = make(map[model.TableItemID]time.Time)
+	return ret
+}
+
+func (m *statsUsage) merge(other map[model.TableItemID]time.Time) {
+	if len(other) == 0 {
+		return
+	}
+	m.lock.Lock()
+	defer m.lock.Unlock()
 	for id, t := range other {
-		if mt, ok := m[id]; !ok || mt.Before(t) {
-			m[id] = t
+		if mt, ok := m.usage[id]; !ok || mt.Before(t) {
+			m.usage[id] = t
 		}
 	}
 }
 
-func merge(s *SessionStatsCollector, deltaMap tableDeltaMap, colMap colStatsUsageMap) {
-	deltaMap.merge(s.mapper)
-	s.mapper = make(tableDeltaMap)
-	colMap.merge(s.colMap)
-	s.colMap = make(colStatsUsageMap)
+func merge(s *SessionStatsCollector, deltaMap *tableDelta, colMap *statsUsage) {
+	deltaMap.merge(s.mapper.getDeltaAndReset())
+	colMap.merge(s.statsUsage.getUsageAndReset())
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	mapper tableDeltaMap
-	colMap colStatsUsageMap
-	next   *SessionStatsCollector
+	mapper     *tableDelta
+	statsUsage *statsUsage
+	next       *SessionStatsCollector
 	sync.Mutex
 
 	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
@@ -97,8 +161,8 @@ type SessionStatsCollector struct {
 // NewSessionStatsCollector initializes a new SessionStatsCollector.
 func NewSessionStatsCollector() *SessionStatsCollector {
 	return &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		colMap: make(colStatsUsageMap),
+		mapper:     newTableDelta(),
+		statsUsage: newStatsUsage(),
 	}
 }
 
@@ -120,17 +184,17 @@ func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSi
 func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper = make(tableDeltaMap)
-	s.colMap = make(colStatsUsageMap)
+	s.mapper = newTableDelta()
+	s.statsUsage = newStatsUsage()
 	s.next = nil
 	s.deleted = false
 }
 
 // UpdateColStatsUsage updates the last time when the column stats are used(needed).
-func (s *SessionStatsCollector) UpdateColStatsUsage(colMap colStatsUsageMap) {
+func (s *SessionStatsCollector) UpdateColStatsUsage(colMap map[model.TableItemID]time.Time) {
 	s.Lock()
 	defer s.Unlock()
-	s.colMap.merge(colMap)
+	s.statsUsage.merge(colMap)
 }
 
 // NewSessionStatsCollector allocates a stats collector for a session.
@@ -138,9 +202,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper: make(tableDeltaMap),
-		next:   h.listHead.next,
-		colMap: make(colStatsUsageMap),
+		mapper:     newTableDelta(),
+		next:       h.listHead.next,
+		statsUsage: newStatsUsage(),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -349,8 +413,8 @@ const (
 // sweepList will loop over the list, merge each session's local stats into handle
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
-	deltaMap := make(tableDeltaMap)
-	colMap := make(colStatsUsageMap)
+	deltaMap := newTableDelta()
+	colMap := newStatsUsage()
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
@@ -368,45 +432,37 @@ func (h *Handle) sweepList() {
 		}
 	}
 	prev.Unlock()
-	h.globalMap.Lock()
-	h.globalMap.data.merge(deltaMap)
-	h.globalMap.Unlock()
-	h.colMap.Lock()
-	h.colMap.data.merge(colMap)
-	h.colMap.Unlock()
+	h.tableDelta.merge(deltaMap.getDeltaAndReset())
+	h.statsUsage.merge(colMap.getUsageAndReset())
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
-	h.globalMap.Lock()
-	deltaMap := h.globalMap.data
-	h.globalMap.data = make(tableDeltaMap)
-	h.globalMap.Unlock()
+	deltaMap := h.tableDelta.getDeltaAndReset()
 	defer func() {
-		h.globalMap.Lock()
-		deltaMap.merge(h.globalMap.data)
-		h.globalMap.data = deltaMap
-		h.globalMap.Unlock()
+		h.tableDelta.merge(deltaMap)
 	}()
-	// TODO: pass in do.InfoSchema() to DumpStatsDeltaToKV.
-	is := func() infoschema.InfoSchema {
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		return h.mu.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	}()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	currentTime := time.Now()
 	for id, item := range deltaMap {
 		if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
 			continue
 		}
-		updated, err := h.dumpTableStatCountToKV(id, item)
+		updated, err := h.dumpTableStatCountToKV(is, id, item)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		if updated {
-			deltaMap.update(id, -item.Delta, -item.Count, nil)
+			updateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
 			delete(deltaMap, id)
@@ -424,20 +480,25 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
-func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (updated bool, err error) {
-	statsVer := uint64(0)
+func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
+	statsVersion := uint64(0)
 	defer func() {
-		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(id, statsVer, StatsMetaHistorySourceFlushStats)
+		if err == nil && statsVersion != 0 {
+			h.recordHistoricalStatsMeta(physicalTableID, statsVersion, StatsMetaHistorySourceFlushStats)
 		}
 	}()
 	if delta.Count == 0 {
 		return true, nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return false, err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+	sctx := se.(sessionctx.Context)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
@@ -446,57 +507,97 @@ func (h *Handle) dumpTableStatCountToKV(id int64, delta variable.TableDelta) (up
 		err = finishTransaction(ctx, exec, err)
 	}()
 
-	txn, err := h.mu.ctx.Txn(true)
+	statsVersion, err = getSessionTxnStartTS(se)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
-	startTS := txn.StartTS()
-	updateStatsMeta := func(id int64) error {
-		lockedTables, err := h.GetLockedTables(id)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		// This lock is already locked on it so it use isTableLockedWithoutLock without lock.
-		if _, ok := lockedTables[id]; ok {
-			if delta.Delta < 0 {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?", startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-			} else {
-				_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?", startTS, delta.Delta, delta.Count, id)
-			}
-		} else {
-			if delta.Delta < 0 {
-				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
-					"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)", startTS, id, delta.Count, -delta.Delta, -delta.Delta)
-			} else {
-				// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-				_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-					"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS, id, delta.Count, delta.Delta)
-			}
-			cache.TableRowStatsCache.Invalidate(id)
-		}
-		statsVer = startTS
-		return errors.Trace(err)
+
+	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
+	// Check if the table and its partitions are locked.
+	tidAndPid := make([]int64, 0, 2)
+	if tbl != nil {
+		tidAndPid = append(tidAndPid, tbl.Meta().ID)
 	}
-	if err = updateStatsMeta(id); err != nil {
+	tidAndPid = append(tidAndPid, physicalTableID)
+	lockedTables, err := h.GetLockedTables(tidAndPid...)
+	if err != nil {
 		return
 	}
-	affectedRows := h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 
-	// if it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-	is := h.mu.ctx.GetInfoSchema().(infoschema.InfoSchema)
-	if is == nil {
-		return false, errors.New("cannot get the information schema")
-	}
-	if tbl, _, _ := is.FindTableByPartitionID(id); tbl != nil {
-		if err = updateStatsMeta(tbl.Meta().ID); err != nil {
+	var affectedRows uint64
+	// If it's a partitioned table and its global-stats exists,
+	// update its count and modify_count as well.
+	if tbl != nil {
+		// We need to check if the table and the partition are locked.
+		isTableLocked := false
+		isPartitionLocked := false
+		tableID := tbl.Meta().ID
+		if _, ok := lockedTables[tableID]; ok {
+			isTableLocked = true
+		}
+		if _, ok := lockedTables[physicalTableID]; ok {
+			isPartitionLocked = true
+		}
+		tableOrPartitionLocked := isTableLocked || isPartitionLocked
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
+			physicalTableID, tableOrPartitionLocked); err != nil {
 			return
 		}
+		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+		// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
+			return
+		}
+		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+	} else {
+		// This is a non-partitioned table.
+		// Check if it's locked.
+		isTableLocked := false
+		if _, ok := lockedTables[physicalTableID]; ok {
+			isTableLocked = true
+		}
+		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
+			physicalTableID, isTableLocked); err != nil {
+			return
+		}
+		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 	}
 
-	affectedRows += h.mu.ctx.GetSessionVars().StmtCtx.AffectedRows()
 	updated = affectedRows > 0
 	return
+}
+
+func updateStatsMeta(
+	ctx context.Context,
+	exec sqlexec.SQLExecutor,
+	startTS uint64,
+	delta variable.TableDelta,
+	id int64,
+	isLocked bool,
+) (err error) {
+	if isLocked {
+		if delta.Delta < 0 {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?",
+				startTS, -delta.Delta, delta.Count, id, -delta.Delta)
+		} else {
+			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?",
+				startTS, delta.Delta, delta.Count, id)
+		}
+	} else {
+		if delta.Delta < 0 {
+			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
+				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
+		} else {
+			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
+			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
+				id, delta.Count, delta.Delta)
+		}
+		cache.TableRowStatsCache.Invalidate(id)
+	}
+	return err
 }
 
 func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
@@ -526,14 +627,9 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		return nil
 	}
 	h.sweepList()
-	h.colMap.Lock()
-	colMap := h.colMap.data
-	h.colMap.data = make(colStatsUsageMap)
-	h.colMap.Unlock()
+	colMap := h.statsUsage.getUsageAndReset()
 	defer func() {
-		h.colMap.Lock()
-		h.colMap.data.merge(colMap)
-		h.colMap.Unlock()
+		h.statsUsage.merge(colMap)
 	}()
 	type pair struct {
 		lastUsedAt string
@@ -664,16 +760,6 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	return s, e, err
 }
 
-func (h *Handle) getAnalyzeSnapshot() (bool, error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	analyzeSnapshot, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
-	if err != nil {
-		return false, err
-	}
-	return variable.TiDBOptOn(analyzeSnapshot), nil
-}
-
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	defer func() {
@@ -681,11 +767,6 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
-	err := h.UpdateSessionVar()
-	if err != nil {
-		logutil.BgLogger().Error("update analyze version for auto analyze session failed", zap.String("category", "stats"), zap.Error(err))
-		return false
-	}
 	dbs := is.AllSchemaNames()
 	parameters := h.getAutoAnalyzeParameters()
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
@@ -697,12 +778,20 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
 		return false
 	}
-	pruneMode := h.CurrentPruneMode()
-	analyzeSnapshot, err := h.getAnalyzeSnapshot()
+
+	se, err := h.pool.Get()
 	if err != nil {
-		logutil.BgLogger().Error("load tidb_enable_analyze_snapshot for auto analyze session failed", zap.String("category", "stats"), zap.Error(err))
+		logutil.BgLogger().Error("get session from session pool failed", zap.String("category", "stats"), zap.Error(err))
 		return false
 	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		logutil.BgLogger().Error("update session variables for stats failed", zap.String("category", "stats"), zap.Error(err))
+		return false
+	}
+	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
@@ -720,12 +809,20 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 
-		tids := make([]int64, 0, len(tbls))
+		// We need to check every partition of every table to see if it needs to be analyzed.
+		tidsAndPids := make([]int64, 0, len(tbls))
 		for _, tbl := range tbls {
-			tids = append(tids, tbl.Meta().ID)
+			tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
+			tblInfo := tbl.Meta()
+			pi := tblInfo.GetPartitionInfo()
+			if pi != nil {
+				for _, def := range pi.Definitions {
+					tidsAndPids = append(tidsAndPids, def.ID)
+				}
+			}
 		}
 
-		lockedTables, err := h.GetLockedTables(tids...)
+		lockedTables, err := h.GetLockedTables(tidsAndPids...)
 		if err != nil {
 			logutil.BgLogger().Error("check table lock failed",
 				zap.String("category", "stats"), zap.Error(err))
@@ -733,11 +830,9 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 		}
 
 		for _, tbl := range tbls {
-			// If table locked, skip analyze.
+			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
 			if _, ok := lockedTables[tbl.Meta().ID]; ok {
-				logutil.BgLogger().Info("skip analyze locked table", zap.String("category", "stats"),
-					zap.String("db", db), zap.String("table", tbl.Meta().Name.O))
 				continue
 			}
 			tblInfo := tbl.Meta()
@@ -756,14 +851,21 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 				}
 				continue
 			}
+			// Only analyze the partition that has not been locked.
+			var partitionDefs []model.PartitionDefinition
+			for _, def := range pi.Definitions {
+				if _, ok := lockedTables[def.ID]; !ok {
+					partitionDefs = append(partitionDefs, def)
+				}
+			}
 			if pruneMode == variable.Dynamic {
-				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, pi, db, autoAnalyzeRatio, analyzeSnapshot)
+				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, partitionDefs, db, autoAnalyzeRatio, analyzeSnapshot)
 				if analyzed {
 					return true
 				}
 				continue
 			}
-			for _, def := range pi.Definitions {
+			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
 				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O, def.Name.O)
@@ -786,7 +888,11 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 			return false
 		}
 		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
-		tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+		tableStatsVer, err := h.GetCurrentAnalyzeVersion()
+		if err != nil {
+			logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
+			return false
+		}
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
 		return true
@@ -800,7 +906,11 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 				return false
 			}
 			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
-			tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
+			tableStatsVer, err := h.GetCurrentAnalyzeVersion()
+			if err != nil {
+				logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
+				return false
+			}
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sqlWithIdx, paramsWithIdx...)
 			return true
@@ -809,13 +919,45 @@ func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics
 	return false
 }
 
-func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, pi *model.PartitionInfo, db string, ratio float64, analyzeSnapshot bool) bool {
-	h.mu.RLock()
-	tableStatsVer := h.mu.ctx.GetSessionVars().AnalyzeVersion
-	h.mu.RUnlock()
+// GetCurrentAnalyzeVersion returns the current analyze version.
+func (h *Handle) GetCurrentAnalyzeVersion() (int, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return 0, err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		return 0, err
+	}
+	return sctx.GetSessionVars().AnalyzeVersion, nil
+}
+
+// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+func (h *Handle) GetCurrentPruneMode() (string, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return "", err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		return "", err
+	}
+	return sctx.GetSessionVars().PartitionPruneMode.Load(), nil
+}
+
+func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition, db string, ratio float64, analyzeSnapshot bool) bool {
+	tableStatsVer, err := h.GetCurrentAnalyzeVersion()
+	if err != nil {
+		logutil.BgLogger().Info("fail to get analyze version", zap.String("category", "stats"),
+			zap.String("table", tblInfo.Name.String()),
+			zap.Error(err))
+		return false
+	}
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	partitionNames := make([]interface{}, 0, len(pi.Definitions))
-	for _, def := range pi.Definitions {
+	partitionNames := make([]interface{}, 0, len(partitionDefs))
+	for _, def := range partitionDefs {
 		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
@@ -863,7 +1005,7 @@ func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo
 		if idx.State != model.StatePublic {
 			continue
 		}
-		for _, def := range pi.Definitions {
+		for _, def := range partitionDefs {
 			partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
 			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
 				partitionNames = append(partitionNames, def.Name.O)

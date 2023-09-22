@@ -68,6 +68,7 @@ const (
 	flagKey                      = "key"
 	flagCsvSeparator             = "csv-separator"
 	flagCsvDelimiter             = "csv-delimiter"
+	flagCsvLineTerminator        = "csv-line-terminator"
 	flagOutputFilenameTemplate   = "output-filename-template"
 	flagCompleteInsert           = "complete-insert"
 	flagParams                   = "params"
@@ -113,18 +114,19 @@ type Config struct {
 		SSLKeyBytes  []byte `json:"-"`
 	}
 
-	LogLevel      string
-	LogFile       string
-	LogFormat     string
-	OutputDirPath string
-	StatusAddr    string
-	Snapshot      string
-	Consistency   string
-	CsvNullValue  string
-	SQL           string
-	CsvSeparator  string
-	CsvDelimiter  string
-	Databases     []string
+	LogLevel          string
+	LogFile           string
+	LogFormat         string
+	OutputDirPath     string
+	StatusAddr        string
+	Snapshot          string
+	Consistency       string
+	CsvNullValue      string
+	SQL               string
+	CsvSeparator      string
+	CsvDelimiter      string
+	CsvLineTerminator string
+	Databases         []string
 
 	TableFilter         filter.Filter `json:"-"`
 	Where               string
@@ -191,6 +193,7 @@ func DefaultConfig() *Config {
 		DumpEmptyDatabase:        true,
 		CsvDelimiter:             "\"",
 		CsvSeparator:             ",",
+		CsvLineTerminator:        "\r\n",
 		SessionParams:            make(map[string]interface{}),
 		OutputFileTemplate:       DefaultOutputFileTemplate,
 		PosAfterConnect:          false,
@@ -300,6 +303,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagKey, "", "The path name to the client private key file for TLS connection")
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
+	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
 	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
@@ -444,6 +448,10 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	conf.CsvDelimiter, err = flags.GetString(flagCsvDelimiter)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	conf.CsvLineTerminator, err = flags.GetString(flagCsvLineTerminator)
 	if err != nil {
 		return errors.Trace(err)
 	}

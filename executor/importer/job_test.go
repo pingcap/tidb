@@ -105,7 +105,7 @@ func TestJobHappyPath(t *testing.T) {
 		jobInfoEqual(t, jobInfo, gotJobInfo)
 
 		// start job
-		require.NoError(t, importer.StartJob(ctx, conn, jobID))
+		require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
 		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, jobInfo.CreatedBy, false)
 		require.NoError(t, err)
 		require.False(t, gotJobInfo.CreateTime.IsZero())
@@ -222,7 +222,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	jobInfoEqual(t, jobInfo, gotJobInfo)
 
 	// start job
-	require.NoError(t, importer.StartJob(ctx, conn, jobID2))
+	require.NoError(t, importer.StartJob(ctx, conn, jobID2, importer.JobStepImporting))
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID2, jobInfo.CreatedBy, false)
 	require.NoError(t, err)
 	require.False(t, gotJobInfo.CreateTime.IsZero())
@@ -306,7 +306,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 	jobID1, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
 		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)
 	require.NoError(t, err)
-	require.NoError(t, importer.StartJob(ctx, conn, jobID1))
+	require.NoError(t, importer.StartJob(ctx, conn, jobID1, importer.JobStepImporting))
 	require.NoError(t, importer.FailJob(ctx, conn, jobID1, "failed"))
 	jobID2, err := importer.CreateJob(ctx, conn, jobInfo.TableSchema, jobInfo.TableName, jobInfo.TableID,
 		jobInfo.CreatedBy, &jobInfo.Parameters, jobInfo.SourceFileSize)

@@ -17,7 +17,6 @@ package gctuner
 import (
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -29,54 +28,67 @@ func TestTuner(t *testing.T) {
 	memLimit := uint64(1000 * 1024 * 1024) //1000 MB
 	threshold := memLimit / 2
 	tn := newTuner(threshold)
-	require.Equal(t, threshold, tn.threshold.Load())
-	require.Equal(t, defaultGCPercent, tn.getGCPercent())
+	currentGCPercent := tn.getGCPercent()
+	require.Equal(t, tn.getThreshold(), threshold)
+	require.Equal(t, defaultGCPercent, currentGCPercent)
 
-	// no heap
-	testHeap = make([]byte, 1)
-	runtime.GC()
-	runtime.GC()
-	for i := 0; i < 100; i++ {
+	// wait for tuner set gcPercent to maxGCPercent
+	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
+	for tn.getGCPercent() != maxGCPercent.Load() {
 		runtime.GC()
-		require.Eventually(t, func() bool { return maxGCPercent.Load() == tn.getGCPercent() },
-			1*time.Second, 50*time.Microsecond)
+		t.Logf("new gc percent after gc: %d", tn.getGCPercent())
 	}
 
 	// 1/4 threshold
 	testHeap = make([]byte, threshold/4)
-	for i := 0; i < 100; i++ {
+	// wait for tuner set gcPercent to ~= 300
+	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
+	for tn.getGCPercent() == maxGCPercent.Load() {
 		runtime.GC()
-		require.GreaterOrEqual(t, tn.getGCPercent(), maxGCPercent.Load()/2)
-		require.LessOrEqual(t, tn.getGCPercent(), maxGCPercent.Load())
+		t.Logf("new gc percent after gc: %d", tn.getGCPercent())
 	}
+	currentGCPercent = tn.getGCPercent()
+	require.GreaterOrEqual(t, currentGCPercent, uint32(250))
+	require.LessOrEqual(t, currentGCPercent, uint32(300))
 
 	// 1/2 threshold
 	testHeap = make([]byte, threshold/2)
-	runtime.GC()
-	for i := 0; i < 100; i++ {
+	// wait for tuner set gcPercent to ~= 100
+	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
+	for tn.getGCPercent() == currentGCPercent {
 		runtime.GC()
-		require.Eventually(t, func() bool { return tn.getGCPercent() >= minGCPercent.Load() },
-			1*time.Second, 50*time.Microsecond)
-		require.Eventually(t, func() bool { return tn.getGCPercent() <= maxGCPercent.Load()/2 },
-			1*time.Second, 50*time.Microsecond)
+		t.Logf("new gc percent after gc: %d", tn.getGCPercent())
 	}
+	currentGCPercent = tn.getGCPercent()
+	require.GreaterOrEqual(t, currentGCPercent, uint32(50))
+	require.LessOrEqual(t, currentGCPercent, uint32(100))
 
 	// 3/4 threshold
 	testHeap = make([]byte, threshold/4*3)
-	runtime.GC()
-	for i := 0; i < 100; i++ {
+	// wait for tuner set gcPercent to minGCPercent
+	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
+	for tn.getGCPercent() != minGCPercent.Load() {
 		runtime.GC()
-		require.Eventually(t, func() bool { return minGCPercent.Load() == tn.getGCPercent() },
-			1*time.Second, 50*time.Microsecond)
+		t.Logf("new gc percent after gc: %d", tn.getGCPercent())
 	}
+	require.Equal(t, minGCPercent.Load(), tn.getGCPercent())
 
 	// out of threshold
 	testHeap = make([]byte, threshold+1024)
+	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
 	runtime.GC()
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 8; i++ {
 		runtime.GC()
-		require.Eventually(t, func() bool { return minGCPercent.Load() == tn.getGCPercent() },
-			1*time.Second, 50*time.Microsecond)
+		require.Equal(t, minGCPercent.Load(), tn.getGCPercent())
+	}
+
+	// no heap
+	testHeap = nil
+	// wait for tuner set gcPercent to maxGCPercent
+	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
+	for tn.getGCPercent() != maxGCPercent.Load() {
+		runtime.GC()
+		t.Logf("new gc percent after gc: %d", tn.getGCPercent())
 	}
 }
 

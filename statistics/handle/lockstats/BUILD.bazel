@@ -11,7 +11,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
-        "//parser/ast",
         "//parser/terror",
         "//statistics/handle/cache",
         "//util/logutil",
@@ -31,11 +30,9 @@ go_test(
     ],
     embed = [":lockstats"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 9,
     deps = [
         "//kv",
-        "//parser/ast",
-        "//parser/model",
         "//parser/mysql",
         "//types",
         "//util/chunk",

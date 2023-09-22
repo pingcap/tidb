@@ -17,6 +17,7 @@ package dispatcher_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/mock"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
@@ -32,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
 )
 
 var (
@@ -48,7 +51,7 @@ type testDispatcherExt struct{}
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ int64) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -66,18 +69,18 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
+func (*testDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) int64 {
+	return proto.StepDone
+}
+
 type numberExampleDispatcherExt struct{}
 
 func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcherExt) OnNextStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task) (metas [][]byte, err error) {
-	if task.State == proto.TaskStatePending {
-		task.Step = proto.StepInit
-	}
+func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ int64) (metas [][]byte, err error) {
 	switch task.Step {
 	case proto.StepInit:
-		task.Step = proto.StepOne
 		for i := 0; i < subtaskCnt; i++ {
 			metas = append(metas, []byte{'1'})
 		}
@@ -102,6 +105,15 @@ func (*numberExampleDispatcherExt) GetEligibleInstances(ctx context.Context, _ *
 
 func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
+}
+
+func (*numberExampleDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	default:
+		return proto.StepDone
+	}
 }
 
 func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.Manager, *storage.TaskManager) {
@@ -191,7 +203,49 @@ func TestGetInstance(t *testing.T) {
 	require.ElementsMatch(t, instanceIDs, serverIDs)
 }
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
+func TestTaskFailInManager(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockDispatcher := mock.NewMockDispatcher(ctrl)
+	mockDispatcher.EXPECT().Init().Return(errors.New("mock dispatcher init error"))
+
+	dspManager, mgr := MockDispatcherManager(t, pool)
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			return mockDispatcher
+		})
+	dspManager.Start()
+	defer dspManager.Stop()
+
+	// unknown task type
+	taskID, err := mgr.AddNewGlobalTask("test", "test-type", 1, nil)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		task, err := mgr.GetGlobalTaskByID(taskID)
+		require.NoError(t, err)
+		return task.State == proto.TaskStateFailed &&
+			strings.Contains(task.Error.Error(), "unknown task type")
+	}, time.Second*10, time.Millisecond*300)
+
+	// dispatcher init error
+	taskID, err = mgr.AddNewGlobalTask("test2", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	require.Eventually(t, func() bool {
+		task, err := mgr.GetGlobalTaskByID(taskID)
+		require.NoError(t, err)
+		return task.State == proto.TaskStateFailed &&
+			strings.Contains(task.Error.Error(), "mock dispatcher init error")
+	}, time.Second*10, time.Millisecond*300)
+}
+
+func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel bool) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
@@ -248,6 +302,17 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		return tasks
 	}
 
+	checkSubtaskCnt := func(tasks []*proto.Task, taskIDs []int64) {
+		for i, taskID := range taskIDs {
+			require.Equal(t, int64(i+1), tasks[i].ID)
+			require.Eventually(t, func() bool {
+				cnt, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
+				require.NoError(t, err)
+				return int64(subtaskCnt) == cnt
+			}, time.Second, 50*time.Millisecond)
+		}
+	}
+
 	// Mock add tasks.
 	taskIDs := make([]int64, 0, taskCnt)
 	for i := 0; i < taskCnt; i++ {
@@ -255,15 +320,10 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		require.NoError(t, err)
 		taskIDs = append(taskIDs, taskID)
 	}
-	// test OnNextStage.
+	// test OnNextSubtasksBatch.
 	checkGetRunningTaskCnt(taskCnt)
 	tasks := checkTaskRunningCnt()
-	for i, taskID := range taskIDs {
-		require.Equal(t, int64(i+1), tasks[i].ID)
-		subtasks, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
-		require.NoError(t, err)
-		require.Equal(t, int64(subtaskCnt), subtasks, fmt.Sprintf("num:%d", i))
-	}
+	checkSubtaskCnt(tasks, taskIDs)
 	// test parallelism control
 	if taskCnt == 1 {
 		taskID, err := mgr.AddNewGlobalTask(fmt.Sprintf("%d", taskCnt), proto.TaskTypeExample, 0, nil)
@@ -311,10 +371,19 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 		defer func() {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
 		}()
-		// Mock a subtask fails.
-		for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, nil)
-			require.NoError(t, err)
+
+		if isSubtaskCancel {
+			// Mock a subtask canceled
+			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
+				err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateCanceled, nil)
+				require.NoError(t, err)
+			}
+		} else {
+			// Mock a subtask fails.
+			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
+				err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateFailed, nil)
+				require.NoError(t, err)
+			}
 		}
 	}
 
@@ -332,27 +401,35 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc bool, isCancel bool) {
 }
 
 func TestSimple(t *testing.T) {
-	checkDispatch(t, 1, true, false)
+	checkDispatch(t, 1, true, false, false)
 }
 
 func TestSimpleErrStage(t *testing.T) {
-	checkDispatch(t, 1, false, false)
+	checkDispatch(t, 1, false, false, false)
 }
 
 func TestSimpleCancel(t *testing.T) {
-	checkDispatch(t, 1, false, true)
+	checkDispatch(t, 1, false, true, false)
+}
+
+func TestSimpleSubtaskCancel(t *testing.T) {
+	checkDispatch(t, 1, false, false, true)
 }
 
 func TestParallel(t *testing.T) {
-	checkDispatch(t, 3, true, false)
+	checkDispatch(t, 3, true, false, false)
 }
 
 func TestParallelErrStage(t *testing.T) {
-	checkDispatch(t, 3, false, false)
+	checkDispatch(t, 3, false, false, false)
 }
 
 func TestParallelCancel(t *testing.T) {
-	checkDispatch(t, 3, false, true)
+	checkDispatch(t, 3, false, true, false)
+}
+
+func TestParallelSubtaskCancel(t *testing.T) {
+	checkDispatch(t, 3, false, false, true)
 }
 
 func TestVerifyTaskStateTransform(t *testing.T) {
