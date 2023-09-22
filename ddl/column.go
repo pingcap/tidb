@@ -1396,7 +1396,7 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 			w.checksumBuffer.Cols = w.checksumBuffer.Cols[:0]
 		}
 		for _, col := range w.table.DeletableCols() {
-			if col.ID == id || (col.IsVirtualGeneratedColumn()) {
+			if col.ID == id || (col.IsVirtualGenerated()) {
 				continue
 			}
 			d := w.rowMap[col.ID]
