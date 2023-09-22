@@ -115,6 +115,17 @@ func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	return errors.Trace(err)
 }
 
+// DeleteFiles delete the files in storage.
+func (s *GCSStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := s.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *GCSStorage) objectName(name string) string {
 	return path.Join(s.gcs.Prefix, name)
 }

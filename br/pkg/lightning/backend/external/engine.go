@@ -153,6 +153,7 @@ func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.
 		values:             values,
 		ts:                 e.ts,
 		memBuf:             memBuf,
+		refCnt:             atomic.NewInt64(0),
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
 	}, nil
@@ -246,6 +247,7 @@ type MemoryIngestData struct {
 	ts     uint64
 
 	memBuf          *membuf.Buffer
+	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 }
@@ -429,9 +431,16 @@ func (m *MemoryIngestData) GetTS() uint64 {
 	return m.ts
 }
 
+// IncRef implements IngestData.IncRef.
+func (m *MemoryIngestData) IncRef() {
+	m.refCnt.Inc()
+}
+
 // Finish implements IngestData.Finish.
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
-	m.memBuf.Destroy()
+	if m.refCnt.Dec() == 0 {
+		m.memBuf.Destroy()
+	}
 }
