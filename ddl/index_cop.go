@@ -133,7 +133,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
 	return wrapInBeginRollback(se, func(startTS uint64) error {
-		rs, err := buildTableScan(p.ctx, p.copCtx, startTS, task.startKey, task.endKey)
+		rs, err := buildTableScan(p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
 		if err != nil {
 			return err
 		}
@@ -148,7 +148,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		var done bool
 		for !done {
 			srcChk := p.getChunk()
-			done, err = fetchTableScanResult(p.ctx, p.copCtx, rs, srcChk)
+			done, err = fetchTableScanResult(p.ctx, p.copCtx.GetBase(), rs, srcChk)
 			if err != nil {
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
@@ -257,8 +257,7 @@ func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
 	c.srcChkPool <- chk
 }
 
-func buildTableScan(ctx context.Context, copCtx copr.CopContext, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
-	c := copCtx.GetBase()
+func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
 	dagPB, err := buildDAGPB(c.SessionContext, c.TableInfo, c.ColumnInfos)
 	if err != nil {
 		return nil, err
@@ -285,11 +284,10 @@ func buildTableScan(ctx context.Context, copCtx copr.CopContext, startTS uint64,
 
 func fetchTableScanResult(
 	ctx context.Context,
-	copCtx copr.CopContext,
+	copCtx *copr.CopContextBase,
 	result distsql.SelectResult,
 	chk *chunk.Chunk,
 ) (bool, error) {
-	c := copCtx.GetBase()
 	err := result.Next(ctx, chk)
 	if err != nil {
 		return false, errors.Trace(err)
@@ -298,8 +296,8 @@ func fetchTableScanResult(
 		return true, nil
 	}
 	err = table.FillVirtualColumnValue(
-		c.VirtualColumnsFieldTypes, c.VirtualColumnsOutputOffsets,
-		c.ExprColumnInfos, c.ColumnInfos, c.SessionContext, chk)
+		copCtx.VirtualColumnsFieldTypes, copCtx.VirtualColumnsOutputOffsets,
+		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.SessionContext, chk)
 	return false, err
 }
 

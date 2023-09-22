@@ -32,9 +32,12 @@ import (
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
 type BackfillGlobalMeta struct {
-	Job        model.Job `json:"job"`
-	EleIDs     []int64   `json:"ele_ids"`
-	EleTypeKey []byte    `json:"ele_type_key"`
+	Job model.Job `json:"job"`
+	// EleIDs stands for the index/column IDs to backfill with distributed framework.
+	EleIDs []int64 `json:"ele_ids"`
+	// EleTypeKey is the type of the element to backfill with distributed framework.
+	// For now, only index type is supported.
+	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 }

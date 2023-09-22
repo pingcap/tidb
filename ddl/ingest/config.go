@@ -55,6 +55,9 @@ func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, isRaftKV2 bool
 	}
 	adjustImportMemory(ctx, memRoot, cfg)
 	cfg.Checkpoint.Enable = true
+	// DupeResAlgErr only works for unique index.
+	// It doesn't matter in non-unique index scenario since
+	// the key adaptor is different for unique and non-unique index.
 	cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
 	// TODO(lance6716): will introduce fail-fast for DDL usage later
 	cfg.Conflict.Threshold = math.MaxInt64

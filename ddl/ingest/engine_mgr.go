@@ -93,7 +93,6 @@ func (bc *litBackendCtx) Unregister(jobID, indexID int64) {
 // ResetWorkers reset the writer count of the engineInfo because
 // the goroutines of backfill workers have been terminated.
 func (bc *litBackendCtx) ResetWorkers(jobID int64) {
-	bc.Keys()
 	for _, indexID := range bc.Keys() {
 		ei, exist := bc.Load(indexID)
 		if !exist {

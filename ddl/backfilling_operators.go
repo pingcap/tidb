@@ -427,14 +427,14 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		failpoint.Inject("scanRecordExec", func(_ failpoint.Value) {
 			OperatorCallBackForTest()
 		})
-		rs, err := buildTableScan(w.ctx, w.copCtx, startTS, task.Start, task.End)
+		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
 		}
 		var done bool
 		for !done {
 			srcChk := w.getChunk()
-			done, err = fetchTableScanResult(w.ctx, w.copCtx, rs, srcChk)
+			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
 			if err != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
