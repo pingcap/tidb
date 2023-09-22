@@ -424,7 +424,7 @@ type BackendConfig struct {
 	// whether disable automatic compactions of pebble db of engine.
 	// deduplicate pebble db is not affected by this option.
 	// see DisableAutomaticCompactions of pebble.Options for more details.
-	// default false.
+	// default true.
 	DisableAutomaticCompactions bool
 }
 
