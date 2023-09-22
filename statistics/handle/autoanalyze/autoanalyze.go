@@ -79,12 +79,18 @@ func getAutoAnalyzeParameters(exec sqlexec.RestrictedSQLExecutor) map[string]str
 
 // Opt is used to hold parameters for auto analyze.
 type Opt struct {
-	SysProcTracker          sessionctx.SysProcTracker                                   // used to track analyze resource consumption
-	GetLockedTables         func(tableIDs ...int64) (map[int64]struct{}, error)         // locked tables will be skipped in auto analyze
-	GetTableStats           func(tblInfo *model.TableInfo) *statistics.Table            // used to look up table stats to decide whether to analyze the table
-	GetPartitionStats       func(tblInfo *model.TableInfo, pid int64) *statistics.Table // used to look up partition stats to decide whether to analyze the partition
-	AutoAnalyzeProcIDGetter func() uint64                                               // used to assign job ID for analyze jobs
-	StatsLease              time.Duration                                               // current stats lease
+	// SysProcTracker is used to track analyze resource consumption.
+	SysProcTracker sessionctx.SysProcTracker
+	// GetLockedTables is used to look up locked tables which will be skipped in auto analyze.
+	GetLockedTables func(tableIDs ...int64) (map[int64]struct{}, error)
+	// GetTableStats is used to look up table stats to decide whether to analyze the table.
+	GetTableStats func(tblInfo *model.TableInfo) *statistics.Table
+	// GetPartitionStats is used to look up partition stats to decide whether to analyze the partition.
+	GetPartitionStats func(tblInfo *model.TableInfo, pid int64) *statistics.Table
+	// AutoAnalyzeProcIDGetter is used to assign job ID for analyze jobs.
+	AutoAnalyzeProcIDGetter func() uint64
+	// StatsLease is the current stats lease.
+	StatsLease time.Duration
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
