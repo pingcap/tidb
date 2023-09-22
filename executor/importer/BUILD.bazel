@@ -112,6 +112,8 @@ go_test(
         "//util/logutil",
         "//util/mock",
         "//util/sqlexec",
+        "@com_github_johannesboyne_gofakes3//:gofakes3",
+        "@com_github_johannesboyne_gofakes3//backend/s3mem",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",

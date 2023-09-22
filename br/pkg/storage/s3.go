@@ -27,6 +27,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/aws/aws-sdk-go/service/s3/s3iface"
 	"github.com/aws/aws-sdk-go/service/s3/s3manager"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -64,10 +65,11 @@ const (
 	domainAliyun = "aliyuncs.com"
 )
 
-var permissionCheckFn = map[Permission]func(*s3.S3, *backuppb.S3) error{
-	AccessBuckets: checkS3Bucket,
-	ListObjects:   listObjects,
-	GetObject:     getObject,
+var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
+	AccessBuckets:      s3BucketExistenceCheck,
+	ListObjects:        listObjectsCheck,
+	GetObject:          getObjectCheck,
+	PutAndDeleteObject: PutAndDeleteObjectCheck,
 }
 
 // WriteBufferSize is the size of the buffer used for writing. (64K may be a better choice)
@@ -410,7 +412,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	for _, p := range opts.CheckPermissions {
-		err := permissionCheckFn[p](c, &qs)
+		err := permissionCheckFn[p](ctx, c, &qs)
 		if err != nil {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
 		}
@@ -428,7 +430,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 }
 
 // checkBucket checks if a bucket exists.
-func checkS3Bucket(svc *s3.S3, qs *backuppb.S3) error {
+func s3BucketExistenceCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
 	}
@@ -436,8 +438,8 @@ func checkS3Bucket(svc *s3.S3, qs *backuppb.S3) error {
 	return errors.Trace(err)
 }
 
-// listObjects checks the permission of listObjects
-func listObjects(svc *s3.S3, qs *backuppb.S3) error {
+// listObjectsCheck checks the permission of listObjects
+func listObjectsCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.ListObjectsInput{
 		Bucket:  aws.String(qs.Bucket),
 		Prefix:  aws.String(qs.Prefix),
@@ -450,8 +452,8 @@ func listObjects(svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-// getObject checks the permission of getObject
-func getObject(svc *s3.S3, qs *backuppb.S3) error {
+// getObjectCheck checks the permission of getObject
+func getObjectCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(qs.Bucket),
 		Key:    aws.String("not-exists"),
@@ -467,6 +469,38 @@ func getObject(svc *s3.S3, qs *backuppb.S3) error {
 		return errors.Trace(err)
 	}
 	return nil
+}
+
+// PutAndDeleteObjectCheck checks the permission of putObject
+// S3 API doesn't provide a way to check the permission, we have to put an
+// object to check the permission.
+// exported for testing.
+func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *backuppb.S3) (err error) {
+	file := fmt.Sprintf("access-check/%s", uuid.New().String())
+	defer func() {
+		// we always delete the object used for permission check,
+		// even on error, since the object might be created successfully even
+		// when it returns an error.
+		input := &s3.DeleteObjectInput{
+			Bucket: aws.String(options.Bucket),
+			Key:    aws.String(options.Prefix + file),
+		}
+		_, err2 := svc.DeleteObjectWithContext(ctx, input)
+		if aerr, ok := err2.(awserr.Error); ok {
+			if aerr.Code() != "NoSuchKey" {
+				log.Warn("failed to delete object used for permission check",
+					zap.String("bucket", options.Bucket),
+					zap.String("key", *input.Key), zap.Error(err2))
+			}
+		}
+		if err == nil {
+			err = errors.Trace(err2)
+		}
+	}()
+	// when no permission, aws returns err with code "AccessDenied"
+	input := buildPutObjectInput(options, file, []byte("check"))
+	_, err = svc.PutObjectWithContext(ctx, input)
+	return errors.Trace(err)
 }
 
 func (rs *S3Storage) IsObjectLockEnabled() bool {
@@ -486,25 +520,30 @@ func (rs *S3Storage) IsObjectLockEnabled() bool {
 	return false
 }
 
-// WriteFile writes data to a file to storage.
-func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
+func buildPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
 	input := &s3.PutObjectInput{
 		Body:   aws.ReadSeekCloser(bytes.NewReader(data)),
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + file),
+		Bucket: aws.String(options.Bucket),
+		Key:    aws.String(options.Prefix + file),
 	}
-	if rs.options.Acl != "" {
-		input = input.SetACL(rs.options.Acl)
+	if options.Acl != "" {
+		input = input.SetACL(options.Acl)
 	}
-	if rs.options.Sse != "" {
-		input = input.SetServerSideEncryption(rs.options.Sse)
+	if options.Sse != "" {
+		input = input.SetServerSideEncryption(options.Sse)
 	}
-	if rs.options.SseKmsKeyId != "" {
-		input = input.SetSSEKMSKeyId(rs.options.SseKmsKeyId)
+	if options.SseKmsKeyId != "" {
+		input = input.SetSSEKMSKeyId(options.SseKmsKeyId)
 	}
-	if rs.options.StorageClass != "" {
-		input = input.SetStorageClass(rs.options.StorageClass)
+	if options.StorageClass != "" {
+		input = input.SetStorageClass(options.StorageClass)
 	}
+	return input
+}
+
+// WriteFile writes data to a file to storage.
+func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
+	input := buildPutObjectInput(rs.options, file, data)
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
