@@ -24,12 +24,10 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 // prettyFileNames removes the directory prefix except the last level from the
@@ -123,38 +121,15 @@ func GetAllFileNames(
 }
 
 // CleanUpFiles delete all data and stat files under one subDir.
-func CleanUpFiles(ctx context.Context,
-	store storage.ExternalStorage,
-	subDir string,
-	concurrency uint) error {
+func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, subDir string) error {
 	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
 	if err != nil {
 		return err
 	}
-
-	eg := &errgroup.Group{}
-	workerPool := utils.NewWorkerPool(concurrency, "delete global sort files")
-	for i := range dataNames {
-		data := dataNames[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
-			err := store.DeleteFile(ctx, data)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
-	}
-	for i := range statNames {
-		stat := statNames[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
-			err := store.DeleteFile(ctx, stat)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
-	}
-	return eg.Wait()
+	allFiles := make([]string, 0, len(dataNames)+len(statNames))
+	allFiles = append(allFiles, dataNames...)
+	allFiles = append(allFiles, statNames...)
+	return store.DeleteFiles(ctx, allFiles)
 }
 
 // MockExternalEngine generates an external engine with the given keys and values.

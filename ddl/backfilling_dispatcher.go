@@ -45,8 +45,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var cleanExternalStoreFilesConcurrency uint = 3
-
 type backfillingDispatcherExt struct {
 	d                    *ddl
 	previousSchedulerIDs []string
@@ -509,7 +507,7 @@ func cleanupCloudStorageFiles(ctx context.Context, gTaskMeta *BackfillGlobalMeta
 		return
 	}
 	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
-	err = external.CleanUpFiles(ctx, extStore, prefix, cleanExternalStoreFilesConcurrency)
+	err = external.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
 		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return
