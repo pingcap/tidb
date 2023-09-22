@@ -1956,10 +1956,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 
 // canSkipUpdateBinlog checks whether the column can be skipped or not.
 func (t *TableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
-	if col.IsVirtualGeneratedColumn() {
-		return true
-	}
-	return false
+	return col.IsVirtualGeneratedColumn()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.
