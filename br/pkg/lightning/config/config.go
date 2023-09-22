@@ -1069,10 +1069,7 @@ func (cfg *Config) CheckAndAdjustTiDBPort(ctx context.Context, mustHaveInternalC
 		if cfg.TiDB.Port <= 0 {
 			cfg.TiDB.Port = int(settings.Port)
 		}
-		if len(cfg.TiDB.PdAddr) == 0 {
-			pdAddrs := strings.Split(settings.Path, ",")
-			cfg.TiDB.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
-		}
+		cfg.TiDB.PdAddr = settings.Path
 	}
 
 	if cfg.TiDB.Port <= 0 {

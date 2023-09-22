@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -82,7 +83,8 @@ func newChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 	var manager ChecksumManager
 	if pdVersion.Major >= 4 {
 		tlsOpt := rc.tls.ToPDSecurityOption()
-		pdCli, err := pd.NewClientWithContext(ctx, []string{pdAddr}, tlsOpt)
+		addrs := strings.Split(pdAddr, ",")
+		pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
