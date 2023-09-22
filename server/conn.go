@@ -1311,7 +1311,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 			data = data[:len(data)-1]
 			dataStr = string(hack.String(data))
 		}
-		return cc.HandleStmtPrepare(ctx, dataStr)
+		return cc.handleStmtPrepare(ctx, dataStr)
 	case mysql.ComStmtExecute:
 		return cc.handleStmtExecute(ctx, data)
 	case mysql.ComStmtSendLongData:

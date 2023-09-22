@@ -1017,7 +1017,7 @@ func TestTiFlashFallback(t *testing.T) {
 	ctx := context.Background()
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
 	tk.MustExec("set @@tidb_allow_mpp=OFF")
-	require.NoError(t, cc.HandleStmtPrepare(ctx, "select sum(a) from t"))
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(a) from t"))
 	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
 	tk.MustQuery("show warnings").Check(testkit.Rows("Error 9012 TiFlash server timeout"))
 
@@ -1926,12 +1926,12 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 	tk.MustExec("create table t (col1 int)")
 
 	// simple prepare and execute
-	require.NoError(t, cc.HandleStmtPrepare(ctx, "select sum(col1) from t"))
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t"))
 	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
 	require.Equal(t, cc.ctx.Session.ShowProcess().Info, "select sum(col1) from t")
 
 	// prepare and execute with params
-	require.NoError(t, cc.HandleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select sum(col1) from t where col1 < ? and col1 > 100"))
 	// 1 params, length of nullBitMap is 1, `0x8, 0x0` represents the type, and the following `0x10, 0x0....` is the param
 	// 10
 	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x2, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0,

@@ -122,7 +122,7 @@ func TestRcReadCheckTSConflictExtra(t *testing.T) {
 	se.SetValue(sessiontxn.CallOnStmtRetryCount, 0)
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("update t1 set id3 = id3 + 1 where id1 = 1")
-	require.NoError(t, cc.HandleStmtPrepare(ctx, "select * from t1 where id1 = 1"))
+	require.NoError(t, cc.handleStmtPrepare(ctx, "select * from t1 where id1 = 1"))
 	require.NoError(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
 	tk.MustExec("commit")
 	count, ok = se.Value(sessiontxn.CallOnStmtRetryCount).(int)
