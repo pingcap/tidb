@@ -54,8 +54,12 @@ func (s *mockExtStore) Seek(_ int64, _ int) (int64, error) {
 	return 0, errors.Errorf("unsupported operation")
 }
 
-func (s *mockExtStore) Close() error {
+func (*mockExtStore) Close() error {
 	return nil
+}
+
+func (s *mockExtStore) GetFileSize() (int64, error) {
+	return int64(len(s.src)), nil
 }
 
 func TestByteReader(t *testing.T) {
@@ -71,8 +75,8 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("abcde"))
 	require.NoError(t, err)
 
-	newRsc := func() storage.ReadSeekCloser {
-		rsc, err := st.Open(context.Background(), "testfile")
+	newRsc := func() storage.ExternalFileReader {
+		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
 	}
@@ -229,8 +233,8 @@ func testReset(t *testing.T, useConcurrency bool) {
 	err := st.WriteFile(context.Background(), "testfile", src)
 	require.NoError(t, err)
 
-	newRsc := func() storage.ReadSeekCloser {
-		rsc, err := st.Open(context.Background(), "testfile")
+	newRsc := func() storage.ExternalFileReader {
+		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
 	}
@@ -276,8 +280,8 @@ func TestUnexpectedEOF(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("0123456789"))
 	require.NoError(t, err)
 
-	newRsc := func() storage.ReadSeekCloser {
-		rsc, err := st.Open(context.Background(), "testfile")
+	newRsc := func() storage.ExternalFileReader {
+		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
 	}
@@ -305,8 +309,8 @@ func TestEmptyContent(t *testing.T) {
 	err = st.WriteFile(context.Background(), "testfile", []byte(""))
 	require.NoError(t, err)
 
-	newRsc := func() storage.ReadSeekCloser {
-		rsc, err := st.Open(context.Background(), "testfile")
+	newRsc := func() storage.ExternalFileReader {
+		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
 	}
@@ -323,8 +327,8 @@ func TestSwitchMode(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", make([]byte, fileSize))
 	require.NoError(t, err)
 
-	newRsc := func() storage.ReadSeekCloser {
-		rsc, err := st.Open(context.Background(), "testfile")
+	newRsc := func() storage.ExternalFileReader {
+		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
 	}

@@ -410,7 +410,7 @@ func SplitLargeCSV(
 	var columns []string
 	var prevRowIdxMax int64
 	if cfg.CSV.Header {
-		r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path)
+		r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -440,7 +440,7 @@ func SplitLargeCSV(
 		curRowsCnt := (endOffset - startOffset) / divisor
 		rowIDMax := prevRowIdxMax + curRowsCnt
 		if endOffset != dataFile.FileMeta.FileSize {
-			r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path)
+			r, err := cfg.Store.Open(ctx, dataFile.FileMeta.Path, nil)
 			if err != nil {
 				return nil, nil, err
 			}

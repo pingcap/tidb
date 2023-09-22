@@ -51,8 +51,8 @@ func openStoreReaderAndSeek(
 	store storage.ExternalStorage,
 	name string,
 	initFileOffset uint64,
-) (storage.ReadSeekCloser, error) {
-	storageReader, err := store.Open(ctx, name)
+) (storage.ExternalFileReader, error) {
+	storageReader, err := store.Open(ctx, name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,11 @@ func newByteReader(
 			_ = r.Close()
 		}
 	}()
-	conReader, err := newSingeFileReader(ctx, st, name, 8, ConcurrentReaderBufferSize)
+	fileSize, err := storageReader.GetFileSize()
+	if err != nil {
+		return nil, err
+	}
+	conReader, err := newSingeFileReader(ctx, st, name, fileSize, 8, ConcurrentReaderBufferSize)
 	if err != nil {
 		return nil, err
 	}

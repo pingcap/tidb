@@ -699,7 +699,7 @@ func calculateFileBytes(ctx context.Context,
 	store storage.ExternalStorage,
 	offset int64) (tot int, pos int64, err error) {
 	bytes := make([]byte, sampleCompressedFileSize)
-	reader, err := store.Open(ctx, dataFile)
+	reader, err := store.Open(ctx, dataFile, nil)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -786,7 +786,7 @@ func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store s
 		return 0, err
 	}
 
-	reader, err := store.Open(ctx, fileMeta.Path)
+	reader, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
 		return 0, err
 	}

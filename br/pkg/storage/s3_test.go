@@ -641,7 +641,7 @@ func TestOpenAsBufio(t *testing.T) {
 			}, nil
 		})
 
-	reader, err := s.storage.Open(ctx, "plain-text-file")
+	reader, err := s.storage.Open(ctx, "plain-text-file", nil)
 	require.NoError(t, err)
 	require.Nil(t, reader.Close())
 	bufReader := bufio.NewReaderSize(reader, 5)
@@ -686,7 +686,7 @@ func TestOpenReadSlowly(t *testing.T) {
 			ContentLength: aws.Int64(26),
 		}, nil)
 
-	reader, err := s.storage.Open(ctx, "alphabets")
+	reader, err := s.storage.Open(ctx, "alphabets", nil)
 	require.NoError(t, err)
 	res, err := io.ReadAll(reader)
 	require.NoError(t, err)
@@ -706,7 +706,7 @@ func TestOpenSeek(t *testing.T) {
 		return io.NopCloser(bytes.NewReader(data[offset:]))
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
+	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())
@@ -824,7 +824,7 @@ func TestS3ReaderWithRetryEOF(t *testing.T) {
 		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
+	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())
@@ -870,7 +870,7 @@ func TestS3ReaderWithRetryFailed(t *testing.T) {
 		return io.NopCloser(&limitedBytesReader{Reader: bytes.NewReader(data[offset:]), limit: 30})
 	})
 
-	reader, err := s.storage.Open(ctx, "random")
+	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())

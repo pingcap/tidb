@@ -670,9 +670,9 @@ func OpenReader(
 		if err2 != nil {
 			return nil, err2
 		}
-		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path)
+		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
 	default:
-		reader, err = store.Open(ctx, fileMeta.Path)
+		reader, err = store.Open(ctx, fileMeta.Path, nil)
 	}
 	return
 }

@@ -38,18 +38,18 @@ func (m *MockExternalStorage) EXPECT() *MockExternalStorageMockRecorder {
 }
 
 // Create mocks base method.
-func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string, _ *storage.WriterOption) (storage.ExternalFileWriter, error) {
+func (m *MockExternalStorage) Create(arg0 context.Context, arg1 string, arg2 *storage.WriterOption) (storage.ExternalFileWriter, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Create", arg0, arg1)
+	ret := m.ctrl.Call(m, "Create", arg0, arg1, arg2)
 	ret0, _ := ret[0].(storage.ExternalFileWriter)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Create indicates an expected call of Create.
-func (mr *MockExternalStorageMockRecorder) Create(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Create(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockExternalStorage)(nil).Create), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Create", reflect.TypeOf((*MockExternalStorage)(nil).Create), arg0, arg1, arg2)
 }
 
 // DeleteFile mocks base method.
@@ -96,18 +96,18 @@ func (mr *MockExternalStorageMockRecorder) FileExists(arg0, arg1 interface{}) *g
 }
 
 // Open mocks base method.
-func (m *MockExternalStorage) Open(arg0 context.Context, arg1 string) (storage.ExternalFileReader, error) {
+func (m *MockExternalStorage) Open(arg0 context.Context, arg1 string, arg2 *storage.ReaderOption) (storage.ExternalFileReader, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Open", arg0, arg1)
+	ret := m.ctrl.Call(m, "Open", arg0, arg1, arg2)
 	ret0, _ := ret[0].(storage.ExternalFileReader)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // Open indicates an expected call of Open.
-func (mr *MockExternalStorageMockRecorder) Open(arg0, arg1 interface{}) *gomock.Call {
+func (mr *MockExternalStorageMockRecorder) Open(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockExternalStorage)(nil).Open), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Open", reflect.TypeOf((*MockExternalStorage)(nil).Open), arg0, arg1, arg2)
 }
 
 // ReadFile mocks base method.
