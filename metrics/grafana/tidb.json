@@ -220,7 +220,7 @@
         "targets": [
           {
             "exemplar": true,
-            "expr": "time() - timestamp(tidb_disttask_dispatcher_start_time{status=\"waiting\"})",
+            "expr": "time() - timestamp(tidb_disttask_start_time{status=\"waiting\"})",
             "interval": "",
             "intervalFactor": 1,
             "legendFormat": "{{task_type}}_{{task_id}}",
@@ -325,7 +325,7 @@
         "targets": [
           {
             "exemplar": true,
-            "expr": "time() - timestamp(tidb_disttask_dispatcher_start_time{status=\"dispatching\"})",
+            "expr": "time() - timestamp(tidb_disttask_start_time{status=\"dispatching\"})",
             "interval": "",
             "intervalFactor": 1,
             "legendFormat": "{{task_type}}_{{task_id}}",
