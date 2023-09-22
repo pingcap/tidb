@@ -242,19 +242,23 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
-	MinKey      []byte   `json:"min_key"`
-	MaxKey      []byte   `json:"max_key"`
-	TotalKVSize uint64   `json:"total_kv_size"`
-	DataFiles   []string `json:"data_files"`
-	StatFiles   []string `json:"stat_files"`
+	MinKey      []byte `json:"min-key"`
+	MaxKey      []byte `json:"max-key"`
+	TotalKVSize uint64 `json:"total-kv-size"`
+	// seems those 2 fields always generated from MultipleFilesStats,
+	// maybe remove them later.
+	DataFiles          []string            `json:"data-files"`
+	StatFiles          []string            `json:"stat-files"`
+	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary.
 func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 	meta := &SortedKVMeta{
-		MinKey:      summary.Min.Clone(),
-		MaxKey:      summary.Max.Clone(),
-		TotalKVSize: summary.TotalSize,
+		MinKey:             summary.Min.Clone(),
+		MaxKey:             summary.Max.Clone(),
+		TotalKVSize:        summary.TotalSize,
+		MultipleFilesStats: summary.MultipleFilesStats,
 	}
 	for _, f := range summary.MultipleFilesStats {
 		for _, filename := range f.Filenames {
@@ -273,6 +277,8 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 
 	m.DataFiles = append(m.DataFiles, other.DataFiles...)
 	m.StatFiles = append(m.StatFiles, other.StatFiles...)
+
+	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.

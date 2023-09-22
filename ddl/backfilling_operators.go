@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -160,14 +161,14 @@ func NewWriteIndexToExternalStoragePipeline(
 	extStoreURI string,
 	sessPool opSessPool,
 	sessCtx sessionctx.Context,
-	jobID int64,
-	subtaskID int64,
+	jobID, subtaskID int64,
 	tbl table.PhysicalTable,
 	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
 	totalRowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 	onClose external.OnCloseFunc,
+	bcctx ingest.BackendCtx,
 ) (*operator.AsyncPipeline, error) {
 	indexes := make([]table.Index, 0, len(idxInfos))
 	for _, idxInfo := range idxInfos {
@@ -196,10 +197,15 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
+	var shareMu *sync.Mutex
+	if bcctx != nil {
+		shareMu = bcctx.GetLocalBackend().GetMutex()
+	}
+
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -476,6 +482,7 @@ func NewWriteExternalStoreOperator(
 	srcChunkPool chan *chunk.Chunk,
 	concurrency int,
 	onClose external.OnCloseFunc,
+	shareMu *sync.Mutex,
 ) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
@@ -486,7 +493,7 @@ func NewWriteExternalStoreOperator(
 			for _, index := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(index.Meta().Unique)
+					SetKeyDuplicationEncoding(index.Meta().Unique).SetMutex(shareMu)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
