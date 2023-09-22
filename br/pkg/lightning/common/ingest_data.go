@@ -27,6 +27,10 @@ type IngestData interface {
 	NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter
 	// GetTS will be used as the start/commit TS of the data.
 	GetTS() uint64
+	// IncRef should be called every time when IngestData is referred by regionJob.
+	// Multiple regionJob can share one IngestData. Same amount of Finish should be
+	// called to release the IngestData.
+	IncRef()
 	// Finish will be called when the data is ingested successfully.
 	Finish(totalBytes, totalCount int64)
 }

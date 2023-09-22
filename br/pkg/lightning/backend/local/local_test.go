@@ -1207,6 +1207,8 @@ func (m mockIngestData) NewIter(ctx context.Context, lowerBound, upperBound []by
 
 func (m mockIngestData) GetTS() uint64 { return 0 }
 
+func (m mockIngestData) IncRef() {}
+
 func (m mockIngestData) Finish(_, _ int64) {}
 
 func TestCheckPeersBusy(t *testing.T) {
