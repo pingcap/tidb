@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -210,102 +211,11 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	return newCollector
 }
 
-// IndexUsageInformation is the data struct to store index usage information.
-type IndexUsageInformation struct {
-	LastUsedAt   string
-	QueryCount   int64
-	RowsSelected int64
-}
-
-// GlobalIndexID is the key type for indexUsageMap.
-type GlobalIndexID struct {
-	TableID int64
-	IndexID int64
-}
-
-type indexUsageMap map[GlobalIndexID]IndexUsageInformation
-
-// SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
-type SessionIndexUsageCollector struct {
-	mapper indexUsageMap
-	next   *SessionIndexUsageCollector
-	sync.Mutex
-
-	deleted bool
-}
-
-func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformation) {
-	item := m[id]
-	item.QueryCount += value.QueryCount
-	item.RowsSelected += value.RowsSelected
-	if item.LastUsedAt < value.LastUsedAt {
-		item.LastUsedAt = value.LastUsedAt
-	}
-	m[id] = item
-}
-
-func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInformation) {
-	id := GlobalIndexID{TableID: tableID, IndexID: indexID}
-	m.updateByKey(id, value)
-}
-
-func (m indexUsageMap) merge(destMap indexUsageMap) {
-	for id := range destMap {
-		item := destMap[id]
-		m.updateByKey(id, &item)
-	}
-}
-
-// Update updates the mapper in SessionIndexUsageCollector.
-func (s *SessionIndexUsageCollector) Update(tableID int64, indexID int64, value *IndexUsageInformation) {
-	value.LastUsedAt = time.Now().Format(types.TimeFSPFormat)
-	s.Lock()
-	defer s.Unlock()
-	s.mapper.update(tableID, indexID, value)
-}
-
-// Delete will set s.deleted to true which means it can be deleted from linked list.
-func (s *SessionIndexUsageCollector) Delete() {
-	s.Lock()
-	defer s.Unlock()
-	s.deleted = true
-}
-
 // NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
 // idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
 // points to new item. It's helpful to sweepIdxUsageList.
-func (h *Handle) NewSessionIndexUsageCollector() *SessionIndexUsageCollector {
-	h.idxUsageListHead.Lock()
-	defer h.idxUsageListHead.Unlock()
-	newCollector := &SessionIndexUsageCollector{
-		mapper: make(indexUsageMap),
-		next:   h.idxUsageListHead.next,
-	}
-	h.idxUsageListHead.next = newCollector
-	return newCollector
-}
-
-// sweepIdxUsageList will loop over the list, merge each session's local index usage information into handle
-// and remove closed session's collector.
-// For convenience, we keep idxUsageListHead always points to sentinel node. So that we don't need to consider corner case.
-func (h *Handle) sweepIdxUsageList() indexUsageMap {
-	prev := h.idxUsageListHead
-	prev.Lock()
-	mapper := make(indexUsageMap)
-	for curr := prev.next; curr != nil; curr = curr.next {
-		curr.Lock()
-		mapper.merge(curr.mapper)
-		if curr.deleted {
-			prev.next = curr.next
-			curr.Unlock()
-		} else {
-			prev.Unlock()
-			curr.mapper = make(indexUsageMap)
-			prev = curr
-		}
-	}
-	prev.Unlock()
-	return mapper
+func (h *Handle) NewSessionIndexUsageCollector() *usage.SessionIndexUsageCollector {
+	return usage.NewSessionIndexUsageCollector(h.idxUsageListHead)
 }
 
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
@@ -316,47 +226,33 @@ const maxInsertLength = 1024 * 1024
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	mapper := h.sweepIdxUsageList()
-	type FullIndexUsageInformation struct {
-		information IndexUsageInformation
-		id          GlobalIndexID
+	return h.callWithExec(func(exec sqlexec.RestrictedSQLExecutor) error {
+		return usage.DumpIndexUsageToKV(exec, h.idxUsageListHead)
+	})
+}
+
+func (h *Handle) callWithExec(f func(exec sqlexec.RestrictedSQLExecutor) error) (err error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
 	}
-	indexInformationSlice := make([]FullIndexUsageInformation, 0, len(mapper))
-	for id, value := range mapper {
-		indexInformationSlice = append(indexInformationSlice, FullIndexUsageInformation{id: id, information: value})
+	defer func() {
+		if err == nil { // only recycle when no error
+			h.pool.Put(se)
+		}
+	}()
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
+		return err
 	}
-	for i := 0; i < len(mapper); i += batchInsertSize {
-		end := i + batchInsertSize
-		if end > len(mapper) {
-			end = len(mapper)
-		}
-		sql := new(strings.Builder)
-		sqlexec.MustFormatSQL(sql, "insert into mysql.SCHEMA_INDEX_USAGE (table_id,index_id,query_count,rows_selected,last_used_at) values")
-		for j := i; j < end; j++ {
-			index := indexInformationSlice[j]
-			sqlexec.MustFormatSQL(sql, "(%?, %?, %?, %?, %?)", index.id.TableID, index.id.IndexID,
-				index.information.QueryCount, index.information.RowsSelected, index.information.LastUsedAt)
-			if j < end-1 {
-				sqlexec.MustFormatSQL(sql, ",")
-			}
-		}
-		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
-		if _, _, err := h.execRestrictedSQL(ctx, sql.String()); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return f(exec)
 }
 
 // GCIndexUsage will delete the usage information of those indexes that do not exist.
 func (h *Handle) GCIndexUsage() error {
-	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
-	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
-	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
-	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
-	_, _, err := h.execRestrictedSQL(context.Background(), sql)
-	return err
+	return h.callWithExec(usage.GCIndexUsageOnKV)
 }
 
 var (
