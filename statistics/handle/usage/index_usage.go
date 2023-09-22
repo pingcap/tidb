@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -151,7 +152,7 @@ var (
 )
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
-func DumpIndexUsageToKV(exec sqlexec.RestrictedSQLExecutor, listHead *SessionIndexUsageCollector) error {
+func DumpIndexUsageToKV(_ sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, listHead *SessionIndexUsageCollector) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	mapper := sweepIdxUsageList(listHead)
 	type FullIndexUsageInformation struct {
@@ -186,7 +187,7 @@ func DumpIndexUsageToKV(exec sqlexec.RestrictedSQLExecutor, listHead *SessionInd
 }
 
 // GCIndexUsageOnKV will delete the usage information of non-existent indexes.
-func GCIndexUsageOnKV(exec sqlexec.RestrictedSQLExecutor) error {
+func GCIndexUsageOnKV(_ sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
 	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
 	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
 	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.

@@ -29,13 +29,13 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/ranger"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestSingleSessionInsert(t *testing.T) {
@@ -362,10 +362,10 @@ func TestAutoUpdate(t *testing.T) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a varchar(20))")
 
-		handle.AutoAnalyzeMinCnt = 0
+		autoanalyze.AutoAnalyzeMinCnt = 0
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.2")
 		defer func() {
-			handle.AutoAnalyzeMinCnt = 1000
+			autoanalyze.AutoAnalyzeMinCnt = 1000
 			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
 		}()
 
@@ -467,10 +467,10 @@ func TestAutoUpdatePartition(t *testing.T) {
 		testKit.MustExec("create table t (a int) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6))")
 		testKit.MustExec("analyze table t")
 
-		handle.AutoAnalyzeMinCnt = 0
+		autoanalyze.AutoAnalyzeMinCnt = 0
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.6")
 		defer func() {
-			handle.AutoAnalyzeMinCnt = 1000
+			autoanalyze.AutoAnalyzeMinCnt = 1000
 			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
 		}()
 
@@ -496,79 +496,6 @@ func TestAutoUpdatePartition(t *testing.T) {
 	})
 }
 
-func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
-	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
-	}()
-
-	tt := time.Now().Add(-1 * time.Minute)
-	h, m := tt.Hour(), tt.Minute()
-	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, index idx(a))")
-	// to pass the stats.Pseudo check in autoAnalyzeTable
-	tk.MustExec("analyze table t")
-	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
-
-	// test if it will be limited by the time range
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
-
-	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
-	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
-}
-
-func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
-	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
-		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
-	}()
-
-	tt := time.Now().Add(-1 * time.Minute)
-	h, m := tt.Hour(), tt.Minute()
-	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int)")
-	// to pass the stats.Pseudo check in autoAnalyzeTable
-	tk.MustExec("analyze table t")
-	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(handle.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
-
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
-	tk.MustExec("analyze table t")
-
-	tk.MustExec("alter table t add index ia(a)")
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
-
-	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
-	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
-}
-
 func TestIssue25700(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -585,116 +512,12 @@ func TestIssue25700(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("CREATE TABLE `t` ( `ldecimal` decimal(32,4) DEFAULT NULL, `rdecimal` decimal(32,4) DEFAULT NULL, `gen_col` decimal(36,4) GENERATED ALWAYS AS (`ldecimal` + `rdecimal`) VIRTUAL, `col_timestamp` timestamp(3) NULL DEFAULT NULL ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("analyze table t")
-	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00')" + strings.Repeat(", (2265.2200, 9843.4100, '1999-12-31 16:00:00')", int(handle.AutoAnalyzeMinCnt)))
+	tk.MustExec("INSERT INTO `t` (`ldecimal`, `rdecimal`, `col_timestamp`) VALUES (2265.2200, 9843.4100, '1999-12-31 16:00:00')" + strings.Repeat(", (2265.2200, 9843.4100, '1999-12-31 16:00:00')", int(autoanalyze.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 	require.Equal(t, "finished", tk.MustQuery("show analyze status").Rows()[1][7])
-}
-
-func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, index idx(a))")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set @@global.tidb_analyze_version = 1")
-	do := dom
-	handle.AutoAnalyzeMinCnt = 0
-	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
-	}()
-	h := do.StatsHandle()
-	err := h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	is := do.InfoSchema()
-	require.NoError(t, h.Update(is))
-	// Auto analyze when global ver is 1.
-	h.HandleAutoAnalyze(is)
-	require.NoError(t, h.Update(is))
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	statsTbl1 := h.GetTableStats(tbl.Meta())
-	// Check that all the version of t's stats are 1.
-	for _, col := range statsTbl1.Columns {
-		require.Equal(t, int64(1), col.GetStatsVer())
-	}
-	for _, idx := range statsTbl1.Indices {
-		require.Equal(t, int64(1), idx.GetStatsVer())
-	}
-	tk.MustExec("set @@global.tidb_analyze_version = 2")
-	tk.MustExec("insert into t values(1), (2), (3), (4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(is))
-	// Auto analyze t whose version is 1 after setting global ver to 2.
-	h.HandleAutoAnalyze(is)
-	require.NoError(t, h.Update(is))
-	statsTbl1 = h.GetTableStats(tbl.Meta())
-	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
-	// All of its statistics should still be version 1.
-	for _, col := range statsTbl1.Columns {
-		require.Equal(t, int64(1), col.GetStatsVer())
-	}
-	for _, idx := range statsTbl1.Indices {
-		require.Equal(t, int64(1), idx.GetStatsVer())
-	}
-	// Add a new table after the analyze version set to 2.
-	tk.MustExec("create table tt(a int, index idx(a))")
-	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
-	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	is = do.InfoSchema()
-	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
-	require.NoError(t, err)
-	require.NoError(t, h.Update(is))
-	h.HandleAutoAnalyze(is)
-	require.NoError(t, h.Update(is))
-	statsTbl2 := h.GetTableStats(tbl2.Meta())
-	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
-	for _, idx := range statsTbl2.Indices {
-		require.Equal(t, int64(2), idx.GetStatsVer())
-	}
-	for _, col := range statsTbl2.Columns {
-		require.Equal(t, int64(2), col.GetStatsVer())
-	}
-	tk.MustExec("set @@global.tidb_analyze_version = 1")
-}
-
-func TestTableAnalyzed(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("create table t (a int)")
-	testKit.MustExec("insert into t values (1)")
-
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tableInfo := tbl.Meta()
-	h := dom.StatsHandle()
-
-	require.NoError(t, h.Update(is))
-	statsTbl := h.GetTableStats(tableInfo)
-	require.False(t, handle.TableAnalyzed(statsTbl))
-
-	testKit.MustExec("analyze table t")
-	require.NoError(t, h.Update(is))
-	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, handle.TableAnalyzed(statsTbl))
-
-	h.Clear()
-	oriLease := h.Lease()
-	// set it to non-zero so we will use load by need strategy
-	h.SetLease(1)
-	defer func() {
-		h.SetLease(oriLease)
-	}()
-	require.NoError(t, h.Update(is))
-	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, handle.TableAnalyzed(statsTbl))
 }
 
 func appendBucket(h *statistics.Histogram, l, r int64) {
@@ -789,88 +612,6 @@ func TestOutOfOrderUpdate(t *testing.T) {
 
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	testKit.MustQuery(fmt.Sprintf("select count from mysql.stats_meta where table_id = %d", tableInfo.ID)).Check(testkit.Rows("3"))
-}
-
-func TestNeedAnalyzeTable(t *testing.T) {
-	columns := map[int64]*statistics.Column{}
-	columns[1] = &statistics.Column{StatsVer: statistics.Version2}
-	tests := []struct {
-		tbl    *statistics.Table
-		ratio  float64
-		limit  time.Duration
-		result bool
-		reason string
-	}{
-		// table was never analyzed and has reach the limit
-		{
-			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
-			limit:  0,
-			ratio:  0,
-			result: true,
-			reason: "table unanalyzed",
-		},
-		// table was never analyzed but has not reached the limit
-		{
-			tbl:    &statistics.Table{Version: oracle.GoTimeToTS(time.Now())},
-			limit:  time.Hour,
-			ratio:  0,
-			result: true,
-			reason: "table unanalyzed",
-		},
-		// table was already analyzed but auto analyze is disabled
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
-			ratio:  0,
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed but modify count is small
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 0, RealtimeCount: 1}},
-			limit:  0,
-			ratio:  0.3,
-			result: false,
-			reason: "",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-		// table was already analyzed
-		{
-			tbl:    &statistics.Table{HistColl: statistics.HistColl{Columns: columns, ModifyCount: 1, RealtimeCount: 1}},
-			limit:  0,
-			ratio:  0.3,
-			result: true,
-			reason: "too many modifications",
-		},
-	}
-	for _, test := range tests {
-		needAnalyze, reason := handle.NeedAnalyzeTable(test.tbl, test.limit, test.ratio)
-		require.Equal(t, test.result, needAnalyze)
-		require.True(t, strings.HasPrefix(reason, test.reason))
-	}
 }
 
 func TestLoadHistCorrelation(t *testing.T) {
@@ -1012,9 +753,6 @@ func TestStatsVariables(t *testing.T) {
 	pruneMode, err := h.GetCurrentPruneMode()
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Dynamic), pruneMode)
-	analyzeVer, err := h.GetCurrentAnalyzeVersion()
-	require.NoError(t, err)
-	require.Equal(t, 2, analyzeVer)
 	err = handle.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
@@ -1032,9 +770,6 @@ func TestStatsVariables(t *testing.T) {
 	pruneMode, err = h.GetCurrentPruneMode()
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Static), pruneMode)
-	analyzeVer, err = h.GetCurrentAnalyzeVersion()
-	require.NoError(t, err)
-	require.Equal(t, 1, analyzeVer)
 	err = handle.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
@@ -1067,10 +802,10 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		testKit.MustExec("set @@tidb_analyze_version = 2")
 		testKit.MustExec("analyze table t")
 
-		handle.AutoAnalyzeMinCnt = 0
+		autoanalyze.AutoAnalyzeMinCnt = 0
 		testKit.MustExec("set global tidb_auto_analyze_ratio = 0.1")
 		defer func() {
-			handle.AutoAnalyzeMinCnt = 1000
+			autoanalyze.AutoAnalyzeMinCnt = 1000
 			testKit.MustExec("set global tidb_auto_analyze_ratio = 0.0")
 		}()
 
@@ -1113,9 +848,9 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1341,9 +1076,9 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -1541,15 +1276,15 @@ func TestNotDumpSysTable(t *testing.T) {
 func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	oriMinCnt := handle.AutoAnalyzeMinCnt
+	oriMinCnt := autoanalyze.AutoAnalyzeMinCnt
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
 	defer func() {
-		handle.AutoAnalyzeMinCnt = oriMinCnt
+		autoanalyze.AutoAnalyzeMinCnt = oriMinCnt
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	tk.MustExec("set global tidb_analyze_version = 2")

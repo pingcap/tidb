@@ -124,24 +124,6 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 	})
 }
 
-func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, analyzeSnapshot bool, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	pruneMode, err := h.GetCurrentPruneMode()
-	if err != nil {
-		return nil, nil, err
-	}
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		optFuncs := []sqlexec.OptionFuncAlias{
-			execOptionForAnalyze[statsVer],
-			sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
-			sqlexec.GetPartitionPruneModeOption(pruneMode),
-			sqlexec.ExecOptionUseCurSession,
-			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
-		}
-		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
-	})
-}
-
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
