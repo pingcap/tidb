@@ -557,7 +557,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 		return ver, errors.Trace(err)
 	}
 
-	var allIndexInfos []*model.IndexInfo
+	allIndexInfos := make([]*model.IndexInfo, 0, len(indexNames))
 	for i, indexName := range indexNames {
 		indexInfo := tblInfo.FindIndexByName(indexName.L)
 		if indexInfo != nil && indexInfo.State == model.StatePublic {
@@ -1723,7 +1723,6 @@ func newAddIndexIngestWorker(
 	checkpointMgr *ingest.CheckpointManager,
 	distribute bool,
 ) (*addIndexIngestWorker, error) {
-
 	indexes := make([]table.Index, 0, len(indexIDs))
 	writers := make([]ingest.Writer, 0, len(indexIDs))
 	for i, indexID := range indexIDs {
@@ -1788,10 +1787,16 @@ func writeChunkToLocal(
 	count := 0
 	var lastHandle kv.Handle
 
+	unlockFns := make([]func(), 0, len(writers))
 	for _, w := range writers {
 		unlock := w.LockForWrite()
-		defer unlock()
+		unlockFns = append(unlockFns, unlock)
 	}
+	defer func() {
+		for _, unlock := range unlockFns {
+			unlock()
+		}
+	}()
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		handleDataBuf = handleDataBuf[:0]
 		handleDataBuf := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, handleDataBuf)

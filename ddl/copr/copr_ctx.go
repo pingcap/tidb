@@ -31,6 +31,7 @@ type CopContext interface {
 	IndexInfo(idxID int64) *model.IndexInfo
 }
 
+// CopContextBase contains common fields for CopContextSingleIndex and CopContextMultiIndex.
 type CopContextBase struct {
 	TableInfo      *model.TableInfo
 	PrimaryKeyInfo *model.IndexInfo
@@ -47,14 +48,16 @@ type CopContextBase struct {
 	VirtualColumnsFieldTypes    []*types.FieldType
 }
 
-type CopCtxSingleIndex struct {
+// CopContextSingleIndex is the coprocessor context for single index.
+type CopContextSingleIndex struct {
 	*CopContextBase
 
 	idxInfo             *model.IndexInfo
 	idxColOutputOffsets []int
 }
 
-type CopCtxMultiIndex struct {
+// CopContextMultiIndex is the coprocessor context for multiple indexes.
+type CopContextMultiIndex struct {
 	*CopContextBase
 
 	allIndexInfos       []*model.IndexInfo
@@ -134,6 +137,7 @@ func NewCopContextBase(
 	}, nil
 }
 
+// NewCopContext creates a CopContext.
 func NewCopContext(
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
@@ -146,42 +150,47 @@ func NewCopContext(
 	return NewCopContextMultiIndex(tblInfo, allIdxInfo, sessCtx, requestSource)
 }
 
+// NewCopContextSingleIndex creates a CopContextSingleIndex.
 func NewCopContextSingleIndex(
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	sessCtx sessionctx.Context,
 	requestSource string,
-) (*CopCtxSingleIndex, error) {
+) (*CopContextSingleIndex, error) {
 	base, err := NewCopContextBase(tblInfo, idxInfo.Columns, sessCtx, requestSource)
 	if err != nil {
 		return nil, err
 	}
 	idxOffsets := resolveIndicesForIndex(base.ExprColumnInfos, idxInfo, tblInfo)
-	return &CopCtxSingleIndex{
+	return &CopContextSingleIndex{
 		CopContextBase:      base,
 		idxInfo:             idxInfo,
 		idxColOutputOffsets: idxOffsets,
 	}, nil
 }
 
-func (c *CopCtxSingleIndex) GetBase() *CopContextBase {
+// GetBase implements the CopContext interface.
+func (c *CopContextSingleIndex) GetBase() *CopContextBase {
 	return c.CopContextBase
 }
 
-func (c *CopCtxSingleIndex) IndexColumnOutputOffsets(_ int64) []int {
+// IndexColumnOutputOffsets implements the CopContext interface.
+func (c *CopContextSingleIndex) IndexColumnOutputOffsets(_ int64) []int {
 	return c.idxColOutputOffsets
 }
 
-func (c *CopCtxSingleIndex) IndexInfo(_ int64) *model.IndexInfo {
+// IndexInfo implements the CopContext interface.
+func (c *CopContextSingleIndex) IndexInfo(_ int64) *model.IndexInfo {
 	return c.idxInfo
 }
 
+// NewCopContextMultiIndex creates a CopContextMultiIndex.
 func NewCopContextMultiIndex(
 	tblInfo *model.TableInfo,
 	allIdxInfo []*model.IndexInfo,
 	sessCtx sessionctx.Context,
 	requestSource string,
-) (*CopCtxMultiIndex, error) {
+) (*CopContextMultiIndex, error) {
 	approxColLen := 0
 	for _, idxInfo := range allIdxInfo {
 		approxColLen += len(idxInfo.Columns)
@@ -206,18 +215,20 @@ func NewCopContextMultiIndex(
 	for _, idxInfo := range allIdxInfo {
 		idxOffsets = append(idxOffsets, resolveIndicesForIndex(base.ExprColumnInfos, idxInfo, tblInfo))
 	}
-	return &CopCtxMultiIndex{
+	return &CopContextMultiIndex{
 		CopContextBase:      base,
 		allIndexInfos:       allIdxInfo,
 		idxColOutputOffsets: idxOffsets,
 	}, nil
 }
 
-func (c *CopCtxMultiIndex) GetBase() *CopContextBase {
+// GetBase implements the CopContext interface.
+func (c *CopContextMultiIndex) GetBase() *CopContextBase {
 	return c.CopContextBase
 }
 
-func (c *CopCtxMultiIndex) IndexColumnOutputOffsets(indexID int64) []int {
+// IndexColumnOutputOffsets implements the CopContext interface.
+func (c *CopContextMultiIndex) IndexColumnOutputOffsets(indexID int64) []int {
 	for i, idxInfo := range c.allIndexInfos {
 		if idxInfo.ID == indexID {
 			return c.idxColOutputOffsets[i]
@@ -226,7 +237,8 @@ func (c *CopCtxMultiIndex) IndexColumnOutputOffsets(indexID int64) []int {
 	return nil
 }
 
-func (c *CopCtxMultiIndex) IndexInfo(indexID int64) *model.IndexInfo {
+// IndexInfo implements the CopContext interface.
+func (c *CopContextMultiIndex) IndexInfo(indexID int64) *model.IndexInfo {
 	for _, idxInfo := range c.allIndexInfos {
 		if idxInfo.ID == indexID {
 			return idxInfo
