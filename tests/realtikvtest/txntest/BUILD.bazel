@@ -9,6 +9,9 @@ go_test(
         "txn_state_test.go",
         "txn_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     flaky = True,
     race = "on",
     deps = [

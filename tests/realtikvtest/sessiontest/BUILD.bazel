@@ -9,6 +9,9 @@ go_test(
         "retry_test.go",
         "session_fail_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     flaky = True,
     race = "on",
     deps = [

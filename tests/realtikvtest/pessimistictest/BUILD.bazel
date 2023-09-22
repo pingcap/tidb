@@ -7,6 +7,9 @@ go_test(
         "main_test.go",
         "pessimistic_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     flaky = True,
     deps = [
         "//config",

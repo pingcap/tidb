@@ -7,6 +7,9 @@ go_test(
         "flashback_test.go",
         "main_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     flaky = True,
     race = "on",
     deps = [

@@ -32,6 +32,9 @@ go_test(
         "operator_test.go",
         "pitr_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     embed = [":addindextest"],
     deps = [
         "//br/pkg/lightning/backend/local",

@@ -13,6 +13,9 @@ go_test(
         "precheck_test.go",
         "util_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     embedsrcs = ["test.parquet"],
     flaky = True,
     race = "on",

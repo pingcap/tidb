@@ -7,6 +7,9 @@ go_test(
         "file_compression_test.go",
         "main_test.go",
     ],
+    data = [
+        "//:tidb_test_binary",
+    ],
     flaky = True,
     race = "on",
     deps = [
