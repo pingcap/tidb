@@ -79,12 +79,12 @@ func getAutoAnalyzeParameters(exec sqlexec.RestrictedSQLExecutor) map[string]str
 
 // Opt is used to hold parameters for auto analyze.
 type Opt struct {
-	StatsLease              time.Duration                                               // current stats lease
+	SysProcTracker          sessionctx.SysProcTracker                                   // used to track analyze resource consumption
 	GetLockedTables         func(tableIDs ...int64) (map[int64]struct{}, error)         // locked tables will be skipped in auto analyze
 	GetTableStats           func(tblInfo *model.TableInfo) *statistics.Table            // used to look up table stats to decide whether to analyze the table
 	GetPartitionStats       func(tblInfo *model.TableInfo, pid int64) *statistics.Table // used to look up partition stats to decide whether to analyze the partition
-	SysProcTracker          sessionctx.SysProcTracker                                   // used to track analyze resource consumption
 	AutoAnalyzeProcIDGetter func() uint64                                               // used to assign job ID for analyze jobs
+	StatsLease              time.Duration                                               // current stats lease
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
