@@ -58,7 +58,6 @@ go_test(
         "//session",
         "//sessionctx",
         "//testkit",
-        "//testkit/testdata",
         "//testkit/testsetup",
         "//types",
         "//util/collate",
