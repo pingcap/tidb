@@ -786,7 +786,7 @@ func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store s
 		return 0, err
 	}
 
-	reader, err := store.Open(ctx, fileMeta.Path)
+	reader, err := store.Open(ctx, fileMeta.Path, nil)
 	if err != nil {
 		return 0, err
 	}

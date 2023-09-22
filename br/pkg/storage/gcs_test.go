@@ -398,3 +398,46 @@ func TestNewGCSStorage(t *testing.T) {
 		require.Equal(t, "a/b/x", s.objectName("x"))
 	}
 }
+
+func TestReadRange(t *testing.T) {
+	ctx := context.Background()
+
+	opts := fakestorage.Options{
+		NoListener: true,
+	}
+	server, err := fakestorage.NewServerWithOptions(opts)
+	require.NoError(t, err)
+	bucketName := "testbucket"
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: bucketName})
+
+	gcs := &backuppb.GCS{
+		Bucket:          bucketName,
+		Prefix:          "a/b/",
+		StorageClass:    "NEARLINE",
+		PredefinedAcl:   "private",
+		CredentialsBlob: "Fake Credentials",
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
+		SendCredentials:  false,
+		CheckPermissions: []Permission{AccessBuckets},
+		HTTPClient:       server.HTTPClient(),
+	})
+	require.NoError(t, err)
+
+	filename := "key"
+	err = stg.WriteFile(ctx, filename, []byte("0123456789"))
+	require.NoError(t, err)
+
+	start := int64(2)
+	end := int64(5)
+	r, err := stg.Open(ctx, filename, &ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
+	require.NoError(t, err)
+
+	content := make([]byte, 10)
+	n, err := r.Read(content)
+	require.NoError(t, err)
+	require.Equal(t, []byte("234"), content[:n])
+}
