@@ -55,7 +55,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 36,
+    shard_count = 35,
     deps = [
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
