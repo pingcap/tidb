@@ -570,7 +570,7 @@ const (
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
-	h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
+	_ = h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
 		analyzed = autoanalyze.HandleAutoAnalyze(sctx, exec, &autoanalyze.Opt{
 			StatsLease:              h.Lease(),
 			GetLockedTables:         h.GetLockedTables,
