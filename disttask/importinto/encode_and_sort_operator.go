@@ -121,7 +121,8 @@ func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, index
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeIndexSummary(indexID, summary)
-			}).SetMemorySizeLimit(totalMemSizeLimitPerIndexWriter)
+			}).SetMemorySizeLimit(totalMemSizeLimitPerIndexWriter).
+			SetMutex(&op.sharedVars.ShareMu)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for index: index/{indexID}/{workerID}
 		writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -132,7 +133,8 @@ func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, index
 	// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 	builder := external.NewWriterBuilder().
 		SetOnCloseFunc(op.sharedVars.mergeDataSummary).
-		SetMemorySizeLimit(totalDataKVMemSizeLimit)
+		SetMemorySizeLimit(totalDataKVMemSizeLimit).
+		SetMutex(&op.sharedVars.ShareMu)
 	prefix := subtaskPrefix(op.taskID, op.subtaskID)
 	// writer id for data: data/{workerID}
 	writerID := path.Join("data", workerUUID)
