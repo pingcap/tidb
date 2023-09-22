@@ -2,7 +2,7 @@
 
 - **Author(s)**: [tiancaiamao](https://github.com/tiancaiamao)
 - **Discussion PR**: [#38449](https://github.com/pingcap/tidb/pull/38449)
-- **Tracking Issue**: [Link to Issue](https://github.com/pingcap/tidb/issues/38442)
+- **Tracking Issue**: [#38442](https://github.com/pingcap/tidb/issues/38442)
 
 ## Abstract
 
