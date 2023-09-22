@@ -61,8 +61,7 @@
       "select * from t1 right join t2 on t1.b=t2.b",
       "select * from t1 right join t2 on t1.a=t2.a",
       "select /*+ hash_join(t1) */ * from t1, t2",
-      "select /*+ leading(t4, t3, t2, t1) */ * from t1, t2, t3, t4",
-      "select /*+ leading(t1, t2, t3, t4), hash_join(t1, t2), hash_join(t4) */ * from t1, t2, t3, t4"
+      "select /*+ hash_join(t2) */ * from t1, t2"
     ]
   },
   {

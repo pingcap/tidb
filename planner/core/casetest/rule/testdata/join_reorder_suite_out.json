@@ -609,7 +609,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
         ]
       },
       {
@@ -622,7 +622,7 @@
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "Warning": [
-          "Warning 1815 Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
         ]
       },
       {
@@ -903,42 +903,22 @@
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
+        ]
       },
       {
-        "SQL": "select /*+ leading(t4, t3, t2, t1) */ * from t1, t2, t3, t4",
+        "SQL": "select /*+ hash_join(t2) */ * from t1, t2",
         "Plan": [
-          "Projection 10000000000000000.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
-          "└─HashJoin 10000000000000000.00 root  CARTESIAN inner join",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─MergeJoin(Probe) 1000000000000.00 root  inner join",
-          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─MergeJoin(Probe) 100000000.00 root  inner join",
-          "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "      │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
-        ],
-        "Warning": null
-      },
-      {
-        "SQL": "select /*+ leading(t1, t2, t3, t4), hash_join(t1, t2), hash_join(t4) */ * from t1, t2, t3, t4",
-        "Plan": [
-          "HashJoin 10000000000000000.00 root  CARTESIAN inner join",
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "│ └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
-          "└─MergeJoin(Probe) 1000000000000.00 root  inner join",
-          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
-          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
-        "Warning": null
+        "Warning": [
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
+        ]
       }
     ]
   },
