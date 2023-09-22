@@ -58,8 +58,8 @@ func (*mockExtStore) Close() error {
 	return nil
 }
 
-func (*mockExtStore) GetFileSize() (int64, error) {
-	return 0, errors.Errorf("unsupported operation")
+func (s *mockExtStore) GetFileSize() (int64, error) {
+	return int64(len(s.src)), nil
 }
 
 func TestByteReader(t *testing.T) {
