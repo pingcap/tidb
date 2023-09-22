@@ -1396,7 +1396,7 @@ func (w *updateColumnWorker) calcChecksums() []uint32 {
 			w.checksumBuffer.Cols = w.checksumBuffer.Cols[:0]
 		}
 		for _, col := range w.table.DeletableCols() {
-			if col.ID == id || (col.IsGenerated() && !col.GeneratedStored) {
+			if col.ID == id || (col.IsVirtualGenerated()) {
 				continue
 			}
 			d := w.rowMap[col.ID]
@@ -1956,14 +1956,6 @@ func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (
 		}
 	}
 	return odValue, nil
-}
-
-// isVirtualGeneratedColumn checks the column if it is virtual.
-func isVirtualGeneratedColumn(col *model.ColumnInfo) bool {
-	if col.IsGenerated() && !col.GeneratedStored {
-		return true
-	}
-	return false
 }
 
 func indexInfoContains(idxID int64, idxInfos []*model.IndexInfo) bool {

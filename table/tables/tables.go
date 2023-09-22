@@ -1249,7 +1249,7 @@ func DecodeRawRowData(ctx sessionctx.Context, meta *model.TableInfo, h kv.Handle
 			v[i] = ri
 			continue
 		}
-		if col.IsGenerated() && !col.GeneratedStored {
+		if col.IsVirtualGenerated() {
 			continue
 		}
 		if col.ChangeStateInfo != nil {
@@ -1948,7 +1948,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 	if col.GetDefaultValue() == nil && value.IsNull() && col.GetOriginDefaultValue() == nil {
 		return true
 	}
-	if col.IsGenerated() && !col.GeneratedStored {
+	if col.IsVirtualGenerated() {
 		return true
 	}
 	return false
@@ -1956,10 +1956,7 @@ func CanSkip(info *model.TableInfo, col *table.Column, value *types.Datum) bool 
 
 // canSkipUpdateBinlog checks whether the column can be skipped or not.
 func (t *TableCommon) canSkipUpdateBinlog(col *table.Column, value types.Datum) bool {
-	if col.IsGenerated() && !col.GeneratedStored {
-		return true
-	}
-	return false
+	return col.IsVirtualGenerated()
 }
 
 // FindIndexByColName returns a public table index containing only one column named `name`.

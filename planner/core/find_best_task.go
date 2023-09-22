@@ -2096,7 +2096,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 	}
 	if ts.StoreType == kv.TiFlash {
 		for _, col := range ts.Columns {
-			if col.IsGenerated() && !col.GeneratedStored {
+			if col.IsVirtualGenerated() {
 				col.AddFlag(mysql.GeneratedColumnFlag)
 			}
 		}

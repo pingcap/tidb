@@ -2099,7 +2099,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	tbl := tn.TableInfo
 	for _, col := range tbl.Columns {
 		// The virtual column will not store any data in TiKV, so it should be ignored when collect statistics
-		if col.IsGenerated() && !col.GeneratedStored {
+		if col.IsVirtualGenerated() {
 			continue
 		}
 		if mysql.HasPriKeyFlag(col.GetFlag()) && tbl.HasClusteredIndex() {
