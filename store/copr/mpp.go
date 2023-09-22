@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -101,6 +102,10 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		}
 	}
 
+	rgName := req.ResourceGroupName
+	if !variable.EnableResourceControl.Load() {
+		rgName = ""
+	}
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
 		GatherId:               req.GatherID,
@@ -108,7 +113,7 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		CoordinatorAddress:     req.CoordinatorAddress,
 		ReportExecutionSummary: req.ReportExecutionSummary,
 		MppVersion:             req.MppVersion.ToInt64(),
-		ResourceGroupName:      req.ResourceGroupName,
+		ResourceGroupName:      rgName,
 	}
 
 	mppReq := &mpp.DispatchTaskRequest{
