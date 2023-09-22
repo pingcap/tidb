@@ -722,6 +722,11 @@ func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
 }
 
+// GetFileSize implements storage.ExternalFileReader.
+func (*SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
+	return 0, errors.Errorf("unsupported GetFileSize on SimpleSeekerOnReadCloser")
+}
+
 // loadDataVarKeyType is a dummy type to avoid naming collision in context.
 type loadDataVarKeyType int
 

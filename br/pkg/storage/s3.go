@@ -551,6 +551,39 @@ func (rs *S3Storage) DeleteFile(ctx context.Context, file string) error {
 	return errors.Trace(err)
 }
 
+// s3DeleteObjectsLimit is the upper limit of objects in a delete request.
+// See https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#S3.DeleteObjects.
+const s3DeleteObjectsLimit = 1000
+
+// DeleteFiles delete the files in batch in s3 storage.
+func (rs *S3Storage) DeleteFiles(ctx context.Context, files []string) error {
+	for len(files) > 0 {
+		batch := files
+		if len(batch) > s3DeleteObjectsLimit {
+			batch = batch[:s3DeleteObjectsLimit]
+		}
+		objects := make([]*s3.ObjectIdentifier, 0, len(batch))
+		for _, file := range batch {
+			objects = append(objects, &s3.ObjectIdentifier{
+				Key: aws.String(rs.options.Prefix + file),
+			})
+		}
+		input := &s3.DeleteObjectsInput{
+			Bucket: aws.String(rs.options.Bucket),
+			Delete: &s3.Delete{
+				Objects: objects,
+				Quiet:   aws.Bool(false),
+			},
+		}
+		_, err := rs.svc.DeleteObjectsWithContext(ctx, input)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		files = files[len(batch):]
+	}
+	return nil
+}
+
 // FileExists check if file exists on s3 storage.
 func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) {
 	input := &s3.HeadObjectInput{
@@ -651,8 +684,18 @@ func (rs *S3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *S3Storage) Open(ctx context.Context, path string) (ExternalFileReader, error) {
-	reader, r, err := rs.open(ctx, path, 0, 0)
+func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
+	start := int64(0)
+	end := int64(0)
+	if o != nil {
+		if o.StartOffset != nil {
+			start = *o.StartOffset
+		}
+		if o.EndOffset != nil {
+			end = *o.EndOffset
+		}
+	}
+	reader, r, err := rs.open(ctx, path, start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -886,8 +929,12 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	return realOffset, nil
 }
 
-// CreateUploader create multi upload request.
-func (rs *S3Storage) CreateUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (r *s3ObjectReader) GetFileSize() (int64, error) {
+	return r.rangeInfo.Size, nil
+}
+
+// createUploader create multi upload request.
+func (rs *S3Storage) createUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -942,7 +989,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 	var uploader ExternalFileWriter
 	var err error
 	if option == nil || option.Concurrency <= 1 {
-		uploader, err = rs.CreateUploader(ctx, name)
+		uploader, err = rs.createUploader(ctx, name)
 		if err != nil {
 			return nil, err
 		}

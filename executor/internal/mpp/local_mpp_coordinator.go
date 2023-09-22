@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -215,6 +216,10 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
 			zap.Uint64("GatherID", c.gatherID),
 		)
+		rgName := c.sessionCtx.GetSessionVars().ResourceGroupName
+		if !variable.EnableResourceControl.Load() {
+			rgName = ""
+		}
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
 			Meta:                   mppTask.Meta,
@@ -229,7 +234,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			CoordinatorAddress:     c.coordinatorAddr,
 			ReportExecutionSummary: c.reportExecutionInfo,
 			State:                  kv.MppTaskReady,
-			ResourceGroupName:      c.sessionCtx.GetSessionVars().ResourceGroupName,
+			ResourceGroupName:      rgName,
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)

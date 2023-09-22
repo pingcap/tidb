@@ -34,9 +34,9 @@ type trackOpenMemStorage struct {
 	opened atomic.Int32
 }
 
-func (s *trackOpenMemStorage) Open(ctx context.Context, path string) (storage.ExternalFileReader, error) {
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storage.ReaderOption) (storage.ExternalFileReader, error) {
 	s.opened.Inc()
-	r, err := s.MemStorage.Open(ctx, path)
+	r, err := s.MemStorage.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
 	}

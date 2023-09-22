@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -421,33 +420,39 @@ type BackendConfig struct {
 	ResourceGroupName         string
 	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
+	// whether disable automatic compactions of pebble db of engine.
+	// deduplicate pebble db is not affected by this option.
+	// see DisableAutomaticCompactions of pebble.Options for more details.
+	// default true.
+	DisableAutomaticCompactions bool
 }
 
 // NewBackendConfig creates a new BackendConfig.
 func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
-		PDAddr:                    cfg.TiDB.PdAddr,
-		LocalStoreDir:             cfg.TikvImporter.SortedKVDir,
-		MaxConnPerStore:           cfg.TikvImporter.RangeConcurrency,
-		ConnCompressType:          cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:         cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:          int64(cfg.TikvImporter.SendKVSize),
-		RegionSplitBatchSize:      cfg.TikvImporter.RegionSplitBatchSize,
-		RegionSplitConcurrency:    cfg.TikvImporter.RegionSplitConcurrency,
-		CheckpointEnabled:         cfg.Checkpoint.Enable,
-		MemTableSize:              int(cfg.TikvImporter.EngineMemCacheSize),
-		LocalWriterMemCacheSize:   int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		ShouldCheckTiKV:           cfg.App.CheckRequirements,
-		DupeDetectEnabled:         cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:        common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
-		StoreWriteBWLimit:         int(cfg.TikvImporter.StoreWriteBWLimit),
-		ShouldCheckWriteStall:     cfg.Cron.SwitchMode.Duration == 0,
-		MaxOpenFiles:              maxOpenFiles,
-		KeyspaceName:              keyspaceName,
-		PausePDSchedulerScope:     cfg.TikvImporter.PausePDSchedulerScope,
-		ResourceGroupName:         resourceGroupName,
-		TaskType:                  taskType,
-		RaftKV2SwitchModeDuration: raftKV2SwitchModeDuration,
+		PDAddr:                      cfg.TiDB.PdAddr,
+		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:      cfg.TikvImporter.RegionSplitConcurrency,
+		CheckpointEnabled:           cfg.Checkpoint.Enable,
+		MemTableSize:                int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize:     int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:             cfg.App.CheckRequirements,
+		DupeDetectEnabled:           cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:           int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:       cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:                maxOpenFiles,
+		KeyspaceName:                keyspaceName,
+		PausePDSchedulerScope:       cfg.TikvImporter.PausePDSchedulerScope,
+		ResourceGroupName:           resourceGroupName,
+		TaskType:                    taskType,
+		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
+		DisableAutomaticCompactions: true,
 	}
 }
 
@@ -859,6 +864,7 @@ func (local *Backend) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
+		DisableAutomaticCompactions: local.DisableAutomaticCompactions,
 	}
 	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
 	opt.Levels = []pebble.LevelOptions{
@@ -942,11 +948,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		opt := &storage.ExternalStorageOptions{}
-		if intest.InTest {
-			opt.NoCredentials = true
-		}
-		store, err := storage.New(ctx, storeBackend, opt)
+		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
 		if err != nil {
 			return err
 		}
@@ -1213,6 +1215,7 @@ func (local *Backend) generateAndSendJob(
 				return err
 			}
 			for _, job := range jobs {
+				data.IncRef()
 				jobWg.Add(1)
 				select {
 				case <-egCtx.Done():
@@ -1346,7 +1349,12 @@ func (local *Backend) startWorker(
 					return err2
 				}
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				jobWg.Add(len(jobs) - 1)
+				newJobCnt := len(jobs) - 1
+				jobWg.Add(newJobCnt)
+				for newJobCnt > 0 {
+					job.ingestData.IncRef()
+					newJobCnt--
+				}
 				for _, j := range jobs {
 					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
