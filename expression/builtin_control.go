@@ -15,7 +15,11 @@
 package expression
 
 import (
+<<<<<<< HEAD
 	"github.com/cznic/mathutil"
+=======
+	"github.com/pingcap/tidb/parser/ast"
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
@@ -62,6 +66,7 @@ func maxlen(lhsFlen, rhsFlen int) int {
 	return mathutil.Max(lhsFlen, rhsFlen)
 }
 
+<<<<<<< HEAD
 // InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, LEAD and LAG.
 func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp Expression) (*types.FieldType, error) {
 	lhs, rhs := lexp.GetType(), rexp.GetType()
@@ -89,13 +94,75 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 				resultFieldType.Decimal = types.UnspecifiedLength
 			} else {
 				resultFieldType.Decimal = mathutil.Max(lhs.Decimal, rhs.Decimal)
+=======
+func setFlenFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+	if evalType == types.ETDecimal || evalType == types.ETInt {
+		maxArgFlen := 0
+		for i := range argTps {
+			flagLen := 0
+			if !mysql.HasUnsignedFlag(argTps[i].GetFlag()) {
+				flagLen = 1
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
 			}
+			flen := argTps[i].GetFlen() - flagLen
+			if argTps[i].GetDecimal() != types.UnspecifiedLength {
+				flen -= argTps[i].GetDecimal()
+			}
+			maxArgFlen = maxlen(maxArgFlen, flen)
 		}
+		// For a decimal field, the `length` and `flen` are not the same.
+		// `length` only holds the binary data, while `flen` represents the number of digits required to display the field, including the negative sign.
+		// In the current implementation of TiDB, `flen` and `length` are treated as the same, so the `length` of a decimal may be inconsistent with that of MySQL.
+		resultFlen := maxArgFlen + resultFieldType.GetDecimal() + 1 // account for -1 len fields
+		resultFieldType.SetFlenUnderLimit(resultFlen)
+	} else if evalType == types.ETString {
+		maxLen := 0
+		for i := range argTps {
+			argFlen := argTps[i].GetFlen()
+			if argFlen == types.UnspecifiedLength {
+				resultFieldType.SetFlen(types.UnspecifiedLength)
+				return
+			}
+			maxLen = maxlen(argFlen, maxLen)
+		}
+		resultFieldType.SetFlen(maxLen)
+	} else {
+		maxLen := 0
+		for i := range argTps {
+			maxLen = maxlen(argTps[i].GetFlen(), maxLen)
+		}
+		resultFieldType.SetFlen(maxLen)
+	}
+}
 
+func setDecimalFromArgs(evalType types.EvalType, resultFieldType *types.FieldType, argTps ...*types.FieldType) {
+	if evalType == types.ETInt {
+		resultFieldType.SetDecimal(0)
+	} else {
+		maxDecimal := 0
+		for i := range argTps {
+			if argTps[i].GetDecimal() == types.UnspecifiedLength {
+				resultFieldType.SetDecimal(types.UnspecifiedLength)
+				return
+			}
+			maxDecimal = mathutil.Max(argTps[i].GetDecimal(), maxDecimal)
+		}
+		resultFieldType.SetDecimalUnderLimit(maxDecimal)
+	}
+}
+
+func addCollateAndCharsetAndFlagFromArgs(ctx sessionctx.Context, funcName string, evalType types.EvalType, resultFieldType *types.FieldType, args ...Expression) error {
+	switch funcName {
+	case ast.If, ast.Ifnull, ast.WindowFuncLead, ast.WindowFuncLag:
+		if len(args) != 2 {
+			panic("unexpected length of args for if/ifnull/lead/lag")
+		}
+		lexp, rexp := args[0], args[1]
+		lhs, rhs := lexp.GetType(), rexp.GetType()
 		if types.IsNonBinaryStr(lhs) && !types.IsBinaryStr(rhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			resultFieldType.Collate, resultFieldType.Charset = ec.Collation, ec.Charset
 			resultFieldType.Flag = 0
@@ -105,7 +172,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		} else if types.IsNonBinaryStr(rhs) && !types.IsBinaryStr(lhs) {
 			ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, lexp, rexp)
 			if err != nil {
-				return nil, err
+				return err
 			}
 			resultFieldType.Collate, resultFieldType.Charset = ec.Collation, ec.Charset
 			resultFieldType.Flag = 0
@@ -117,6 +184,7 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 		} else {
 			resultFieldType.Charset, resultFieldType.Collate, resultFieldType.Flag = mysql.DefaultCharset, mysql.DefaultCollationName, 0
 		}
+<<<<<<< HEAD
 		if evalType == types.ETDecimal || evalType == types.ETInt {
 			lhsUnsignedFlag, rhsUnsignedFlag := mysql.HasUnsignedFlag(lhs.Flag), mysql.HasUnsignedFlag(rhs.Flag)
 			lhsFlagLen, rhsFlagLen := 0, 0
@@ -155,6 +223,97 @@ func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, lexp, rexp 
 			resultFieldType.Tp = mysql.TypeVarchar
 		}
 	} else if resultFieldType.Tp == mysql.TypeDatetime {
+=======
+	case ast.Case:
+		if len(args) == 0 {
+			panic("unexpected length 0 of args for casewhen")
+		}
+		ec, err := CheckAndDeriveCollationFromExprs(ctx, funcName, evalType, args...)
+		if err != nil {
+			return err
+		}
+		resultFieldType.SetCollate(ec.Collation)
+		resultFieldType.SetCharset(ec.Charset)
+		for i := range args {
+			if mysql.HasBinaryFlag(args[i].GetType().GetFlag()) || !types.IsNonBinaryStr(args[i].GetType()) {
+				resultFieldType.AddFlag(mysql.BinaryFlag)
+				break
+			}
+		}
+	default:
+		panic("unexpected function: " + funcName)
+	}
+	return nil
+}
+
+// InferType4ControlFuncs infer result type for builtin IF, IFNULL, NULLIF, CASEWHEN, LEAD and LAG.
+func InferType4ControlFuncs(ctx sessionctx.Context, funcName string, args ...Expression) (*types.FieldType, error) {
+	argsNum := len(args)
+	if argsNum == 0 {
+		panic("unexpected length 0 of args")
+	}
+	nullFields := make([]*types.FieldType, 0, argsNum)
+	notNullFields := make([]*types.FieldType, 0, argsNum)
+	for i := range args {
+		if args[i].GetType().GetType() == mysql.TypeNull {
+			nullFields = append(nullFields, args[i].GetType())
+		} else {
+			notNullFields = append(notNullFields, args[i].GetType())
+		}
+	}
+	resultFieldType := &types.FieldType{}
+	if len(nullFields) == argsNum { // all field is TypeNull
+		*resultFieldType = *nullFields[0]
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		tempFlag := resultFieldType.GetFlag()
+		types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+		resultFieldType.SetFlag(tempFlag)
+		// If both arguments are NULL, make resulting type BINARY(0).
+		resultFieldType.SetType(mysql.TypeString)
+		resultFieldType.SetFlen(0)
+		resultFieldType.SetDecimal(0)
+		types.SetBinChsClnFlag(resultFieldType)
+	} else {
+		if len(notNullFields) == 1 {
+			*resultFieldType = *notNullFields[0]
+		} else {
+			resultFieldType = types.AggFieldType(notNullFields)
+			var tempFlag uint
+			evalType := types.AggregateEvalType(notNullFields, &tempFlag)
+			resultFieldType.SetFlag(tempFlag)
+			setDecimalFromArgs(evalType, resultFieldType, notNullFields...)
+			err := addCollateAndCharsetAndFlagFromArgs(ctx, funcName, evalType, resultFieldType, args...)
+			if err != nil {
+				return nil, err
+			}
+			setFlenFromArgs(evalType, resultFieldType, notNullFields...)
+		}
+
+		// If any of arg is NULL, result type need unset NotNullFlag.
+		if len(nullFields) > 0 {
+			tempFlag := resultFieldType.GetFlag()
+			types.SetTypeFlag(&tempFlag, mysql.NotNullFlag, false)
+			resultFieldType.SetFlag(tempFlag)
+		}
+
+		resultEvalType := resultFieldType.EvalType()
+		// fix decimal for int and string.
+		if resultEvalType == types.ETInt {
+			resultFieldType.SetDecimal(0)
+		} else if resultEvalType == types.ETString {
+			resultFieldType.SetDecimal(types.UnspecifiedLength)
+		}
+		// fix type for enum and set
+		if resultFieldType.GetType() == mysql.TypeEnum || resultFieldType.GetType() == mysql.TypeSet {
+			switch resultEvalType {
+			case types.ETInt:
+				resultFieldType.SetType(mysql.TypeLonglong)
+			case types.ETString:
+				resultFieldType.SetType(mysql.TypeVarchar)
+			}
+		}
+		// fix flen for datetime
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
 		types.TryToFixFlenOfDatetime(resultFieldType)
 	}
 	return resultFieldType, nil
@@ -170,6 +329,7 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 	}
 	l := len(args)
 	// Fill in each 'THEN' clause parameter type.
+<<<<<<< HEAD
 	fieldTps := make([]*types.FieldType, 0, (l+1)/2)
 	decimal, flen, isBinaryFlag := args[1].GetType().Decimal, 0, false
 	for i := 1; i < l; i += 2 {
@@ -191,14 +351,25 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 			flen = mathutil.Max(flen, args[l-1].GetType().Flen)
 		}
 		isBinaryFlag = isBinaryFlag || !types.IsNonBinaryStr(args[l-1].GetType())
+=======
+	thenArgs := make([]Expression, 0, (l+1)/2)
+	for i := 1; i < l; i += 2 {
+		thenArgs = append(thenArgs, args[i])
 	}
-
-	fieldTp := types.AggFieldType(fieldTps)
+	if l%2 == 1 {
+		thenArgs = append(thenArgs, args[l-1])
+	}
+	fieldTp, err := InferType4ControlFuncs(ctx, c.funcName, thenArgs...)
+	if err != nil {
+		return nil, err
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
+	}
 	// Here we turn off NotNullFlag. Because if all when-clauses are false,
 	// the result of case-when expr is NULL.
 	types.SetTypeFlag(&fieldTp.Flag, mysql.NotNullFlag, false)
 	tp := fieldTp.EvalType()
 
+<<<<<<< HEAD
 	if tp == types.ETInt {
 		decimal = 0
 	}
@@ -213,21 +384,25 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		types.SetBinChsClnFlag(fieldTp)
 	}
 	argTps := make([]types.EvalType, 0, l)
+=======
+	argTps := make([]*types.FieldType, 0, l)
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
 	for i := 0; i < l-1; i += 2 {
 		if args[i], err = wrapWithIsTrue(ctx, true, args[i], false); err != nil {
 			return nil, err
 		}
-		argTps = append(argTps, types.ETInt, tp)
+		argTps = append(argTps, args[i].GetType(), fieldTp.Clone())
 	}
 	if l%2 == 1 {
-		argTps = append(argTps, tp)
+		argTps = append(argTps, fieldTp.Clone())
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, tp, argTps...)
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, tp, argTps...)
 	if err != nil {
 		return nil, err
 	}
 	fieldTp.Charset, fieldTp.Collate = bf.tp.Charset, bf.tp.Collate
 	bf.tp = fieldTp
+<<<<<<< HEAD
 	if fieldTp.Tp == mysql.TypeEnum || fieldTp.Tp == mysql.TypeSet {
 		switch tp {
 		case types.ETInt:
@@ -236,6 +411,8 @@ func (c *caseWhenFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 			fieldTp.Tp = mysql.TypeVarchar
 		}
 	}
+=======
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
 
 	switch tp {
 	case types.ETInt:
@@ -533,11 +710,16 @@ func (c *ifFunctionClass) getFunction(ctx sessionctx.Context, args []Expression)
 	if err != nil {
 		return nil, err
 	}
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, types.ETInt, evalTps, evalTps)
+
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, args[0].GetType().Clone(), retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	retTp.Flag |= bf.tp.Flag
+=======
+	retTp.AddFlag(bf.tp.GetFlag())
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
 	bf.tp = retTp
 	switch evalTps {
 	case types.ETInt:
@@ -732,7 +914,7 @@ func (c *ifNullFunctionClass) getFunction(ctx sessionctx.Context, args []Express
 		types.SetBinChsClnFlag(retTp)
 	}
 	evalTps := retTp.EvalType()
-	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, evalTps, evalTps, evalTps)
+	bf, err := newBaseBuiltinFuncWithFieldTypes(ctx, c.funcName, args, evalTps, retTp.Clone(), retTp.Clone())
 	if err != nil {
 		return nil, err
 	}
