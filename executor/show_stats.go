@@ -200,6 +200,8 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 		return err
 	}
 
+	// Sort the table IDs to make the output stable.
+	slices.Sort(tids)
 	for _, tid := range tids {
 		if _, ok := lockedTables[tid]; ok {
 			info := tableInfo[tid]
