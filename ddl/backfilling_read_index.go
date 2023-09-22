@@ -143,6 +143,8 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
+	r.bc.ResetWorkers(r.job.ID, r.index.ID)
+
 	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
 	return nil
 }
