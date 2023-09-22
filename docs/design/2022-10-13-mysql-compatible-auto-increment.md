@@ -85,7 +85,7 @@ When the switch happen, the current max allocated ID information is required so 
 
 We can persist the max allocated ID every time, but that's costly. Another choice is persisting it periodically, it's safe to allocate IDs in range `[base, max persisted)`. When the primary process crash abnormally, the backup process gets the max persisted ID as its base. Etcd is also used as the storage for the max persisted ID. This optimization could still make the ID not be consecutive, but it's not so common, so this is not a big issue.
 
-MySQL 8.0 can survive crash recovery, that's really impressive! https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
+NOTE: MySQL 8.0 can survive crash recovery: https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 
 > In MySQL 8.0, this behavior is changed. The current maximum auto-increment counter value is written to the redo log each time it changes and saved to the data dictionary on each checkpoint. These changes make the current maximum auto-increment counter value persistent across server restarts.
 
