@@ -629,6 +629,8 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 	}
 
 	originalState := allIndexInfos[0].State
+
+SwitchIndexState:
 	switch allIndexInfos[0].State {
 	case model.StateNone:
 		// none -> delete only
@@ -651,45 +653,37 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			indexInfo.State = model.StateDeleteOnly
 			moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		}
-		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+		ver, err = updateVersionAndTableInfoWithCheck(d, t, job, tblInfo, originalState != model.StateDeleteOnly)
 		if err != nil {
 			return ver, err
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		// delete only -> write only
-		var checkErr bool
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateWriteOnly
 			_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 			if err != nil {
-				checkErr = true
+				break SwitchIndexState
 			}
 		}
-		if checkErr {
-			break
-		}
 
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateWriteOnly)
 		if err != nil {
 			return ver, err
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		// write only -> reorganization
-		var checkErr bool
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateWriteReorganization
 			_, err = checkPrimaryKeyNotNull(d, w, t, job, tblInfo, indexInfo)
 			if err != nil {
-				checkErr = true
+				break SwitchIndexState
 			}
 		}
-		if checkErr {
-			break
-		}
 
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateWriteReorganization)
 		if err != nil {
 			return ver, err
 		}
@@ -724,7 +718,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 			indexInfo.State = model.StatePublic
 		}
 
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StatePublic)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1131,7 +1125,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateWriteOnly
 		}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateWriteOnly)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1140,7 +1134,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteOnly
 		}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateDeleteOnly)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1149,7 +1143,7 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.State = model.StateDeleteReorganization
 		}
-		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateDeleteReorganization)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}

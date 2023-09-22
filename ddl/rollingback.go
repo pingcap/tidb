@@ -84,7 +84,7 @@ func convertAddIdxJob2RollbackJob(
 	// the second and the third args will be used in onDropIndex.
 	job.Args = []interface{}{idxNames, ifExists, getPartitionIDs(tblInfo)}
 	job.SchemaState = model.StateDeleteOnly
-	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != allIndexInfos[0].State)
+	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
 		return ver, errors.Trace(err1)
 	}
