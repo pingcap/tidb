@@ -1172,6 +1172,17 @@ func TestTiDBServerMemoryLimitGCTrigger(t *testing.T) {
 	require.Error(t, err)
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "51%")
 	require.NoError(t, err)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMaxValue, "50")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "200")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "1000")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "100")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMaxValue, "200")
+	require.NoError(t, err)
 }
 
 func TestSetAggPushDownGlobally(t *testing.T) {
