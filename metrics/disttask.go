@@ -22,15 +22,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// status for task
 const (
-	// status for dispatching task
 	DispatchingStatus = "dispatching"
-	// task status for waiting task
-	WaitingStatus = "waiting"
-	// task status for running task
-	RunningStatus = "running"
-	// task status for completed task
-	CompletedStatus = "completed"
+	WaitingStatus     = "waiting"
+	RunningStatus     = "running"
+	CompletedStatus   = "completed"
 )
 
 // labels for task metrics
@@ -42,14 +39,13 @@ const (
 	LblSchedulerID = "scheduler_id"
 )
 
+// DistTask metrics
 var (
-	// GaugeVec for task status
-	DistTaskGauge *prometheus.GaugeVec
-	// GaugeVec for task for waiting or dispatching start time
+	DistTaskGauge          *prometheus.GaugeVec
 	DistTaskStarttimeGauge *prometheus.GaugeVec
 )
 
-// InitDistTaskMetrics() initializes disttask metrics.
+// InitDistTaskMetrics initializes disttask metrics.
 func InitDistTaskMetrics() {
 	DistTaskGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -68,13 +64,13 @@ func InitDistTaskMetrics() {
 		}, []string{LblTaskType, LblTaskStatus, LblTaskID})
 }
 
-// UpdateMetricsForAddTask() update metrics when a task is added
+// UpdateMetricsForAddTask update metrics when a task is added
 func UpdateMetricsForAddTask(task *proto.Task) {
 	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Inc()
 	DistTaskStarttimeGauge.WithLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 }
 
-// UpdateMetricsForDisptchTask() update metrics when a task is added
+// UpdateMetricsForDisptchTask update metrics when a task is added
 func UpdateMetricsForDisptchTask(task *proto.Task) {
 	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Set(float64(300))
 	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Dec()
@@ -82,7 +78,7 @@ func UpdateMetricsForDisptchTask(task *proto.Task) {
 	DistTaskStarttimeGauge.WithLabelValues(task.Type, DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
 }
 
-// UpdateMetricsForRunTask() update metrics when a task starts running
+// UpdateMetricsForRunTask update metrics when a task starts running
 func UpdateMetricsForRunTask(task *proto.Task) {
 	DistTaskStarttimeGauge.DeleteLabelValues(task.Type, DispatchingStatus, fmt.Sprint(task.ID))
 	DistTaskGauge.WithLabelValues(task.Type, DispatchingStatus).Dec()
