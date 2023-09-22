@@ -236,6 +236,8 @@ func init() {
 	keyspaceName = flag.String(nmKeyspaceName, "", "keyspace name.")
 	serviceScope = flag.String(nmTiDBServiceScope, "", "tidb service scope")
 	help = flag.Bool("help", false, "show the usage")
+	// Ignore errors; CommandLine is set for ExitOnError.
+	// nolint:errcheck
 	flag.CommandLine.Parse(os.Args[1:])
 }
 
