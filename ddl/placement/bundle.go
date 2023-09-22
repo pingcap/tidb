@@ -311,13 +311,13 @@ func (b *Bundle) Tidy() error {
 		id++
 	}
 
-	groups := make(map[string]*ConstraintsGroup)
+	groups := make(map[string]*constraintsGroup)
 	finalRules := tempRules[:0]
 	for _, rule := range tempRules {
 		key := rule.Constraints.FingerPrint()
 		existing, ok := groups[key]
 		if !ok {
-			groups[key] = &ConstraintsGroup{rules: []*Rule{rule}}
+			groups[key] = &constraintsGroup{rules: []*Rule{rule}}
 			continue
 		}
 		existing.rules = append(existing.rules, rule)
@@ -325,14 +325,8 @@ func (b *Bundle) Tidy() error {
 	for _, group := range groups {
 		group.MergeRulesByRole()
 	}
-	if len(groups) == 1 {
-		for _, group := range groups {
-			group.MergeTransformableRoles()
-		}
-	} else {
-		if err := transformableLeaderConstraint(groups); err != nil {
-			return err
-		}
+	if err := transformableLeaderConstraint(groups); err != nil {
+		return err
 	}
 	for _, group := range groups {
 		finalRules = append(finalRules, group.rules...)
@@ -345,19 +339,22 @@ func (b *Bundle) Tidy() error {
 	return nil
 }
 
-// ConstraintsGroup is a group of rules with the same constraints.
-type ConstraintsGroup struct {
-	rules           []*Rule
+// constraintsGroup is a group of rules with the same constraints.
+type constraintsGroup struct {
+	rules []*Rule
+	// canBecameLeader means the group has leader/voter role,
+	// it's valid if it has leader.
 	canBecameLeader bool
-	isLeaderGroup   bool
+	// isLeaderGroup means it has specified leader role in this group.
+	isLeaderGroup bool
 }
 
-func transformableLeaderConstraint(groups map[string]*ConstraintsGroup) error {
-	var leaderGroup *ConstraintsGroup
+func transformableLeaderConstraint(groups map[string]*constraintsGroup) error {
+	var leaderGroup *constraintsGroup
 	canBecameLeaderNum := 0
 	for _, group := range groups {
 		if group.isLeaderGroup {
-			if !(leaderGroup == nil) {
+			if leaderGroup != nil {
 				return ErrInvalidPlacementOptions
 			}
 			leaderGroup = group
@@ -366,6 +363,11 @@ func transformableLeaderConstraint(groups map[string]*ConstraintsGroup) error {
 			canBecameLeaderNum++
 		}
 	}
+	// If there is a specified group should have leader, and only this group can be a leader, that means
+	// the leader's priority is certain, so we can merge the transformable rules into one.
+	// eg:
+	//  - [ group1 (L F), group2 (F) ], after merging is [group1 (2*V), group2 (F)], we still know the leader prefers group1.
+	//  - [ group1(L, F), group2(V) ],  after merging is [group1 (2*V), group2 (V)], we can't know leader priority after merge.
 	if leaderGroup != nil && canBecameLeaderNum == 1 {
 		leaderGroup.MergeTransformableRoles()
 	}
@@ -373,7 +375,7 @@ func transformableLeaderConstraint(groups map[string]*ConstraintsGroup) error {
 }
 
 // MergeRulesByRole merges the rules with the same role.
-func (c *ConstraintsGroup) MergeRulesByRole() {
+func (c *constraintsGroup) MergeRulesByRole() {
 	// Create a map to store rules by role
 	rulesByRole := make(map[PeerRoleType][]*Rule)
 
@@ -409,15 +411,12 @@ func (c *ConstraintsGroup) MergeRulesByRole() {
 }
 
 // MergeTransformableRoles merges all the rules to one that can be transformed to other roles.
-func (c *ConstraintsGroup) MergeTransformableRoles() {
-	if len(c.rules) == 0 {
+func (c *constraintsGroup) MergeTransformableRoles() {
+	if len(c.rules) == 0 || len(c.rules) == 1 {
 		return
 	}
-	newRules := make([]*Rule, 0, len(c.rules))
 	var mergedRule *Rule
-	if len(c.rules) == 1 {
-		return
-	}
+	newRules := make([]*Rule, 0, len(c.rules))
 	for _, rule := range c.rules {
 		// Learner is not transformable, it should be promote by PD.
 		if rule.Role == Learner {

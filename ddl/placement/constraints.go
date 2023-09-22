@@ -117,16 +117,16 @@ func (constraints *Constraints) Add(label Constraint) error {
 }
 
 // FingerPrint returns a unique string for the constraints.
-func (constraints Constraints) FingerPrint() string {
-	copied := make(Constraints, len(constraints))
-	copy(copied, constraints)
+func (constraints *Constraints) FingerPrint() string {
+	copied := make(Constraints, len(*constraints))
+	copy(copied, *constraints)
 	slices.SortStableFunc(copied, func(i, j Constraint) int {
-		a, b := constraintToString(i), constraintToString(j)
+		a, b := constraintToString(&i), constraintToString(&j)
 		return cmp.Compare(a, b)
 	})
 	var combinedConstraints string
 	for _, constraint := range copied {
-		combinedConstraints += constraintToString(constraint)
+		combinedConstraints += constraintToString(&constraint)
 	}
 
 	// Calculate the SHA256 hash of the concatenated constraints
@@ -138,7 +138,7 @@ func (constraints Constraints) FingerPrint() string {
 	return hashStr
 }
 
-func constraintToString(c Constraint) string {
+func constraintToString(c *Constraint) string {
 	// Sort the values in the constraint
 	sortedValues := make([]string, len(c.Values))
 	copy(sortedValues, c.Values)
