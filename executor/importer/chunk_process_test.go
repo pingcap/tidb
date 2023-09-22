@@ -30,12 +30,13 @@ func TestIndexRouteWriter(t *testing.T) {
 	routeWriter := NewIndexRouteWriter(logger, func(i int64) *external.Writer {
 		return external.NewWriterBuilder().Build(nil, "", "")
 	})
-	seed := time.Now().Unix()
-	logger.Info("seed", zap.Int64("seed", seed))
-	r := rand.New(rand.NewSource(seed))
 	wg := util.WaitGroupWrapper{}
 	for i := 0; i < 10; i++ {
+		idx := i
 		wg.Run(func() {
+			seed := time.Now().Unix()
+			logger.Info("seed", zap.Int("idx", idx), zap.Int64("seed", seed))
+			r := rand.New(rand.NewSource(seed))
 			gotWriters := make(map[int64]*wrappedWriter)
 			for i := 0; i < 3000; i++ {
 				indexID := int64(r.Int()) % 100

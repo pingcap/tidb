@@ -136,7 +136,6 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	s.prepareAndUseDB("gs_multi_files")
 	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), key(b), key(a,b), key(b,a));")
-	s.enableFailpoint("github.com/pingcap/tidb/br/pkg/lightning/backend/external/disableConcurrentReader", "return(true)")
 	// 1 subtask, encoding 10 files using 4 threads.
 	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
