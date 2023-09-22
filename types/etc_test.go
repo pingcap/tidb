@@ -307,3 +307,40 @@ func TestIsTypeNumeric(t *testing.T) {
 	res = IsTypeNumeric('t')
 	require.False(t, res)
 }
+
+func TestNeedRestoredData(t *testing.T) {
+	type testCase struct {
+		tp      byte
+		charset string
+		collate string
+		result  bool
+	}
+	cases := []testCase{
+		{mysql.TypeString, "binary", "binary", false},
+		{mysql.TypeVarString, "binary", "binary", false},
+		{mysql.TypeString, "utf8mb4", "utf8mb4_bin", false},
+		{mysql.TypeVarString, "utf8mb4", "utf8mb4_bin", true},
+		{mysql.TypeString, "utf8mb4", "utf8mb4_general_ci", true},
+		{mysql.TypeVarString, "utf8mb4", "utf8mb4_general_ci", true},
+		{mysql.TypeString, "utf8mb4", "utf8mb4_unicode_ci", true},
+		{mysql.TypeVarString, "utf8mb4", "utf8mb4_unicode_ci", true},
+		{mysql.TypeString, "utf8mb4", "utf8mb4_0900_ai_ci", true},
+		{mysql.TypeVarString, "utf8mb4", "utf8mb4_0900_ai_ci", true},
+		{mysql.TypeString, "utf8mb4", "utf8mb4_0900_bin", false},
+		{mysql.TypeVarString, "utf8mb4", "utf8mb4_0900_bin", false},
+		{mysql.TypeString, "gbk", "gbk_bin", true},
+		{mysql.TypeVarString, "gbk", "gbk_bin", true},
+		{mysql.TypeString, "gbk", "gbk_chinese_ci", true},
+		{mysql.TypeVarString, "gbk", "gbk_chinese_ci", true},
+	}
+
+	for _, c := range cases {
+		ft := NewFieldTypeBuilder().
+			SetType(c.tp).
+			SetCharset(c.charset).
+			SetCollate(c.collate).
+			Build()
+
+		require.Equal(t, c.result, NeedRestoredData(&ft), "NeedRestoredData of tp: %d charset: %s collate: %s should be %t", c.tp, c.charset, c.collate, c.result)
+	}
+}

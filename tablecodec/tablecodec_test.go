@@ -610,12 +610,18 @@ func TestTempIndexKey(t *testing.T) {
 	require.Equal(t, tid, tableID)
 	require.NotEqual(t, indexID, iid)
 	require.Equal(t, indexID, iid&IndexIDMask)
+	iid2, err := DecodeIndexID(indexKey)
+	require.NoError(t, err)
+	require.Equal(t, iid, iid2)
 
 	TempIndexKey2IndexKey(indexKey)
 	tid, iid, _, err = DecodeKeyHead(indexKey)
 	require.NoError(t, err)
 	require.Equal(t, tid, tableID)
 	require.Equal(t, indexID, iid)
+	iid2, err = DecodeIndexID(indexKey)
+	require.NoError(t, err)
+	require.Equal(t, iid, iid2)
 }
 
 func TestTempIndexValueCodec(t *testing.T) {

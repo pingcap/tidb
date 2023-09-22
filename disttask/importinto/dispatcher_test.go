@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
@@ -60,7 +61,7 @@ func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	dsp := importDispatcherExt{}
+	dsp := ImportDispatcherExt{}
 	gTask := &proto.Task{Meta: []byte("{}")}
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	s.enableFailPoint("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
@@ -88,7 +89,7 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	dsp := importDispatcherExt{}
+	dsp := ImportDispatcherExt{}
 	require.Equal(s.T(), int64(0), dsp.currTaskID.Load())
 	require.False(s.T(), dsp.disableTiKVImportMode.Load())
 
@@ -105,4 +106,71 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	})
 	require.Equal(s.T(), int64(1), dsp.currTaskID.Load())
 	require.True(s.T(), dsp.disableTiKVImportMode.Load())
+}
+
+func (s *importIntoSuite) TestDispatcherInit() {
+	meta := TaskMeta{
+		Plan: importer.Plan{
+			CloudStorageURI: "",
+		},
+	}
+	bytes, err := json.Marshal(meta)
+	s.NoError(err)
+	dsp := importDispatcher{
+		BaseDispatcher: &dispatcher.BaseDispatcher{
+			Task: &proto.Task{
+				Meta: bytes,
+			},
+		},
+	}
+	s.NoError(dsp.Init())
+	s.False(dsp.Extension.(*ImportDispatcherExt).GlobalSort)
+
+	meta.Plan.CloudStorageURI = "s3://test"
+	bytes, err = json.Marshal(meta)
+	s.NoError(err)
+	dsp = importDispatcher{
+		BaseDispatcher: &dispatcher.BaseDispatcher{
+			Task: &proto.Task{
+				Meta: bytes,
+			},
+		},
+	}
+	s.NoError(dsp.Init())
+	s.True(dsp.Extension.(*ImportDispatcherExt).GlobalSort)
+}
+
+func (s *importIntoSuite) TestGetNextStep() {
+	task := &proto.Task{
+		Step: proto.StepInit,
+	}
+	ext := &ImportDispatcherExt{}
+	for _, nextStep := range []int64{StepImport, StepPostProcess, proto.StepDone} {
+		s.Equal(nextStep, ext.GetNextStep(nil, task))
+		task.Step = nextStep
+	}
+
+	task.Step = proto.StepInit
+	ext = &ImportDispatcherExt{GlobalSort: true}
+	for _, nextStep := range []int64{StepEncodeAndSort, StepMergeSort,
+		StepWriteAndIngest, StepPostProcess, proto.StepDone} {
+		s.Equal(nextStep, ext.GetNextStep(nil, task))
+		task.Step = nextStep
+	}
+}
+
+func (s *importIntoSuite) TestStr() {
+	s.Equal("init", stepStr(proto.StepInit))
+	s.Equal("import", stepStr(StepImport))
+	s.Equal("post-process", stepStr(StepPostProcess))
+	s.Equal("merge-sort", stepStr(StepMergeSort))
+	s.Equal("encode&sort", stepStr(StepEncodeAndSort))
+	s.Equal("write&ingest", stepStr(StepWriteAndIngest))
+	s.Equal("done", stepStr(proto.StepDone))
+	s.Equal("unknown", stepStr(111))
+}
+
+func (s *importIntoSuite) TestGetStepOfEncode() {
+	s.Equal(StepImport, getStepOfEncode(false))
+	s.Equal(StepEncodeAndSort, getStepOfEncode(true))
 }

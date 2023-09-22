@@ -360,7 +360,8 @@ func ConvertAndGetBinCollation(collate string) Collator {
 func IsBinCollation(collate string) bool {
 	return collate == charset.CollationASCII || collate == charset.CollationLatin1 ||
 		collate == charset.CollationUTF8 || collate == charset.CollationUTF8MB4 ||
-		collate == charset.CollationBin
+		collate == charset.CollationBin || collate == "utf8mb4_0900_bin"
+	// TODO: define a constant to reference collations
 }
 
 // CollationToProto converts collation from string to int32(used by protocol).

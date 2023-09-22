@@ -5178,7 +5178,7 @@ DropStatsStmt:
 	}
 |	"DROP" "STATS" TableName "PARTITION" PartitionNameList
 	{
-		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("DROP STATS ... PARTITION ..."))
+		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("'DROP STATS ... PARTITION ...'", ""))
 		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
 			Tables:         []*ast.TableName{$3.(*ast.TableName)},
@@ -12461,10 +12461,6 @@ NumericType:
 		// TODO: check flen 0
 		tp := types.NewFieldType($1.(byte))
 		tp.SetFlen($2.(int))
-		if $2.(int) != types.UnspecifiedLength && types.TiDBStrictIntegerDisplayWidth {
-			yylex.AppendError(ErrWarnDeprecatedIntegerDisplayWidth)
-			parser.lastErrorAsWarn()
-		}
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				tp.AddFlag(mysql.UnsignedFlag)
@@ -14673,12 +14669,44 @@ LockStatsStmt:
 			Tables: $3.([]*ast.TableName),
 		}
 	}
+|	"LOCK" "STATS" TableName "PARTITION" PartitionNameList
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $5.([]model.CIStr)
+		$$ = &ast.LockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
+|	"LOCK" "STATS" TableName "PARTITION" '(' PartitionNameList ')'
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $6.([]model.CIStr)
+		$$ = &ast.LockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
 
 UnlockStatsStmt:
 	"UNLOCK" "STATS" TableNameList
 	{
 		$$ = &ast.UnlockStatsStmt{
 			Tables: $3.([]*ast.TableName),
+		}
+	}
+|	"UNLOCK" "STATS" TableName "PARTITION" PartitionNameList
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $5.([]model.CIStr)
+		$$ = &ast.UnlockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
+|	"UNLOCK" "STATS" TableName "PARTITION" '(' PartitionNameList ')'
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $6.([]model.CIStr)
+		$$ = &ast.UnlockStatsStmt{
+			Tables: []*ast.TableName{x},
 		}
 	}
 

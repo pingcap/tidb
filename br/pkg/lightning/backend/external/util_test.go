@@ -18,8 +18,6 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 )
@@ -126,37 +124,45 @@ func TestGetAllFileNames(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 0)
-	kvPairs := make([]common.KvPair, 0, 30)
+		Build(store, "/subtask", "0")
+
+	keys := make([][]byte, 0, 30)
+	values := make([][]byte, 0, 30)
 	for i := 0; i < 30; i++ {
-		kvPairs = append(kvPairs, common.KvPair{
-			Key: []byte{byte(i)},
-			Val: []byte{byte(i)},
-		})
+		keys = append(keys, []byte{byte(i)})
+		values = append(values, []byte{byte(i)})
 	}
-	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w.Close(ctx)
+
+	for i, key := range keys {
+		err := w.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err := w.Close(ctx)
 	require.NoError(t, err)
 
 	w2 := NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 3)
-	err = w2.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
+		Build(store, "/subtask", "3")
+	for i, key := range keys {
+		err := w2.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
 	require.NoError(t, err)
-	_, err = w2.Close(ctx)
+	err = w2.Close(ctx)
 	require.NoError(t, err)
 
 	w3 := NewWriterBuilder().
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 12)
-	err = w3.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w3.Close(ctx)
+		Build(store, "/subtask", "12")
+	for i, key := range keys {
+		err := w3.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err = w3.Close(ctx)
 	require.NoError(t, err)
 
 	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
@@ -180,17 +186,18 @@ func TestCleanUpFiles(t *testing.T) {
 		SetMemorySizeLimit(20).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
-		Build(store, "/subtask", 0)
-	kvPairs := make([]common.KvPair, 0, 30)
+		Build(store, "/subtask", "0")
+	keys := make([][]byte, 0, 30)
+	values := make([][]byte, 0, 30)
 	for i := 0; i < 30; i++ {
-		kvPairs = append(kvPairs, common.KvPair{
-			Key: []byte{byte(i)},
-			Val: []byte{byte(i)},
-		})
+		keys = append(keys, []byte{byte(i)})
+		values = append(values, []byte{byte(i)})
 	}
-	err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs))
-	require.NoError(t, err)
-	_, err = w.Close(ctx)
+	for i, key := range keys {
+		err := w.WriteRow(ctx, key, values[i], nil)
+		require.NoError(t, err)
+	}
+	err := w.Close(ctx)
 	require.NoError(t, err)
 
 	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "/subtask")
@@ -218,7 +225,7 @@ func TestGetMaxOverlapping(t *testing.T) {
 		{Key: []byte{2}, Tp: InclusiveStart, Weight: 1},
 		{Key: []byte{4}, Tp: ExclusiveEnd, Weight: 1},
 	}
-	require.Equal(t, 2, GetMaxOverlapping(points))
+	require.EqualValues(t, 2, GetMaxOverlapping(points))
 	// [1, 3), [2, 4), [3, 5)
 	points = []Endpoint{
 		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
@@ -228,7 +235,7 @@ func TestGetMaxOverlapping(t *testing.T) {
 		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
 		{Key: []byte{5}, Tp: ExclusiveEnd, Weight: 1},
 	}
-	require.Equal(t, 2, GetMaxOverlapping(points))
+	require.EqualValues(t, 2, GetMaxOverlapping(points))
 	// [1, 3], [2, 4], [3, 5]
 	points = []Endpoint{
 		{Key: []byte{1}, Tp: InclusiveStart, Weight: 1},
@@ -238,5 +245,84 @@ func TestGetMaxOverlapping(t *testing.T) {
 		{Key: []byte{3}, Tp: InclusiveStart, Weight: 1},
 		{Key: []byte{5}, Tp: InclusiveEnd, Weight: 1},
 	}
-	require.Equal(t, 3, GetMaxOverlapping(points))
+	require.EqualValues(t, 3, GetMaxOverlapping(points))
+}
+
+func TestSortedKVMeta(t *testing.T) {
+	summary := []*WriterSummary{
+		{
+			Min:       []byte("a"),
+			Max:       []byte("b"),
+			TotalSize: 123,
+			MultipleFilesStats: []MultipleFilesStat{
+				{
+					Filenames: [][2]string{
+						{"f1", "stat1"},
+						{"f2", "stat2"},
+					},
+				},
+			},
+		},
+		{
+			Min:       []byte("x"),
+			Max:       []byte("y"),
+			TotalSize: 177,
+			MultipleFilesStats: []MultipleFilesStat{
+				{
+					Filenames: [][2]string{
+						{"f3", "stat3"},
+						{"f4", "stat4"},
+					},
+				},
+			},
+		},
+	}
+	meta0 := NewSortedKVMeta(summary[0])
+	require.Equal(t, []byte("a"), meta0.MinKey)
+	require.Equal(t, []byte("b"), meta0.MaxKey)
+	require.Equal(t, uint64(123), meta0.TotalKVSize)
+	require.Equal(t, []string{"f1", "f2"}, meta0.DataFiles)
+	require.Equal(t, []string{"stat1", "stat2"}, meta0.StatFiles)
+	require.Equal(t, summary[0].MultipleFilesStats, meta0.MultipleFilesStats)
+	meta1 := NewSortedKVMeta(summary[1])
+	require.Equal(t, []byte("x"), meta1.MinKey)
+	require.Equal(t, []byte("y"), meta1.MaxKey)
+	require.Equal(t, uint64(177), meta1.TotalKVSize)
+	require.Equal(t, []string{"f3", "f4"}, meta1.DataFiles)
+	require.Equal(t, []string{"stat3", "stat4"}, meta1.StatFiles)
+	require.Equal(t, summary[1].MultipleFilesStats, meta1.MultipleFilesStats)
+
+	meta0.MergeSummary(summary[1])
+	require.Equal(t, []byte("a"), meta0.MinKey)
+	require.Equal(t, []byte("y"), meta0.MaxKey)
+	require.Equal(t, uint64(300), meta0.TotalKVSize)
+	require.Equal(t, []string{"f1", "f2", "f3", "f4"}, meta0.DataFiles)
+	require.Equal(t, []string{"stat1", "stat2", "stat3", "stat4"}, meta0.StatFiles)
+	mergedStats := append([]MultipleFilesStat{}, summary[0].MultipleFilesStats...)
+	mergedStats = append(mergedStats, summary[1].MultipleFilesStats...)
+	require.Equal(t, mergedStats, meta0.MultipleFilesStats)
+
+	meta00 := NewSortedKVMeta(summary[0])
+	meta00.Merge(meta1)
+	require.Equal(t, meta0, meta00)
+}
+
+func TestKeyMinMax(t *testing.T) {
+	require.Equal(t, []byte(nil), NotNilMin(nil, nil))
+	require.Equal(t, []byte{}, NotNilMin(nil, []byte{}))
+	require.Equal(t, []byte(nil), NotNilMin([]byte{}, nil))
+	require.Equal(t, []byte("a"), NotNilMin([]byte("a"), nil))
+	require.Equal(t, []byte("a"), NotNilMin([]byte("a"), []byte{}))
+	require.Equal(t, []byte("a"), NotNilMin(nil, []byte("a")))
+	require.Equal(t, []byte("a"), NotNilMin([]byte("a"), []byte("b")))
+	require.Equal(t, []byte("a"), NotNilMin([]byte("b"), []byte("a")))
+
+	require.Equal(t, []byte(nil), NotNilMax(nil, nil))
+	require.Equal(t, []byte{}, NotNilMax(nil, []byte{}))
+	require.Equal(t, []byte(nil), NotNilMax([]byte{}, nil))
+	require.Equal(t, []byte("a"), NotNilMax([]byte("a"), nil))
+	require.Equal(t, []byte("a"), NotNilMax([]byte("a"), []byte{}))
+	require.Equal(t, []byte("a"), NotNilMax(nil, []byte("a")))
+	require.Equal(t, []byte("b"), NotNilMax([]byte("a"), []byte("b")))
+	require.Equal(t, []byte("b"), NotNilMax([]byte("b"), []byte("a")))
 }

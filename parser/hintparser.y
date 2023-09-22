@@ -77,7 +77,6 @@ import (
 	hintSemijoin            "SEMIJOIN"
 	hintNoSemijoin          "NO_SEMIJOIN"
 	hintMaxExecutionTime    "MAX_EXECUTION_TIME"
-	hintTidbKvReadTimeout   "TIDB_KV_READ_TIMEOUT"
 	hintSetVar              "SET_VAR"
 	hintResourceGroup       "RESOURCE_GROUP"
 	hintQBName              "QB_NAME"
@@ -260,14 +259,6 @@ TableOptimizerHintOpt:
 		$$ = nil
 	}
 |	"MAX_EXECUTION_TIME" '(' QueryBlockOpt hintIntLit ')'
-	{
-		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
-			HintData: $4,
-		}
-	}
-|	"TIDB_KV_READ_TIMEOUT" '(' QueryBlockOpt hintIntLit ')'
 	{
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
@@ -763,7 +754,6 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
-|	"TIDB_KV_READ_TIMEOUT"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

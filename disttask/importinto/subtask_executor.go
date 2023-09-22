@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -29,7 +30,6 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
@@ -44,6 +44,12 @@ import (
 // TestSyncChan is used to test.
 var TestSyncChan = make(chan struct{})
 
+// MiniTaskExecutor is the interface for a minimal task executor.
+// exported for testing.
+type MiniTaskExecutor interface {
+	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error
+}
+
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
 type importMinimalTaskExecutor struct {
 	mTtask *importStepMinimalTask
@@ -51,13 +57,13 @@ type importMinimalTaskExecutor struct {
 
 var newImportMinimalTaskExecutor = newImportMinimalTaskExecutor0
 
-func newImportMinimalTaskExecutor0(t *importStepMinimalTask) execute.MiniTaskExecutor {
+func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	return &importMinimalTaskExecutor{
 		mTtask: t,
 	}
 }
 
-func (e *importMinimalTaskExecutor) Run(ctx context.Context) error {
+func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("run minimal task")
 	failpoint.Inject("waitBeforeSortChunk", func() {
@@ -72,26 +78,20 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context) error {
 	})
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
-	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {
-		return err
+	if sharedVars.TableImporter.IsLocalSort() {
+		if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {
+			return err
+		}
+	} else {
+		if err := importer.ProcessChunkWith(ctx, &chunkCheckpoint, sharedVars.TableImporter, dataWriter, indexWriter, sharedVars.Progress, logger); err != nil {
+			return err
+		}
 	}
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
 	sharedVars.Checksum.Add(&chunkCheckpoint.Checksum)
 	return nil
-}
-
-type postProcessMinimalTaskExecutor struct {
-	mTask *postProcessStepMinimalTask
-}
-
-func (e *postProcessMinimalTaskExecutor) Run(ctx context.Context) error {
-	mTask := e.mTask
-	failpoint.Inject("waitBeforePostProcess", func() {
-		time.Sleep(5 * time.Second)
-	})
-	return postProcess(ctx, mTask.taskMeta, &mTask.meta, mTask.logger)
 }
 
 // postProcess does the post-processing for the task.
@@ -183,6 +183,8 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 			defer func() {
 				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
 			}()
+
+			// TODO: add resource group name
 
 			rs, err := storage.ExecSQL(ctx, se, sql)
 			if err != nil {

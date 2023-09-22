@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -474,9 +475,11 @@ type Backend struct {
 	importClientFactory ImportClientFactory
 
 	bufferPool   *membuf.Pool
-	metrics      *metric.Metrics
+	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
+	mu sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -602,7 +605,7 @@ func NewBackend(
 		writeLimiter:        writeLimiter,
 		logger:              log.FromContext(ctx),
 	}
-	if m, ok := metric.FromContext(ctx); ok {
+	if m, ok := metric.GetCommonMetric(ctx); ok {
 		local.metrics = m
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
@@ -939,7 +942,11 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		store, err := storage.New(ctx, storeBackend, nil)
+		opt := &storage.ExternalStorageOptions{}
+		if intest.InTest {
+			opt.NoCredentials = true
+		}
+		store, err := storage.New(ctx, storeBackend, opt)
 		if err != nil {
 			return err
 		}
@@ -1469,7 +1476,7 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
 			regionSplitSize = kvRegionSplitSize
@@ -1545,6 +1552,16 @@ func (local *Backend) ImportEngine(
 			zap.Int64("importedCount", importedLength))
 	}
 	return err
+}
+
+// GetRegionSplitSizeKeys gets the region split size and keys from PD.
+func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
+	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+}
+
+// GetMutex returns the mutex of the backend.
+func (local *Backend) GetMutex() *sync.Mutex {
+	return &local.mu
 }
 
 // expose these variables to unit test.
@@ -1682,6 +1699,16 @@ func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 	}
 	e := v.(*Engine)
 	return e.importedKVCount.Load()
+}
+
+// GetExternalEngineKVStatistics returns kv statistics of some engine.
+func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
+	totalKVSize int64, totalKVCount int64) {
+	v, ok := local.externalEngine[engineUUID]
+	if !ok {
+		return 0, 0
+	}
+	return v.KVStatistics()
 }
 
 // ResetEngine reset the engine and reclaim the space.
@@ -1922,8 +1949,8 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 	return splitSize, nested.Coprocessor.RegionSplitKeys, nil
 }
 
-// return region split size, region split keys, error
-func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
+// GetRegionSplitSizeKeys return region split size, region split keys, error
+func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
 	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {

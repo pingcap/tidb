@@ -63,10 +63,7 @@ func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32
 type Manager struct {
 	taskTable     TaskTable
 	schedulerPool Pool
-	// taskType -> subtaskExecutorPool
-	// shared by subtasks of all task steps
-	subtaskExecutorPools map[string]Pool
-	mu                   struct {
+	mu            struct {
 		sync.RWMutex
 		// taskID -> cancelFunc.
 		// cancelFunc is used to fast cancel the scheduler.Run.
@@ -84,11 +81,10 @@ type Manager struct {
 // BuildManager builds a Manager.
 func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
 	m := &Manager{
-		id:                   id,
-		taskTable:            taskTable,
-		subtaskExecutorPools: make(map[string]Pool),
-		logCtx:               logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
-		newPool:              b.newPool,
+		id:        id,
+		taskTable: taskTable,
+		logCtx:    logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
+		newPool:   b.newPool,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
@@ -99,17 +95,6 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	}
 	m.schedulerPool = schedulerPool
 
-	for taskType, opt := range taskTypes {
-		poolSize := subtaskExecutorPoolSize
-		if opt.PoolSize > 0 {
-			poolSize = opt.PoolSize
-		}
-		subtaskExecutorPool, err := m.newPool(taskType+"_pool", poolSize, util.DistTask)
-		if err != nil {
-			return nil, err
-		}
-		m.subtaskExecutorPools[taskType] = subtaskExecutorPool
-	}
 	return m, nil
 }
 
@@ -149,9 +134,6 @@ func (m *Manager) Start() error {
 // Stop stops the Manager.
 func (m *Manager) Stop() {
 	m.cancel()
-	for _, pool := range m.subtaskExecutorPools {
-		pool.ReleaseAndWait()
-	}
 	m.schedulerPool.ReleaseAndWait()
 	m.wg.Wait()
 }
@@ -199,10 +181,6 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		if _, ok := m.subtaskExecutorPools[task.Type]; !ok {
-			logutil.Logger(m.logCtx).Error("unknown task type", zap.String("type", task.Type))
-			continue
-		}
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
@@ -216,8 +194,8 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
-			m.onRunnableTask(ctx, t.ID, t.Type)
-			m.removeHandlingTask(task.ID)
+			m.onRunnableTask(ctx, t)
+			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
 		if err != nil {
@@ -276,19 +254,21 @@ type TestContext struct {
 var testContexts sync.Map
 
 // onRunnableTask handles a runnable task.
-func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType string) {
-	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Any("task_id", taskID), zap.Any("type", taskType))
-	if _, ok := m.subtaskExecutorPools[taskType]; !ok {
-		m.onError(errors.Errorf("task type %s not found", taskType))
-		return
-	}
+func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
+	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task_id", task.ID), zap.String("type", task.Type))
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
-	factory := getSchedulerFactory(taskType)
+	factory := getSchedulerFactory(task.Type)
 	if factory == nil {
-		m.onError(errors.Errorf("task type %s not found", taskType))
+		m.onError(errors.Errorf("task type %s not found", task.Type))
 		return
 	}
-	scheduler := factory(ctx, m.id, taskID, m.taskTable, m.subtaskExecutorPools[taskType])
+	scheduler := factory(ctx, m.id, task, m.taskTable)
+	err := scheduler.Init(ctx)
+	if err != nil {
+		m.onError(err)
+		return
+	}
+	defer scheduler.Close()
 	for {
 		select {
 		case <-ctx.Done():
@@ -301,18 +281,19 @@ func (m *Manager) onRunnableTask(ctx context.Context, taskID int64, taskType str
 				v, ok := testContexts.Load(m.id)
 				if ok {
 					<-v.(*TestContext).TestSyncSubtaskRun
-					m.Stop()
 					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
+					m.Stop()
 				}
 			}()
 		})
-		task, err := m.taskTable.GetGlobalTaskByID(taskID)
+		task, err := m.taskTable.GetGlobalTaskByID(task.ID)
 		if err != nil {
 			m.onError(err)
 			return
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
-			logutil.Logger(m.logCtx).Info("onRunnableTask exit", zap.Any("task_id", taskID), zap.Int64("step", task.Step), zap.Any("state", task.State))
+			logutil.Logger(m.logCtx).Info("onRunnableTask exit",
+				zap.Int64("task_id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
 			return
 		}
 		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {

@@ -8038,12 +8038,10 @@
       {
         "SQL": "explain format = 'brief' select /*+ use_index_merge(t2, a, b) */ * from t2 where a=1 and b=1 limit 2; -- test sink limit to table side of intersection index merge case, because of intersection case special",
         "Plan": [
-          "Limit 0.01 root  offset:0, count:2",
-          "└─IndexMerge 0.01 root  type: intersection",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
-          "  └─Limit(Probe) 0.01 cop[tikv]  offset:0, count:2",
-          "    └─TableRowIDScan 0.01 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "IndexMerge 0.01 root  type: intersection, limit embedded(offset:0, count:2)",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.01 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
@@ -8058,20 +8056,18 @@
           "IndexMerge 0.00 root  type: union, limit embedded(offset:0, count:1)",
           "├─Limit(Build) 0.00 cop[tikv]  offset:0, count:1",
           "│ └─IndexRangeScan 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
       {
-        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1; -- index merge intersection case, sink limit into table side",
+        "SQL": "explain format = 'brief' select /*+ use_index(t, kj) */ * from t where json_contains(j, '[1, 2, 3]') limit 1; -- index merge intersection case, embedding limit into index merge reader",
         "Plan": [
-          "Limit 1.00 root  offset:0, count:1",
-          "└─IndexMerge 0.00 root  type: intersection",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[2,2], keep order:false, stats:pseudo",
-          "  ├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[3,3], keep order:false, stats:pseudo",
-          "  └─Limit(Probe) 0.00 cop[tikv]  offset:0, count:1",
-          "    └─TableRowIDScan 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "IndexMerge 0.00 root  type: intersection, limit embedded(offset:0, count:1)",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[1,1], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[2,2], keep order:false, stats:pseudo",
+          "├─IndexRangeScan(Build) 0.00 cop[tikv] table:t, index:kj(cast(`j` as signed array)) range:[3,3], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 0.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
       },
