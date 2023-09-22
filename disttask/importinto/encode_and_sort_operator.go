@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -106,15 +107,21 @@ func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
 // each kv group, and all chunks shares the same writers.
 // the writer itself will sort and upload data concurrently.
 func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, indexMemorySizeLimit uint64) {
+	totalDataKVMemSizeLimit := external.DefaultMemSizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt)
+	totalMemSizeLimitPerIndexWriter := indexMemorySizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt)
+	op.logger.Info("init global sort writer with mem limit",
+		zap.String("data-limit", units.BytesSize(float64(totalDataKVMemSizeLimit))),
+		zap.String("per-index-limit", units.BytesSize(float64(totalMemSizeLimitPerIndexWriter))))
+
 	// in case on network partition, 2 nodes might run the same subtask.
+	// so use uuid to make sure the path is unique.
 	workerUUID := uuid.New().String()
 	// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-	totalIndexMemSizeLimit := indexMemorySizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt)
 	indexWriterFn := func(indexID int64) *external.Writer {
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeIndexSummary(indexID, summary)
-			}).SetMemorySizeLimit(totalIndexMemSizeLimit)
+			}).SetMemorySizeLimit(totalMemSizeLimitPerIndexWriter)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for index: index/{indexID}/{workerID}
 		writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -125,7 +132,7 @@ func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, index
 	// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 	builder := external.NewWriterBuilder().
 		SetOnCloseFunc(op.sharedVars.mergeDataSummary).
-		SetMemorySizeLimit(external.DefaultMemSizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt))
+		SetMemorySizeLimit(totalDataKVMemSizeLimit)
 	prefix := subtaskPrefix(op.taskID, op.subtaskID)
 	// writer id for data: data/{workerID}
 	writerID := path.Join("data", workerUUID)

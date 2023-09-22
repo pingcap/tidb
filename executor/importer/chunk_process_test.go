@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/util"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -35,8 +36,16 @@ func TestIndexRouteWriter(t *testing.T) {
 	wg := util.WaitGroupWrapper{}
 	for i := 0; i < 10; i++ {
 		wg.Run(func() {
-			for i := 0; i < 1000; i++ {
-				routeWriter.getWriter(int64(r.Int()) % 100)
+			gotWriters := make(map[int64]*wrappedWriter)
+			for i := 0; i < 3000; i++ {
+				indexID := int64(r.Int()) % 100
+				writer := routeWriter.getWriter(indexID)
+				require.NotNil(t, writer)
+				if got, ok := gotWriters[indexID]; ok {
+					require.Equal(t, got, writer)
+				} else {
+					gotWriters[indexID] = writer
+				}
 			}
 		})
 	}

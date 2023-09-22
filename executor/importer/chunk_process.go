@@ -349,7 +349,7 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 // writer will take 256MiB buffer on default.
 // this will take a lot of memory, or even OOM.
 type IndexRouteWriter struct {
-	// this writer and all wrappedWriters are shared by all chunk processors,
+	// this writer and all wrappedWriters are shared by all deliver routines,
 	// so we need to synchronize them.
 	sync.RWMutex
 	writers       map[int64]*wrappedWriter
@@ -366,6 +366,12 @@ func (w *wrappedWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte, han
 	w.Lock()
 	defer w.Unlock()
 	return w.Writer.WriteRow(ctx, idxKey, idxVal, handle)
+}
+
+func (w *wrappedWriter) Close(ctx context.Context) error {
+	w.Lock()
+	defer w.Unlock()
+	return w.Writer.Close(ctx)
 }
 
 // NewIndexRouteWriter creates a new IndexRouteWriter.
@@ -389,8 +395,10 @@ func (w *IndexRouteWriter) getWriter(indexID int64) *wrappedWriter {
 	defer w.Unlock()
 	writer, ok = w.writers[indexID]
 	if !ok {
-		internalWriter := w.writerFactory(indexID)
-		w.writers[indexID] = &wrappedWriter{Writer: internalWriter}
+		writer = &wrappedWriter{
+			Writer: w.writerFactory(indexID),
+		}
+		w.writers[indexID] = writer
 	}
 	return writer
 }
