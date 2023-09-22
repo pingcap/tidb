@@ -393,7 +393,11 @@
         "Plan": [
           "HashAgg_18 1.00 root  funcs:sum(Column#4)->Column#3",
           "└─TableReader_19 1.00 root  data:HashAgg_20",
+<<<<<<< HEAD
           "  └─HashAgg_20 1.00 cop[tikv]  funcs:sum(cast(test.t.b, decimal(33,1) BINARY))->Column#4",
+=======
+          "  └─HashAgg_20 1.00 cop[tikv]  funcs:sum(cast(test.t.b, decimal(12,1) BINARY))->Column#4",
+>>>>>>> c634119bee4 (expression: Add cast to ensure that the actual output type of `builtin_control` is consistent with retType (#46786))
           "    └─TableRangeScan_17 250.00 cop[tikv] table:t range:(0,1000], keep order:false, stats:pseudo"
         ],
         "Result": [
