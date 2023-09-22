@@ -8480,7 +8480,7 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 // AddResourceGroup implements the DDL interface, creates a resource group.
 func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
 	if err != nil {
 		return err

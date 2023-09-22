@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	tidbmetrics "github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	copr_metrics "github.com/pingcap/tidb/store/copr/metrics"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -1169,6 +1170,13 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
 
 	replicaRead := worker.req.ReplicaRead
+	rgName := worker.req.ResourceGroupName
+	if task.storeType == kv.TiFlash && !variable.EnableResourceControl.Load() {
+		// By calling variable.EnableGlobalResourceControlFunc() and setting global variables,
+		// tikv/client-go can sense whether the rg function is enabled
+		// But for tiflash, it check if rgName is empty to decide if resource control is enabled or not.
+		rgName = ""
+	}
 	req := tikvrpc.NewReplicaReadRequest(task.cmdType, &copReq, options.GetTiKVReplicaReadType(replicaRead), &worker.replicaReadSeed, kvrpcpb.Context{
 		IsolationLevel: isolationLevelToPB(worker.req.IsolationLevel),
 		Priority:       priorityToPB(worker.req.Priority),
@@ -1177,7 +1185,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 		RecordScanStat: true,
 		TaskId:         worker.req.TaskID,
 		ResourceControlContext: &kvrpcpb.ResourceControlContext{
-			ResourceGroupName: worker.req.ResourceGroupName,
+			ResourceGroupName: rgName,
 		},
 		BusyThresholdMs: uint32(task.busyThreshold.Milliseconds()),
 		BucketsVersion:  task.bucketsVer,

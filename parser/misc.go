@@ -562,6 +562,7 @@ var tokenMap = map[string]int{
 	"OLTP_READ_ONLY":           oltpReadOnly,
 	"OLTP_READ_WRITE":          oltpReadWrite,
 	"OLTP_WRITE_ONLY":          oltpWriteOnly,
+	"TPCH_10":                  tpch10,
 	"ON_DUPLICATE":             onDuplicate,
 	"ON":                       on,
 	"ONLINE":                   online,

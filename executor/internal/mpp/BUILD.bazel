@@ -15,6 +15,7 @@ go_library(
         "//kv",
         "//planner/core",
         "//sessionctx",
+        "//sessionctx/variable",
         "//store/copr",
         "//store/driver/backoff",
         "//store/driver/error",

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
+	resourceControlClient "github.com/tikv/pd/client/resource_group/controller"
 )
 
 var (
@@ -252,29 +253,40 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 	if err != nil {
 		return err
 	}
+	tidbQuota, err1 := e.getTiDBQuota(ctx, exec, startTs, endTs)
+	tiflashQuota, err2 := e.getTiFlashQuota(ctx, exec, startTs, endTs)
+	if err1 != nil && err2 != nil {
+		return err1
+	}
+	req.AppendUint64(0, uint64(tidbQuota+tiflashQuota))
+	return nil
+}
+
+func (e *Executor) getTiDBQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTs, endTs time.Time) (float64, error) {
 	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	totalTiDBCPU, err := getTiDBTotalCPUQuota(ctx, exec)
 	if err != nil {
-		return errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
 	}
 	rus, err := getRUPerSec(ctx, e.Ctx(), exec, startTime, endTime)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	tikvCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tikv", startTime, endTime)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	tidbCPUs, err := getComponentCPUUsagePerSec(ctx, e.Ctx(), exec, "tidb", startTime, endTime)
 	if err != nil {
-		return err
+		return 0, err
 	}
+
 	failpoint.Inject("mockMetricsDataFilter", func() {
 		ret := make([]*timePointValue, 0)
 		for _, point := range tikvCPUs.vals {
@@ -332,8 +344,16 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 		tidbCPUs.next()
 		tikvCPUs.next()
 	}
+	quota, err := setupQuotas(quotas)
+	if err != nil {
+		return 0, err
+	}
+	return quota, nil
+}
+
+func setupQuotas(quotas []float64) (float64, error) {
 	if len(quotas) < 2 {
-		return errLowUsage
+		return 0, errLowUsage
 	}
 	sort.Slice(quotas, func(i, j int) bool {
 		return quotas[i] > quotas[j]
@@ -344,9 +364,46 @@ func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk, exec 
 	for i := lowerBound; i < upperBound; i++ {
 		sum += quotas[i]
 	}
-	quota := sum / float64(upperBound-lowerBound)
-	req.AppendUint64(0, uint64(quota))
-	return nil
+	return sum / float64(upperBound-lowerBound), nil
+}
+
+func (e *Executor) getTiFlashQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, startTs, endTs time.Time) (float64, error) {
+	startTime := startTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+	endTime := endTs.In(e.Ctx().GetSessionVars().Location()).Format(time.DateTime)
+
+	quotas := make([]float64, 0)
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
+	if err != nil {
+		return 0, errNoCPUQuotaMetrics.FastGenByArgs(err.Error())
+	}
+	tiflashCPUs, err := getTiFlashCPUUsagePerSec(ctx, e.Ctx(), exec, startTime, endTime)
+	if err != nil {
+		return 0, err
+	}
+	tiflashRUs, err := getTiFlashRUPerSec(ctx, e.Ctx(), exec, startTime, endTime)
+	if err != nil {
+		return 0, err
+	}
+	for {
+		if tiflashRUs.isEnd() || tiflashCPUs.isEnd() {
+			break
+		}
+		// make time point match
+		maxTime := tiflashRUs.getTime()
+		if tiflashCPUs.getTime().After(maxTime) {
+			maxTime = tiflashCPUs.getTime()
+		}
+		if !tiflashRUs.advance(maxTime) || !tiflashCPUs.advance(maxTime) {
+			continue
+		}
+		tiflashQuota := tiflashCPUs.getValue() / totalTiFlashLogicalCores
+		if tiflashQuota > lowUsageThreshold {
+			quotas = append(quotas, tiflashRUs.getValue()/tiflashQuota)
+		}
+		tiflashRUs.next()
+		tiflashCPUs.next()
+	}
+	return setupQuotas(quotas)
 }
 
 func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor) error {
@@ -357,6 +414,10 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	// first fetch the ru settings config.
 	if resourceGroupCtl == nil {
 		return errors.New("resource group controller is not initialized")
+	}
+	ruCfg := resourceGroupCtl.GetConfig()
+	if e.WorkloadType == ast.TPCH10 {
+		return staticCalibrateTpch10(ctx, req, exec, ruCfg)
 	}
 
 	totalKVCPUQuota, err := getTiKVTotalCPUQuota(ctx, exec)
@@ -380,13 +441,28 @@ func (e *Executor) staticCalibrate(ctx context.Context, req *chunk.Chunk, exec s
 	if totalTiDBCPU/baseCost.tidbToKVCPURatio < totalKVCPUQuota {
 		totalKVCPUQuota = totalTiDBCPU / baseCost.tidbToKVCPURatio
 	}
-	ruCfg := resourceGroupCtl.GetConfig()
 	ruPerKVCPU := float64(ruCfg.ReadBaseCost)*float64(baseCost.readReqCount) +
 		float64(ruCfg.CPUMsCost)*baseCost.kvCPU*1000 + // convert to ms
 		float64(ruCfg.ReadBytesCost)*float64(baseCost.readBytes) +
 		float64(ruCfg.WriteBaseCost)*float64(baseCost.writeReqCount) +
 		float64(ruCfg.WriteBytesCost)*float64(baseCost.writeBytes)
 	quota := totalKVCPUQuota * ruPerKVCPU
+	req.AppendUint64(0, uint64(quota))
+	return nil
+}
+
+func staticCalibrateTpch10(ctx context.Context, req *chunk.Chunk, exec sqlexec.RestrictedSQLExecutor, ruCfg *resourceControlClient.RUConfig) error {
+	// TPCH10 only considers the resource usage of the TiFlash including cpu and read bytes. Others are ignored.
+	// cpu usage: 105494.666484 / 20 / 20 = 263.74
+	// read bytes: 401799161689.0 / 20 / 20 = 1004497904.22
+	const cpuTimePerCPUPerSec float64 = 263.74
+	const readBytesPerCPUPerSec float64 = 1004497904.22
+	ruPerCPU := float64(ruCfg.CPUMsCost)*cpuTimePerCPUPerSec + float64(ruCfg.ReadBytesCost)*readBytesPerCPUPerSec
+	totalTiFlashLogicalCores, err := getTiFlashLogicalCores(ctx, exec)
+	if err != nil {
+		return err
+	}
+	quota := totalTiFlashLogicalCores * ruPerCPU
 	req.AppendUint64(0, uint64(quota))
 	return nil
 }
@@ -399,6 +475,21 @@ func getTiKVTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecuto
 func getTiDBTotalCPUQuota(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
 	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tidb_server_maxprocs GROUP BY time ORDER BY time desc limit 1"
 	return getNumberFromMetrics(ctx, exec, query, "tidb_server_maxprocs")
+}
+
+func getTiFlashLogicalCores(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) (float64, error) {
+	query := "SELECT SUM(value) FROM METRICS_SCHEMA.tiflash_cpu_quota GROUP BY time ORDER BY time desc limit 1"
+	return getNumberFromMetrics(ctx, exec, query, "tiflash_cpu_quota")
+}
+
+func getTiFlashRUPerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
+	query := fmt.Sprintf("SELECT time, value FROM METRICS_SCHEMA.tiflash_resource_manager_resource_unit where time >= '%s' and time <= '%s' ORDER BY time asc", startTime, endTime)
+	return getValuesFromMetrics(ctx, sctx, exec, query)
+}
+
+func getTiFlashCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, startTime, endTime string) (*timeSeriesValues, error) {
+	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.tiflash_process_cpu_usage where time >= '%s' and time <= '%s' and job = 'tiflash' GROUP BY time ORDER BY time asc", startTime, endTime)
+	return getValuesFromMetrics(ctx, sctx, exec, query)
 }
 
 type timePointValue struct {
