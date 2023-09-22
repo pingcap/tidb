@@ -1,7 +1,7 @@
 # Proposal: MySQL-Compatible `AUTO_INCREMENT`
 
 - **Author(s)**: [tiancaiamao](https://github.com/tiancaiamao)
-- **Discussion PR**: [Link to PR](https://github.com/pingcap/tidb/pull/38449)
+- **Discussion PR**: [#38449](https://github.com/pingcap/tidb/pull/38449)
 - **Tracking Issue**: [Link to Issue](https://github.com/pingcap/tidb/issues/38442)
 
 ## Abstract
