@@ -84,6 +84,72 @@ func TestIssue43311(t *testing.T) {
 	tk.MustQuery(`execute st using @a, @b`).Check(testkit.Rows()) // empty
 }
 
+func TestIssue44830(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44830:ON"`)
+	tk.MustExec(`create table t (a int, primary key(a))`)
+	tk.MustExec(`create table t1 (a int, b int, primary key(a, b))`) // multiple-column primary key
+	tk.MustExec(`insert into t values (1), (2), (3)`)
+	tk.MustExec(`insert into t1 values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec(`set @a=1, @b=2, @c=3`)
+
+	// single-column primary key cases
+	tk.MustExec(`prepare st from 'select * from t where 1=1 and a in (?, ?, ?)'`)
+	tk.MustQuery(`execute st using @a, @b, @c`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute st using @a, @b, @c`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute st using @a, @b, @b`).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @b, @b, @b`).Sort().Check(testkit.Rows("2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @a, @b, @c`).Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery(`execute st using @a, @b, @b`).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`execute st using @a, @b, @b`).Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // contain duplicated values in the in-list
+
+	// multi-column primary key cases
+	tk.MustExec(`prepare st from 'select * from t1 where 1=1 and (a, b) in ((?, ?), (?, ?), (?, ?))'`)
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @c, @c`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @c, @c`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @b, @b`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @b, @b, @b, @b, @b, @b`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @b, @b, @b, @b, @c, @c`).Sort().Check(testkit.Rows("2 2", "3 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // range length changed
+	tk.MustQuery(`execute st using @a, @a, @a, @a, @a, @a`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`execute st using @a, @a, @a, @a, @a, @a`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // contain duplicated values in the in-list
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @b, @b`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`execute st using @a, @a, @b, @b, @b, @b`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // contain duplicated values in the in-list
+}
+
+func TestIssue44830NonPrep(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`set @@tidb_opt_fix_control = "44830:ON"`)
+	tk.MustExec(`create table t1 (a int, b int, primary key(a, b))`) // multiple-column primary key
+	tk.MustExec(`insert into t1 values (1, 1), (2, 2), (3, 3)`)
+	tk.MustExec(`set @a=1, @b=2, @c=3`)
+
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3))`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (3, 3))`).Sort().Check(testkit.Rows("1 1", "2 2", "3 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (2, 2), (2, 2))`).Sort().Check(testkit.Rows("1 1", "2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((2, 2), (2, 2), (2, 2))`).Sort().Check(testkit.Rows("2 2"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (1, 1), (1, 1))`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select * from t1 where 1=1 and (a, b) in ((1, 1), (1, 1), (1, 1))`).Sort().Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
 func TestPlanCacheSizeSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
