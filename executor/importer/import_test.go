@@ -20,6 +20,7 @@ import (
 	"net/url"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -270,4 +271,20 @@ func TestInitParameters(t *testing.T) {
 	require.Len(t, p.Parameters.Options, 2)
 	require.Contains(t, p.Parameters.Options, detachedOption)
 	require.Equal(t, "3", p.Parameters.Options[threadOption])
+}
+
+func TestGetLocalBackendCfg(t *testing.T) {
+	c := &LoadDataController{
+		Plan: &Plan{},
+	}
+	cfg := c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	require.Equal(t, "http://1.1.1.1:1234", cfg.PDAddr)
+	require.Equal(t, "/tmp", cfg.LocalStoreDir)
+	require.True(t, cfg.DisableAutomaticCompactions)
+	require.Zero(t, cfg.RaftKV2SwitchModeDuration)
+
+	c.Plan.IsRaftKV2 = true
+	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
+	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }
