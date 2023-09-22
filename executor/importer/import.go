@@ -1003,7 +1003,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
-		fileReader, err2 := s.Open(ctx, fileNameKey)
+		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
 		}

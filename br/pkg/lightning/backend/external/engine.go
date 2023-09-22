@@ -176,8 +176,8 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		logger.Info("seek props offsets",
 			zap.Uint64s("offsets", offsets),
 			zap.String("startKey", hex.EncodeToString(start)),
-			zap.Strings("dataFiles", prettyFileNames(e.dataFiles)),
-			zap.Strings("statsFiles", prettyFileNames(e.statsFiles)))
+			zap.Strings("dataFiles", e.dataFiles),
+			zap.Strings("statsFiles", e.statsFiles))
 	}
 	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024)
 	if err != nil {

@@ -108,7 +108,7 @@ func (*HDFSStorage) DeleteFiles(_ context.Context, _ []string) error {
 }
 
 // Open a Reader by file path. path is relative path to storage base path
-func (*HDFSStorage) Open(_ context.Context, _ string) (ExternalFileReader, error) {
+func (*HDFSStorage) Open(_ context.Context, _ string, _ *ReaderOption) (ExternalFileReader, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
