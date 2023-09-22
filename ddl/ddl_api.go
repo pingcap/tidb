@@ -4903,7 +4903,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
-		if isVirtualGeneratedColumn(sourceCol) != isVirtualGeneratedColumn(targetCol) {
+		if sourceCol.IsVirtualGenerated() != targetCol.IsVirtualGenerated() {
 			return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		// It should strictyle compare expressions for generated columns

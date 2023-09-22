@@ -88,7 +88,7 @@ func MergePartitionStats2GlobalStats(
 	if len(histIDs) == 0 {
 		for _, col := range globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
-			if col.IsGenerated() && !col.GeneratedStored {
+			if col.IsVirtualGenerated() {
 				continue
 			}
 			histIDs = append(histIDs, col.ID)
