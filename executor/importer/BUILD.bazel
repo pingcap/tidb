@@ -78,6 +78,7 @@ go_test(
     name = "importer_test",
     timeout = "short",
     srcs = [
+        "chunk_process_test.go",
         "import_test.go",
         "job_test.go",
         "precheck_test.go",
@@ -86,9 +87,10 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-    shard_count = 16,
+    shard_count = 17,
     deps = [
         "//br/pkg/errors",
+        "//br/pkg/lightning/backend/external",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/mydump",
         "//br/pkg/streamhelper",
@@ -104,6 +106,7 @@ go_test(
         "//sessionctx/variable",
         "//testkit",
         "//types",
+        "//util",
         "//util/dbterror/exeerrors",
         "//util/etcd",
         "//util/logutil",

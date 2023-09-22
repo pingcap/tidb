@@ -121,7 +121,7 @@ func TestAzblob(t *testing.T) {
 	require.Equal(t, "keykey1key2", list)
 	require.Equal(t, int64(42), totalSize)
 
-	efr, err := azblobStorage.Open(ctx, "key2")
+	efr, err := azblobStorage.Open(ctx, "key2", nil)
 	require.NoError(t, err)
 
 	p := make([]byte, 10)
