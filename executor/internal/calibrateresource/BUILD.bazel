@@ -17,7 +17,6 @@ go_library(
         "//sessionctx/variable",
         "//sessiontxn/staleread",
         "//util/chunk",
-        "//util/logutil",
         "//util/mathutil",
         "//util/sqlexec",
         "@com_github_docker_go_units//:go-units",
@@ -25,7 +24,6 @@ go_library(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//resource_group/controller",
-        "@org_uber_go_zap//:zap",
     ],
 )
 
