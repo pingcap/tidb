@@ -234,7 +234,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	}
 }
 
-func (w *chunkWorker) Close() {
+func (*chunkWorker) Close() {
 }
 
 func subtaskPrefix(taskID, subtaskID int64) string {
