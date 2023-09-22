@@ -35,43 +35,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestBindingInListEffect(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, c int, d int)`)
-
-	// binding created with `in (?)` can work for `in (?,?,?)`
-	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
-	tk.MustExec(`create binding for select a from t where a in (1) using select a from t where a in (1)`)
-	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select a from t where a in (1, 2)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select a from t where a in (1)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-
-	// binding created with `in (?,?,?)` can work for `in (?)`
-	tk.MustQuery(`select b from t where b in (1)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
-	tk.MustExec(`create binding for select b from t where b in (1,2,3) using select b from t where b in (1,2,3)`)
-	tk.MustQuery(`select b from t where b in (1)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-
-	// bindings with multiple in-lists can take effect
-	tk.MustQuery(`select * from t where a in (1) and b in (1) and c in (1)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
-	tk.MustExec(`create binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3) using
-select * from t where a in (1,2,3) and b in (1,2) and c in (1)`)
-	tk.MustQuery(`select * from t where a in (1) and b in (1) and c in (1)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select * from t where a in (1) and b in (1,2) and c in (1,2,3)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select * from t where a in (1,2,3) and b in (1,2) and c in (1)`)
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-}
-
 func TestBindingInListOperation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -370,101 +333,6 @@ func TestPrepareCacheWithBinding(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.True(t, tk.MustUseIndex4ExplainFor(res, "ib(b)"), res.Rows())
-}
-
-func TestExplain(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t1(id int)")
-	tk.MustExec("create table t2(id int)")
-
-	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
-	tk.MustHavePlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin")
-
-	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
-
-	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
-
-	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
-
-	// Add test for SetOprStmt
-	tk.MustExec("create index index_id on t1(id)")
-	tk.MustHavePlan("SELECT * from t1 union SELECT * from t1", "IndexReader")
-	tk.MustHavePlan("SELECT * from t1 use index(index_id) union SELECT * from t1", "IndexReader")
-
-	tk.MustExec("create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1")
-
-	tk.MustHavePlan("SELECT * from t1 union SELECT * from t1", "IndexReader")
-
-	tk.MustExec("drop global binding for SELECT * from t1 union SELECT * from t1")
-}
-
-func TestBindSemiJoinRewrite(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t1(id int)")
-	tk.MustExec("create table t2(id int)")
-	require.True(t, tk.HasKeywordInOperatorInfo("select * from t1 where exists(select 1 from t2 where t1.id=t2.id)", "semi join"))
-	require.True(t, tk.NotHasKeywordInOperatorInfo("select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id)", "semi join"))
-
-	tk.MustExec(`
-create global binding for
-	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
-using
-	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id)
-`)
-
-	require.True(t, tk.NotHasKeywordInOperatorInfo("select * from t1 where exists(select 1 from t2 where t1.id=t2.id)", "semi join"))
-}
-
-func TestBindCTEMerge(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(id int)")
-	tk.MustHavePlan("with cte as (select * from t1) select * from cte a, cte b", "CTEFullScan")
-	tk.MustNotHavePlan("with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b", "CTEFullScan")
-	tk.MustExec(`
-create global binding for
-	with cte as (select * from t1) select * from cte
-using
-	with cte as (select /*+ MERGE() */ * from t1) select * from cte
-`)
-
-	tk.MustNotHavePlan("with cte as (select * from t1) select * from cte", "CTEFullScan")
-}
-
-func TestBindNoDecorrelate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t1(a int, b int)")
-	tk.MustExec("create table t2(a int, b int)")
-	tk.MustNotHavePlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply")
-	tk.MustHavePlan("select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply")
-
-	tk.MustExec(`
-create global binding for
-	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
-using
-	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1
-`)
-
-	tk.MustHavePlan("select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1", "Apply")
 }
 
 // TestBindingSymbolList tests sql with "?, ?, ?, ?", fixes #13871
@@ -809,20 +677,6 @@ func TestRuntimeHintsInEvolveTasks(t *testing.T) {
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `idx_c`), no_order_index(@`sel_1` `test`.`t` `idx_c`), max_execution_time(5000), set_var(tikv_client_read_timeout = 20)*/ * FROM `test`.`t` WHERE `a` >= 4 AND `b` >= 1 AND `c` = 0", rows[0][1])
 }
 
-func TestDefaultSessionVars(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery(`show variables like "%baselines%"`).Sort().Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-		"tidb_evolve_plan_baselines OFF",
-		"tidb_use_plan_baselines ON"))
-	tk.MustQuery(`show global variables like "%baselines%"`).Sort().Check(testkit.Rows(
-		"tidb_capture_plan_baselines OFF",
-		"tidb_evolve_plan_baselines OFF",
-		"tidb_use_plan_baselines ON"))
-}
-
 func TestCaptureBaselinesScope(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -1144,33 +998,6 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("drop binding for select * from t")
 }
 
-func TestSPMHitInfo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t1(id int)")
-	tk.MustExec("create table t2(id int)")
-
-	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
-	tk.MustHavePlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin")
-
-	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
-	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
-	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
-
-	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
-	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
-	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("1"))
-	tk.MustExec("set binding disabled for SELECT * from t1,t2 where t1.id = t2.id")
-	tk.MustExec("SELECT * from t1,t2 where t1.id = t2.id")
-	tk.MustQuery(`select @@last_plan_from_binding;`).Check(testkit.Rows("0"))
-
-	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
-}
-
 func TestReCreateBind(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1201,24 +1028,6 @@ func TestReCreateBind(t *testing.T) {
 	require.Len(t, rows, 2)
 	require.Equal(t, "deleted", rows[0][1])
 	require.Equal(t, bindinfo.Enabled, rows[1][1])
-}
-
-func TestExplainShowBindSQL(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, key(a))")
-
-	tk.MustExec("create global binding for select * from t using select * from t use index(a)")
-	tk.MustQuery("select original_sql, bind_sql from mysql.bind_info where default_db != 'mysql'").Check(testkit.Rows(
-		"select * from `test` . `t` SELECT * FROM `test`.`t` USE INDEX (`a`)",
-	))
-
-	tk.MustExec("explain format = 'verbose' select * from t")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `test`.`t` USE INDEX (`a`)"))
-	// explain analyze do not support verbose yet.
 }
 
 func TestDMLIndexHintBind(t *testing.T) {
@@ -1255,18 +1064,6 @@ func TestForbidEvolvePlanBaseLinesBeforeGA(t *testing.T) {
 	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
 	err = tk.ExecToErr("admin evolve bindings")
 	require.EqualError(t, err, "Cannot enable baseline evolution feature, it is not generally available now")
-}
-
-func TestExplainTableStmts(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int, value decimal(5,2))")
-	tk.MustExec("table t")
-	tk.MustExec("explain table t")
-	tk.MustExec("desc table t")
 }
 
 func TestSPMWithoutUseDatabase(t *testing.T) {
