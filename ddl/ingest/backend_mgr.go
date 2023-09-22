@@ -135,6 +135,7 @@ func createLocalBackend(ctx context.Context, cfg *Config, resourceGroupName stri
 		raftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
 	backendConfig := local.NewBackendConfig(cfg.Lightning, int(LitRLimit), cfg.KeyspaceName, resourceGroupName, kvutil.ExplicitTypeDDL, raftKV2SwitchModeDuration)
+	backendConfig.DisableAutomaticCompactions = true
 	return local.NewBackend(ctx, tls, backendConfig, regionSizeGetter)
 }
 
