@@ -185,7 +185,7 @@ var (
 	help                        *bool
 )
 
-func init() {
+func initflag() {
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	version = flagBoolean(nmVersion, false, "print version information and exit")
 	configPath = flag.String(nmConfig, "", "config file path")
@@ -242,6 +242,7 @@ func init() {
 }
 
 func main() {
+	initflag()
 	if *help {
 		flag.Usage()
 		os.Exit(0)
