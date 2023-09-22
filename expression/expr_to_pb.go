@@ -129,7 +129,8 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
 		var err error
-		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		// use precision and frac from MyDecimal instead of datum
+		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), 0, 0)
 		if err != nil {
 			logutil.BgLogger().Error("encode decimal", zap.Error(err))
 			return tp, nil, false
@@ -225,6 +226,14 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 			panic(errors.Errorf("unspecified PbCode: %T", expr.Function))
 		})
 		return nil
+	}
+
+	if pbCode == tipb.ScalarFuncSig_GEDecimal {
+		logutil.BgLogger().Info("tttttttttttt")
+	}
+
+	if pbCode == tipb.ScalarFuncSig_MultiplyDecimal {
+		logutil.BgLogger().Info("tttttttttttt")
 	}
 
 	// Check whether this function can be pushed.
