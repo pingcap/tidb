@@ -144,6 +144,8 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
+	r.bc.ResetWorkers(r.job.ID, r.index.ID)
+
 	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
 	return nil
 }
@@ -274,7 +276,5 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
-	return NewWriteIndexToExternalStoragePipeline(
-		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.index, start, end, totalRowCount, counter, onClose)
+	return NewWriteIndexToExternalStoragePipeline(opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID, tbl, r.index, start, end, totalRowCount, counter, onClose, r.bc)
 }

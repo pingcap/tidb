@@ -209,7 +209,7 @@ func TestCleanUpFiles(t *testing.T) {
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 	}, dataFiles)
 
-	require.NoError(t, CleanUpFiles(ctx, store, "/subtask", 10))
+	require.NoError(t, CleanUpFiles(ctx, store, "/subtask"))
 
 	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
 	require.NoError(t, err)

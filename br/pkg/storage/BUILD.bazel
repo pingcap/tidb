@@ -26,6 +26,7 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/logutil",
         "//sessionctx/variable",
+        "//util/intest",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials",
         "@com_github_aliyun_alibaba_cloud_sdk_go//sdk/auth/credentials/providers",
         "@com_github_aws_aws_sdk_go//aws",
