@@ -22,7 +22,7 @@ TiDB is a distributed database, each TiDB instance caches a batch of IDs for loc
 
 This proposes that we introduce a centralized auto ID allocating service, the `AUTO_INCREMENT` ID is allocated from the centralized service and there is no caching mechanism on the TiDB layer, so the behaviour can be MySQL compatible.
 
-## Compatibility
+## Syntax
 
 The old implementation can still be kept, its performance is better and might meet some user's needs.
 
