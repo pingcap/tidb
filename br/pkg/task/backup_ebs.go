@@ -171,7 +171,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 				log.Warn("failed to restore importing, you may need to wait until you are able to start importing", zap.Duration("wait_for", utils.DefaultBRGCSafePointTTL))
 			}
 			if err := denyLightning.ConsistentWithPrev(res); err != nil {
-				log.Warn("lightning hasn't been denied during restoring, the backup archive may not be usable.", logutil.ShortError(err))
+				log.Warn("lightning hasn't been denied, the backup archive may not be usable.", logutil.ShortError(err))
 			}
 		}()
 	}
