@@ -29,6 +29,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/metric",
+        "//disttask/framework/proto",
         "//parser/terror",
         "//timer/metrics",
         "//util/logutil",
