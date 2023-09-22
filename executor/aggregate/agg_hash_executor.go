@@ -34,10 +34,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/hack"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
-	"go.uber.org/zap"
 )
 
 // HashAggInput indicates the input of hash agg exec.
@@ -257,29 +255,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 	}
 }
 
-func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
-	sessionVars := e.Ctx().GetSessionVars()
-	finalConcurrency := sessionVars.HashAggFinalConcurrency()
-	partialConcurrency := sessionVars.HashAggPartialConcurrency()
-	e.IsChildReturnEmpty = true
-	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency+partialConcurrency+1)
-	e.inputCh = make(chan *HashAggInput, partialConcurrency)
-	e.finishCh = make(chan struct{}, 1)
-
-	e.partialInputChs = make([]chan *chunk.Chunk, partialConcurrency)
-	for i := range e.partialInputChs {
-		e.partialInputChs[i] = make(chan *chunk.Chunk, 1)
-	}
-	e.partialOutputChs = make([]chan *HashAggIntermData, finalConcurrency)
-	for i := range e.partialOutputChs {
-		e.partialOutputChs[i] = make(chan *HashAggIntermData, partialConcurrency)
-	}
-
-	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
-	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
-	e.initRuntimeStats()
-
-	e.spillHelper = &parallelHashAggSpillHelper{
+func (e *HashAggExec) initSpillHelper(partialConcurrency int) *parallelHashAggSpillHelper {
+	return &parallelHashAggSpillHelper{
 		spilledChunksIO:                   make([][]*chunk.ListInDisk, spilledPartitionNum),
 		spillTriggered:                    0,
 		isSpilling:                        0,
@@ -287,12 +264,14 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		hasError:                          0,
 		runningPartialWorkerNum:           int32(partialConcurrency),
 		waitingWorkerNum:                  0,
-		partitionNeedRestore:              spilledPartitionNum,
+		partitionNeedRestore:              spilledPartitionNum - 1,
 		waitForPartialWorkersSyncer:       make(chan struct{}),
 		spillActionAndPartialWorkerSyncer: make(chan struct{}),
 	}
+}
 
-	workerSync := partialWorkerSync{
+func (e *HashAggExec) initPartialWorkerSync(partialConcurrency int, finalConcurrency int) partialWorkerSync {
+	return partialWorkerSync{
 		totalFinalWorkerNum:     finalConcurrency,
 		totalPartialWorkerNum:   partialConcurrency,
 		runningPartialWorkerNum: partialConcurrency,
@@ -300,8 +279,16 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		partialWorkDoneNotifier: make(chan struct{}, partialConcurrency),
 		partialAndFinalNotifier: make(chan struct{}, finalConcurrency),
 	}
+}
 
-	// Init partial workers.
+func (e *HashAggExec) initPartialWorkers(partialConcurrency int, ctx sessionctx.Context, workerSync *partialWorkerSync) {
+	baseRetTypeNum := len(e.Base().RetFieldTypes())
+	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
+	for i := 0; i < baseRetTypeNum; i++ {
+		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeBit)
+	}
+	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
+
 	for i := 0; i < partialConcurrency; i++ {
 		w := HashAggPartialWorker{
 			baseHashAggWorker: newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
@@ -321,14 +308,13 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 
 				// This string field is used for storing groupby key
 				retTypes = append(retTypes, types.NewFieldType(mysql.TypeString))
-				return chunk.New(retTypes, base.InitCap(), base.MaxChunkSize())
+				ret := chunk.New(retTypes, base.InitCap(), base.MaxChunkSize())
+				return ret
 			},
-			getSpillChunkFieldTypesFunc: func() []*types.FieldType {
-				return append(e.Base().RetFieldTypes(), types.NewFieldType(mysql.TypeString))
-			},
-			spillSerializeHelpers: make([]aggfuncs.SpillSerializeHelper, 0, len(e.PartialAggFuncs)),
+			spillChunkFieldTypes:  spillChunkFieldTypes,
+			spillSerializeHelpers: make([]aggfuncs.SpillSerializeHelper, len(e.PartialAggFuncs)),
 			spillHelper:           e.spillHelper,
-			workerSync:            &workerSync,
+			workerSync:            workerSync,
 		}
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -346,8 +332,9 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		e.memTracker.Consume(input.chk.MemoryUsage())
 		e.inputCh <- input
 	}
+}
 
-	// Init final workers.
+func (e *HashAggExec) initFinalWorkers(finalConcurrency int, workerSync *partialWorkerSync) {
 	for i := 0; i < finalConcurrency; i++ {
 		groupSet, setSize := set.NewStringSetWithMemoryUsage()
 		w := HashAggFinalWorker{
@@ -375,6 +362,34 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 		e.finalWorkers[i] = w
 		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
 	}
+}
+
+func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
+	sessionVars := e.Ctx().GetSessionVars()
+	finalConcurrency := sessionVars.HashAggFinalConcurrency()
+	partialConcurrency := sessionVars.HashAggPartialConcurrency()
+	e.IsChildReturnEmpty = true
+	e.finalOutputCh = make(chan *AfFinalResult, finalConcurrency+partialConcurrency+1)
+	e.inputCh = make(chan *HashAggInput, partialConcurrency)
+	e.finishCh = make(chan struct{}, 1)
+
+	e.partialInputChs = make([]chan *chunk.Chunk, partialConcurrency)
+	for i := range e.partialInputChs {
+		e.partialInputChs[i] = make(chan *chunk.Chunk, 1)
+	}
+	e.partialOutputChs = make([]chan *HashAggIntermData, finalConcurrency)
+	for i := range e.partialOutputChs {
+		e.partialOutputChs[i] = make(chan *HashAggIntermData, partialConcurrency)
+	}
+
+	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
+	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
+	e.initRuntimeStats()
+
+	e.spillHelper = e.initSpillHelper(partialConcurrency)
+	workerSync := e.initPartialWorkerSync(partialConcurrency, finalConcurrency)
+	e.initPartialWorkers(partialConcurrency, ctx, &workerSync)
+	e.initFinalWorkers(finalConcurrency, &workerSync)
 
 	// TODO some agg functions' spill is not supported, set it.
 	vars := e.Ctx().GetSessionVars()
@@ -525,7 +540,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		return nil
 	}
 
-	logutil.BgLogger().Info("xzxdebug: executos starts to run", zap.String("xzx", "xzx"))
+	// logutil.BgLogger().Info("xzxdebug: executos starts to run", zap.String("xzx", "xzx"))
 	for {
 		result, ok := <-e.finalOutputCh
 		if !ok {

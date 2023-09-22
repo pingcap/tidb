@@ -245,11 +245,11 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorker
 
 func (a *AggSpillDiskAction) spill() {
 	syncer := make(chan struct{}, a.spillHelper.runningPartialWorkerNum)
-	for _, worker := range a.e.partialWorkers {
+	for i := range a.e.partialWorkers {
 		go func(worker *HashAggPartialWorker) {
 			worker.spillDataToDisk()
 			syncer <- struct{}{}
-		}(&worker)
+		}(&a.e.partialWorkers[i])
 	}
 
 	// Wait for the finish of spill

@@ -15,6 +15,7 @@
 package aggregate
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
@@ -70,14 +71,14 @@ type HashAggPartialWorker struct {
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
 
-	isSpillPrepared             bool
-	workerSync                  *partialWorkerSync
-	spillHelper                 *parallelHashAggSpillHelper
-	tmpChksForSpill             []*chunk.Chunk
-	spillSerializeHelpers       []aggfuncs.SpillSerializeHelper
-	getNewTmpChunkFunc          func() *chunk.Chunk
-	getSpillChunkFieldTypesFunc func() []*types.FieldType
-	spilledChunksIO             []*chunk.ListInDisk
+	isSpillPrepared       bool
+	workerSync            *partialWorkerSync
+	spillHelper           *parallelHashAggSpillHelper
+	tmpChksForSpill       []*chunk.Chunk
+	spillSerializeHelpers []aggfuncs.SpillSerializeHelper
+	getNewTmpChunkFunc    func() *chunk.Chunk
+	spillChunkFieldTypes  []*types.FieldType
+	spilledChunksIO       []*chunk.ListInDisk
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -136,10 +137,11 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
+		w.waitForSpillDoneBeforeWorkerExit()
 
-		logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers>", zap.String("xzx", "xzx"))
+		// logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers>", zap.String("xzx", "xzx"))
 		w.workerSync.waitForRunningWorkers()
-		logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers<", zap.String("xzx", "xzx"))
+		// logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers<", zap.String("xzx", "xzx"))
 
 		if !hasError {
 			if w.spillHelper.isSpillTriggered() {
@@ -158,9 +160,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		// TODO Do we need to handle something when error happens?
 
-		logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers>", zap.String("xzx", "xzx"))
+		// logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers>", zap.String("xzx", "xzx"))
 		w.workerSync.waitForExitOfAliveWorkers()
-		logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers<", zap.String("xzx", "xzx"))
+		// logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers<", zap.String("xzx", "xzx"))
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -169,7 +171,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		waitGroup.Done()
 	}()
 
-	logutil.BgLogger().Info("xzxdebug: partial worker begins to run", zap.String("xzx", "xzx"))
+	// logutil.BgLogger().Info("xzxdebug: partial worker begins to run", zap.String("xzx", "xzx"))
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
@@ -178,9 +180,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 
 		if !ok {
-			logutil.BgLogger().Info("xzxdebug: partial worker waitForSpillDoneBeforeWorkerExit>", zap.String("xzx", "xzx"))
-			w.waitForSpillDoneBeforeWorkerExit()
-			logutil.BgLogger().Info("xzxdebug: partial worker waitForSpillDoneBeforeWorkerExit<", zap.String("xzx", "xzx"))
 			return
 		}
 
@@ -189,7 +188,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			hasError = true
 			w.globalOutputCh <- &AfFinalResult{err: err}
 			w.spillHelper.setError()
-			w.waitForSpillDoneBeforeWorkerExit()
 			return
 		}
 		if w.stats != nil {
@@ -264,7 +262,7 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 		w.spilledChunksIO = make([]*chunk.ListInDisk, spilledPartitionNum)
 		for i := 0; i < spilledPartitionNum; i++ {
 			w.tmpChksForSpill[i] = w.getNewTmpChunkFunc()
-			w.spilledChunksIO[i] = chunk.NewListInDisk(w.getSpillChunkFieldTypesFunc())
+			w.spilledChunksIO[i] = chunk.NewListInDisk(w.spillChunkFieldTypes)
 			if w.spillHelper.isTrackerEnabled {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
 			}
@@ -273,6 +271,15 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 }
 
 func (w *HashAggPartialWorker) spillDataToDisk() error {
+	enterMsg := fmt.Sprintf("xzxdebug: enter spillDataToDisk, w addr: %p", w)
+	exitMsg := fmt.Sprintf("xzxdebug: exit spillDataToDisk, w addr: %p", w)
+	logutil.BgLogger().Info(enterMsg, zap.String("xzx", "xzx"))
+	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(w.globalOutputCh, r)
+		}
+		logutil.BgLogger().Info(exitMsg, zap.String("xzx", "xzx"))
+	}()
 	if len(w.partialResultsMap) == 0 {
 		return nil
 	}
