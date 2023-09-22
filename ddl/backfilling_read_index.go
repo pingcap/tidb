@@ -144,8 +144,6 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	// TODO(tangenta): when we support running subtasks concurrently,
-	// we should ignore "concurrency quota exceeded" error if possible.
 	r.bc.ResetWorkers(r.job.ID, r.index.ID)
 
 	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
