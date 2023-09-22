@@ -1257,7 +1257,7 @@ func checkDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (*model.TableInfo, 
 		indexInfo := tblInfo.FindIndexByName(idxName.L)
 		if indexInfo == nil {
 			job.State = model.JobStateCancelled
-			return nil, nil, ifExists[i], dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", indexNames)
+			return nil, nil, ifExists[i], dbterror.ErrCantDropFieldOrKey.GenWithStack("index %s doesn't exist", idxName)
 		}
 
 		// Check that drop primary index will not cause invisible implicit primary index.
