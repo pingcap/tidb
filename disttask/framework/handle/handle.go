@@ -16,7 +16,6 @@ package handle
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -45,9 +44,6 @@ func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte
 
 	if globalTask == nil {
 		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
-		metrics.DistDDLTaskGauge.WithLabelValues(taskType, metrics.WaitingStatus).Inc()
-		metrics.DistDDLTaskStarttimeGauge.WithLabelValues(taskType, metrics.WaitingStatus, fmt.Sprint(taskID)).Set(float64(time.Now().UnixMicro()))
-
 		if err != nil {
 			return nil, err
 		}
@@ -60,6 +56,7 @@ func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte
 		if globalTask == nil {
 			return nil, errors.Errorf("cannot find global task with ID %d", taskID)
 		}
+		metrics.UpdateMetricsForAddTask(globalTask)
 	}
 	return globalTask, nil
 }

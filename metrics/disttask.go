@@ -15,6 +15,10 @@
 package metrics
 
 import (
+	"fmt"
+	"time"
+
+	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -34,25 +38,47 @@ const (
 )
 
 var (
-	DistDDLTaskGauge          *prometheus.GaugeVec
-	DistDDLTaskStarttimeGauge *prometheus.GaugeVec
+	DistTaskGauge          *prometheus.GaugeVec
+	DistTaskStarttimeGauge *prometheus.GaugeVec
 )
 
 // InitDistDDLMetrics initializes disttask metrics.
-func InitDistDDLMetrics() {
-	DistDDLTaskGauge = NewGaugeVec(
+func InitDistTaskMetrics() {
+	DistTaskGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
-			Name:      "dispatcher",
-			Help:      "Gauge of distdispatcher.",
+			Name:      "task_status",
+			Help:      "Gauge of disttask.",
 		}, []string{LblTaskType, LblTaskStatus})
 
-	DistDDLTaskStarttimeGauge = NewGaugeVec(
+	DistTaskStarttimeGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
-			Name:      "dispatcher_start_time",
-			Help:      "Gauge of start_time of distdispatcher.",
+			Name:      "start_time",
+			Help:      "Gauge of start_time of disttask.",
 		}, []string{LblTaskType, LblTaskStatus, LblTaskID})
+}
+
+func UpdateMetricsForAddTask(task *proto.Task) {
+	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Inc()
+	DistTaskStarttimeGauge.WithLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
+}
+
+func UpdateMetricsForDisptchTask(task *proto.Task) {
+	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Dec()
+	DistTaskStarttimeGauge.DeleteLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID))
+	DistTaskStarttimeGauge.WithLabelValues(task.Type, DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
+}
+
+func UpdateMetricsForRunTask(task *proto.Task) {
+	DistTaskStarttimeGauge.DeleteLabelValues(task.Type, DispatchingStatus, fmt.Sprint(task.ID))
+	DistTaskGauge.WithLabelValues(task.Type, DispatchingStatus).Dec()
+	DistTaskGauge.WithLabelValues(task.Type, RunningStatus).Inc()
+}
+
+func UpdateMetricsForFinishTask(task *proto.Task) {
+	DistTaskGauge.WithLabelValues(task.Type, RunningStatus).Dec()
+	DistTaskGauge.WithLabelValues(task.Type, CompletedStatus).Inc()
 }

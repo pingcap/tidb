@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "bindinfo.go",
         "ddl.go",
+        "disttask.go",
         "distsql.go",
         "domain.go",
         "executor.go",

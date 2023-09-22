@@ -16,7 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -52,9 +51,7 @@ func (dm *Manager) setRunningTask(task *proto.Task, dispatcher Dispatcher) {
 	defer dm.runningTasks.Unlock()
 	dm.runningTasks.taskIDs[task.ID] = struct{}{}
 	dm.runningTasks.dispatchers[task.ID] = dispatcher
-	metrics.DistDDLTaskStarttimeGauge.DeleteLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID))
-	metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Dec()
-	metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.RunningStatus).Inc()
+	metrics.UpdateMetricsForRunTask(task)
 }
 
 func (dm *Manager) isRunningTask(taskID int64) bool {
@@ -67,11 +64,6 @@ func (dm *Manager) isRunningTask(taskID int64) bool {
 func (dm *Manager) delRunningTask(taskID int64) {
 	dm.runningTasks.Lock()
 	defer dm.runningTasks.Unlock()
-	task, err := dm.taskMgr.GetGlobalTaskByID(taskID)
-	if err == nil {
-		metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.RunningStatus).Dec()
-		metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.CompletedStatus).Inc()
-	}
 	delete(dm.runningTasks.taskIDs, taskID)
 	delete(dm.runningTasks.dispatchers, taskID)
 }
@@ -180,7 +172,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
-				metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
+				metrics.DistTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
@@ -197,9 +189,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
 					dm.startDispatcher(task)
 					cnt++
-					metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
-					metrics.DistDDLTaskStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
-					metrics.DistDDLTaskStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
+					metrics.UpdateMetricsForDisptchTask(task)
 					continue
 				}
 				if dm.checkConcurrencyOverflow(cnt) {
@@ -207,9 +197,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				}
 				dm.startDispatcher(task)
 				cnt++
-				metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
-				metrics.DistDDLTaskStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
-				metrics.DistDDLTaskStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
+				metrics.UpdateMetricsForDisptchTask(task)
 			}
 		}
 	}
