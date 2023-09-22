@@ -92,6 +92,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	InitDistDDLMetrics()
 	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(

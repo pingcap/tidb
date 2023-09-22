@@ -104,6 +104,7 @@ type Subtask struct {
 	Summary    string
 }
 
+// IsFinished checks if the subtask is finished.
 func (t *Subtask) IsFinished() bool {
 	return t.State == TaskStateSucceed || t.State == TaskStateReverted || t.State == TaskStateCanceled ||
 		t.State == TaskStateFailed || t.State == TaskStateRevertFailed

@@ -324,6 +324,7 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 	return nil
 }
 
+// GetSubtasksInStates gets all subtasks by given states.
 func (stm *TaskManager) GetSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) ([]*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
@@ -341,7 +342,7 @@ func (stm *TaskManager) GetSubtasksInStates(tidbID string, taskID int64, step in
 	return subtasks, nil
 }
 
-// GetSubtaskInStates gets the subtask in the states.
+// GetFirstSubtaskInStates gets the first subtask by given states.
 func (stm *TaskManager) GetFirstSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
 	subtasks, err := stm.GetSubtasksInStates(tidbID, taskID, step, states...)
 	if err != nil {
