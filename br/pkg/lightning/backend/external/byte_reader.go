@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -94,6 +95,10 @@ func newByteReader(
 
 // switchReaderMode switches to concurrent reader.
 func (r *byteReader) switchReaderMode(useConcurrent bool) {
+	failpoint.Inject("disableConcurrentReader", func() {
+		// current impl only supports S3, but we need test using GCS
+		useConcurrent = false
+	})
 	r.useConcurrentReader.Store(useConcurrent)
 }
 

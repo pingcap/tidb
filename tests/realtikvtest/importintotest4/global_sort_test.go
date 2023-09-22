@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
@@ -114,4 +115,31 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
+}
+
+func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
+	var allData []string
+	for i := 0; i < 10; i++ {
+		var content []byte
+		for j := 0; j < 1000; j++ {
+			idx := i*100 + j
+			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
+			allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))
+		}
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{BucketName: "gs-multi-files", Name: fmt.Sprintf("t.%d.csv", i)},
+			Content:     content,
+		})
+	}
+	slices.Sort(allData)
+	s.prepareAndUseDB("gs_multi_files")
+	s.server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), key(b), key(a,b), key(b,a));")
+	s.enableFailpoint("github.com/pingcap/tidb/br/pkg/lightning/backend/external/disableConcurrentReader", "return(true)")
+	// 1 subtask, encoding 10 files using 4 threads.
+	sortStorageURI := fmt.Sprintf("gs://sorted/gs_multi_files?endpoint=%s", gcsEndpoint)
+	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-multi-files/t.*.csv?endpoint=%s'
+		with thread=4, cloud_storage_uri='%s'`, gcsEndpoint, sortStorageURI)
+	s.tk.MustQuery(importSQL)
+	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))
 }
