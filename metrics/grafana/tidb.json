@@ -19790,7 +19790,7 @@
             {
               "exemplar": true,
               "expr": "sum(increase(tidb_server_ttl_insert_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[${__to:date:H}h${__to:date:m}m]))",
-              "hide": false, 
+              "hide": false,
               "interval": "",
               "legendFormat": "insert current day",
               "refId": "A"
