@@ -167,7 +167,7 @@ func TestExportStatementHandleNonEOFError(t *testing.T) {
 
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
 	mockStorage.EXPECT().
-		Open(ctx, "no-perm-file").
+		Open(ctx, "no-perm-file", nil).
 		Return(AlwaysErrorReadSeekCloser{}, nil)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: "no-perm-file", FileSize: 1}}
