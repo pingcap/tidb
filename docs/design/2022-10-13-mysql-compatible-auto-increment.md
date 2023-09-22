@@ -83,7 +83,7 @@ Both the primary and backup regist themself in the etcd, the elected primay proc
 
 When the switch happen, the current max allocated ID information is required so as to guarantee the uniqueness. The new primary process allocate IDs begin from the max allocated ID plus one.
 
-We can persist the max allocated ID every time, but that's costly. Another choice is persisting it periodically, it's safe to allocate IDs in range `[base, max persisted)`. When the primary process crash abnormally, the backup process gets the max persisted ID as its base. Etcd is also used as the storage for the max persisted ID. This optimization could still make the ID not be consecutive, but it's not so common ~~(and I believe MySQL may also crash and facing such problem?)~~, so this is not a big issue.
+We can persist the max allocated ID every time, but that's costly. Another choice is persisting it periodically, it's safe to allocate IDs in range `[base, max persisted)`. When the primary process crash abnormally, the backup process gets the max persisted ID as its base. Etcd is also used as the storage for the max persisted ID. This optimization could still make the ID not be consecutive, but it's not so common, so this is not a big issue.
 
 MySQL 8.0 can survive crash recovery, that's really impressive! https://dev.mysql.com/doc/refman/8.0/en/innodb-auto-increment-handling.html
 
