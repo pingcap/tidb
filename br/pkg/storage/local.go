@@ -35,6 +35,17 @@ func (l *LocalStorage) DeleteFile(_ context.Context, name string) error {
 	return os.Remove(path)
 }
 
+// DeleteFiles deletes the files.
+func (l *LocalStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := l.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WriteFile writes data to a file to storage.
 func (l *LocalStorage) WriteFile(_ context.Context, name string, data []byte) error {
 	// because `os.WriteFile` is not atomic, directly write into it may reset the file

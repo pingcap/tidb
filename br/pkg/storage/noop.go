@@ -13,6 +13,11 @@ func (*noopStorage) DeleteFile(_ context.Context, _ string) error {
 	return nil
 }
 
+// DeleteFiles deletes the files in storage
+func (*noopStorage) DeleteFiles(_ context.Context, _ []string) error {
+	return nil
+}
+
 // WriteFile file to storage.
 func (*noopStorage) WriteFile(_ context.Context, _ string, _ []byte) error {
 	return nil

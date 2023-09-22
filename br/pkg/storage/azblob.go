@@ -460,6 +460,17 @@ func (s *AzureBlobStorage) DeleteFile(ctx context.Context, name string) error {
 	return nil
 }
 
+// DeleteFile deletes the files with the given names.
+func (s *AzureBlobStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := s.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Open implements the StorageReader interface.
 func (s *AzureBlobStorage) Open(ctx context.Context, name string) (ExternalFileReader, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))

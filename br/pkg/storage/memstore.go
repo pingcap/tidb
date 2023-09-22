@@ -81,6 +81,18 @@ func (s *MemStorage) DeleteFile(ctx context.Context, name string) error {
 	return nil
 }
 
+// DeleteFiles delete the files in storage
+// It implements the `ExternalStorage` interface
+func (s *MemStorage) DeleteFiles(ctx context.Context, names []string) error {
+	for _, name := range names {
+		err := s.DeleteFile(ctx, name)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // WriteFile file to storage.
 // It implements the `ExternalStorage` interface
 func (s *MemStorage) WriteFile(ctx context.Context, name string, data []byte) error {

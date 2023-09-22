@@ -26,7 +26,6 @@ go_library(
         "//br/pkg/lightning/log",
         "//br/pkg/membuf",
         "//br/pkg/storage",
-        "//br/pkg/utils",
         "//kv",
         "//sessionctx/variable",
         "//util/hack",
