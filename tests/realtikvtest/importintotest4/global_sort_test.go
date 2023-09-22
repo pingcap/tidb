@@ -121,8 +121,9 @@ func (s *mockGCSSuite) TestGlobalSortMultiFiles() {
 	var allData []string
 	for i := 0; i < 10; i++ {
 		var content []byte
-		for j := 0; j < 1000; j++ {
-			idx := i*100 + j
+		keyCnt := 1000
+		for j := 0; j < keyCnt; j++ {
+			idx := i*keyCnt + j
 			content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", idx, idx))...)
 			allData = append(allData, fmt.Sprintf("%d test-%d", idx, idx))
 		}
