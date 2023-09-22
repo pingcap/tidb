@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -148,21 +149,10 @@ func NewAddIndexIngestPipeline(
 }
 
 // NewWriteIndexToExternalStoragePipeline creates a pipeline for writing index to external storage.
-func NewWriteIndexToExternalStoragePipeline(
-	ctx *OperatorCtx,
-	store kv.Storage,
-	extStoreURI string,
-	sessPool opSessPool,
-	sessCtx sessionctx.Context,
-	jobID int64,
-	subtaskID int64,
-	tbl table.PhysicalTable,
-	idxInfo *model.IndexInfo,
-	startKey, endKey kv.Key,
-	totalRowCount *atomic.Int64,
-	metricCounter prometheus.Counter,
-	onClose external.OnCloseFunc,
-) (*operator.AsyncPipeline, error) {
+func NewWriteIndexToExternalStoragePipeline(ctx *OperatorCtx, store kv.Storage, extStoreURI string, sessPool opSessPool,
+	sessCtx sessionctx.Context, jobID, subtaskID int64, tbl table.PhysicalTable, idxInfo *model.IndexInfo, startKey,
+	endKey kv.Key, totalRowCount *atomic.Int64, metricCounter prometheus.Counter, onClose external.OnCloseFunc,
+	bcctx ingest.BackendCtx) (*operator.AsyncPipeline, error) {
 	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
 	copCtx, err := NewCopContext(tbl.Meta(), idxInfo, sessCtx)
 	if err != nil {
@@ -185,10 +175,14 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 
+	var shareMu *sync.Mutex
+	if bcctx != nil {
+		shareMu = bcctx.GetLocalBackend().GetMutex()
+	}
+
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
-	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, index, extStore, srcChkPool, writerCnt, onClose)
+	writeOp := NewWriteExternalStoreOperator(ctx, copCtx, sessPool, jobID, subtaskID, tbl, index, extStore, srcChkPool, writerCnt, onClose, shareMu)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, index, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -453,19 +447,9 @@ type WriteExternalStoreOperator struct {
 }
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
-func NewWriteExternalStoreOperator(
-	ctx *OperatorCtx,
-	copCtx *CopContext,
-	sessPool opSessPool,
-	jobID int64,
-	subtaskID int64,
-	tbl table.PhysicalTable,
-	index table.Index,
-	store storage.ExternalStorage,
-	srcChunkPool chan *chunk.Chunk,
-	concurrency int,
-	onClose external.OnCloseFunc,
-) *WriteExternalStoreOperator {
+func NewWriteExternalStoreOperator(ctx *OperatorCtx, copCtx *CopContext, sessPool opSessPool, jobID int64,
+	subtaskID int64, tbl table.PhysicalTable, index table.Index, store storage.ExternalStorage, srcChunkPool chan *chunk.Chunk,
+	concurrency int, onClose external.OnCloseFunc, shareMu *sync.Mutex) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
@@ -473,7 +457,7 @@ func NewWriteExternalStoreOperator(
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(onClose).
-				SetKeyDuplicationEncoding(index.Meta().Unique)
+				SetKeyDuplicationEncoding(index.Meta().Unique).SetMutex(shareMu)
 			writerID := uuid.New().String()
 			prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 			writer := builder.Build(store, prefix, writerID)
