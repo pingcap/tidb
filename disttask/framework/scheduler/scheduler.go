@@ -184,7 +184,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 
 		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 		if err != nil {
-			logutil.Logger(s.logCtx).Warn("GetSubtaskInStates meets error", zap.Error(err))
+			logutil.Logger(s.logCtx).Warn("GetFirstSubtaskInStates meets error", zap.Error(err))
 			continue
 		}
 		if subtask == nil {
