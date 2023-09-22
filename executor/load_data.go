@@ -723,7 +723,7 @@ func (s *SimpleSeekerOnReadCloser) Close() error {
 }
 
 // GetFileSize implements storage.ExternalFileReader.
-func (s *SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
+func (*SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
 	return 0, errors.Errorf("unsupported GetFileSize on SimpleSeekerOnReadCloser")
 }
 
