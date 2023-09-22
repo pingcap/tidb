@@ -327,6 +327,12 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 }
 
 func mergeAddIndex(info *model.MultiSchemaInfo) {
+	for _, subJob := range info.SubJobs {
+		if subJob.Type == model.ActionAddForeignKey {
+			// Foreign key requires the order of adding indexes is unchanged.
+			return
+		}
+	}
 	var newSubJob *model.SubJob
 	var unique []bool
 	var indexNames []model.CIStr
@@ -339,14 +345,10 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 	for _, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddIndex {
 			if newSubJob == nil {
-				newSubJob = new(model.SubJob)
-				newSubJob.Type = model.ActionAddIndex
+				clonedSubJob := *subJob
+				newSubJob = &clonedSubJob
 				newSubJob.Args = nil
 				newSubJob.RawArgs = nil
-				newSubJob.SchemaState = subJob.SchemaState
-				newSubJob.SnapshotVer = subJob.SnapshotVer
-				newSubJob.Revertible = true
-				newSubJob.CtxVars = subJob.CtxVars
 			}
 			unique = append(unique, subJob.Args[0].(bool))
 			indexNames = append(indexNames, subJob.Args[1].(model.CIStr))
