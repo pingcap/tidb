@@ -1188,9 +1188,9 @@ func onDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
 			// Global index key has t{tableID}_ prefix.
 			// Assign partitionIDs empty to guarantee correct prefix in insertJobIntoDeleteRangeTable.
 			if allIndexInfos[0].Global {
-				job.Args = append(job.Args, idxIds, []int64{})
+				job.Args = append(job.Args, idxIds[0], []int64{})
 			} else {
-				job.Args = append(job.Args, idxIds, getPartitionIDs(tblInfo))
+				job.Args = append(job.Args, idxIds[0], getPartitionIDs(tblInfo))
 			}
 		}
 	default:
