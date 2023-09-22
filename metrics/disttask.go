@@ -22,11 +22,11 @@ import (
 )
 
 const (
-	LblTaskStatus  = "status"
-	LblTaskType    = "task_type"
-	LblTaskID      = "task_id"
-	LblSubTaskID   = "subtask_id"
-	LblSchedulerID = "scheduler_id"
+	lblTaskStatus  = "status"
+	lblTaskType    = "task_type"
+	lblTaskID      = "task_id"
+	lblSubTaskID   = "subtask_id"
+	lblSchedulerID = "scheduler_id"
 )
 
 var (
@@ -42,7 +42,7 @@ func InitDistDDLMetrics() {
 			Subsystem: "disttask",
 			Name:      "ddl_subtask_cnt",
 			Help:      "Gauge of ddl subtask count.",
-		}, []string{LblTaskType, LblTaskID, LblSchedulerID, LblTaskStatus})
+		}, []string{lblTaskType, lblTaskID, lblSchedulerID, lblTaskStatus})
 
 	DistDDLSubTaskStartTimeGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -50,7 +50,7 @@ func InitDistDDLMetrics() {
 			Subsystem: "disttask",
 			Name:      "ddl_subtask_start_time",
 			Help:      "Gauge of ddl subtask start time.",
-		}, []string{LblTaskType, LblTaskID, LblSchedulerID, LblTaskStatus, LblSubTaskID})
+		}, []string{lblTaskType, lblTaskID, lblSchedulerID, lblTaskStatus, lblSubTaskID})
 }
 
 func IncDistDDLSubTaskCnt(subtask *proto.Subtask) {
