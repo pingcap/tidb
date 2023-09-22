@@ -551,6 +551,39 @@ func (rs *S3Storage) DeleteFile(ctx context.Context, file string) error {
 	return errors.Trace(err)
 }
 
+// s3DeleteObjectsLimit is the upper limit of objects in a delete request.
+// See https://docs.aws.amazon.com/sdk-for-go/api/service/s3/#S3.DeleteObjects.
+const s3DeleteObjectsLimit = 1000
+
+// DeleteFiles delete the files in batch in s3 storage.
+func (rs *S3Storage) DeleteFiles(ctx context.Context, files []string) error {
+	for len(files) > 0 {
+		batch := files
+		if len(batch) > s3DeleteObjectsLimit {
+			batch = batch[:s3DeleteObjectsLimit]
+		}
+		objects := make([]*s3.ObjectIdentifier, 0, len(batch))
+		for _, file := range batch {
+			objects = append(objects, &s3.ObjectIdentifier{
+				Key: aws.String(rs.options.Prefix + file),
+			})
+		}
+		input := &s3.DeleteObjectsInput{
+			Bucket: aws.String(rs.options.Bucket),
+			Delete: &s3.Delete{
+				Objects: objects,
+				Quiet:   aws.Bool(false),
+			},
+		}
+		_, err := rs.svc.DeleteObjectsWithContext(ctx, input)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		files = files[len(batch):]
+	}
+	return nil
+}
+
 // FileExists check if file exists on s3 storage.
 func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) {
 	input := &s3.HeadObjectInput{
