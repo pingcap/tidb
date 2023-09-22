@@ -1097,9 +1097,8 @@ const (
 	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
 	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `true`, means never use pipeline model in tiflash.
-	// Value set to `true` means try to execute query with pipeline model in tiflash.
-	TiDBEnableTiFlashPipelineMode = "tiflash_enable_pipeline_model"
+	// It's deprecated and setting it will not have any effect.
+	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
 )
 
 // TiDB intentional limits

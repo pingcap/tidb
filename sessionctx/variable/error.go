@@ -47,4 +47,5 @@ var (
 	ErrVariableNoLongerSupported         = dbterror.ClassVariable.NewStd(mysql.ErrVariableNoLongerSupported)
 	ErrInvalidDefaultUTF8MB4Collation    = dbterror.ClassVariable.NewStd(mysql.ErrInvalidDefaultUTF8MB4Collation)
 	ErrWarnDeprecatedSyntaxNoReplacement = dbterror.ClassVariable.NewStdErr(mysql.ErrWarnDeprecatedSyntaxNoReplacement, pmysql.Message("Updating '%s' is deprecated. It will be made read-only in a future release.", nil))
+	ErrWarnDeprecatedSyntaxSimpleMsg     = dbterror.ClassVariable.NewStdErr(mysql.ErrWarnDeprecatedSyntaxNoReplacement, pmysql.Message("%s is deprecated and will be removed in a future release.", nil))
 )
