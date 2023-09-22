@@ -1208,6 +1208,7 @@ func (local *Backend) generateAndSendJob(
 				return err
 			}
 			for _, job := range jobs {
+				data.IncRef()
 				jobWg.Add(1)
 				select {
 				case <-egCtx.Done():
@@ -1341,7 +1342,12 @@ func (local *Backend) startWorker(
 					return err2
 				}
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				jobWg.Add(len(jobs) - 1)
+				newJobCnt := len(jobs) - 1
+				jobWg.Add(newJobCnt)
+				for newJobCnt > 0 {
+					job.ingestData.IncRef()
+					newJobCnt--
+				}
 				for _, j := range jobs {
 					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
