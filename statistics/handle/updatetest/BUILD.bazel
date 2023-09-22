@@ -8,11 +8,12 @@ go_test(
         "update_test.go",
     ],
     flaky = True,
-    shard_count = 27,
+    shard_count = 28,
     deps = [
         "//parser/model",
         "//parser/mysql",
         "//planner/cardinality",
+        "//sessionctx",
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle",

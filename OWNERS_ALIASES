@@ -11,3 +11,15 @@ aliases:
   sig-approvers-autoid-service: # approvers for auto-id service
     - bb7133
     - tiancaiamao
+  sig-approvers-distsql: # approvers for distsql pkg
+    - windtalker
+    - XuHuaiyu
+    - zanmato1984
+  sig-approvers-executor: # approvers for executor pkg
+    - windtalker
+    - XuHuaiyu
+    - zanmato1984
+  sig-approvers-expression: # approvers for expression pkg
+    - windtalker
+    - XuHuaiyu
+    - zanmato1984

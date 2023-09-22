@@ -57,6 +57,8 @@ var (
 // TaskHandle provides the interface for operations needed by Dispatcher.
 // Then we can use dispatcher's function in Dispatcher interface.
 type TaskHandle interface {
+	// GetPreviousSchedulerIDs gets previous scheduler IDs.
+	GetPreviousSchedulerIDs(_ context.Context, taskID int64, step int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
@@ -65,9 +67,13 @@ type TaskHandle interface {
 // Dispatcher manages the lifetime of a task
 // including submitting subtasks and updating the status of a task.
 type Dispatcher interface {
+	// Init initializes the dispatcher, should be called before ExecuteTask.
+	// if Init returns error, dispatcher manager will fail the task directly,
+	// so the returned error should be a fatal error.
+	Init() error
+	// ExecuteTask start to schedule a task.
 	ExecuteTask()
-	// Close closes the dispatcher, not routine-safe, and should be called
-	// after ExecuteTask finished.
+	// Close closes the dispatcher, should be called if Init returns nil.
 	Close()
 }
 
@@ -114,7 +120,12 @@ func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, server
 	}
 }
 
-// ExecuteTask start to schedule a task.
+// Init implements the Dispatcher interface.
+func (*BaseDispatcher) Init() error {
+	return nil
+}
+
+// ExecuteTask implements the Dispatcher interface.
 func (d *BaseDispatcher) ExecuteTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
 		zap.String("state", d.Task.State), zap.Uint64("concurrency", d.Task.Concurrency))
@@ -387,7 +398,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		failpoint.Return(errors.New("mockDynamicDispatchErr"))
 	})
 
-	nextStep := d.GetNextStep(d.Task)
+	nextStep := d.GetNextStep(d, d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
 		zap.Int64("current-step", d.Task.Step),
 		zap.Int64("next-step", nextStep))
@@ -433,7 +444,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 
 	for {
 		// 3. generate a batch of subtasks.
-		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task)
+		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, nextStep)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return d.handlePlanErr(err)
@@ -589,6 +600,11 @@ func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step int64) ([][]
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
+}
+
+// GetPreviousSchedulerIDs gets scheduler IDs that run previous step.
+func (d *BaseDispatcher) GetPreviousSchedulerIDs(_ context.Context, taskID int64, step int64) ([]string, error) {
+	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(taskID, step)
 }
 
 // WithNewSession executes the function with a new session.

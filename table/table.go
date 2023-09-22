@@ -253,7 +253,7 @@ type PartitionedTable interface {
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error
+	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.

@@ -16,6 +16,7 @@ package lockstats
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -48,11 +49,12 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 	is := do.InfoSchema()
 
 	if e.onlyUnlockPartitions() {
-		tableName := e.Tables[0]
-		tid, pidNames, err := populatePartitionIDAndNames(tableName, tableName.PartitionNames, is)
+		table := e.Tables[0]
+		tid, pidNames, err := populatePartitionIDAndNames(table, table.PartitionNames, is)
 		if err != nil {
 			return err
 		}
+		tableName := fmt.Sprintf("%s.%s", table.Schema.O, table.Name.O)
 		msg, err := h.RemoveLockedPartitions(tid, tableName, pidNames)
 		if err != nil {
 			return err
@@ -61,11 +63,11 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	} else {
-		tids, pids, err := populateTableAndPartitionIDs(e.Tables, is)
+		tidAndNames, pidAndNames, err := populateTableAndPartitionIDs(e.Tables, is)
 		if err != nil {
 			return err
 		}
-		msg, err := h.RemoveLockedTables(tids, pids, e.Tables)
+		msg, err := h.RemoveLockedTables(tidAndNames, pidAndNames)
 		if err != nil {
 			return err
 		}

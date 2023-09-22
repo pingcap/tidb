@@ -302,7 +302,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 		}
 	}
 	for {
-		newReader, err := statistics.GetStatsReader(0, ctx)
+		newReader, err := statistics.GetStatsReader(0, ctx, nil)
 		if err == nil {
 			readerCtx.reader = newReader
 			readerCtx.createdTime = time.Now()

@@ -39,7 +39,7 @@ type byteReader struct {
 
 	retPointers []*[]byte
 
-	useConcurrentReaderCurrent atomic.Bool
+	useConcurrentReaderCurrent bool
 	useConcurrentReader        atomic.Bool
 
 	currFileOffset int64
@@ -63,14 +63,25 @@ func openStoreReaderAndSeek(
 	return storageReader, nil
 }
 
-// newByteReader wraps readNBytes functionality to storageReader. It will not
-// close storageReader when meet error.
-func newByteReader(ctx context.Context, storageReader storage.ExternalFileReader, bufSize int, st storage.ExternalStorage, name string, defaultUseConcurrency bool) (*byteReader, error) {
+// newByteReader wraps readNBytes functionality to storageReader.
+func newByteReader(
+	ctx context.Context,
+	storageReader storage.ExternalFileReader,
+	bufSize int,
+	st storage.ExternalStorage,
+	name string,
+	defaultUseConcurrency bool,
+) (r *byteReader, err error) {
+	defer func() {
+		if err != nil && r != nil {
+			_ = r.Close()
+		}
+	}()
 	conReader, err := newSingeFileReader(ctx, st, name, 8, ConcurrentReaderBufferSize)
 	if err != nil {
 		return nil, err
 	}
-	r := &byteReader{
+	r = &byteReader{
 		ctx:           ctx,
 		storageReader: storageReader,
 		buf:           make([]byte, bufSize),
@@ -98,13 +109,13 @@ func (r *byteReader) switchToConcurrentReaderImpl() error {
 	r.conReader.currentFileOffset = currOffset
 	r.conReader.bufferReadOffset = 0
 
-	r.useConcurrentReaderCurrent.Store(true)
 	r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
+	r.useConcurrentReaderCurrent = true
 	return nil
 }
 
 func (r *byteReader) switchToNormalReaderImpl() error {
-	r.useConcurrentReaderCurrent.Store(false)
+	r.useConcurrentReaderCurrent = false
 	r.currFileOffset = r.conReader.currentFileOffset
 	r.conReader.buffer = nil
 	_, err := r.storageReader.Seek(r.currFileOffset, io.SeekStart)
@@ -165,7 +176,7 @@ func (r *byteReader) cloneSlices() {
 }
 
 func (r *byteReader) next(n int) []byte {
-	if r.useConcurrentReaderCurrent.Load() {
+	if r.useConcurrentReaderCurrent {
 		return r.conReader.next(n)
 	}
 	end := mathutil.Min(r.bufOffset+n, len(r.buf))
@@ -176,8 +187,9 @@ func (r *byteReader) next(n int) []byte {
 
 func (r *byteReader) reload() error {
 	to := r.useConcurrentReader.Load()
-	now := r.useConcurrentReaderCurrent.Load()
+	now := r.useConcurrentReaderCurrent
 	if to != now {
+		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", to))
 		if to {
 			err := r.switchToConcurrentReaderImpl()
 			if err != nil {
