@@ -130,8 +130,8 @@ type ColumnInfo struct {
 }
 
 // IsVirtualGeneratedColumn checks the column if it is virtual.
-func (col *ColumnInfo) IsVirtualGeneratedColumn() bool {
-	if col.IsGenerated() && !col.GeneratedStored {
+func (c *ColumnInfo) IsVirtualGeneratedColumn() bool {
+	if c.IsGenerated() && !c.GeneratedStored {
 		return true
 	}
 	return false
