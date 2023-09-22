@@ -66,9 +66,9 @@ const (
 )
 
 var permissionCheckFn = map[Permission]func(context.Context, s3iface.S3API, *backuppb.S3) error{
-	AccessBuckets:      checkS3Bucket,
-	ListObjects:        listObjects,
-	GetObject:          getObject,
+	AccessBuckets:      checkS3BucketCheck,
+	ListObjects:        listObjectsCheck,
+	GetObject:          getObjectCheck,
 	PutAndDeleteObject: PutAndDeleteObjectCheck,
 }
 
@@ -430,7 +430,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 }
 
 // checkBucket checks if a bucket exists.
-func checkS3Bucket(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+func checkS3BucketCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
 	}
@@ -438,8 +438,8 @@ func checkS3Bucket(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error 
 	return errors.Trace(err)
 }
 
-// listObjects checks the permission of listObjects
-func listObjects(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+// listObjectsCheck checks the permission of listObjects
+func listObjectsCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.ListObjectsInput{
 		Bucket:  aws.String(qs.Bucket),
 		Prefix:  aws.String(qs.Prefix),
@@ -452,8 +452,8 @@ func listObjects(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	return nil
 }
 
-// getObject checks the permission of getObject
-func getObject(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
+// getObjectCheck checks the permission of getObject
+func getObjectCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(qs.Bucket),
 		Key:    aws.String("not-exists"),
@@ -498,7 +498,7 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc s3iface.S3API, options *ba
 		}
 	}()
 	// when no permission, aws returns err with code "AccessDenied"
-	input := getPutObjectInput(options, file, []byte("check"))
+	input := buildPutObjectInput(options, file, []byte("check"))
 	_, err = svc.PutObjectWithContext(ctx, input)
 	return errors.Trace(err)
 }
@@ -520,7 +520,7 @@ func (rs *S3Storage) IsObjectLockEnabled() bool {
 	return false
 }
 
-func getPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
+func buildPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
 	input := &s3.PutObjectInput{
 		Body:   aws.ReadSeekCloser(bytes.NewReader(data)),
 		Bucket: aws.String(options.Bucket),
@@ -543,7 +543,7 @@ func getPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutOb
 
 // WriteFile writes data to a file to storage.
 func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
-	input := getPutObjectInput(rs.options, file, data)
+	input := buildPutObjectInput(rs.options, file, data)
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
