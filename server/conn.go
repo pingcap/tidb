@@ -184,7 +184,7 @@ func (cc *clientConn) getCtx() *TiDBContext {
 	return cc.ctx.TiDBContext
 }
 
-func (cc *clientConn) SetCtx(ctx *TiDBContext) {
+func (cc *clientConn) setCtx(ctx *TiDBContext) {
 	cc.ctx.Lock()
 	cc.ctx.TiDBContext = ctx
 	cc.ctx.Unlock()
@@ -422,7 +422,7 @@ func (cc *clientConn) writeInitialHandshake(ctx context.Context) error {
 	if err = cc.ctx.Close(); err != nil {
 		return err
 	}
-	cc.SetCtx(nil)
+	cc.setCtx(nil)
 
 	data = append(data, 0)
 	if err = cc.writePacket(data); err != nil {
@@ -685,7 +685,7 @@ func (cc *clientConn) authSM3(ctx context.Context, resp handshake.Response41) ([
 	return bytes.Trim(data, "\x00"), nil
 }
 
-func (cc *clientConn) SessionStatusToString() string {
+func (cc *clientConn) sessionStatusToString() string {
 	status := cc.ctx.Status()
 	inTxn, autoCommit := 0, 0
 	if status&mysql.ServerStatusInTrans > 0 {
@@ -709,7 +709,7 @@ func (cc *clientConn) openSession() error {
 	if err != nil {
 		return err
 	}
-	cc.SetCtx(ctx)
+	cc.setCtx(ctx)
 
 	err = cc.server.checkConnectionCount()
 	if err != nil {
@@ -1099,7 +1099,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
 					zap.String("command", mysql.Command2Str[data[0]]),
-					zap.String("status", cc.SessionStatusToString()),
+					zap.String("status", cc.sessionStatusToString()),
 					zap.Stringer("sql", getLastStmtInConn{cc}),
 					zap.String("txn_mode", txnMode),
 					zap.Uint64("timestamp", startTS),
@@ -2454,7 +2454,7 @@ func (cc *clientConn) handleResetConnection(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	cc.SetCtx(tidbCtx)
+	cc.setCtx(tidbCtx)
 	if !cc.ctx.AuthWithoutVerification(user) {
 		return errors.New("Could not reset connection")
 	}

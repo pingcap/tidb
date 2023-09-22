@@ -63,7 +63,7 @@ func TestOptimizerDebugTrace(t *testing.T) {
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	ctx := context.Background()
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (col1 int, index i(col1))")
@@ -139,7 +139,7 @@ func TestIssue46197(t *testing.T) {
 		capability: mysql.ClientLocalFiles,
 	}
 	ctx := context.Background()
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int)")
@@ -173,7 +173,7 @@ func TestGetConAttrs(t *testing.T) {
 		user:     "userA",
 		peerHost: "foo.example.com",
 	}
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 	server.registerConn(cc)
 
 	// Get attributes for all clients

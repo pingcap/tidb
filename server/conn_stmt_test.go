@@ -398,7 +398,7 @@ func getExpectOutput(t *testing.T, originalConn *mockConn, writeFn func(conn *cl
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(buf)),
 	}
 	conn.pkt.SetSequence(originalConn.pkt.Sequence())
-	conn.SetCtx(originalConn.getCtx())
+	conn.setCtx(originalConn.getCtx())
 	writeFn(conn)
 	require.NoError(t, conn.flush(context.Background()))
 

@@ -103,7 +103,7 @@ func TestIssue33699(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := &TiDBContext{Session: tk.Session()}
-	cc.SetCtx(ctx)
+	cc.setCtx(ctx)
 
 	// change user.
 	doChangeUser := func() {
@@ -620,7 +620,7 @@ func testDispatch(t *testing.T, inputs []dispatchInput, capability uint32) {
 		chunkAlloc:   chunk.NewAllocator(),
 		capability:   capability,
 	}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 	for _, cs := range inputs {
 		inBytes := append([]byte{cs.com}, cs.in...)
 		err := cc.dispatch(context.Background(), inBytes)
@@ -651,7 +651,7 @@ func TestGetSessionVarsWaitTimeout(t *testing.T) {
 			capability: defaultCapability,
 		},
 	}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 	require.Equal(t, uint64(variable.DefWaitTimeout), cc.getSessionVarsWaitTimeout(context.Background()))
 }
 
@@ -693,7 +693,7 @@ func TestConnExecutionTimeout(t *testing.T) {
 		alloc:      arena.NewAllocator(32 * 1024),
 		chunkAlloc: chunk.NewAllocator(),
 	}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 	srv := &Server{
 		clients: map[uint64]*clientConn{
 			connID: cc,
@@ -749,7 +749,7 @@ func TestShutDown(t *testing.T) {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	tc := &TiDBContext{Session: se}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 	// set killed flag
 	cc.status = connStatusShutdown
 	// assert ErrQueryInterrupted
@@ -765,7 +765,7 @@ func TestShutDown(t *testing.T) {
 	srv.SetDomain(dom)
 
 	cc = &clientConn{server: srv}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 
 	// test in txn
 	srv.clients[dom.NextConnID()] = cc
@@ -798,7 +798,7 @@ func TestPrefetchPointKeys4Update(t *testing.T) {
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
-	cc.SetCtx(&TiDBContext{Session: tk.Session()})
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("use test")
@@ -847,7 +847,7 @@ func TestPrefetchPointKeys4Delete(t *testing.T) {
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
-	cc.SetCtx(&TiDBContext{Session: tk.Session()})
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 	tk.MustExec("use test")
@@ -900,7 +900,7 @@ func TestPrefetchBatchPointGet(t *testing.T) {
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
-	cc.SetCtx(&TiDBContext{Session: tk.Session()})
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
 	tk.MustExec("use test")
 	tk.MustExec("create table prefetch (a int primary key, b int)")
@@ -935,7 +935,7 @@ func TestPrefetchPartitionTable(t *testing.T) {
 		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(bytes.NewBuffer(nil))),
 	}
 	tk := testkit.NewTestKit(t, store)
-	cc.SetCtx(&TiDBContext{Session: tk.Session()})
+	cc.setCtx(&TiDBContext{Session: tk.Session()})
 	ctx := context.Background()
 	tk.MustExec("use test")
 	tk.MustExec("create table prefetch (a int primary key, b int) partition by hash(a) partitions 4")
@@ -985,7 +985,7 @@ func TestTiFlashFallback(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set tidb_cost_model_version=1")
@@ -1102,7 +1102,7 @@ func TestShowErrors(t *testing.T) {
 	}
 	ctx := context.Background()
 	tk := testkit.NewTestKit(t, store)
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	err := cc.handleQuery(ctx, "create database if not exists test;")
 	require.NoError(t, err)
@@ -1493,7 +1493,7 @@ func TestChangeUserAuth(t *testing.T) {
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 
 	data := []byte{}
 	data = append(data, "user1"...)
@@ -1536,7 +1536,7 @@ func TestAuthPlugin2(t *testing.T) {
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 
 	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1587,7 +1587,7 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 		server:       srv,
 		user:         "auth_session_token",
 	}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 	// create a token without TLS
 	tk1 := testkit.NewTestKitWithSession(t, store, tc.Session)
 	tc.Session.GetSessionVars().ConnectionInfo = cc.connectInfo()
@@ -1723,7 +1723,7 @@ func TestOkEof(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := &TiDBContext{Session: tk.Session()}
-	cc.SetCtx(ctx)
+	cc.setCtx(ctx)
 
 	err = cc.writeOK(context.Background())
 	require.NoError(t, err)
@@ -1785,7 +1785,7 @@ func TestExtensionChangeUser(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := &TiDBContext{Session: tk.Session()}
-	cc.SetCtx(ctx)
+	cc.setCtx(ctx)
 	tk.MustExec("create user user1")
 	tk.MustExec("create user user2")
 	tk.MustExec("create database db1")
@@ -1893,7 +1893,7 @@ func TestAuthSha(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	ctx := &TiDBContext{Session: tk.Session()}
-	cc.SetCtx(ctx)
+	cc.setCtx(ctx)
 
 	resp := handshake.Response41{
 		Capability: mysql.ClientProtocol41 | mysql.ClientPluginAuth,
@@ -1921,7 +1921,7 @@ func TestProcessInfoForExecuteCommand(t *testing.T) {
 	ctx := context.Background()
 
 	tk.MustExec("use test")
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("create table t (col1 int)")
 
@@ -1964,7 +1964,7 @@ func TestLDAPAuthSwitch(t *testing.T) {
 		Session: se,
 		stmts:   make(map[int]*TiDBStatement),
 	}
-	cc.SetCtx(tc)
+	cc.setCtx(tc)
 	cc.isUnixSocket = true
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/server/FakeAuthSwitch", "return(1)"))

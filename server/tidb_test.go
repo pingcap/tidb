@@ -43,7 +43,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_rc_read_check_ts = ON")
 	tk.RefreshSession()
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
@@ -93,7 +93,7 @@ func TestRcReadCheckTSConflictExtra(t *testing.T) {
 	tk.MustExec("set global tidb_rc_read_check_ts = ON")
 
 	se := tk.Session()
-	cc.SetCtx(&TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: se, stmts: make(map[int]*TiDBStatement)})
 
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
