@@ -220,7 +220,7 @@
         "targets": [
           {
             "exemplar": true,
-            "expr": "time() - tidb_disttask_dispatcher_start_time{status=\"waiting\"}/1000000",
+            "expr": "time() - timestamp(tidb_disttask_dispatcher_start_time{status=\"waiting\"})",
             "interval": "",
             "intervalFactor": 1,
             "legendFormat": "{{task_type}}_{{task_id}}",
@@ -232,7 +232,7 @@
         "timeFrom": null,
         "timeRegions": [],
         "timeShift": null,
-        "title": "Task Waiting Duration",
+        "title": "Task Waiting Duraion",
         "tooltip": {
           "shared": true,
           "sort": 0,
@@ -325,7 +325,7 @@
         "targets": [
           {
             "exemplar": true,
-            "expr": "time() - tidb_disttask_dispatcher_start_time{status=\"dispatching\"}/1000000",
+            "expr": "time() - timestamp(tidb_disttask_dispatcher_start_time{status=\"dispatching\"})",
             "interval": "",
             "intervalFactor": 1,
             "legendFormat": "{{task_type}}_{{task_id}}",
@@ -337,7 +337,7 @@
         "timeFrom": null,
         "timeRegions": [],
         "timeShift": null,
-        "title": "Task Dispatching Time",
+        "title": "Task Dispatching Duraion",
         "tooltip": {
           "shared": true,
           "sort": 0,
@@ -363,109 +363,6 @@
           },
           {
             "$$hashKey": "object:276",
-            "format": "short",
-            "label": null,
-            "logBase": 1,
-            "max": null,
-            "min": null,
-            "show": true
-          }
-        ],
-        "yaxis": {
-          "align": false,
-          "alignLevel": null
-        }
-      },
-      {
-        "aliasColors": {},
-        "bars": false,
-        "dashLength": 10,
-        "dashes": false,
-        "datasource": "${DS_TEST-CLUSTER}",
-        "fieldConfig": {
-          "defaults": {},
-          "overrides": []
-        },
-        "fill": 1,
-        "fillGradient": 0,
-        "gridPos": {
-          "h": 8,
-          "w": 12,
-          "x": 12,
-          "y": 9
-        },
-        "hiddenSeries": false,
-        "id": 317,
-        "interval": "1s",
-        "legend": {
-          "alignAsTable": true,
-          "avg": false,
-          "current": true,
-          "hideEmpty": true,
-          "hideZero": true,
-          "max": true,
-          "min": false,
-          "rightSide": true,
-          "show": true,
-          "sortDesc": true,
-          "total": false,
-          "values": true
-        },
-        "lines": true,
-        "linewidth": 1,
-        "nullPointMode": "null",
-        "options": {
-          "alertThreshold": true
-        },
-        "percentage": false,
-        "pluginVersion": "7.5.11",
-        "pointradius": 2,
-        "points": false,
-        "renderer": "flot",
-        "seriesOverrides": [],
-        "spaceLength": 10,
-        "stack": false,
-        "steppedLine": false,
-        "targets": [
-          {
-            "exemplar": true,
-            "expr": "tidb_disttask_dispatcher_duration{status=\"dispatching\"}",
-            "interval": "",
-            "legendFormat": "{{task_type}}_{{task_id}}",
-            "queryType": "randomWalk",
-            "refId": "A"
-          }
-        ],
-        "thresholds": [],
-        "timeFrom": null,
-        "timeRegions": [],
-        "timeShift": null,
-        "title": "Task Dispatching Duration",
-        "tooltip": {
-          "shared": true,
-          "sort": 0,
-          "value_type": "individual"
-        },
-        "type": "graph",
-        "xaxis": {
-          "buckets": null,
-          "mode": "time",
-          "name": null,
-          "show": true,
-          "values": []
-        },
-        "yaxes": [
-          {
-            "$$hashKey": "object:174",
-            "format": "µs",
-            "label": null,
-            "logBase": 1,
-            "max": null,
-            "min": null,
-            "show": true
-          },
-          {
-            "$$hashKey": "object:175",
             "format": "short",
             "label": null,
             "logBase": 1,

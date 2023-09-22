@@ -48,6 +48,9 @@ func (dm *Manager) setRunningTask(task *proto.Task, dispatcher Dispatcher) {
 	defer dm.runningTasks.Unlock()
 	dm.runningTasks.taskIDs[task.ID] = struct{}{}
 	dm.runningTasks.dispatchers[task.ID] = dispatcher
+	metrics.DistDDLTaskStarttimeGauge.DeleteLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID))
+	metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Dec()
+	metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.RunningStatus).Inc()
 }
 
 func (dm *Manager) isRunningTask(taskID int64) bool {
@@ -60,6 +63,11 @@ func (dm *Manager) isRunningTask(taskID int64) bool {
 func (dm *Manager) delRunningTask(taskID int64) {
 	dm.runningTasks.Lock()
 	defer dm.runningTasks.Unlock()
+	task, err := dm.taskMgr.GetGlobalTaskByID(taskID)
+	if err == nil {
+		metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.RunningStatus).Dec()
+		metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.CompletedStatus).Inc()
+	}
 	delete(dm.runningTasks.taskIDs, taskID)
 	delete(dm.runningTasks.dispatchers, taskID)
 }
@@ -145,6 +153,11 @@ func (dm *Manager) dispatchTaskLoop() {
 			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
+			cnt := dm.getRunningTaskCnt()
+			if dm.checkConcurrencyOverflow(cnt) {
+				break
+			}
+
 			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			tasks, err := dm.taskMgr.GetGlobalTasksInStates(proto.TaskStatePending, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateCancelling)
 			if err != nil {
@@ -157,18 +170,12 @@ func (dm *Manager) dispatchTaskLoop() {
 				break
 			}
 
-			cnt := dm.getRunningTaskCnt()
-			if dm.checkConcurrencyOverflow(cnt) {
-				break
-			}
-
 			for _, task := range tasks {
 				// This global task is running, so no need to reprocess it.
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
-				startTime := time.Now()
-				metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
+				metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
@@ -188,21 +195,21 @@ func (dm *Manager) dispatchTaskLoop() {
 				// the task is not in runningTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
-					dm.startDispatcher(task, startTime)
+					dm.startDispatcher(task)
 					cnt++
-					metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
-					metrics.DistTaskDispatcherStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
-					metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
+					metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
+					metrics.DistDDLTaskStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
+					metrics.DistDDLTaskStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
 					continue
 				}
 				if dm.checkConcurrencyOverflow(cnt) {
 					break
 				}
-				dm.startDispatcher(task, startTime)
+				dm.startDispatcher(task)
 				cnt++
-				metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
-				metrics.DistTaskDispatcherStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
-				metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
+				metrics.DistDDLTaskGauge.WithLabelValues(task.Type, metrics.WaitingStatus).Dec()
+				metrics.DistDDLTaskStarttimeGauge.DeleteLabelValues(task.Type, metrics.WaitingStatus, fmt.Sprint(task.ID))
+				metrics.DistDDLTaskStarttimeGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
 			}
 		}
 	}
@@ -217,20 +224,14 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 	return false
 }
 
-func (dm *Manager) startDispatcher(task *proto.Task, startTime time.Time) {
+func (dm *Manager) startDispatcher(task *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
 		dispatcherFactory := GetDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		dm.setRunningTask(task, dispatcher)
-		metrics.DistTaskDispatcherDurationGauge.WithLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID)).Set(float64((time.Now().Sub(startTime)).Microseconds()))
-		metrics.DistTaskDispatcherStarttimeGauge.DeleteLabelValues(task.Type, metrics.DispatchingStatus, fmt.Sprint(task.ID))
-		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Dec()
-		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.RunningStatus).Inc()
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
-		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.RunningStatus).Dec()
-		metrics.DistTaskDispatcherGauge.WithLabelValues(task.Type, metrics.CompletedStatus).Inc()
 	})
 }
 

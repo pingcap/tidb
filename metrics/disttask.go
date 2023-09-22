@@ -34,15 +34,13 @@ const (
 )
 
 var (
-	//DistTaskHistogram      *prometheus.HistogramVec
-	DistTaskDispatcherGauge          *prometheus.GaugeVec
-	DistTaskDispatcherDurationGauge  *prometheus.GaugeVec
-	DistTaskDispatcherStarttimeGauge *prometheus.GaugeVec
+	DistDDLTaskGauge          *prometheus.GaugeVec
+	DistDDLTaskStarttimeGauge *prometheus.GaugeVec
 )
 
 // InitDistDDLMetrics initializes disttask metrics.
 func InitDistDDLMetrics() {
-	DistTaskDispatcherGauge = NewGaugeVec(
+	DistDDLTaskGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
@@ -50,19 +48,11 @@ func InitDistDDLMetrics() {
 			Help:      "Gauge of distdispatcher.",
 		}, []string{LblTaskType, LblTaskStatus})
 
-	DistTaskDispatcherStarttimeGauge = NewGaugeVec(
+	DistDDLTaskStarttimeGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
 			Name:      "dispatcher_start_time",
 			Help:      "Gauge of start_time of distdispatcher.",
-		}, []string{LblTaskType, LblTaskStatus, LblTaskID})
-
-	DistTaskDispatcherDurationGauge = NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "disttask",
-			Name:      "dispatcher_duration",
-			Help:      "Gauge of duration time (ms) of distdispatcher.",
 		}, []string{LblTaskType, LblTaskStatus, LblTaskID})
 }

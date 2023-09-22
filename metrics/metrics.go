@@ -265,9 +265,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
-	prometheus.MustRegister(DistTaskDispatcherGauge)
-	prometheus.MustRegister(DistTaskDispatcherDurationGauge)
-	prometheus.MustRegister(DistTaskDispatcherStarttimeGauge)
+	prometheus.MustRegister(DistDDLTaskGauge)
+	prometheus.MustRegister(DistDDLTaskStarttimeGauge)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

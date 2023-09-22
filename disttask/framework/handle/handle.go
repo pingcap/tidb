@@ -16,11 +16,13 @@ package handle
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -42,6 +44,9 @@ func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte
 
 	if globalTask == nil {
 		taskID, err := globalTaskManager.AddNewGlobalTask(taskKey, taskType, concurrency, taskMeta)
+		metrics.DistDDLTaskGauge.WithLabelValues(taskType, metrics.WaitingStatus).Inc()
+		metrics.DistDDLTaskStarttimeGauge.WithLabelValues(taskType, metrics.WaitingStatus, fmt.Sprint(taskID)).Set(float64(time.Now().UnixMicro()))
+
 		if err != nil {
 			return nil, err
 		}

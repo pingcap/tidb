@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/chunk"
@@ -189,8 +188,6 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 	err = stm.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
 		taskID, err2 = stm.AddGlobalTaskWithSession(se, key, tp, concurrency, meta)
-		metrics.DistTaskDispatcherGauge.WithLabelValues(tp, metrics.WaitingStatus).Inc()
-		metrics.DistTaskDispatcherStarttimeGauge.WithLabelValues(tp, metrics.WaitingStatus, fmt.Sprint(taskID)).Set(float64(time.Now().UnixMicro()))
 		return err2
 	})
 	return
