@@ -228,14 +228,6 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 		return nil
 	}
 
-	if pbCode == tipb.ScalarFuncSig_GEDecimal {
-		logutil.BgLogger().Info("tttttttttttt")
-	}
-
-	if pbCode == tipb.ScalarFuncSig_MultiplyDecimal {
-		logutil.BgLogger().Info("tttttttttttt")
-	}
-
 	// Check whether this function can be pushed.
 	if !canFuncBePushed(expr, kv.UnSpecified) {
 		return nil
