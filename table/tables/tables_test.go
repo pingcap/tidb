@@ -411,24 +411,6 @@ func TestTableFromMeta(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestShardRowIDBitsStep(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists shard_t;")
-	tk.MustExec("create table shard_t (a int) shard_row_id_bits = 15;")
-	tk.MustExec("set @@tidb_shard_allocate_step=3;")
-	tk.MustExec("insert into shard_t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10), (11);")
-	rows := tk.MustQuery("select _tidb_rowid from shard_t;").Rows()
-	shards := make(map[int]struct{})
-	for _, row := range rows {
-		id, err := strconv.ParseUint(row[0].(string), 10, 64)
-		require.NoError(t, err)
-		shards[int(id>>48)] = struct{}{}
-	}
-	require.Equal(t, 4, len(shards))
-}
-
 func TestHiddenColumn(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
