@@ -14,6 +14,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -100,6 +101,8 @@ type ExternalStorage interface {
 	FileExists(ctx context.Context, name string) (bool, error)
 	// DeleteFile delete the file in storage
 	DeleteFile(ctx context.Context, name string) error
+	// DeleteFiles delete the files in storage
+	DeleteFiles(ctx context.Context, names []string) error
 	// Open a Reader by file path. path is relative path to storage base path
 	Open(ctx context.Context, path string) (ExternalFileReader, error)
 	// WalkDir traverse all the files in a dir.
@@ -170,6 +173,15 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 		SendCredentials: sendCreds,
 		HTTPClient:      nil,
 	})
+}
+
+// NewWithDefaultOpt creates ExternalStorage with default options.
+func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
+	var opts ExternalStorageOptions
+	if intest.InTest {
+		opts.NoCredentials = true
+	}
+	return New(ctx, backend, &opts)
 }
 
 // New creates an ExternalStorage with options.

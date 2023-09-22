@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
@@ -478,6 +477,8 @@ type Backend struct {
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
+	mu sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -940,11 +941,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		opt := &storage.ExternalStorageOptions{}
-		if intest.InTest {
-			opt.NoCredentials = true
-		}
-		store, err := storage.New(ctx, storeBackend, opt)
+		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
 		if err != nil {
 			return err
 		}
@@ -1211,6 +1208,7 @@ func (local *Backend) generateAndSendJob(
 				return err
 			}
 			for _, job := range jobs {
+				data.IncRef()
 				jobWg.Add(1)
 				select {
 				case <-egCtx.Done():
@@ -1344,7 +1342,12 @@ func (local *Backend) startWorker(
 					return err2
 				}
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				jobWg.Add(len(jobs) - 1)
+				newJobCnt := len(jobs) - 1
+				jobWg.Add(newJobCnt)
+				for newJobCnt > 0 {
+					job.ingestData.IncRef()
+					newJobCnt--
+				}
 				for _, j := range jobs {
 					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
@@ -1555,6 +1558,11 @@ func (local *Backend) ImportEngine(
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+}
+
+// GetMutex returns the mutex of the backend.
+func (local *Backend) GetMutex() *sync.Mutex {
+	return &local.mu
 }
 
 // expose these variables to unit test.

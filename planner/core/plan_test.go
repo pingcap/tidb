@@ -439,7 +439,6 @@ func TestNthPlanHint(t *testing.T) {
 	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
 		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)",
 		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
 
 	// Test the correctness of generated plans.
