@@ -314,9 +314,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 		s.markErrorHandled()
 		return
 	}
-	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
-		s.onError(err)
-	}
+	s.finishSubtask(subtask)
 	failpoint.Inject("syncAfterSubtaskFinish", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -473,10 +471,10 @@ func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state
 	metrics.StartDistDDLSubTask(subtask)
 }
 
-func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask, subtaskMeta []byte) {
+func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask) {
 	metrics.DecDistDDLSubTaskCnt(subtask)
 	metrics.EndDistDDLSubTask(subtask)
-	if err := s.taskTable.FinishSubtask(subtask.ID, subtaskMeta); err != nil {
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
 		s.onError(err)
 	}
 	subtask.State = proto.TaskStateSucceed
