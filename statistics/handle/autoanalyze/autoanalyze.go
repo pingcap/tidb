@@ -215,7 +215,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		execAutoAnalyze(sctx, exec, opt, sql, params...)
+		execAutoAnalyze(sctx, exec, opt, tableStatsVer, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
@@ -229,7 +229,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			execAutoAnalyze(sctx, exec, opt, sqlWithIdx, paramsWithIdx...)
+			execAutoAnalyze(sctx, exec, opt, tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -242,6 +242,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 //  2. If the table had been analyzed before, we need to analyze it when
 //     "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
 //     between `start` and `end`.
+//
 // Exposed for test.
 func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
 	analyzed := TableAnalyzed(tbl)
@@ -327,7 +328,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
-			execAutoAnalyze(sctx, exec, opt, sql, params...)
+			execAutoAnalyze(sctx, exec, opt, tableStatsVer, sql, params...)
 		}
 		return true
 	}
@@ -358,7 +359,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", partitionNames[start:end]))
-				execAutoAnalyze(sctx, exec, opt, sql, params...)
+				execAutoAnalyze(sctx, exec, opt, tableStatsVer, sql, params...)
 			}
 			return true
 		}
@@ -375,9 +376,10 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 func execAutoAnalyze(sctx sessionctx.Context,
 	exec sqlexec.RestrictedSQLExecutor,
 	opt *Opt,
+	statsVer int,
 	sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := execRestrictedSQLWithStatsVer(sctx, exec, opt, sql, params...)
+	_, _, err := execRestrictedSQLWithStatsVer(sctx, exec, opt, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -395,10 +397,10 @@ func execAutoAnalyze(sctx sessionctx.Context,
 func execRestrictedSQLWithStatsVer(sctx sessionctx.Context,
 	exec sqlexec.RestrictedSQLExecutor,
 	opt *Opt,
+	statsVer int,
 	sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
-	statsVer := sctx.GetSessionVars().AnalyzeVersion
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	optFuncs := []sqlexec.OptionFuncAlias{
 		execOptionForAnalyze[statsVer],
