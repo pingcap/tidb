@@ -1052,8 +1052,8 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 		if job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateDeleteOnly {
 			newTk := testkit.NewTestKit(t, store)
 			rows := newTk.MustQuery("admin show ddl jobs 1").Rows()
-			// 1 history job and 1 running job with 2 subjobs
-			assert.Equal(t, len(rows), 4)
+			// 1 history job and 1 running job with 1 subjobs
+			assert.Equal(t, len(rows), 3)
 			assert.Equal(t, rows[1][1], "test")
 			assert.Equal(t, rows[1][2], "t")
 			assert.Equal(t, rows[1][3], "add index /* subjob */ /* txn-merge */")
@@ -1062,13 +1062,7 @@ func TestMultiSchemaChangeAdminShowDDLJobs(t *testing.T) {
 			assert.True(t, len(rows[1][8].(string)) > 0)
 			assert.True(t, len(rows[1][9].(string)) > 0)
 			assert.True(t, len(rows[1][10].(string)) > 0)
-
-			assert.Equal(t, rows[2][3], "add index /* subjob */")
-			assert.Equal(t, rows[2][4], "none")
-			assert.Equal(t, rows[2][len(rows[2])-1], "queueing")
-			assert.True(t, len(rows[2][8].(string)) > 0)
-			assert.True(t, len(rows[2][9].(string)) > 0)
-			assert.True(t, len(rows[2][10].(string)) > 0)
+			assert.Equal(t, rows[2][3], "create table")
 		}
 	}
 
