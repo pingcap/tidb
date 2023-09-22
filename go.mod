@@ -61,6 +61,7 @@ require (
 	github.com/iancoleman/strcase v0.2.0
 	github.com/jedib0t/go-pretty/v6 v6.2.2
 	github.com/jellydator/ttlcache/v3 v3.0.1
+	github.com/jfcg/sorty/v2 v2.1.0
 	github.com/jingyugao/rowserrcheck v1.1.1
 	github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
@@ -142,6 +143,7 @@ require (
 
 require (
 	github.com/dolthub/maphash v0.1.0 // indirect
+	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shabbyrobe/gocovmerge v0.0.0-20190829150210-3e036491d500 // indirect

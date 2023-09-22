@@ -4005,6 +4005,58 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_jfcg_opt",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/opt",
+        sha256 = "d774e375f6827f16be051e177407bb3217e051cf4285449788abff3ebf01a468",
+        strip_prefix = "github.com/jfcg/opt@v0.3.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_jfcg_rng",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/rng",
+        sha256 = "8c450d237ea8ba22b6bc6337dcd11519fd6d04c2b31b9b38e5c26ae04ed7cae8",
+        strip_prefix = "github.com/jfcg/rng@v1.0.4",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_jfcg_sixb",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/sixb",
+        sha256 = "5eda29ec69dff767e5353325eab7b2edac5911fcbbaf84f42c0513ab50b76952",
+        strip_prefix = "github.com/jfcg/sixb@v1.3.8",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_jfcg_sorty_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/sorty/v2",
+        sha256 = "4a126a66ee9237c696a038eff39710b55d92a846f807a5005dde35f4a0b869e3",
+        strip_prefix = "github.com/jfcg/sorty/v2@v2.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_jgautheron_goconst",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/jgautheron/goconst",

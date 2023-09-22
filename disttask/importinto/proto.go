@@ -136,6 +136,7 @@ type SharedVars struct {
 	SortedDataMeta *external.SortedKVMeta
 	// SortedIndexMetas is a map from index id to its sorted kv meta.
 	SortedIndexMetas map[int64]*external.SortedKVMeta
+	ShareMu          sync.Mutex
 }
 
 func (sv *SharedVars) mergeDataSummary(summary *external.WriterSummary) {

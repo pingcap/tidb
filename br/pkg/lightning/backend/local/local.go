@@ -478,6 +478,8 @@ type Backend struct {
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
+	mu sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -1555,6 +1557,11 @@ func (local *Backend) ImportEngine(
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+}
+
+// GetMutex returns the mutex of the backend.
+func (local *Backend) GetMutex() *sync.Mutex {
+	return &local.mu
 }
 
 // expose these variables to unit test.
