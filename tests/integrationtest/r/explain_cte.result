@@ -388,7 +388,7 @@ order by t_s_secyear.customer_id
 limit 100;
 id	estRows	task	access object	operator info
 TopN	40.00	root		Column#180, Column#181, Column#182, Column#186, offset:0, count:100
-└─HashJoin	40.00	root		inner join, equal:[eq(Column#170, Column#200)], other cond:gt(case(gt(Column#198, 0), div(Column#208, Column#198), 0.0), case(gt(Column#178, 0), div(Column#188, Column#178), 0.0))
+└─HashJoin	40.00	root		inner join, equal:[eq(Column#170, Column#200)], other cond:gt(case(gt(Column#198, 0), div(Column#208, Column#198), 0.000000), case(gt(Column#178, 0), div(Column#188, Column#178), 0.000000))
   ├─Selection(Build)	40.00	root		eq(Column#207, 2002), eq(Column#209, "w"), not(isnull(Column#200))
   │ └─CTEFullScan	50.00	root	CTE:year_total AS t_w_secyear	data:CTE_0
   └─HashJoin(Probe)	40.00	root		inner join, equal:[eq(Column#170, Column#190)]

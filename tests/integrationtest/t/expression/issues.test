@@ -1696,6 +1696,43 @@ insert into t values('z', 25.18040000000000000000);
 select * from t where t.b > t.c;
 select * from t where t.b < t.c;
 
+# TestIssue44196
+## decimal
+drop table if exists t1;
+CREATE TABLE t1 (c1 INT);
+INSERT INTO t1 VALUES (1), (null);
+SELECT IFNULL(c1, 0.0) from t1;
+SELECT if(c1 is not null, c1, 0.0) from t1;
+SELECT case when c1 is not null then c1 else 0.0 end from t1;
+## datetime
+drop table if exists t1;
+CREATE TABLE t1 (v1 datetime(3), v2 datetime(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+SELECT if(v1 is not null, v1, v2) from t1;
+SELECT case when v1 is not null then v1 else v2 end from t1;
+## timestamp
+drop table if exists t1;
+CREATE TABLE t1 (v1 timestamp(3), v2 timestamp(4));
+INSERT INTO t1 VALUES ('2020-01-01 11:11:11.123', null), (null, '2020-01-01 11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+SELECT if(v1 is not null, v1, v2) from t1;
+SELECT case when v1 is not null then v1 else v2 end from t1;
+## duration
+drop table if exists t1;
+CREATE TABLE t1 (v1 time(3), v2 time(4));
+INSERT INTO t1 VALUES ('11:11:11.123', null), (null, '11:11:11.1234');
+SELECT IFNULL(v1, v2) from t1;
+SELECT if(v1 is not null, v1, v2) from t1;
+SELECT case when v1 is not null then v1 else v2 end from t1;
+## others
+drop table if exists t1;
+CREATE TABLE t1 (var_fld int(11) DEFAULT '0' );
+INSERT INTO t1 VALUES (4500), (6000);
+SELECT IF ( var_fld  > 5000, ( 00001 / var_fld ) , 5000 ) if_var FROM t1;
+SELECT CASE WHEN var_fld  > 5000 THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+SELECT CASE var_fld  > 5000 WHEN TRUE THEN ( 1 / var_fld ) ELSE 5000 END case_var FROM t1;
+
 # TestIssue45410
 drop table if exists t1;
 CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL);

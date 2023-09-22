@@ -1341,42 +1341,42 @@ select (case when null then c1 end) is not null from t1;
 0
 select case when b=0 then 1 else 1/b end from t;
 case when b=0 then 1 else 1/b end
-1
+1.0000
 NULL
 0.2500
 select if(b=0, 1, 1/b) from t;
 if(b=0, 1, 1/b)
-1
+1.0000
 NULL
 0.2500
 select ifnull(b, b/0) from t;
 ifnull(b, b/0)
-0
+0.0000
 NULL
-4
+4.0000
 select case when 1 then 1 else 1/0 end;
 case when 1 then 1 else 1/0 end
 1.0000
 select if(1,1,1/0);
 if(1,1,1/0)
-1
+1.0000
 select ifnull(1, 1/0);
 ifnull(1, 1/0)
-1
+1.0000
 delete from t;
 insert t values ('str2', 0);
 select case when b < 1 then 1 else 1/0 end from t;
 case when b < 1 then 1 else 1/0 end
-1
+1.0000
 select case when b < 1 then 1 when 1/0 then b else 1/0 end from t;
 case when b < 1 then 1 when 1/0 then b else 1/0 end
-1
+1.0000
 select if(b < 1 , 1, 1/0) from t;
 if(b < 1 , 1, 1/0)
-1
+1.0000
 select ifnull(b, 1/0) from t;
 ifnull(b, 1/0)
-0
+0.0000
 select COALESCE(1, b, b/0) from t;
 COALESCE(1, b, b/0)
 1
@@ -2247,7 +2247,7 @@ if(1, 1.0, 1)
 1.0
 select if(1, 1, 1.0);
 if(1, 1, 1.0)
-1
+1.0
 select if(count(*), cast('2000-01-01' as date), cast('2011-01-01' as date)) from t1;
 if(count(*), cast('2000-01-01' as date), cast('2011-01-01' as date))
 2000-01-01
