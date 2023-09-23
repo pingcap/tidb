@@ -344,14 +344,19 @@ func (stm *TaskManager) GetSubtasksInStates(tidbID string, taskID int64, step in
 
 // GetFirstSubtaskInStates gets the first subtask by given states.
 func (stm *TaskManager) GetFirstSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
-	subtasks, err := stm.GetSubtasksInStates(tidbID, taskID, step, states...)
+	args := []interface{}{tidbID, taskID, step}
+	args = append(args, states...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
+		where exec_id = %? and task_key = %? and step = %?
+		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
 		return nil, err
 	}
-	if len(subtasks) == 0 {
+
+	if len(rs) == 0 {
 		return nil, nil
 	}
-	return subtasks[0], nil
+	return row2SubTask(rs[0]), nil
 }
 
 // UpdateErrorToSubtask updates the error to subtask.
