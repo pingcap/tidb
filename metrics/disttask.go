@@ -30,15 +30,15 @@ const (
 )
 
 var (
-	// DistDDLSubTaskCntGauge is the gauge of dist ddl subtask count.
-	DistDDLSubTaskCntGauge *prometheus.GaugeVec
-	// DistDDLSubTaskStartTimeGauge is the gauge of dist ddl subtask start time.
-	DistDDLSubTaskStartTimeGauge *prometheus.GaugeVec
+	// DistTaskSubTaskCntGauge is the gauge of dist ddl subtask count.
+	DistTaskSubTaskCntGauge *prometheus.GaugeVec
+	// DistTaskSubTaskStartTimeGauge is the gauge of dist ddl subtask start time.
+	DistTaskSubTaskStartTimeGauge *prometheus.GaugeVec
 )
 
 // InitDistTaskMetrics initializes disttask metrics.
 func InitDistTaskMetrics() {
-	DistDDLSubTaskCntGauge = NewGaugeVec(
+	DistTaskSubTaskCntGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
@@ -46,7 +46,7 @@ func InitDistTaskMetrics() {
 			Help:      "Gauge of ddl subtask count.",
 		}, []string{lblTaskType, lblTaskID, lblSchedulerID, lblTaskStatus})
 
-	DistDDLSubTaskStartTimeGauge = NewGaugeVec(
+	DistTaskSubTaskStartTimeGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
@@ -55,9 +55,9 @@ func InitDistTaskMetrics() {
 		}, []string{lblTaskType, lblTaskID, lblSchedulerID, lblTaskStatus, lblSubTaskID})
 }
 
-// IncDistDDLSubTaskCnt increases the count of dist ddl subtask.
-func IncDistDDLSubTaskCnt(subtask *proto.Subtask) {
-	DistDDLSubTaskCntGauge.WithLabelValues(
+// IncDistTaskSubTaskCnt increases the count of dist ddl subtask.
+func IncDistTaskSubTaskCnt(subtask *proto.Subtask) {
+	DistTaskSubTaskCntGauge.WithLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
 		subtask.SchedulerID,
@@ -65,9 +65,9 @@ func IncDistDDLSubTaskCnt(subtask *proto.Subtask) {
 	).Inc()
 }
 
-// DecDistDDLSubTaskCnt decreases the count of dist ddl subtask.
-func DecDistDDLSubTaskCnt(subtask *proto.Subtask) {
-	DistDDLSubTaskCntGauge.WithLabelValues(
+// DecDistTaskSubTaskCnt decreases the count of dist ddl subtask.
+func DecDistTaskSubTaskCnt(subtask *proto.Subtask) {
+	DistTaskSubTaskCntGauge.WithLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
 		subtask.SchedulerID,
@@ -75,12 +75,12 @@ func DecDistDDLSubTaskCnt(subtask *proto.Subtask) {
 	).Dec()
 }
 
-// StartDistDDLSubTask sets the start time of dist ddl subtask.
-func StartDistDDLSubTask(subtask *proto.Subtask) {
+// StartDistTaskSubTask sets the start time of dist ddl subtask.
+func StartDistTaskSubTask(subtask *proto.Subtask) {
 	if subtask.IsFinished() {
 		return
 	}
-	DistDDLSubTaskStartTimeGauge.WithLabelValues(
+	DistTaskSubTaskStartTimeGauge.WithLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
 		subtask.SchedulerID,
@@ -89,9 +89,9 @@ func StartDistDDLSubTask(subtask *proto.Subtask) {
 	).SetToCurrentTime()
 }
 
-// EndDistDDLSubTask deletes the start time of dist ddl subtask.
-func EndDistDDLSubTask(subtask *proto.Subtask) {
-	DistDDLSubTaskStartTimeGauge.DeleteLabelValues(
+// EndDistTaskSubTask deletes the start time of dist ddl subtask.
+func EndDistTaskSubTask(subtask *proto.Subtask) {
+	DistTaskSubTaskStartTimeGauge.DeleteLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
 		subtask.SchedulerID,

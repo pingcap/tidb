@@ -172,8 +172,8 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		return s.getError()
 	}
 	for _, subtask := range subtasks {
-		metrics.IncDistDDLSubTaskCnt(subtask)
-		metrics.StartDistDDLSubTask(subtask)
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
 	}
 
 	for {
@@ -459,36 +459,36 @@ func (s *BaseScheduler) resetError() {
 }
 
 func (s *BaseScheduler) startSubtask(subtask *proto.Subtask) {
-	metrics.DecDistDDLSubTaskCnt(subtask)
-	metrics.EndDistDDLSubTask(subtask)
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
 	err := s.taskTable.StartSubtask(subtask.ID)
 	if err != nil {
 		s.onError(err)
 	}
 	subtask.State = proto.TaskStateRunning
-	metrics.IncDistDDLSubTaskCnt(subtask)
-	metrics.StartDistDDLSubTask(subtask)
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	metrics.StartDistTaskSubTask(subtask)
 }
 
 func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {
-	metrics.DecDistDDLSubTaskCnt(subtask)
-	metrics.EndDistDDLSubTask(subtask)
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
 	err := s.taskTable.UpdateSubtaskStateAndError(subtask.ID, state, subTaskErr)
 	if err != nil {
 		s.onError(err)
 	}
 	subtask.State = state
-	metrics.IncDistDDLSubTaskCnt(subtask)
-	metrics.StartDistDDLSubTask(subtask)
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	metrics.StartDistTaskSubTask(subtask)
 }
 
 func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask) {
-	metrics.DecDistDDLSubTaskCnt(subtask)
-	metrics.EndDistDDLSubTask(subtask)
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
 	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
 		s.onError(err)
 	}
 	subtask.State = proto.TaskStateSucceed
-	metrics.IncDistDDLSubTaskCnt(subtask)
-	metrics.StartDistDDLSubTask(subtask)
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	metrics.StartDistTaskSubTask(subtask)
 }
