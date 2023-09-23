@@ -59,14 +59,15 @@ type Extension interface {
 	GetNextStep(h TaskHandle, task *proto.Task) int64
 }
 
-// FactoryFn is used to create a dispatcher.
-type FactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
+// / dispatcher factory related code.
+// dispatcherFactoryFn is used to create a dispatcher.
+type dispatcherFactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
 
 var dispatcherFactoryMap = struct {
 	syncutil.RWMutex
-	m map[string]FactoryFn
+	m map[string]dispatcherFactoryFn
 }{
-	m: make(map[string]FactoryFn),
+	m: make(map[string]dispatcherFactoryFn),
 }
 
 // RegisterDispatcherFactory is used to register the dispatcher factory.
@@ -75,22 +76,60 @@ var dispatcherFactoryMap = struct {
 // after the server start, there's should be no write to the map.
 // but for index backfill, the register call stack is so deep, not sure
 // if it's safe to do so, so we use a lock here.
-func RegisterDispatcherFactory(taskType string, ctor FactoryFn) {
+func RegisterDispatcherFactory(taskType string, ctor dispatcherFactoryFn) {
 	dispatcherFactoryMap.Lock()
 	defer dispatcherFactoryMap.Unlock()
 	dispatcherFactoryMap.m[taskType] = ctor
 }
 
 // GetDispatcherFactory is used to get the dispatcher factory.
-func GetDispatcherFactory(taskType string) FactoryFn {
+func GetDispatcherFactory(taskType string) dispatcherFactoryFn {
 	dispatcherFactoryMap.RLock()
 	defer dispatcherFactoryMap.RUnlock()
 	return dispatcherFactoryMap.m[taskType]
 }
 
-// ClearDispatcherFactory is only used in test
+// ClearDispatcherFactory is only used in test.
 func ClearDispatcherFactory() {
 	dispatcherFactoryMap.Lock()
 	defer dispatcherFactoryMap.Unlock()
-	dispatcherFactoryMap.m = make(map[string]FactoryFn)
+	dispatcherFactoryMap.m = make(map[string]dispatcherFactoryFn)
+}
+
+// / dispatcher clean up related code.
+// CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
+type CleanUpRoutine interface {
+	// CleanUp do the clean up work.
+	CleanUp() error
+}
+type cleanUpFactoryFn func(ctx context.Context, task *proto.Task) CleanUpRoutine
+
+var cleanUpFactoryMap = struct {
+	syncutil.RWMutex
+	m map[string]cleanUpFactoryFn
+}{
+	m: make(map[string]cleanUpFactoryFn),
+}
+
+// RegisterDispatcherCleanUpFactory is used to register the dispatcher clean up factory.
+// normally dispatcher cleanup is used in the dispatcher_manager gcTaskLoop to do clean up
+// works when tasks are finished.
+func RegisterDispatcherCleanUpFactory(taskType string, ctor cleanUpFactoryFn) {
+	cleanUpFactoryMap.Lock()
+	defer cleanUpFactoryMap.Unlock()
+	cleanUpFactoryMap.m[taskType] = ctor
+}
+
+// GetDispatcherCleanUpFactory is used to get the dispatcher factory.
+func GetDispatcherCleanUpFactory(taskType string) cleanUpFactoryFn {
+	cleanUpFactoryMap.RLock()
+	defer cleanUpFactoryMap.RUnlock()
+	return cleanUpFactoryMap.m[taskType]
+}
+
+// ClearDispatcherCleanUpFactory is only used in test.
+func ClearDispatcherCleanUpFactory() {
+	cleanUpFactoryMap.Lock()
+	defer cleanUpFactoryMap.Unlock()
+	cleanUpFactoryMap.m = make(map[string]cleanUpFactoryFn)
 }

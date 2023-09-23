@@ -33,7 +33,13 @@ import (
 var (
 	// DefaultDispatchConcurrency is the default concurrency for dispatching task.
 	DefaultDispatchConcurrency = 4
-	checkTaskRunningInterval   = 3 * time.Second
+	// checkTaskRunningInterval is the interval for loading tasks.
+	checkTaskRunningInterval = 3 * time.Second
+	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
+	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
+	// defaultGCInterval
+	// ywq todo refine interval
+	defaultGCInterval = 1 * time.Second
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -119,7 +125,8 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 // Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
-	dm.wg.Run(dm.gcSubtaskHistoryTable)
+	dm.wg.Run(dm.gcSubtaskHistoryTableLoop)
+	dm.wg.Run(dm.gcTaskLoop)
 	dm.inited = true
 }
 
@@ -212,7 +219,7 @@ func (dm *Manager) failTask(task *proto.Task, err error) {
 	}
 }
 
-func (dm *Manager) gcSubtaskHistoryTable() {
+func (dm *Manager) gcSubtaskHistoryTableLoop() {
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
 	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
 		if seconds, ok := val.(int); ok {
@@ -222,7 +229,7 @@ func (dm *Manager) gcSubtaskHistoryTable() {
 		<-WaitTaskFinished
 	})
 
-	logutil.Logger(dm.ctx).Info("task table gc loop start")
+	logutil.Logger(dm.ctx).Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
@@ -231,11 +238,40 @@ func (dm *Manager) gcSubtaskHistoryTable() {
 			logutil.BgLogger().Info("subtask history table gc loop exits", zap.Error(dm.ctx.Err()))
 			return
 		case <-ticker.C:
-			err := dm.taskMgr.GC()
+			err := dm.taskMgr.GCSubtasks()
 			if err != nil {
 				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
 			} else {
-				logutil.Logger(dm.ctx).Info("subtask history table gc")
+				logutil.Logger(dm.ctx).Info("subtask history table gc success")
+			}
+		}
+	}
+}
+
+func (dm *Manager) gcTaskLoop() {
+	logutil.Logger(dm.ctx).Info("task gc loop start")
+	ticker := time.NewTicker(defaultGCInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-dm.ctx.Done():
+			logutil.BgLogger().Info("task gc loop exits", zap.Error(dm.ctx.Err()))
+			return
+		case <-ticker.C:
+			tasks, err := dm.taskMgr.GetGlobalTasksInStates(
+				proto.TaskStateFailed,
+				proto.TaskStateReverted,
+				proto.TaskStateSucceed,
+			)
+			if err != nil {
+				logutil.BgLogger().Warn("task gc failed", zap.Error(err))
+				continue
+			}
+			err = dm.gcFinishedTasks(tasks)
+			if err != nil {
+				logutil.BgLogger().Warn("task gc failed", zap.Error(err))
+			} else {
+				logutil.Logger(dm.ctx).Info("task gc success")
 			}
 		}
 	}
@@ -265,6 +301,21 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
 	})
+}
+
+func (dm *Manager) gcFinishedTasks(tasks []*proto.Task) error {
+	for _, task := range tasks {
+		cleanUpFactory := GetDispatcherCleanUpFactory(task.Type)
+		if cleanUpFactory != nil {
+			cleanUp := cleanUpFactory(dm.ctx, task)
+			err := cleanUp.CleanUp()
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return dm.taskMgr.TransferTasks2History(tasks)
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.

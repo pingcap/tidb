@@ -492,11 +492,35 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask4, proto.TaskStateFailed, nil))
 	require.NoError(t, sm.TransferSubTasks2History(taskID2))
 
-	require.NoError(t, sm.GC())
+	require.NoError(t, sm.GCSubtasks())
 
 	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
 	require.NoError(t, err)
 	require.Equal(t, 1, historySubTasksCnt)
+}
+
+func TestTaskHistoryTable(t *testing.T) {
+	pool := GetResourcePool(t)
+	gm := GetTaskManager(t, pool)
+	defer pool.Close()
+
+	_, err := gm.AddNewGlobalTask("1", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	_, err = gm.AddNewGlobalTask("2", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+
+	tasks, err := gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(tasks))
+
+	require.NoError(t, gm.TransferTasks2History(tasks))
+
+	tasks, err = gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(tasks))
+	num, err := storage.GetTasksFromHistoryForTest(gm)
+	require.NoError(t, err)
+	require.Equal(t, 2, num)
 }
 
 func TestPauseAndResume(t *testing.T) {

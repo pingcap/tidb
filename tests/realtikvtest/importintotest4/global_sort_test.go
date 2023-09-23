@@ -70,6 +70,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	))
 
 	// check all sorted data cleaned up
+	// ywq todo sync notify the cleanup
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)

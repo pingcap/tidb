@@ -109,6 +109,8 @@ func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExe
 
 func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp().DoAndReturn(nil).AnyTimes()
 	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
@@ -123,12 +125,13 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 			return nil
 		}).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, dispatcherHandle)
+	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType string, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType string, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
 	t.Cleanup(func() {
 		dispatcher.ClearDispatcherFactory()
+		dispatcher.ClearDispatcherCleanUpFactory()
 		scheduler.ClearSchedulers()
 	})
 	dispatcher.RegisterDispatcherFactory(taskType,
@@ -137,6 +140,12 @@ func registerTaskMetaInner(t *testing.T, taskType string, mockExtension schedule
 			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher
 		})
+
+	dispatcher.RegisterDispatcherCleanUpFactory(taskType,
+		func(ctx context.Context, task *proto.Task) dispatcher.CleanUpRoutine {
+			return mockCleanup
+		})
+
 	scheduler.RegisterTaskType(taskType,
 		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
 			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
@@ -148,6 +157,8 @@ func registerTaskMetaInner(t *testing.T, taskType string, mockExtension schedule
 
 func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp().DoAndReturn(nil).AnyTimes()
 	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
@@ -162,11 +173,13 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 			return nil
 		}).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample2, mockExtension, dispatcherHandle)
+	registerTaskMetaInner(t, proto.TaskTypeExample2, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
 func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp().DoAndReturn(nil).AnyTimes()
 	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
@@ -181,7 +194,7 @@ func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.
 			return nil
 		}).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample3, mockExtension, dispatcherHandle)
+	registerTaskMetaInner(t, proto.TaskTypeExample3, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
 func DispatchTask(taskKey string, t *testing.T) *proto.Task {

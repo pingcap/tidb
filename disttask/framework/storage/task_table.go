@@ -835,8 +835,8 @@ func (stm *TaskManager) TransferSubTasks2History(taskID int64) error {
 	})
 }
 
-// GC deletes the history subtask which is older than the given days.
-func (stm *TaskManager) GC() error {
+// GCSubtasks deletes the history subtask which is older than the given days.
+func (stm *TaskManager) GCSubtasks() error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
 	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
 		if val, ok := val.(int); ok {
@@ -848,6 +848,55 @@ func (stm *TaskManager) GC() error {
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
 	)
 	return err
+}
+
+// TransferTasks2History transfer the selected tasks into tidb_global_task_history table by taskIDs.
+func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		insertSql := new(strings.Builder)
+		if err := sqlexec.FormatSQL(insertSql, "insert into mysql.tidb_global_task_history select * from mysql.tidb_global_task where task_key in("); err != nil {
+			return err
+		}
+		for i, task := range tasks {
+			if i != 0 {
+				if err := sqlexec.FormatSQL(insertSql, ","); err != nil {
+					return err
+				}
+			}
+			if err := sqlexec.FormatSQL(insertSql, "%?", task.ID); err != nil {
+				return err
+			}
+		}
+		if err := sqlexec.FormatSQL(insertSql, ")"); err != nil {
+			return err
+		}
+
+		_, err := ExecSQL(stm.ctx, se, insertSql.String())
+		if err != nil {
+			return err
+		}
+
+		// delete taskIDs tasks
+		deleteSql := new(strings.Builder)
+		if err := sqlexec.FormatSQL(deleteSql, "delete from mysql.tidb_global_task where task_key in("); err != nil {
+			return err
+		}
+		for i, task := range tasks {
+			if i != 0 {
+				if err := sqlexec.FormatSQL(deleteSql, ","); err != nil {
+					return err
+				}
+			}
+			if err := sqlexec.FormatSQL(deleteSql, "%?", task.ID); err != nil {
+				return err
+			}
+		}
+		if err := sqlexec.FormatSQL(deleteSql, ")"); err != nil {
+			return err
+		}
+		_, err = ExecSQL(stm.ctx, se, deleteSql.String())
+		return err
+	})
 }
 
 // GetNodesByRole gets nodes map from dist_framework_meta by role.

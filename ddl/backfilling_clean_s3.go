@@ -1,0 +1,67 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//	http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package ddl
+
+import (
+	"context"
+	"encoding/json"
+	"strconv"
+
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
+)
+
+var _ dispatcher.CleanUpRoutine = (*BackfillCleanUpS3)(nil)
+
+// BackfillCleanUpS3 implements dispatcher.CleanUpRoutine.
+type BackfillCleanUpS3 struct {
+	ctx  context.Context
+	task *proto.Task
+}
+
+func newBackCleanUpS3(ctx context.Context, task *proto.Task) dispatcher.CleanUpRoutine {
+	return &BackfillCleanUpS3{
+		ctx:  ctx,
+		task: task,
+	}
+}
+
+func (c *BackfillCleanUpS3) CleanUp() error {
+	var gTaskMeta BackfillGlobalMeta
+	if err := json.Unmarshal(c.task.Meta, &gTaskMeta); err != nil {
+		return err
+	}
+	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
+	if err != nil {
+		logutil.Logger(c.ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
+		return err
+	}
+	extStore, err := storage.NewWithDefaultOpt(c.ctx, backend)
+	if err != nil {
+		logutil.Logger(c.ctx).Warn("failed to create cloud storage", zap.Error(err))
+		return err
+	}
+	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
+	err = external.CleanUpFiles(c.ctx, extStore, prefix)
+	if err != nil {
+		logutil.Logger(c.ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		return err
+	}
+	return nil
+}
