@@ -368,8 +368,9 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			require.NoError(t, err)
 		}
 	} else if isPauseAndResume {
-		for i := 1; i <= taskCnt; i++ {
-			err = mgr.PauseTask(int64(i))
+		for i := 0; i < taskCnt; i++ {
+			found, err := mgr.PauseTask(fmt.Sprintf("%d", i))
+			require.Equal(t, true, found)
 			require.NoError(t, err)
 		}
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
@@ -377,8 +378,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStatePaused)
-		for i := 1; i <= taskCnt; i++ {
-			found, err := mgr.ResumeTask(int64(i))
+		for i := 0; i < taskCnt; i++ {
+			found, err := mgr.ResumeTask(fmt.Sprintf("%d", i))
 			require.Equal(t, true, found)
 			require.NoError(t, err)
 		}
