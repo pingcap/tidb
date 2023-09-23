@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
+	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -56,7 +57,9 @@ import (
 
 // Handle can update stats info periodically.
 type Handle struct {
-	pool sessionPool
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
+	pool  sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
@@ -74,7 +77,7 @@ type Handle struct {
 	ddlEventCh chan *ddlUtil.Event
 
 	// idxUsageListHead contains all the index usage collectors required by session.
-	idxUsageListHead *SessionIndexUsageCollector
+	idxUsageListHead *usage.SessionIndexUsageCollector
 
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
@@ -88,8 +91,6 @@ type Handle struct {
 
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
 	statsUsage *statsUsage
-
-	globalstatushandler *globalstats.GlobalStatusHandler
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -120,24 +121,6 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
 		return exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, params...)
-	})
-}
-
-func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, analyzeSnapshot bool, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	pruneMode, err := h.GetCurrentPruneMode()
-	if err != nil {
-		return nil, nil, err
-	}
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		optFuncs := []sqlexec.OptionFuncAlias{
-			execOptionForAnalyze[statsVer],
-			sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
-			sqlexec.GetPartitionPruneModeOption(pruneMode),
-			sqlexec.ExecOptionUseCurSession,
-			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
-		}
-		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
 	})
 }
 
@@ -176,12 +159,12 @@ type sessionPool interface {
 // NewHandle creates a Handle for update stats.
 func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
-	gpool := gp.New(math.MaxInt16, time.Minute)
+
 	handle := &Handle{
-		globalstatushandler:     globalstats.NewGlobalStatusHandler(gpool),
+		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		listHead:                NewSessionStatsCollector(),
-		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		idxUsageListHead:        usage.NewSessionIndexUsageCollector(nil),
 		pool:                    pool,
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
@@ -362,9 +345,8 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
 	physicalID int64,
 	isIndex bool,
 	histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table,
 ) (globalStats *globalstats.GlobalStats, err error) {
-	return h.globalstatushandler.MergePartitionStats2GlobalStatsByTableID(sc, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -389,8 +371,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
-) (globalStats *globalstats.GlobalStats, err error) {
+) (*globalstats.GlobalStats, error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return nil, err
@@ -401,7 +382,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	if err := UpdateSCtxVarsForStats(sc); err != nil {
 		return nil, err
 	}
-	return h.globalstatushandler.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
@@ -1797,7 +1778,7 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.globalstatushandler.Close()
+	h.gpool.Close()
 	h.statsCache.Load().Close()
 }
 

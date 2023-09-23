@@ -18,30 +18,16 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
-
-// prettyFileNames removes the directory prefix except the last level from the
-// file names.
-func prettyFileNames(files []string) []string {
-	names := make([]string, 0, len(files))
-	for _, f := range files {
-		dir, file := filepath.Split(f)
-		names = append(names, fmt.Sprintf("%s/%s", filepath.Base(dir), file))
-	}
-	return names
-}
 
 // seekPropsOffsets seeks the statistic files to find the largest offset of
 // sorted data file offsets such that the key at offset is less than or equal to
@@ -123,38 +109,15 @@ func GetAllFileNames(
 }
 
 // CleanUpFiles delete all data and stat files under one subDir.
-func CleanUpFiles(ctx context.Context,
-	store storage.ExternalStorage,
-	subDir string,
-	concurrency uint) error {
+func CleanUpFiles(ctx context.Context, store storage.ExternalStorage, subDir string) error {
 	dataNames, statNames, err := GetAllFileNames(ctx, store, subDir)
 	if err != nil {
 		return err
 	}
-
-	eg := &errgroup.Group{}
-	workerPool := utils.NewWorkerPool(concurrency, "delete global sort files")
-	for i := range dataNames {
-		data := dataNames[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
-			err := store.DeleteFile(ctx, data)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
-	}
-	for i := range statNames {
-		stat := statNames[i]
-		workerPool.ApplyOnErrorGroup(eg, func() error {
-			err := store.DeleteFile(ctx, stat)
-			if err != nil {
-				return err
-			}
-			return nil
-		})
-	}
-	return eg.Wait()
+	allFiles := make([]string, 0, len(dataNames)+len(statNames))
+	allFiles = append(allFiles, dataNames...)
+	allFiles = append(allFiles, statNames...)
+	return store.DeleteFiles(ctx, allFiles)
 }
 
 // MockExternalEngine generates an external engine with the given keys and values.
@@ -242,19 +205,23 @@ func GetMaxOverlapping(points []Endpoint) int64 {
 
 // SortedKVMeta is the meta of sorted kv.
 type SortedKVMeta struct {
-	MinKey      []byte   `json:"min_key"`
-	MaxKey      []byte   `json:"max_key"`
-	TotalKVSize uint64   `json:"total_kv_size"`
-	DataFiles   []string `json:"data_files"`
-	StatFiles   []string `json:"stat_files"`
+	MinKey      []byte `json:"min-key"`
+	MaxKey      []byte `json:"max-key"`
+	TotalKVSize uint64 `json:"total-kv-size"`
+	// seems those 2 fields always generated from MultipleFilesStats,
+	// maybe remove them later.
+	DataFiles          []string            `json:"data-files"`
+	StatFiles          []string            `json:"stat-files"`
+	MultipleFilesStats []MultipleFilesStat `json:"multiple-files-stats"`
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary.
 func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 	meta := &SortedKVMeta{
-		MinKey:      summary.Min.Clone(),
-		MaxKey:      summary.Max.Clone(),
-		TotalKVSize: summary.TotalSize,
+		MinKey:             summary.Min.Clone(),
+		MaxKey:             summary.Max.Clone(),
+		TotalKVSize:        summary.TotalSize,
+		MultipleFilesStats: summary.MultipleFilesStats,
 	}
 	for _, f := range summary.MultipleFilesStats {
 		for _, filename := range f.Filenames {
@@ -273,6 +240,8 @@ func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
 
 	m.DataFiles = append(m.DataFiles, other.DataFiles...)
 	m.StatFiles = append(m.StatFiles, other.StatFiles...)
+
+	m.MultipleFilesStats = append(m.MultipleFilesStats, other.MultipleFilesStats...)
 }
 
 // MergeSummary merges the WriterSummary into this SortedKVMeta.

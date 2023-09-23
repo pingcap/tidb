@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -83,6 +84,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 	defer func() {
 		// Only redact when the task is complete.
 		if len(taskMeta) == 0 && useExtStore {
+			cleanupCloudStorageFiles(ctx, &gTaskMeta)
 			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
 		}
 	}()
@@ -141,7 +143,7 @@ func (*backfillingDispatcherExt) GetNextStep(
 			}
 			multiStats = append(multiStats, subtask.MultipleFilesStats...)
 		}
-		if external.GetMaxOverlappingTotal(multiStats) > 1000 {
+		if external.GetMaxOverlappingTotal(multiStats) > external.MergeSortOverlapThreshold {
 			return proto.StepTwo
 		}
 		return proto.StepThree
@@ -398,7 +400,7 @@ func generateMergePlan(
 	}
 
 	start := 0
-	step := 1000
+	step := external.MergeSortFileCountStep
 	metaArr := make([][]byte, 0, 16)
 	for start < len(dataFiles) {
 		end := start + step
@@ -433,7 +435,7 @@ func getRangeSplitter(
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
@@ -491,6 +493,25 @@ func getSummaryFromLastStep(
 		}
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
+}
+
+func cleanupCloudStorageFiles(ctx context.Context, gTaskMeta *BackfillGlobalMeta) {
+	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
+	if err != nil {
+		logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
+		return
+	}
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	if err != nil {
+		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
+		return
+	}
+	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
+	err = external.CleanUpFiles(ctx, extStore, prefix)
+	if err != nil {
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		return
+	}
 }
 
 func redactCloudStorageURI(

@@ -69,40 +69,26 @@ type (
 	getTableByPhysicalIDFunc    func(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
 	loadTablePartitionStatsFunc func(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
 	// GlobalStatusHandler is used to handle the global-level stats.
-	GlobalStatusHandler struct {
-		// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
-		gpool *gp.Pool
-	}
 )
 
-// NewGlobalStatusHandler creates a new GlobalStatusHandler.
-func NewGlobalStatusHandler(gpool *gp.Pool) *GlobalStatusHandler {
-	return &GlobalStatusHandler{gpool: gpool}
-}
-
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
-func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
+func MergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
+	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-	externalCache := false
-	if allPartitionStats == nil {
-		allPartitionStats = make(map[int64]*statistics.Table)
-	} else {
-		externalCache = true
-	}
+	allPartitionStats := make(map[int64]*statistics.Table)
 	if len(histIDs) == 0 {
 		for _, col := range globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
-			if col.IsGenerated() && !col.GeneratedStored {
+			if col.IsVirtualGenerated() {
 				continue
 			}
 			histIDs = append(histIDs, col.ID)
@@ -214,7 +200,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 			continue
 		}
 		// Merge CMSketch.
-		globalStats.Cms[i] = allCms[i][0].Copy()
+		globalStats.Cms[i] = allCms[i][0]
 		for j := 1; j < len(allCms[i]); j++ {
 			err = globalStats.Cms[i].MergeCMSketch(allCms[i][j])
 			if err != nil {
@@ -228,7 +214,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
 		var poppedTopN []statistics.TopNMeta
 		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
-		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(g.gpool, sc, wrapper,
+		globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(gpool, sc, wrapper,
 			sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
 		if err != nil {
 			return
@@ -247,7 +233,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 		}
 
 		// Merge FMSketch.
-		globalStats.Fms[i] = allFms[i][0].Copy()
+		globalStats.Fms[i] = allFms[i][0]
 		for j := 1; j < len(allFms[i]); j++ {
 			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
 			allFms[i][j].DestroyAndPutToPool()
@@ -261,23 +247,21 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStats(
 		globalStats.Fms[i].DestroyAndPutToPool()
 		globalStats.Hg[i].NDV = globalStatsNDV
 	}
-	if !externalCache {
-		for _, value := range allPartitionStats {
-			value.ReleaseAndPutToPool()
-		}
+	for _, value := range allPartitionStats {
+		value.ReleaseAndPutToPool()
 	}
 	return
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (g *GlobalStatusHandler) MergePartitionStats2GlobalStatsByTableID(
+func MergePartitionStats2GlobalStatsByTableID(
 	sc sessionctx.Context,
+	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
 	physicalID int64,
 	isIndex bool,
 	histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
@@ -289,8 +273,7 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStatsByTableID(
 	}
 
 	globalTableInfo := globalTable.Meta()
-	globalStats, err = g.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs,
-		tablePartitionStats, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
+	globalStats, err = MergePartitionStats2GlobalStats(sc, gpool, opts, is, globalTableInfo, isIndex, histIDs, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
 	if err != nil {
 		return
 	}
@@ -311,9 +294,4 @@ func (g *GlobalStatusHandler) MergePartitionStats2GlobalStatsByTableID(
 	}
 
 	return
-}
-
-// Close closes the GlobalStatusHandler.
-func (g *GlobalStatusHandler) Close() {
-	g.gpool.Close()
 }

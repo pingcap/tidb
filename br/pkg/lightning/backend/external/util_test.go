@@ -22,20 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrettyFileNames(t *testing.T) {
-	filenames := []string{
-		"/tmp/br/backup/1/1_1.sst",
-		"/tmp/br/2/1_2.sst",
-		"/tmp/123/1/1_3",
-	}
-	expected := []string{
-		"1/1_1.sst",
-		"2/1_2.sst",
-		"1/1_3",
-	}
-	require.Equal(t, expected, prettyFileNames(filenames))
-}
-
 func TestSeekPropsOffsets(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
@@ -209,7 +195,7 @@ func TestCleanUpFiles(t *testing.T) {
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 	}, dataFiles)
 
-	require.NoError(t, CleanUpFiles(ctx, store, "/subtask", 10))
+	require.NoError(t, CleanUpFiles(ctx, store, "/subtask"))
 
 	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
 	require.NoError(t, err)
@@ -283,12 +269,14 @@ func TestSortedKVMeta(t *testing.T) {
 	require.Equal(t, uint64(123), meta0.TotalKVSize)
 	require.Equal(t, []string{"f1", "f2"}, meta0.DataFiles)
 	require.Equal(t, []string{"stat1", "stat2"}, meta0.StatFiles)
+	require.Equal(t, summary[0].MultipleFilesStats, meta0.MultipleFilesStats)
 	meta1 := NewSortedKVMeta(summary[1])
 	require.Equal(t, []byte("x"), meta1.MinKey)
 	require.Equal(t, []byte("y"), meta1.MaxKey)
 	require.Equal(t, uint64(177), meta1.TotalKVSize)
 	require.Equal(t, []string{"f3", "f4"}, meta1.DataFiles)
 	require.Equal(t, []string{"stat3", "stat4"}, meta1.StatFiles)
+	require.Equal(t, summary[1].MultipleFilesStats, meta1.MultipleFilesStats)
 
 	meta0.MergeSummary(summary[1])
 	require.Equal(t, []byte("a"), meta0.MinKey)
@@ -296,6 +284,9 @@ func TestSortedKVMeta(t *testing.T) {
 	require.Equal(t, uint64(300), meta0.TotalKVSize)
 	require.Equal(t, []string{"f1", "f2", "f3", "f4"}, meta0.DataFiles)
 	require.Equal(t, []string{"stat1", "stat2", "stat3", "stat4"}, meta0.StatFiles)
+	mergedStats := append([]MultipleFilesStat{}, summary[0].MultipleFilesStats...)
+	mergedStats = append(mergedStats, summary[1].MultipleFilesStats...)
+	require.Equal(t, mergedStats, meta0.MultipleFilesStats)
 
 	meta00 := NewSortedKVMeta(summary[0])
 	meta00.Merge(meta1)
