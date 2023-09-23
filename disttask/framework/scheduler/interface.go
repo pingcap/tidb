@@ -33,9 +33,10 @@ type TaskTable interface {
 	UpdateSubtaskStateAndError(subtaskID int64, state string, err error) error
 	FinishSubtask(subtaskID int64, meta []byte) error
 
-	HasSubtasksInStates(instanceID string, taskID int64, step int64, states ...interface{}) (bool, error)
-	UpdateErrorToSubtask(instanceID string, taskID int64, err error) error
-	IsSchedulerCanceled(taskID int64, instanceID string) (bool, error)
+	HasSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) (bool, error)
+	UpdateErrorToSubtask(tidbID string, taskID int64, err error) error
+	IsSchedulerCanceled(tidbID string, taskID int64) (bool, error)
+	PauseSubtasks(tidbID string, taskID int64) error
 }
 
 // Pool defines the interface of a pool.
@@ -51,6 +52,7 @@ type Scheduler interface {
 	Init(context.Context) error
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
+	Pause(context.Context, *proto.Task) error
 	Close()
 }
 

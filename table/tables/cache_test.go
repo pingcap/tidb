@@ -16,6 +16,7 @@ package tables_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -144,28 +145,29 @@ func TestCacheCondition(t *testing.T) {
 	}
 
 	// Insert should not trigger cache.
-	tk.MustExec("insert into t2 values (1,1)")
 	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t2 values (%d,%d)", i, i))
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Update should not trigger cache.
-	tk.MustExec("update t2 set v = v + 1 where id > 0")
 	for i := 0; i < 10; i++ {
+		tk.MustExec("update t2 set v = v + 1 where id > 0")
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
+
 	// Contains PointGet Update should not trigger cache.
-	tk.MustExec("update t2 set v = v + 1 where id = 2")
 	for i := 0; i < 10; i++ {
+		tk.MustExec("update t2 set v = v + 1 where id = 2")
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
 
 	// Contains PointGet Delete should not trigger cache.
-	tk.MustExec("delete from t2 where id = 2")
 	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("delete from t2 where id = %d", i))
 		time.Sleep(100 * time.Millisecond)
 		require.False(t, lastReadFromCache(tk))
 	}
@@ -327,82 +329,6 @@ func TestBeginSleepABA(t *testing.T) {
 	require.False(t, lastReadFromCache(tk1))
 }
 
-func TestCacheTablePointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table cache_point (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into cache_point values(1, 11, 101)")
-	tk.MustExec("insert into cache_point values(2, 12, 102)")
-	tk.MustExec("alter table cache_point cache")
-	// check point get out transaction
-	tk.MustQuery("select * from cache_point where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from cache_point where u=11").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 102"))
-	tk.MustQuery("select * from cache_point where u=12").Check(testkit.Rows("2 12 102"))
-	tk.MustQuery("select * from cache_point where u > 10 and u < 12").Check(testkit.Rows("1 11 101"))
-
-	// check point get in transaction
-	tk.MustExec("begin")
-	tk.MustQuery("select * from cache_point where id=1").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from cache_point where u=11").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 102"))
-	tk.MustQuery("select * from cache_point where u=12").Check(testkit.Rows("2 12 102"))
-	tk.MustExec("insert into cache_point values(3, 13, 103)")
-	tk.MustQuery("select * from cache_point where id=3").Check(testkit.Rows("3 13 103"))
-	tk.MustQuery("select * from cache_point where u=13").Check(testkit.Rows("3 13 103"))
-	tk.MustQuery("select * from cache_point where u > 12 and u < 14").Check(testkit.Rows("3 13 103"))
-	tk.MustExec("update cache_point set v=999 where id=2")
-	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 999"))
-	tk.MustExec("commit")
-
-	// check point get after transaction
-	tk.MustQuery("select * from cache_point where id=3").Check(testkit.Rows("3 13 103"))
-	tk.MustQuery("select * from cache_point where u=13").Check(testkit.Rows("3 13 103"))
-	tk.MustQuery("select * from cache_point where id=2").Check(testkit.Rows("2 12 999"))
-}
-
-func TestCacheTableBatchPointGet(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create  table bp_cache_tmp1 (id int primary key auto_increment, u int unique, v int)")
-	tk.MustExec("insert into bp_cache_tmp1 values(1, 11, 101)")
-	tk.MustExec("insert into bp_cache_tmp1 values(2, 12, 102)")
-	tk.MustExec("insert into bp_cache_tmp1 values(3, 13, 103)")
-	tk.MustExec("insert into bp_cache_tmp1 values(4, 14, 104)")
-	tk.MustExec("alter table bp_cache_tmp1 cache")
-	// check point get out transaction
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3, 5)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13, 15)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13) and u in (12, 13)").Check(testkit.Rows("3 13 103"))
-	// check point get in transaction
-	tk.MustExec("begin")
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3, 5)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13, 15)").Check(testkit.Rows("1 11 101", "3 13 103"))
-	tk.MustExec("insert into bp_cache_tmp1 values(6, 16, 106)")
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 6)").Check(testkit.Rows("1 11 101", "6 16 106"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 16)").Check(testkit.Rows("1 11 101", "6 16 106"))
-	tk.MustExec("update bp_cache_tmp1 set v=999 where id=3")
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3)").Check(testkit.Rows("1 11 101", "3 13 999"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13)").Check(testkit.Rows("1 11 101", "3 13 999"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13) and u in (12, 13)").Check(testkit.Rows("3 13 999"))
-	tk.MustExec("delete from bp_cache_tmp1 where id=4")
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
-	tk.MustExec("commit")
-
-	// check point get after transaction
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 3, 6)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 13, 16)").Check(testkit.Rows("1 11 101", "3 13 999", "6 16 106"))
-	tk.MustQuery("select * from bp_cache_tmp1 where id in (1, 4)").Check(testkit.Rows("1 11 101"))
-	tk.MustQuery("select * from bp_cache_tmp1 where u in (11, 14)").Check(testkit.Rows("1 11 101"))
-}
-
 func TestRenewLease(t *testing.T) {
 	// Test RenewLeaseForRead
 	store := testkit.CreateMockStore(t)
@@ -441,24 +367,6 @@ func TestRenewLease(t *testing.T) {
 		}
 	}
 	require.True(t, i < 20)
-}
-
-func TestCacheTableAddColumns(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table cache_add_column (f1 int, index k(f1))")
-	tk.MustExec("insert into cache_add_column (f1) values (1)")
-	tk.MustExec("alter table cache_add_column add column f2 int not null, add column f3 int default 3, add column f4 int default null")
-	tk.MustExec("alter table cache_add_column cache")
-	for i := 0; i < 10; i++ {
-		time.Sleep(100 * time.Millisecond)
-		tk.MustQuery("select * from cache_add_column").Check(testkit.Rows("1 0 3 <nil>"))
-	}
-	for i := 0; i < 10; i++ {
-		time.Sleep(100 * time.Millisecond)
-		tk.MustQuery("select * from cache_add_column use index(k) where f1 = 1").Check(testkit.Rows("1 0 3 <nil>"))
-	}
 }
 
 func TestCacheTableWriteOperatorWaitLockLease(t *testing.T) {

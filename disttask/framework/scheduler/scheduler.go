@@ -82,7 +82,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				logutil.Logger(s.logCtx).Info("scheduler exits", zap.Error(ctx.Err()))
 				return
 			case <-ticker.C:
-				canceled, err := s.taskTable.IsSchedulerCanceled(s.taskID, s.id)
+				canceled, err := s.taskTable.IsSchedulerCanceled(s.id, s.taskID)
 				if err != nil {
 					continue
 				}
@@ -375,6 +375,17 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		s.updateSubtaskStateAndError(subtask, proto.TaskStateReverted, nil)
 	}
 	return s.getError()
+}
+
+// Pause pause the scheduler task.
+func (s *BaseScheduler) Pause(_ context.Context, task *proto.Task) error {
+	logutil.Logger(s.logCtx).Info("scheduler pause subtasks")
+	// pause all running subtasks.
+	if err := s.taskTable.PauseSubtasks(s.id, task.ID); err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	return nil
 }
 
 // Close closes the scheduler when all the subtasks are complete.

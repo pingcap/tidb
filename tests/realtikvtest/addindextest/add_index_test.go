@@ -142,7 +142,8 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 
-	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;")
+	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")

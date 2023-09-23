@@ -31,7 +31,7 @@ go_test(
     srcs = ["table_test.go"],
     flaky = True,
     race = "on",
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         ":storage",
         "//disttask/framework/proto",
