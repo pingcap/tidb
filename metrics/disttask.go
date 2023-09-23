@@ -36,8 +36,8 @@ var (
 	DistDDLSubTaskStartTimeGauge *prometheus.GaugeVec
 )
 
-// InitDistDDLMetrics initializes disttask metrics.
-func InitDistDDLMetrics() {
+// InitDistTaskMetrics initializes disttask metrics.
+func InitDistTaskMetrics() {
 	DistDDLSubTaskCntGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
