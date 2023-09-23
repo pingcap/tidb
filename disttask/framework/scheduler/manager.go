@@ -157,7 +157,7 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 	}
 }
 
-// fetchAndFastCancelTasks fetches the reverting tasks from the global task table and fast cancels them.
+// fetchAndFastCancelTasks fetches the reverting/pausing tasks from the global task table and fast cancels them.
 func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 	ticker := time.NewTicker(checkTime)
 	for {
@@ -173,6 +173,17 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 				continue
 			}
 			m.onCanceledTasks(ctx, tasks)
+
+			// cancel pending/running subtasks, and mark them as paused.
+			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStatePausing)
+			if err != nil {
+				m.onError(err)
+				continue
+			}
+			if err := m.onPausingTasks(pausingTasks); err != nil {
+				m.onError(err)
+				continue
+			}
 		}
 	}
 }
@@ -206,7 +217,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	}
 }
 
-// onCanceledTasks cancels the running tasks.
+// onCanceledTasks cancels the running subtasks.
 func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -216,6 +227,22 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 			cancel()
 		}
 	}
+}
+
+// onPausingTasks pauses/cancels the pending/running subtasks.
+func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, task := range tasks {
+		logutil.Logger(m.logCtx).Info("onPausingTasks", zap.Any("task_id", task.ID))
+		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
+			cancel()
+		}
+		if err := m.taskTable.PauseSubtasks(m.id, task.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // cancelAllRunningTasks cancels all running tasks.
@@ -302,13 +329,14 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		} else if !exist {
 			continue
 		}
-
 		switch task.State {
 		case proto.TaskStateRunning:
 			runCtx, runCancel := context.WithCancel(ctx)
 			m.registerCancelFunc(task.ID, runCancel)
 			err = scheduler.Run(runCtx, task)
 			runCancel()
+		case proto.TaskStatePausing:
+			err = scheduler.Pause(ctx, task)
 		case proto.TaskStateReverting:
 			err = scheduler.Rollback(ctx, task)
 		}

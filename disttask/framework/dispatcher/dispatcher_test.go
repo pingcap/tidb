@@ -245,7 +245,7 @@ func TestTaskFailInManager(t *testing.T) {
 	}, time.Second*10, time.Millisecond*300)
 }
 
-func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel bool) {
+func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel, isPauseAndResume bool) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
@@ -336,7 +336,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel 
 
 	// test DetectTaskLoop
 	checkGetTaskState := func(expectedState string) {
-		for i := 0; i < cnt; i++ {
+		i := 0
+		for ; i < cnt; i++ {
 			tasks, err := mgr.GetGlobalTasksInStates(expectedState)
 			require.NoError(t, err)
 			if len(tasks) == taskCnt {
@@ -344,6 +345,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel 
 			}
 			time.Sleep(time.Millisecond * 50)
 		}
+		require.Less(t, i, cnt)
 	}
 	// Test all subtasks are successful.
 	var err error
@@ -365,6 +367,30 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel 
 			err = mgr.CancelGlobalTask(int64(i))
 			require.NoError(t, err)
 		}
+	} else if isPauseAndResume {
+		for i := 0; i < taskCnt; i++ {
+			found, err := mgr.PauseTask(fmt.Sprintf("%d", i))
+			require.Equal(t, true, found)
+			require.NoError(t, err)
+		}
+		for i := 1; i <= subtaskCnt*taskCnt; i++ {
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStatePaused, nil)
+			require.NoError(t, err)
+		}
+		checkGetTaskState(proto.TaskStatePaused)
+		for i := 0; i < taskCnt; i++ {
+			found, err := mgr.ResumeTask(fmt.Sprintf("%d", i))
+			require.Equal(t, true, found)
+			require.NoError(t, err)
+		}
+
+		// Mock subtasks succeed.
+		for i := 1; i <= subtaskCnt*taskCnt; i++ {
+			err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
+			require.NoError(t, err)
+		}
+		checkGetTaskState(proto.TaskStateSucceed)
+		return
 	} else {
 		// Test each task has a subtask failed.
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)"))
@@ -401,35 +427,43 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel 
 }
 
 func TestSimple(t *testing.T) {
-	checkDispatch(t, 1, true, false, false)
+	checkDispatch(t, 1, true, false, false, false)
 }
 
 func TestSimpleErrStage(t *testing.T) {
-	checkDispatch(t, 1, false, false, false)
+	checkDispatch(t, 1, false, false, false, false)
 }
 
 func TestSimpleCancel(t *testing.T) {
-	checkDispatch(t, 1, false, true, false)
+	checkDispatch(t, 1, false, true, false, false)
 }
 
 func TestSimpleSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 1, false, false, true)
+	checkDispatch(t, 1, false, false, true, false)
 }
 
 func TestParallel(t *testing.T) {
-	checkDispatch(t, 3, true, false, false)
+	checkDispatch(t, 3, true, false, false, false)
 }
 
 func TestParallelErrStage(t *testing.T) {
-	checkDispatch(t, 3, false, false, false)
+	checkDispatch(t, 3, false, false, false, false)
 }
 
 func TestParallelCancel(t *testing.T) {
-	checkDispatch(t, 3, false, true, false)
+	checkDispatch(t, 3, false, true, false, false)
 }
 
 func TestParallelSubtaskCancel(t *testing.T) {
-	checkDispatch(t, 3, false, false, true)
+	checkDispatch(t, 3, false, false, true, false)
+}
+
+func TestPause(t *testing.T) {
+	checkDispatch(t, 1, false, false, false, true)
+}
+
+func TestParallelPause(t *testing.T) {
+	checkDispatch(t, 3, false, false, false, true)
 }
 
 func TestVerifyTaskStateTransform(t *testing.T) {

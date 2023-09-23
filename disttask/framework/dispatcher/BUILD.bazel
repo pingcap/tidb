@@ -37,7 +37,7 @@ go_test(
     embed = [":dispatcher"],
     flaky = True,
     race = "off",
-    shard_count = 11,
+    shard_count = 13,
     deps = [
         "//disttask/framework/mock",
         "//disttask/framework/proto",

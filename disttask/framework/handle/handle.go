@@ -106,18 +106,48 @@ func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concu
 
 // CancelGlobalTask cancels a global task.
 func CancelGlobalTask(taskKey string) error {
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := taskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
 		return err
 	}
-	if globalTask == nil {
+	if task == nil {
+		logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
+
 		return nil
 	}
-	return globalTaskManager.CancelGlobalTask(globalTask.ID)
+	return taskManager.CancelGlobalTask(task.ID)
+}
+
+// PauseTask pauses a task.
+func PauseTask(taskKey string) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	found, err := taskManager.PauseTask(taskKey)
+	if !found {
+		logutil.BgLogger().Info("task not pausable", zap.String("taskKey", taskKey))
+		return nil
+	}
+	return err
+}
+
+// ResumeTask resumes a task.
+func ResumeTask(taskKey string) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	found, err := taskManager.ResumeTask(taskKey)
+	if !found {
+		logutil.BgLogger().Info("task not resumable", zap.String("taskKey", taskKey))
+		return nil
+	}
+	return err
 }
 
 // RunWithRetry runs a function with retry, when retry exceed max retry time, it
