@@ -183,6 +183,12 @@ type Expression interface {
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
+	// ExplainInfo4InList returns operator information to be explained for plan digest.
+	ExplainInfo4InList() string
+
+	// ExplainNormalizedInfo4InList returns operator normalized information for plan digest.
+	ExplainNormalizedInfo4InList() string
+
 	// HashCode creates the hashcode for expression which can be used to identify itself from other expression.
 	// It generated as the following:
 	// Constant: ConstantFlag+encoded value

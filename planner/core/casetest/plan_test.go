@@ -154,6 +154,28 @@ func TestNormalizedPlan(t *testing.T) {
 	}
 }
 
+func TestPlanDigest4InList(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int);")
+	tk.Session().GetSessionVars().PlanID.Store(0)
+	tk.MustExec("select * from t where a in (1, 2);")
+	info := tk.Session().ShowProcess()
+	require.NotNil(t, info)
+	p, ok := info.Plan.(core.Plan)
+	require.True(t, ok)
+	_, digest := core.NormalizePlan(p)
+	tk.MustExec("select * from t where a in (1, 2, 3);")
+	latestinfo := tk.Session().ShowProcess()
+	require.NotNil(t, latestinfo)
+	latestp, ok := latestinfo.Plan.(core.Plan)
+	require.True(t, ok)
+	_, latestdigest := core.NormalizePlan(latestp)
+	require.Equal(t, digest, latestdigest)
+}
+
 func TestNormalizedPlanForDiffStore(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
