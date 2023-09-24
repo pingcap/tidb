@@ -84,7 +84,6 @@ func MergePartitionStats2GlobalStats(
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-	allPartitionStats := make(map[int64]*statistics.Table)
 	if len(histIDs) == 0 {
 		for _, col := range globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
@@ -122,24 +121,18 @@ func MergePartitionStats2GlobalStats(
 			err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
 			return
 		}
-
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-
-		partitionStats, ok = allPartitionStats[partitionID]
 		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
-		if !ok {
-			var err1 error
-			partitionStats, err1 = loadTablePartitionStatsFn(tableInfo, &def)
-			if err1 != nil {
-				if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
-					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
-					continue
-				}
-				err = err1
-				return
+		var err1 error
+		partitionStats, err1 = loadTablePartitionStatsFn(tableInfo, &def)
+		if err1 != nil {
+			if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
+				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
+				continue
 			}
-			allPartitionStats[partitionID] = partitionStats
+			err = err1
+			return
 		}
 
 		for i := 0; i < globalStats.Num; i++ {
@@ -189,6 +182,7 @@ func MergePartitionStats2GlobalStats(
 				allFms[i] = append(allFms[i], fms)
 			}
 		}
+		partitionStats.ReleaseAndPutToPool()
 	}
 
 	// After collect all the statistics from the partition-level stats,
@@ -246,9 +240,6 @@ func MergePartitionStats2GlobalStats(
 		}
 		globalStats.Fms[i].DestroyAndPutToPool()
 		globalStats.Hg[i].NDV = globalStatsNDV
-	}
-	for _, value := range allPartitionStats {
-		value.ReleaseAndPutToPool()
 	}
 	return
 }
