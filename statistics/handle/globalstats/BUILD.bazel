@@ -28,13 +28,22 @@ go_library(
 go_test(
     name = "globalstats_test",
     timeout = "short",
-    srcs = ["topn_bench_test.go"],
+    srcs = [
+        "global_stats_test.go",
+        "topn_bench_test.go",
+    ],
     embed = [":globalstats"],
     flaky = True,
     deps = [
+        "//infoschema",
+        "//parser/ast",
+        "//parser/model",
         "//parser/mysql",
+        "//sessionctx",
         "//sessionctx/stmtctx",
         "//statistics",
+        "//table",
+        "//testkit",
         "//types",
         "//util/chunk",
         "//util/codec",
