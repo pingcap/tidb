@@ -46,7 +46,7 @@ func buildFuke() (*model.TableInfo, []int64) {
 		columns = append(columns, &model.ColumnInfo{})
 		hists = append(hists, int64(i))
 	}
-	var partition *model.PartitionInfo
+	var partition = &model.PartitionInfo{}
 	partition.Definitions = make([]model.PartitionDefinition, 0, 2)
 	return &model.TableInfo{
 		ID:        1,
