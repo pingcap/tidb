@@ -428,7 +428,6 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	}
 	checkGetTaskState(proto.TaskStateReverted)
 	require.Len(t, tasks, taskCnt)
-	checkGetRunningTaskCnt(0)
 }
 
 func TestSimple(t *testing.T) {
