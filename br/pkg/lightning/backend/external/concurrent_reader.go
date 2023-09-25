@@ -37,7 +37,6 @@ type singeFileReader struct {
 	name     string
 
 	storage storage.ExternalStorage
-	buffer  []byte
 }
 
 // newSingeFileReader creates a new singeFileReader.
@@ -45,6 +44,7 @@ func newSingeFileReader(
 	ctx context.Context,
 	st storage.ExternalStorage,
 	name string,
+	offset int64,
 	fileSize int64,
 	concurrency int,
 	readBufferSize int,
@@ -56,8 +56,7 @@ func newSingeFileReader(
 		ctx:               ctx,
 		concurrency:       concurrency,
 		readBufferSize:    readBufferSize,
-		currentFileOffset: 0,
-		bufferReadOffset:  0,
+		currentFileOffset: offset,
 		fileSize:          fileSize,
 		name:              name,
 		storage:           st,

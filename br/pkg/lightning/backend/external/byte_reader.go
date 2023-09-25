@@ -36,7 +36,7 @@ var (
 // data to improve throughput.
 type byteReader struct {
 	ctx           context.Context
-	storageReader storage.ReadSeekCloser
+	storageReader storage.ExternalFileReader
 
 	// curBuf is either smallBuf or concurrentReader.largeBuf.
 	curBuf       []byte
@@ -46,16 +46,20 @@ type byteReader struct {
 	retPointers []*[]byte
 
 	concurrentReader struct {
-		now      bool
-		expected bool
-
 		largeBufferPool *membuf.Buffer
-		largeBuf        []byte
+		store           storage.ExternalStorage
+		filename        string
+		concurrency     int
+		bufSizePerConc  int
+
+		now       bool
+		expected  bool
+		largeBuf  []byte
+		reader    *singeFileReader
+		reloadCnt int
 	}
-	//useConcurrentReaderCurrent bool
-	//
-	//currFileOffset int64
-	//conReader      *singeFileReader
+
+	logger *zap.Logger
 }
 
 func openStoreReaderAndSeek(
@@ -75,14 +79,13 @@ func openStoreReaderAndSeek(
 	return storageReader, nil
 }
 
-// newByteReader wraps readNBytes functionality to storageReader.
+// newByteReader wraps readNBytes functionality to storageReader. If store and
+// filename are also given, this reader can use needLargePrefetch to switch to
+// concurrent reading mode.
 func newByteReader(
 	ctx context.Context,
 	storageReader storage.ExternalFileReader,
 	bufSize int,
-	st storage.ExternalStorage,
-	name string,
-	defaultUseConcurrency bool,
 ) (r *byteReader, err error) {
 	defer func() {
 		if err != nil && r != nil {
@@ -96,15 +99,45 @@ func newByteReader(
 		curBufOffset:  0,
 	}
 	r.curBuf = r.smallBuf
-	r.needLargePrefetch(defaultUseConcurrency)
+	r.logger = logutil.Logger(r.ctx)
 	return r, r.reload()
+}
+
+func (r *byteReader) enableConcurrentRead(
+	store storage.ExternalStorage,
+	filename string,
+	concurrency int,
+	bufSizePerConc int,
+	bufferPool *membuf.Buffer,
+) {
+	r.concurrentReader.store = store
+	r.concurrentReader.filename = filename
+	r.concurrentReader.concurrency = concurrency
+	r.concurrentReader.bufSizePerConc = bufSizePerConc
+	r.concurrentReader.largeBufferPool = bufferPool
 }
 
 // needLargePrefetch is used to help implement sortedReader.needLargePrefetch.
 // See the comment of the interface.
-func (r *byteReader) needLargePrefetch(useConcurrent bool) {
-	here
-	r.concurrentReader.expected = useConcurrent
+func (r *byteReader) needLargePrefetch(useConcurrent bool) error {
+	readerFields := &r.concurrentReader
+	if readerFields.store == nil {
+		r.logger.Warn("concurrent reader is not enabled, skip switching")
+		return
+	}
+	if !useConcurrent {
+		readerFields.now = false
+		readerFields.largeBuf = nil
+		readerFields.largeBufferPool.Destroy()
+		// largeBuf is always fully loaded except for it's the end of file.
+		// When it's the end, TODO: explain it won't affect
+		largeBufSize := readerFields.bufSizePerConc * readerFields.concurrency
+		delta := int64(r.curBufOffset + readerFields.reloadCnt*largeBufSize)
+		_, err := r.storageReader.Seek(delta, io.SeekCurrent)
+		return err
+	}
+	readerFields.expected = useConcurrent
+	return nil
 }
 
 func (r *byteReader) switchToConcurrentReader() error {
@@ -115,21 +148,30 @@ func (r *byteReader) switchToConcurrentReader() error {
 	if err != nil {
 		return err
 	}
-	r.currFileOffset = currOffset
-	r.conReader.currentFileOffset = currOffset
-	r.conReader.bufferReadOffset = 0
+	fileSize, err := r.storageReader.GetFileSize()
+	if err != nil {
+		return err
+	}
+	readerFields := &r.concurrentReader
+	readerFields.reader, err = newSingeFileReader(
+		r.ctx,
+		readerFields.store,
+		readerFields.filename,
+		currOffset,
+		fileSize,
+		readerFields.concurrency,
+		readerFields.bufSizePerConc,
+	)
+	if err != nil {
+		return err
+	}
 
-	r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
-	r.useConcurrentReaderCurrent = true
+	totalSize := readerFields.concurrency * readerFields.bufSizePerConc
+	readerFields.largeBuf = readerFields.largeBufferPool.AllocBytes(totalSize)
+	r.curBuf = readerFields.largeBuf
+	r.curBufOffset = 0
+	readerFields.now = true
 	return nil
-}
-
-func (r *byteReader) switchToNormalReaderImpl() error {
-	r.useConcurrentReaderCurrent = false
-	r.currFileOffset = r.conReader.currentFileOffset
-	r.conReader.buffer = nil
-	_, err := r.storageReader.Seek(r.currFileOffset, io.SeekStart)
-	return err
 }
 
 // readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
@@ -197,46 +239,37 @@ func (r *byteReader) reload() error {
 	now := r.concurrentReader.now
 	// in reload only false -> true is possible
 	if !now && to {
-		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", true))
+		r.logger.Info("switch reader mode", zap.Bool("use concurrent mode", true))
 		err := r.switchToConcurrentReader()
 		if err != nil {
 			return err
 		}
 	}
 
-	if to != now {
-		if to {
-			err := r.switchToConcurrentReader()
-			if err != nil {
-				return err
-			}
-		} else {
-			err := r.switchToNormalReaderImpl()
-			if err != nil {
-				return err
-			}
-		}
+	if r.concurrentReader.now {
+		r.concurrentReader.reloadCnt++
+		return r.concurrentReader.reader.reload(r.concurrentReader.largeBuf)
 	}
-	if to {
-		return r.conReader.reload()
-	}
-	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
+	nBytes, err := io.ReadFull(r.storageReader, r.curBuf[0:])
 	if err != nil {
 		switch err {
 		case io.EOF:
 			return err
 		case io.ErrUnexpectedEOF:
 			// The last batch.
-			r.buf = r.buf[:nBytes]
+			r.curBuf = r.curBuf[:nBytes]
 		default:
-			logutil.Logger(r.ctx).Warn("other error during reload", zap.Error(err))
+			r.logger.Warn("other error during reload", zap.Error(err))
 			return err
 		}
 	}
-	r.bufOffset = 0
+	r.curBufOffset = 0
 	return nil
 }
 
 func (r *byteReader) Close() error {
+	if r.concurrentReader.now {
+		here
+	}
 	return r.storageReader.Close()
 }
