@@ -324,8 +324,8 @@ func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step int64, designated
 	return nil
 }
 
-// GetSubtaskInStates gets the subtask in the states.
-func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
+// GetSubtasksInStates gets all subtasks by given states.
+func (stm *TaskManager) GetSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) ([]*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
@@ -334,6 +334,25 @@ func (stm *TaskManager) GetSubtaskInStates(tidbID string, taskID int64, step int
 	if err != nil {
 		return nil, err
 	}
+
+	subtasks := make([]*proto.Subtask, len(rs))
+	for i, row := range rs {
+		subtasks[i] = row2SubTask(row)
+	}
+	return subtasks, nil
+}
+
+// GetFirstSubtaskInStates gets the first subtask by given states.
+func (stm *TaskManager) GetFirstSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error) {
+	args := []interface{}{tidbID, taskID, step}
+	args = append(args, states...)
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, `select * from mysql.tidb_background_subtask
+		where exec_id = %? and task_key = %? and step = %?
+		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
+	if err != nil {
+		return nil, err
+	}
+
 	if len(rs) == 0 {
 		return nil, nil
 	}
