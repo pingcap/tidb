@@ -199,6 +199,21 @@ func MergePartitionStats2GlobalStats(
 			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
 			continue
 		}
+		// FMSketch use many memory, so we first deal with it and then destroy it.
+		// Merge FMSketch.
+		globalStats.Fms[i] = allFms[i][0]
+		for j := 1; j < len(allFms[i]); j++ {
+			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			allFms[i][j].DestroyAndPutToPool()
+		}
+
+		// Update the global NDV.
+		globalStatsNDV := globalStats.Fms[i].NDV()
+		if globalStatsNDV > globalStats.Count {
+			globalStatsNDV = globalStats.Count
+		}
+		globalStats.Fms[i].DestroyAndPutToPool()
+
 		// Merge CMSketch.
 		globalStats.Cms[i] = allCms[i][0]
 		for j := 1; j < len(allCms[i]); j++ {
@@ -232,19 +247,6 @@ func MergePartitionStats2GlobalStats(
 			globalStats.Hg[i].Buckets[j].NDV = 0
 		}
 
-		// Merge FMSketch.
-		globalStats.Fms[i] = allFms[i][0]
-		for j := 1; j < len(allFms[i]); j++ {
-			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			allFms[i][j].DestroyAndPutToPool()
-		}
-
-		// Update the global NDV.
-		globalStatsNDV := globalStats.Fms[i].NDV()
-		if globalStatsNDV > globalStats.Count {
-			globalStatsNDV = globalStats.Count
-		}
-		globalStats.Fms[i].DestroyAndPutToPool()
 		globalStats.Hg[i].NDV = globalStatsNDV
 	}
 	for _, value := range allPartitionStats {
