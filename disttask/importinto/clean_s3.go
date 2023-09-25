@@ -29,6 +29,7 @@ import (
 
 var _ dispatcher.CleanUpRoutine = (*ImportCleanUpS3)(nil)
 
+// ImportCleanUpS3 implements dispatcher.CleanUpRoutine.
 type ImportCleanUpS3 struct {
 	ctx  context.Context
 	task *proto.Task
