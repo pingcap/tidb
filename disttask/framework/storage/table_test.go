@@ -531,7 +531,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.NotNil(t, task)
 
 	// task with fail transfer
-	taskID, err = gm.AddNewGlobalTask("3", proto.TaskTypeExample, 1, nil)
+	_, err = gm.AddNewGlobalTask("3", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	tasks, err = gm.GetGlobalTasksInStates(proto.TaskStatePending)
 	require.NoError(t, err)
