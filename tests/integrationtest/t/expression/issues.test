@@ -1888,3 +1888,12 @@ select (@j := case when substr(t2.b,1,3)=@i then 1 else @j+1 end) from t2, (sele
 select b'10000000' DIV 10;
 select cast(b'10000000' as unsigned) / 10;
 select b'10000000' / 10;
+
+# TestIssue42622
+drop table if exists t0;
+create table t0 (c0 int);
+select * from (select (92 / 4) as c4) as subq_0 where exists (
+  select 1 as c0
+  union all
+  select 1 as c0 from (t0 as ref_88) where (subq_0.c4) >= (subq_0.c4)
+);

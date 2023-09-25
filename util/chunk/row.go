@@ -173,14 +173,15 @@ func (r Row) DatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 		}
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
+			dec := r.GetMyDecimal(colIdx)
+			d.SetMysqlDecimal(dec)
 			d.SetLength(tp.GetFlen())
 			// If tp.decimal is unspecified(-1), we should set it to the real
 			// fraction length of the decimal value, if not, the d.Frac will
 			// be set to MAX_UINT16 which will cause unexpected BadNumber error
 			// when encoding.
 			if tp.GetDecimal() == types.UnspecifiedLength {
-				d.SetFrac(d.Frac())
+				d.SetFrac(int(dec.GetDigitsFrac()))
 			} else {
 				d.SetFrac(tp.GetDecimal())
 			}
