@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/domain"
@@ -80,7 +81,7 @@ func TestBackfillOperators(t *testing.T) {
 		// Make sure the buffer is large enough since the chunks do not recycled.
 		srcChkPool := make(chan *chunk.Chunk, regionCnt*2)
 		for i := 0; i < regionCnt*2; i++ {
-			srcChkPool <- chunk.NewChunkWithCapacity(copCtx.FieldTypes(), 100)
+			srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, 100)
 		}
 
 		ctx := context.Background()
@@ -132,7 +133,7 @@ func TestBackfillOperators(t *testing.T) {
 
 		src := newTestSource(chunkResults...)
 		ingestOp := ddl.NewIndexIngestOperator(
-			opCtx, copCtx, sessPool, pTbl, index, mockEngine, srcChkPool, 3)
+			opCtx, copCtx, sessPool, pTbl, []table.Index{index}, []ingest.Engine{mockEngine}, srcChkPool, 3)
 		sink := newTestSink[ddl.IndexWriteResult]()
 
 		operator.Compose[ddl.IndexRecordChunk](src, ingestOp)
@@ -177,10 +178,10 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 		opCtx, store,
 		sessPool,
 		mockBackendCtx,
-		mockEngine,
+		[]ingest.Engine{mockEngine},
 		tk.Session(),
 		tbl.(table.PhysicalTable),
-		idxInfo,
+		[]*model.IndexInfo{idxInfo},
 		startKey,
 		endKey,
 		totalRowCount,
@@ -250,10 +251,10 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 			opCtx, store,
 			sessPool,
 			mockBackendCtx,
-			mockEngine,
+			[]ingest.Engine{mockEngine},
 			tk.Session(),
 			tbl.(table.PhysicalTable),
-			idxInfo,
+			[]*model.IndexInfo{idxInfo},
 			startKey,
 			endKey,
 			&atomic.Int64{},
@@ -278,7 +279,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 }
 
 func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt int) (
-	tbl table.Table, idxInfo *model.IndexInfo, start, end kv.Key, copCtx *ddl.CopContext) {
+	tbl table.Table, idxInfo *model.IndexInfo, start, end kv.Key, copCtx copr.CopContext) {
 	tk.MustExec("drop database if exists op;")
 	tk.MustExec("create database op;")
 	tk.MustExec("use op;")
@@ -302,7 +303,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
-	copCtx, err = ddl.NewCopContext(tblInfo, idxInfo, tk.Session())
+	copCtx, err = copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
 	require.NoError(t, err)
 	return tbl, idxInfo, start, end, copCtx
 }

@@ -44,7 +44,7 @@ type BackendCtx interface {
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
-	ResetWorkers(jobID, indexID int64)
+	ResetWorkers(jobID int64)
 	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()

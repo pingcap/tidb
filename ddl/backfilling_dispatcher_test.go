@@ -139,7 +139,7 @@ func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName 
 				IsDistReorg: true,
 			},
 		},
-		EleID:      10,
+		EleIDs:     []int64{10},
 		EleTypeKey: meta.IndexElementKey,
 	}
 

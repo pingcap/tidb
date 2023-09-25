@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/disttask/operator"
@@ -115,30 +116,35 @@ func NewAddIndexIngestPipeline(
 	store kv.Storage,
 	sessPool opSessPool,
 	backendCtx ingest.BackendCtx,
-	engine ingest.Engine,
+	engines []ingest.Engine,
 	sessCtx sessionctx.Context,
 	tbl table.PhysicalTable,
-	idxInfo *model.IndexInfo,
+	idxInfos []*model.IndexInfo,
 	startKey, endKey kv.Key,
 	totalRowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 ) (*operator.AsyncPipeline, error) {
-	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-	copCtx, err := NewCopContext(tbl.Meta(), idxInfo, sessCtx)
+	indexes := make([]table.Index, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		indexes = append(indexes, index)
+	}
+	reqSrc := getDDLRequestSource(model.ActionAddIndex)
+	copCtx, err := copr.NewCopContext(tbl.Meta(), idxInfos, sessCtx, reqSrc)
 	if err != nil {
 		return nil, err
 	}
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
 	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
-	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, index, engine, srcChkPool, writerCnt)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, index, totalRowCount, metricCounter)
+	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt)
+	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -150,19 +156,35 @@ func NewAddIndexIngestPipeline(
 }
 
 // NewWriteIndexToExternalStoragePipeline creates a pipeline for writing index to external storage.
-func NewWriteIndexToExternalStoragePipeline(ctx *OperatorCtx, store kv.Storage, extStoreURI string, sessPool opSessPool,
-	sessCtx sessionctx.Context, jobID, subtaskID int64, tbl table.PhysicalTable, idxInfo *model.IndexInfo, startKey,
-	endKey kv.Key, totalRowCount *atomic.Int64, metricCounter prometheus.Counter, onClose external.OnCloseFunc,
-	bcctx ingest.BackendCtx) (*operator.AsyncPipeline, error) {
-	index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
-	copCtx, err := NewCopContext(tbl.Meta(), idxInfo, sessCtx)
+func NewWriteIndexToExternalStoragePipeline(
+	ctx *OperatorCtx,
+	store kv.Storage,
+	extStoreURI string,
+	sessPool opSessPool,
+	sessCtx sessionctx.Context,
+	jobID, subtaskID int64,
+	tbl table.PhysicalTable,
+	idxInfos []*model.IndexInfo,
+	startKey, endKey kv.Key,
+	totalRowCount *atomic.Int64,
+	metricCounter prometheus.Counter,
+	onClose external.OnCloseFunc,
+	bcctx ingest.BackendCtx,
+) (*operator.AsyncPipeline, error) {
+	indexes := make([]table.Index, 0, len(idxInfos))
+	for _, idxInfo := range idxInfos {
+		index := tables.NewIndex(tbl.GetPhysicalID(), tbl.Meta(), idxInfo)
+		indexes = append(indexes, index)
+	}
+	reqSrc := getDDLRequestSource(model.ActionAddIndex)
+	copCtx, err := copr.NewCopContext(tbl.Meta(), idxInfos, sessCtx, reqSrc)
 	if err != nil {
 		return nil, err
 	}
 	poolSize := copReadChunkPoolSize()
 	srcChkPool := make(chan *chunk.Chunk, poolSize)
 	for i := 0; i < poolSize; i++ {
-		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.fieldTps, copReadBatchSize())
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
 	readerCnt := int(variable.GetDDLReorgWorkerCounter())
 	writerCnt := 1
@@ -185,11 +207,13 @@ func NewWriteIndexToExternalStoragePipeline(ctx *OperatorCtx, store kv.Storage, 
 	if err != nil {
 		return nil, err
 	}
+	memSize := (memTotal / 2) / uint64(len(indexes))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
-	writeOp := NewWriteExternalStoreOperator(ctx, copCtx, sessPool, jobID, subtaskID, tbl, index, extStore, srcChkPool, writerCnt, onClose, shareMu, memTotal/2)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, index, totalRowCount, metricCounter)
+	writeOp := NewWriteExternalStoreOperator(
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu, memSize)
+	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -346,7 +370,7 @@ type TableScanOperator struct {
 func NewTableScanOperator(
 	ctx *OperatorCtx,
 	sessPool opSessPool,
-	copCtx *CopContext,
+	copCtx copr.CopContext,
 	srcChkPool chan *chunk.Chunk,
 	concurrency int,
 ) *TableScanOperator {
@@ -370,7 +394,7 @@ func NewTableScanOperator(
 
 type tableScanWorker struct {
 	ctx        *OperatorCtx
-	copCtx     *CopContext
+	copCtx     copr.CopContext
 	sessPool   opSessPool
 	se         *session.Session
 	srcChkPool chan *chunk.Chunk
@@ -410,14 +434,14 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		failpoint.Inject("scanRecordExec", func(_ failpoint.Value) {
 			OperatorCallBackForTest()
 		})
-		rs, err := w.copCtx.buildTableScan(w.ctx, startTS, task.Start, task.End)
+		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
 		}
 		var done bool
 		for !done {
 			srcChk := w.getChunk()
-			done, err = w.copCtx.fetchTableScanResult(w.ctx, rs, srcChk)
+			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
 			if err != nil {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
@@ -437,7 +461,7 @@ func (w *tableScanWorker) getChunk() *chunk.Chunk {
 	chk := <-w.srcChkPool
 	newCap := copReadBatchSize()
 	if chk.Capacity() != newCap {
-		chk = chunk.NewChunkWithCapacity(w.copCtx.fieldTps, newCap)
+		chk = chunk.NewChunkWithCapacity(w.copCtx.GetBase().FieldTypes, newCap)
 	}
 	chk.Reset()
 	return chk
@@ -453,31 +477,47 @@ type WriteExternalStoreOperator struct {
 }
 
 // NewWriteExternalStoreOperator creates a new WriteExternalStoreOperator.
-func NewWriteExternalStoreOperator(ctx *OperatorCtx, copCtx *CopContext, sessPool opSessPool, jobID int64,
-	subtaskID int64, tbl table.PhysicalTable, index table.Index, store storage.ExternalStorage, srcChunkPool chan *chunk.Chunk,
-	concurrency int, onClose external.OnCloseFunc, shareMu *sync.Mutex, memoryQuota uint64) *WriteExternalStoreOperator {
+func NewWriteExternalStoreOperator(
+	ctx *OperatorCtx,
+	copCtx copr.CopContext,
+	sessPool opSessPool,
+	jobID int64,
+	subtaskID int64,
+	tbl table.PhysicalTable,
+	indexes []table.Index,
+	store storage.ExternalStorage,
+	srcChunkPool chan *chunk.Chunk,
+	concurrency int,
+	onClose external.OnCloseFunc,
+	shareMu *sync.Mutex,
+	memoryQuota uint64,
+) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
-			builder := external.NewWriterBuilder().
-				SetOnCloseFunc(onClose).
-				SetKeyDuplicationEncoding(index.Meta().Unique).
-				SetMutex(shareMu).
-				SetMemorySizeLimit(memoryQuota)
-			writerID := uuid.New().String()
-			prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
-			writer := builder.Build(store, prefix, writerID)
+			writers := make([]ingest.Writer, 0, len(indexes))
+			for _, index := range indexes {
+				builder := external.NewWriterBuilder().
+					SetOnCloseFunc(onClose).
+					SetKeyDuplicationEncoding(index.Meta().Unique).
+					SetMutex(shareMu).
+					SetMemorySizeLimit(memoryQuota)
+				writerID := uuid.New().String()
+				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+				writer := builder.Build(store, prefix, writerID)
+				writers = append(writers, writer)
+			}
 
 			return &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,
-				index:        index,
+				indexes:      indexes,
 				copCtx:       copCtx,
 				se:           nil,
 				sessPool:     sessPool,
-				writer:       writer,
+				writers:      writers,
 				srcChunkPool: srcChunkPool,
 			}
 		})
@@ -502,11 +542,11 @@ type IndexIngestOperator struct {
 // NewIndexIngestOperator creates a new IndexIngestOperator.
 func NewIndexIngestOperator(
 	ctx *OperatorCtx,
-	copCtx *CopContext,
+	copCtx copr.CopContext,
 	sessPool opSessPool,
 	tbl table.PhysicalTable,
-	index table.Index,
-	engine ingest.Engine,
+	indexes []table.Index,
+	engines []ingest.Engine,
 	srcChunkPool chan *chunk.Chunk,
 	concurrency int,
 ) *IndexIngestOperator {
@@ -516,20 +556,25 @@ func NewIndexIngestOperator(
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
-			writerID := int(writerIDAlloc.Add(1))
-			writer, err := engine.CreateWriter(writerID)
-			if err != nil {
-				logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
-				return nil
+			writers := make([]ingest.Writer, 0, len(indexes))
+			for i := range indexes {
+				writerID := int(writerIDAlloc.Add(1))
+				writer, err := engines[i].CreateWriter(writerID)
+				if err != nil {
+					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
+					return nil
+				}
+				writers = append(writers, writer)
 			}
+
 			return &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,
-				index:        index,
+				indexes:      indexes,
 				copCtx:       copCtx,
 				se:           nil,
 				sessPool:     sessPool,
-				writer:       writer,
+				writers:      writers,
 				srcChunkPool: srcChunkPool,
 			}
 		})
@@ -541,14 +586,14 @@ func NewIndexIngestOperator(
 type indexIngestWorker struct {
 	ctx *OperatorCtx
 
-	tbl   table.PhysicalTable
-	index table.Index
+	tbl     table.PhysicalTable
+	indexes []table.Index
 
-	copCtx   *CopContext
+	copCtx   copr.CopContext
 	sessPool opSessPool
 	se       *session.Session
 
-	writer       ingest.Writer
+	writers      []ingest.Writer
 	srcChunkPool chan *chunk.Chunk
 }
 
@@ -588,9 +633,11 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 }
 
 func (w *indexIngestWorker) Close() {
-	err := w.writer.Close(w.ctx)
-	if err != nil {
-		w.ctx.onError(err)
+	for _, writer := range w.writers {
+		err := writer.Close(w.ctx)
+		if err != nil {
+			w.ctx.onError(err)
+		}
 	}
 	if w.se != nil {
 		w.sessPool.Put(w.se.Context)
@@ -608,7 +655,7 @@ func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey
 
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
-	cnt, lastHandle, err := writeChunkToLocal(w.ctx, w.writer, w.index, w.copCtx, vars, rs.Chunk)
+	cnt, lastHandle, err := writeChunkToLocal(w.ctx, w.writers, w.indexes, w.copCtx, vars, rs.Chunk)
 	if err != nil || cnt == 0 {
 		return 0, nil, err
 	}
@@ -621,7 +668,7 @@ type indexWriteResultSink struct {
 	ctx        *OperatorCtx
 	backendCtx ingest.BackendCtx
 	tbl        table.PhysicalTable
-	index      table.Index
+	indexes    []table.Index
 
 	rowCount      *atomic.Int64
 	metricCounter prometheus.Counter
@@ -634,7 +681,7 @@ func newIndexWriteResultSink(
 	ctx *OperatorCtx,
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
-	index table.Index,
+	indexes []table.Index,
 	rowCount *atomic.Int64,
 	metricCounter prometheus.Counter,
 ) *indexWriteResultSink {
@@ -642,7 +689,7 @@ func newIndexWriteResultSink(
 		ctx:           ctx,
 		backendCtx:    backendCtx,
 		tbl:           tbl,
-		index:         index,
+		indexes:       indexes,
 		rowCount:      rowCount,
 		metricCounter: metricCounter,
 		errGroup:      errgroup.Group{},
@@ -690,16 +737,18 @@ func (s *indexWriteResultSink) flush() error {
 	if s.tbl.GetPartitionedTable() != nil {
 		flushMode = ingest.FlushModeForceGlobal
 	}
-	idxInfo := s.index.Meta()
-	_, _, err := s.backendCtx.Flush(idxInfo.ID, flushMode)
-	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
+	for _, index := range s.indexes {
+		idxInfo := index.Meta()
+		_, _, err := s.backendCtx.Flush(idxInfo.ID, flushMode)
+		if err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = convertToKeyExistsErr(err, idxInfo, s.tbl.Meta())
+				return err
+			}
+			logutil.BgLogger().Error("flush error",
+				zap.String("category", "ddl"), zap.Error(err))
 			return err
 		}
-		logutil.BgLogger().Error("flush error",
-			zap.String("category", "ddl"), zap.Error(err))
-		return err
 	}
 	return nil
 }

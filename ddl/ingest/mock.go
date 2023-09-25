@@ -122,7 +122,7 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 }
 
 // ResetWorkers implements BackendCtx.ResetWorkers interface.
-func (*MockBackendCtx) ResetWorkers(_, _ int64) {
+func (*MockBackendCtx) ResetWorkers(_ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.

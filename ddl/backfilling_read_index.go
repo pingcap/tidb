@@ -38,11 +38,11 @@ import (
 )
 
 type readIndexExecutor struct {
-	d     *ddl
-	job   *model.Job
-	index *model.IndexInfo
-	ptbl  table.PhysicalTable
-	jc    *JobContext
+	d       *ddl
+	job     *model.Job
+	indexes []*model.IndexInfo
+	ptbl    table.PhysicalTable
+	jc      *JobContext
 
 	cloudStorageURI string
 
@@ -65,7 +65,7 @@ type readIndexSummary struct {
 func newReadIndexExecutor(
 	d *ddl,
 	job *model.Job,
-	index *model.IndexInfo,
+	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *JobContext,
 	bc ingest.BackendCtx,
@@ -75,7 +75,7 @@ func newReadIndexExecutor(
 	return &readIndexExecutor{
 		d:               d,
 		job:             job,
-		index:           index,
+		indexes:         indexes,
 		ptbl:            ptbl,
 		jc:              jc,
 		bc:              bc,
@@ -97,7 +97,6 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
-	d := r.d
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
@@ -113,7 +112,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	sessCtx, err := newSessCtx(
-		d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
+		r.d.store, r.job.ReorgMeta.SQLMode, r.job.ReorgMeta.Location, r.job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return err
 	}
@@ -124,9 +123,9 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, d, subtask.ID, sessCtx, tbl, startKey, endKey, totalRowCount)
+		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, tbl, startKey, endKey, totalRowCount)
 	} else {
-		pipe, err = r.buildLocalStorePipeline(opCtx, d, sessCtx, tbl, startKey, endKey, totalRowCount)
+		pipe, err = r.buildLocalStorePipeline(opCtx, sessCtx, tbl, startKey, endKey, totalRowCount)
 	}
 	if err != nil {
 		return err
@@ -144,8 +143,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	r.bc.ResetWorkers(r.job.ID, r.index.ID)
-
+	r.bc.ResetWorkers(r.job.ID)
 	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
 	return nil
 }
@@ -227,33 +225,37 @@ func (r *readIndexExecutor) getTableStartEndKey(sm *BackfillSubTaskMeta) (
 
 func (r *readIndexExecutor) buildLocalStorePipeline(
 	opCtx *OperatorCtx,
-	d *ddl,
 	sessCtx sessionctx.Context,
 	tbl table.PhysicalTable,
 	start, end kv.Key,
 	totalRowCount *atomic.Int64,
 ) (*operator.AsyncPipeline, error) {
-	ei, err := r.bc.Register(r.job.ID, r.index.ID, r.job.SchemaName, r.job.TableName)
-	if err != nil {
-		logutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
-			zap.Int64("job ID", r.job.ID), zap.Int64("index ID", r.index.ID))
-		return nil, err
+	d := r.d
+	engines := make([]ingest.Engine, 0, len(r.indexes))
+	for _, index := range r.indexes {
+		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
+		if err != nil {
+			logutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
+				zap.Int64("job ID", r.job.ID), zap.Int64("index ID", index.ID))
+			return nil, err
+		}
+		engines = append(engines, ei)
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
 	return NewAddIndexIngestPipeline(
-		opCtx, d.store, d.sessPool, r.bc, ei, sessCtx, tbl, r.index, start, end, totalRowCount, counter)
+		opCtx, d.store, d.sessPool, r.bc, engines, sessCtx, tbl, r.indexes, start, end, totalRowCount, counter)
 }
 
 func (r *readIndexExecutor) buildExternalStorePipeline(
 	opCtx *OperatorCtx,
-	d *ddl,
 	subtaskID int64,
 	sessCtx sessionctx.Context,
 	tbl table.PhysicalTable,
 	start, end kv.Key,
 	totalRowCount *atomic.Int64,
 ) (*operator.AsyncPipeline, error) {
+	d := r.d
 	onClose := func(summary *external.WriterSummary) {
 		sum, _ := r.subtaskSummary.Load(subtaskID)
 		s := sum.(*readIndexSummary)
@@ -276,5 +278,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
-	return NewWriteIndexToExternalStoragePipeline(opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID, tbl, r.index, start, end, totalRowCount, counter, onClose, r.bc)
+	return NewWriteIndexToExternalStoragePipeline(
+		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
+		tbl, r.indexes, start, end, totalRowCount, counter, onClose, r.bc)
 }
