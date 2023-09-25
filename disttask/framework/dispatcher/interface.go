@@ -81,8 +81,8 @@ func RegisterDispatcherFactory(taskType string, ctor dispatcherFactoryFn) {
 	dispatcherFactoryMap.m[taskType] = ctor
 }
 
-// GetDispatcherFactory is used to get the dispatcher factory.
-func GetDispatcherFactory(taskType string) dispatcherFactoryFn {
+// getDispatcherFactory is used to get the dispatcher factory.
+func getDispatcherFactory(taskType string) dispatcherFactoryFn {
 	dispatcherFactoryMap.RLock()
 	defer dispatcherFactoryMap.RUnlock()
 	return dispatcherFactoryMap.m[taskType]
@@ -98,9 +98,9 @@ func ClearDispatcherFactory() {
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
 type CleanUpRoutine interface {
 	// CleanUp do the clean up work.
-	CleanUp() error
+	CleanUp(ctx context.Context, task *proto.Task) error
 }
-type cleanUpFactoryFn func(ctx context.Context, task *proto.Task) CleanUpRoutine
+type cleanUpFactoryFn func() CleanUpRoutine
 
 var cleanUpFactoryMap = struct {
 	syncutil.RWMutex
@@ -118,8 +118,8 @@ func RegisterDispatcherCleanUpFactory(taskType string, ctor cleanUpFactoryFn) {
 	cleanUpFactoryMap.m[taskType] = ctor
 }
 
-// GetDispatcherCleanUpFactory is used to get the dispatcher factory.
-func GetDispatcherCleanUpFactory(taskType string) cleanUpFactoryFn {
+// getDispatcherCleanUpFactory is used to get the dispatcher factory.
+func getDispatcherCleanUpFactory(taskType string) cleanUpFactoryFn {
 	cleanUpFactoryMap.RLock()
 	defer cleanUpFactoryMap.RUnlock()
 	return cleanUpFactoryMap.m[taskType]

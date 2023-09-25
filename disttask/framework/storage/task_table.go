@@ -199,9 +199,9 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 // AddGlobalTaskWithSession adds a new task to global task table with session.
 func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
 	_, err = ExecSQL(stm.ctx, se,
-		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time)
-		values (%?, %?, %?, %?, %?, %?, %?)`,
-		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
+		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, start_time, state_update_time)
+		values (%?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())`,
+		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta)
 	if err != nil {
 		return 0, err
 	}
@@ -278,9 +278,10 @@ func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err e
 	return row2GlobeTask(rs[0]), nil
 }
 
-// GetTaskByIDFromHistory gets the task by the global task ID from history.
-func (stm *TaskManager) GetTaskByIDFromHistory(taskID int64) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where id = %?", taskID)
+// GetTaskByIDWithHistory gets the task by the global task ID from both tidb_global_task and tidb_global_task_history.
+func (stm *TaskManager) GetTaskByIDWithHistory(taskID int64) (task *proto.Task, err error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where id = %? "+
+		"union select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where id = %?", taskID, taskID)
 	if err != nil {
 		return task, err
 	}
@@ -304,9 +305,10 @@ func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err er
 	return row2GlobeTask(rs[0]), nil
 }
 
-// GetGlobalTaskByKeyFromHistory gets the task from history table by the task key.
-func (stm *TaskManager) GetGlobalTaskByKeyFromHistory(key string) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where task_key = %?", key)
+// GetGlobalTaskByKeyWithHistory gets the task from history table by the task key.
+func (stm *TaskManager) GetGlobalTaskByKeyWithHistory(key string) (task *proto.Task, err error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where task_key = %?"+
+		"union select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where task_key = %?", key, key)
 	if err != nil {
 		return task, err
 	}
@@ -910,21 +912,25 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 	}
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		insertSQL := new(strings.Builder)
-		if err := sqlexec.FormatSQL(insertSQL, "insert into mysql.tidb_global_task_history select * from mysql.tidb_global_task where id in ("); err != nil {
+		if err := sqlexec.FormatSQL(insertSQL, "insert into mysql.tidb_global_task_history"+
+			"(id, task_key, type, dispatcher_id, state, start_time, state_update_time,"+
+			"meta, concurrency, step, error) values"); err != nil {
 			return err
 		}
+
 		for i, task := range tasks {
 			if i != 0 {
 				if err := sqlexec.FormatSQL(insertSQL, ","); err != nil {
 					return err
 				}
 			}
-			if err := sqlexec.FormatSQL(insertSQL, "%?", task.ID); err != nil {
+			logutil.BgLogger().Info("ywq test", zap.Any("any", task.StartTime.Local().Local().Unix()))
+			if err := sqlexec.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+				task.ID, task.Key, task.Type, task.DispatcherID,
+				task.State, task.StartTime, task.StateUpdateTime,
+				task.Meta, task.Concurrency, task.Step, task.Error); err != nil {
 				return err
 			}
-		}
-		if err := sqlexec.FormatSQL(insertSQL, ")"); err != nil {
-			return err
 		}
 		_, err := ExecSQL(stm.ctx, se, insertSQL.String())
 		if err != nil {
@@ -936,19 +942,13 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 		if err := sqlexec.FormatSQL(deleteSQL, "delete from mysql.tidb_global_task where id in("); err != nil {
 			return err
 		}
-		for i, task := range tasks {
-			if i != 0 {
-				if err := sqlexec.FormatSQL(deleteSQL, ","); err != nil {
-					return err
-				}
-			}
-			if err := sqlexec.FormatSQL(deleteSQL, "%?", task.ID); err != nil {
-				return err
-			}
+		deleteElems := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			deleteElems = append(deleteElems, fmt.Sprintf("%d", task.ID))
 		}
-		if err := sqlexec.FormatSQL(deleteSQL, ")"); err != nil {
-			return err
-		}
+
+		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
+		deleteSQL.WriteString(")")
 		_, err = ExecSQL(stm.ctx, se, deleteSQL.String())
 		return err
 	})

@@ -32,21 +32,16 @@ var _ dispatcher.CleanUpRoutine = (*BackfillCleanUpS3)(nil)
 
 // BackfillCleanUpS3 implements dispatcher.CleanUpRoutine.
 type BackfillCleanUpS3 struct {
-	ctx  context.Context
-	task *proto.Task
 }
 
-func newBackfillCleanUpS3(ctx context.Context, task *proto.Task) dispatcher.CleanUpRoutine {
-	return &BackfillCleanUpS3{
-		ctx:  ctx,
-		task: task,
-	}
+func newBackfillCleanUpS3() dispatcher.CleanUpRoutine {
+	return &BackfillCleanUpS3{}
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (c *BackfillCleanUpS3) CleanUp() error {
+func (c *BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	var gTaskMeta BackfillGlobalMeta
-	if err := json.Unmarshal(c.task.Meta, &gTaskMeta); err != nil {
+	if err := json.Unmarshal(task.Meta, &gTaskMeta); err != nil {
 		return err
 	}
 	// Not use cloud storage, no need to cleanUp.
@@ -55,21 +50,21 @@ func (c *BackfillCleanUpS3) CleanUp() error {
 	}
 	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
 	if err != nil {
-		logutil.Logger(c.ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
 		return err
 	}
-	extStore, err := storage.NewWithDefaultOpt(c.ctx, backend)
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
-		logutil.Logger(c.ctx).Warn("failed to create cloud storage", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
 		return err
 	}
 	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
-	err = external.CleanUpFiles(c.ctx, extStore, prefix)
+	err = external.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
-		logutil.Logger(c.ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
 	}
-	redactCloudStorageURI(c.ctx, c.task, &gTaskMeta)
+	redactCloudStorageURI(ctx, task, &gTaskMeta)
 	return nil
 }
 

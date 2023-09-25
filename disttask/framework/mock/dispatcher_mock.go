@@ -5,8 +5,10 @@
 package mock
 
 import (
+	context "context"
 	reflect "reflect"
 
+	proto "github.com/pingcap/tidb/disttask/framework/proto"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -95,15 +97,15 @@ func (m *MockCleanUpRoutine) EXPECT() *MockCleanUpRoutineMockRecorder {
 }
 
 // CleanUp mocks base method.
-func (m *MockCleanUpRoutine) CleanUp() error {
+func (m *MockCleanUpRoutine) CleanUp(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CleanUp")
+	ret := m.ctrl.Call(m, "CleanUp", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // CleanUp indicates an expected call of CleanUp.
-func (mr *MockCleanUpRoutineMockRecorder) CleanUp() *gomock.Call {
+func (mr *MockCleanUpRoutineMockRecorder) CleanUp(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanUp", reflect.TypeOf((*MockCleanUpRoutine)(nil).CleanUp))
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanUp", reflect.TypeOf((*MockCleanUpRoutine)(nil).CleanUp), arg0, arg1)
 }

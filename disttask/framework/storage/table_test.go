@@ -506,7 +506,7 @@ func TestTaskHistoryTable(t *testing.T) {
 
 	_, err := gm.AddNewGlobalTask("1", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
-	_, err = gm.AddNewGlobalTask("2", proto.TaskTypeExample, 1, nil)
+	taskID, err := gm.AddNewGlobalTask("2", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
 	tasks, err := gm.GetGlobalTasksInStates(proto.TaskStatePending)
@@ -521,6 +521,14 @@ func TestTaskHistoryTable(t *testing.T) {
 	num, err := storage.GetTasksFromHistoryForTest(gm)
 	require.NoError(t, err)
 	require.Equal(t, 2, num)
+
+	task, err := gm.GetTaskByIDWithHistory(taskID)
+	require.NoError(t, err)
+	require.NotNil(t, task)
+
+	task, err = gm.GetGlobalTaskByKeyWithHistory("1")
+	require.NoError(t, err)
+	require.NotNil(t, task)
 }
 
 func TestPauseAndResume(t *testing.T) {

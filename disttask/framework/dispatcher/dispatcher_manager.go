@@ -187,7 +187,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
 				// directly.
-				if GetDispatcherFactory(task.Type) == nil {
+				if getDispatcherFactory(task.Type) == nil {
 					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
 						zap.String("task-type", task.Type))
 					dm.failTask(task, errors.New("unknown task type"))
@@ -261,7 +261,7 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 func (dm *Manager) startDispatcher(task *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
-		dispatcherFactory := GetDispatcherFactory(task.Type)
+		dispatcherFactory := getDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		if err := dispatcher.Init(); err != nil {
 			logutil.BgLogger().Error("init dispatcher failed", zap.Error(err))
@@ -316,26 +316,31 @@ func (dm *Manager) doCleanUpRoutine() {
 var WaitGCFinished = make(chan struct{})
 
 func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
+	cleanUpedTasks := make([]*proto.Task, 0)
+	var firstErr error
 	for _, task := range tasks {
-		cleanUpFactory := GetDispatcherCleanUpFactory(task.Type)
+		cleanUpFactory := getDispatcherCleanUpFactory(task.Type)
 		if cleanUpFactory != nil {
-			cleanUp := cleanUpFactory(dm.ctx, task)
-			err := cleanUp.CleanUp()
+			cleanUp := cleanUpFactory()
+			err := cleanUp.CleanUp(dm.ctx, task)
 			if err != nil {
-				return err
+				firstErr = err
+				break
 			}
-			// update task meta.
-			_, err = dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, task.State)
-			if err != nil {
-				return err
-			}
+			cleanUpedTasks = append(cleanUpedTasks, task)
 			failpoint.Inject("waitGCFinished", func() {
 				WaitGCFinished <- struct{}{}
 			})
+		} else {
+			// if task dosen't register cleanUp function, mark it as cleanUped.
+			cleanUpedTasks = append(cleanUpedTasks, task)
 		}
 	}
+	if firstErr != nil {
+		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(errors.Trace(firstErr)))
+	}
 
-	return dm.taskMgr.TransferTasks2History(tasks)
+	return dm.taskMgr.TransferTasks2History(cleanUpedTasks)
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.

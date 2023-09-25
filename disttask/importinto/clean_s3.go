@@ -31,33 +31,28 @@ var _ dispatcher.CleanUpRoutine = (*ImportCleanUpS3)(nil)
 
 // ImportCleanUpS3 implements dispatcher.CleanUpRoutine.
 type ImportCleanUpS3 struct {
-	ctx  context.Context
-	task *proto.Task
 }
 
-func newImportCleanUpS3(ctx context.Context, task *proto.Task) dispatcher.CleanUpRoutine {
-	return &ImportCleanUpS3{
-		ctx:  ctx,
-		task: task,
-	}
+func newImportCleanUpS3() dispatcher.CleanUpRoutine {
+	return &ImportCleanUpS3{}
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (c *ImportCleanUpS3) CleanUp() error {
+func (c *ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
-	// TODO: maybe add a way to notify user that there are files left in global sorted storage.
-	logger := logutil.BgLogger().With(zap.Int64("task-id", c.task.ID))
-	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	taskMeta := &TaskMeta{}
-	err := json.Unmarshal(c.task.Meta, taskMeta)
+	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
 		return err
 	}
+	defer redactSensitiveInfo(task, taskMeta)
 	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {
 		return nil
 	}
+	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
+	callLog := log.BeginTask(logger, "cleanup global sorted data")
 	defer callLog.End(zap.InfoLevel, nil)
 
 	controller, err := buildController(&taskMeta.Plan, taskMeta.Stmt)
@@ -65,17 +60,15 @@ func (c *ImportCleanUpS3) CleanUp() error {
 		logger.Warn("failed to build controller", zap.Error(err))
 		return err
 	}
-	if err = controller.InitDataStore(c.ctx); err != nil {
+	if err = controller.InitDataStore(ctx); err != nil {
 		logger.Warn("failed to init data store", zap.Error(err))
 		return err
 	}
-	if err = external.CleanUpFiles(c.ctx, controller.GlobalSortStore,
-		strconv.Itoa(int(c.task.ID))); err != nil {
+	if err = external.CleanUpFiles(ctx, controller.GlobalSortStore,
+		strconv.Itoa(int(task.ID))); err != nil {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
-	// Only redact sensitive info after cleanUpFiles success.
-	redactSensitiveInfo(c.task, taskMeta)
 	return nil
 }
 

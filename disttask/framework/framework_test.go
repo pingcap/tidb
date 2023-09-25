@@ -110,7 +110,7 @@ func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExe
 func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp().Return(nil).AnyTimes()
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
@@ -142,7 +142,7 @@ func registerTaskMetaInner(t *testing.T, taskType string, mockExtension schedule
 		})
 
 	dispatcher.RegisterDispatcherCleanUpFactory(taskType,
-		func(ctx context.Context, task *proto.Task) dispatcher.CleanUpRoutine {
+		func() dispatcher.CleanUpRoutine {
 			return mockCleanup
 		})
 
@@ -158,7 +158,7 @@ func registerTaskMetaInner(t *testing.T, taskType string, mockExtension schedule
 func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp().Return(nil).AnyTimes()
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
@@ -179,7 +179,7 @@ func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.
 func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp().Return(nil).AnyTimes()
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(ctx context.Context, subtask *proto.Subtask) error {
@@ -216,14 +216,9 @@ func WaitTaskExit(t *testing.T, taskKey string) *proto.Task {
 		}
 
 		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByKey(taskKey)
+		task, err = mgr.GetGlobalTaskByKeyWithHistory(taskKey)
 		require.NoError(t, err)
-
-		if task == nil {
-			task, err = mgr.GetGlobalTaskByKeyFromHistory(taskKey)
-			require.NoError(t, err)
-			require.NotNil(t, task)
-		}
+		require.NotNil(t, task)
 		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting && task.State != proto.TaskStatePausing {
 			break
 		}
@@ -287,10 +282,7 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 					require.FailNow(t, "timeout")
 				}
 				time.Sleep(time.Second)
-				task, err = mgr.GetGlobalTaskByID(taskID[0])
-				if task == nil {
-					task, err = mgr.GetTaskByIDFromHistory(taskID[i])
-				}
+				task, err = mgr.GetTaskByIDWithHistory(taskID[0])
 				require.NoError(t, err)
 				require.NotNil(t, task)
 				tasks[0] = task
@@ -313,10 +305,7 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 				require.FailNow(t, "timeout")
 			}
 			time.Sleep(time.Second)
-			task, err = mgr.GetGlobalTaskByID(taskID[i])
-			if task == nil {
-				task, err = mgr.GetTaskByIDFromHistory(taskID[i])
-			}
+			task, err = mgr.GetTaskByIDWithHistory(taskID[i])
 			require.NoError(t, err)
 			require.NotNil(t, task)
 			tasks[i] = task
@@ -664,5 +653,22 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 	require.NoError(t, err)
 	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel"))
+	distContext.Close()
+}
+
+func TestFrameworkCleanUpRoutine(t *testing.T) {
+	var m sync.Map
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/waitGCFinished", "return()"))
+	DispatchTaskAndCheckSuccess("key1", t, &m)
+	<-dispatcher.WaitGCFinished
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	tasks, err := mgr.GetGlobalTaskByKeyWithHistory("key1")
+	require.NoError(t, err)
+	require.NotEmpty(t, tasks)
 	distContext.Close()
 }
