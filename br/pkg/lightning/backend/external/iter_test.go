@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"runtime"
 	"testing"
 	"time"
 
@@ -74,7 +75,7 @@ func TestMergeKVIter(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -126,7 +127,7 @@ func TestOneUpstream(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -204,7 +205,7 @@ func TestCorruptContent(t *testing.T) {
 			propKeysDist: 2,
 		}
 		rc.reset()
-		kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
 			err = kvStore.AddKeyValue([]byte(kv[0]), []byte(kv[1]))
@@ -258,7 +259,7 @@ func generateMockFileReader() *kvReader {
 		propKeysDist: 2,
 	}
 	rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc)
 	if err != nil {
 		panic(err)
 	}
@@ -318,8 +319,8 @@ func (p kvReaderPointerProxy) next() (*kvPair, error) {
 	return &kvPair{key: k, value: v}, nil
 }
 
-func (p kvReaderPointerProxy) setReadMode(useConcurrency bool) {
-	p.r.byteReader.switchReaderMode(useConcurrency)
+func (p kvReaderPointerProxy) needLargePrefetch(useConcurrency bool) {
+	p.r.byteReader.needLargePrefetch(useConcurrency)
 }
 
 func (p kvReaderPointerProxy) close() error {
@@ -414,4 +415,74 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	}
 	err = iter.Close()
 	require.NoError(t, err)
+}
+
+func TestMemoryUsageWhenHotspotChange(t *testing.T) {
+	backup := checkHotspotPeriod
+	checkHotspotPeriod = 10
+	t.Cleanup(func() {
+		checkHotspotPeriod = backup
+	})
+	backup2 := ConcurrentReaderBufferSize
+	ConcurrentReaderBufferSize = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
+	t.Cleanup(func() {
+		ConcurrentReaderBufferSize = backup2
+	})
+
+	getMemoryInUse := func() uint64 {
+		runtime.GC()
+		s := runtime.MemStats{}
+		runtime.ReadMemStats(&s)
+		return s.HeapInuse
+	}
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	// check if we will leak 100*100MB = 1GB memory
+	cur := 0
+	largeChunk := make([]byte, 10*1024*1024)
+	filenames := make([]string, 0, 10)
+	for i := 0; i < 10; i++ {
+		filename := fmt.Sprintf("/test%06d", i)
+		filenames = append(filenames, filename)
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		rc := &rangePropertiesCollector{
+			propSizeDist: 100,
+			propKeysDist: 2,
+		}
+		rc.reset()
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
+		require.NoError(t, err)
+		for j := 0; j < checkHotspotPeriod; j++ {
+			key := fmt.Sprintf("key%06d", cur)
+			val := fmt.Sprintf("value%06d", cur)
+			err = kvStore.AddKeyValue([]byte(key), []byte(val))
+			require.NoError(t, err)
+			cur++
+		}
+		for j := 0; j <= 12; j++ {
+			key := fmt.Sprintf("key999%06d", cur+j)
+			err = kvStore.AddKeyValue([]byte(key), largeChunk)
+			require.NoError(t, err)
+		}
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	beforeMem := getMemoryInUse()
+
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024)
+	require.NoError(t, err)
+	for cur > 0 {
+		cur--
+		require.True(t, iter.Next())
+	}
+
+	afterMem := getMemoryInUse()
+	t.Logf("memory usage: %d -> %d", beforeMem, afterMem)
+	_ = iter.Close()
 }

@@ -17,33 +17,40 @@ package external
 import (
 	"context"
 	"io"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
 
-// ConcurrentReaderBufferSize is the buffer size for concurrent reader.
-var ConcurrentReaderBufferSize = 4 * 1024 * 1024
+var (
+	// ConcurrentReaderBufferSize is the buffer size for concurrent reader.
+	ConcurrentReaderBufferSize  = 4 * 1024 * 1024
+	ConcurrentReaderConcurrency = 8
+)
 
 // byteReader provides structured reading on a byte stream of external storage.
+// It can also switch to concurrent reading mode and fetch a larger amount of
+// data to improve throughput.
 type byteReader struct {
 	ctx           context.Context
 	storageReader storage.ReadSeekCloser
 
-	buf       []byte
-	bufOffset int
+	buf             []byte
+	bufOffset       int
+	largeBufferPool *membuf.Buffer
+	largeBuf        []byte
 
 	retPointers []*[]byte
 
-	useConcurrentReaderCurrent bool
-	useConcurrentReader        atomic.Bool
-
-	currFileOffset int64
-	conReader      *singeFileReader
+	//useConcurrentReaderCurrent bool
+	//useConcurrentReader        atomic.Bool
+	//
+	//currFileOffset int64
+	//conReader      *singeFileReader
 }
 
 func openStoreReaderAndSeek(
@@ -81,7 +88,7 @@ func newByteReader(
 	if err != nil {
 		return nil, err
 	}
-	conReader, err := newSingeFileReader(ctx, st, name, fileSize, 8, ConcurrentReaderBufferSize)
+	conReader, err := newSingeFileReader(ctx, st, name, fileSize, ConcurrentReaderConcurrency, ConcurrentReaderBufferSize)
 	if err != nil {
 		return nil, err
 	}
@@ -92,12 +99,13 @@ func newByteReader(
 		bufOffset:     0,
 		conReader:     conReader,
 	}
-	r.switchReaderMode(defaultUseConcurrency)
+	r.needLargePrefetch(defaultUseConcurrency)
 	return r, r.reload()
 }
 
-// switchReaderMode switches to concurrent reader.
-func (r *byteReader) switchReaderMode(useConcurrent bool) {
+// needLargePrefetch is used to help implement sortedReader.needLargePrefetch.
+// See the comment of the interface.
+func (r *byteReader) needLargePrefetch(useConcurrent bool) {
 	r.useConcurrentReader.Store(useConcurrent)
 }
 

@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -33,7 +34,14 @@ type heapElem interface {
 type sortedReader[T heapElem] interface {
 	path() string
 	next() (T, error)
-	setReadMode(useConcurrency bool)
+	// When `need` is changed from false to true, the reader should prefetch more
+	// data than usual when local cache is used up. It's used when one reader is more
+	// frequently accessed than others and usual prefetching strategy is the
+	// bottleneck.
+	// When `need` is changed from true to false, the reader should
+	// immediately release the memory for large prefetching to avoid OOM.
+	// TODO(lance6716): learn more about external merge sort prefetch strategy.
+	needLargePrefetch(need bool)
 	close() error
 }
 
@@ -196,6 +204,8 @@ func (i *mergeIter[T, R]) currElem() T {
 	return i.curr
 }
 
+var checkHotspotPeriod = 1000
+
 // next forwards the iterator to the next element. It returns false if there is
 // no available element.
 func (i *mergeIter[T, R]) next() bool {
@@ -205,11 +215,10 @@ func (i *mergeIter[T, R]) next() bool {
 		i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
 		i.checkHotspotCnt++
 
-		checkPeriod := 1000
 		// check hot point every checkPeriod times
-		if i.checkHotspotCnt == checkPeriod {
+		if i.checkHotspotCnt == checkHotspotPeriod {
 			for idx, cnt := range i.hotspotMap {
-				(*i.readers[idx]).setReadMode(cnt > (checkPeriod / 2))
+				(*i.readers[idx]).needLargePrefetch(cnt > (checkHotspotPeriod / 2))
 			}
 			i.checkHotspotCnt = 0
 			i.hotspotMap = make(map[int]int)
@@ -273,8 +282,8 @@ func (p kvReaderProxy) next() (kvPair, error) {
 	return kvPair{key: k, value: v}, nil
 }
 
-func (p kvReaderProxy) setReadMode(useConcurrency bool) {
-	p.r.byteReader.switchReaderMode(useConcurrency)
+func (p kvReaderProxy) needLargePrefetch(useConcurrency bool) {
+	p.r.byteReader.needLargePrefetch(useConcurrency)
 }
 
 func (p kvReaderProxy) close() error {
@@ -283,7 +292,8 @@ func (p kvReaderProxy) close() error {
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
-	iter *mergeIter[kvPair, kvReaderProxy]
+	iter    *mergeIter[kvPair, kvReaderProxy]
+	memPool *membuf.Pool
 }
 
 // NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
@@ -297,6 +307,12 @@ func NewMergeKVIter(
 	readBufferSize int,
 ) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[kvPair, kvReaderProxy], 0, len(paths))
+	largeBufSize := ConcurrentReaderBufferSize * ConcurrentReaderConcurrency
+	memPool := membuf.NewPool(
+		membuf.WithPoolSize(1), // currently only one reader will become hotspot
+		membuf.WithBlockSize(largeBufSize),
+		membuf.WithLargeAllocThreshold(largeBufSize),
+	)
 
 	for i := range paths {
 		i := i
@@ -305,12 +321,13 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
+			rd.byteReader.largeBufferPool = memPool.NewBuffer()
 			return &kvReaderProxy{p: paths[i], r: rd}, nil
 		})
 	}
 
 	it, err := newMergeIter[kvPair, kvReaderProxy](ctx, readerOpeners)
-	return &MergeKVIter{iter: it}, err
+	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
 // Error returns the error of the iterator.
@@ -335,6 +352,7 @@ func (i *MergeKVIter) Value() []byte {
 
 // Close closes the iterator.
 func (i *MergeKVIter) Close() error {
+	i.memPool.Destroy()
 	return i.iter.close()
 }
 
@@ -355,9 +373,7 @@ func (p statReaderProxy) next() (*rangeProperty, error) {
 	return p.r.nextProp()
 }
 
-func (p statReaderProxy) setReadMode(useConcurrency bool) {
-	p.r.byteReader.switchReaderMode(useConcurrency)
-}
+func (p statReaderProxy) needLargePrefetch(bool) {}
 
 func (p statReaderProxy) close() error {
 	return p.r.Close()
