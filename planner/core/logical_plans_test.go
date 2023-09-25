@@ -563,6 +563,7 @@ func TestPlanBuilder(t *testing.T) {
 	s := createPlannerSuite()
 	defer s.Close()
 	s.ctx.GetSessionVars().CostModelVersion = modelVer1
+	s.ctx.GetSessionVars().EnableHashJoin = true
 	ctx := context.Background()
 	for i, ca := range input {
 		comment := fmt.Sprintf("for %s", ca)
