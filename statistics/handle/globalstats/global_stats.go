@@ -134,7 +134,7 @@ func MergePartitionStats2GlobalStats(
 		}
 
 		for i := 0; i < globalStats.Num; i++ {
-			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the memory problem.
+			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the data race.
 			// partitionStats will be released after the for loop.
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex)
 			skipPartition := false
