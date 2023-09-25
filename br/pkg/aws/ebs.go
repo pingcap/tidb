@@ -27,7 +27,6 @@ import (
 const (
 	pollingPendingSnapshotInterval = 30 * time.Second
 	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
-	maxConcurrentFSRJob            = 200
 )
 
 type EC2Session struct {
@@ -283,19 +282,8 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 }
 
 // EnableDataFSR enables FSR for data volume snapshots
-func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta) error {
-	var sourceSnapshotIDs, availableZones []*string
-	for i := range meta.TiKVComponent.Stores {
-		store := meta.TiKVComponent.Stores[i]
-		for j := range store.Volumes {
-			oldVol := store.Volumes[j]
-			// Handle data volume snapshots only
-			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
-				sourceSnapshotIDs = append(sourceSnapshotIDs, &oldVol.SnapshotID)
-				availableZones = append(availableZones, &oldVol.VolumeAZ)
-			}
-		}
-	}
+func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) error {
+	sourceSnapshotIDs, availableZones := fetchTargetSnapshots(meta, targetAZ)
 
 	log.Info("Start enable FSR for", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs))
 
@@ -319,19 +307,8 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta) error {
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
-func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta) error {
-	var sourceSnapshotIDs, availableZones []*string
-	for i := range meta.TiKVComponent.Stores {
-		store := meta.TiKVComponent.Stores[i]
-		for j := range store.Volumes {
-			oldVol := store.Volumes[j]
-			// Handle data volume snapshots only
-			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
-				sourceSnapshotIDs = append(sourceSnapshotIDs, &oldVol.SnapshotID)
-				availableZones = append(availableZones, &oldVol.VolumeAZ)
-			}
-		}
-	}
+func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) error {
+	sourceSnapshotIDs, availableZones := fetchTargetSnapshots(meta, targetAZ)
 
 	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs))
 
@@ -352,6 +329,23 @@ func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta) error {
 	log.Info("disable FSR succeed")
 
 	return nil
+}
+
+func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, targetAZ string) ([]*string, []*string) {
+	var sourceSnapshotIDs, availableZones []*string
+	for i := range meta.TiKVComponent.Stores {
+		store := meta.TiKVComponent.Stores[i]
+		for j := range store.Volumes {
+			oldVol := store.Volumes[j]
+			// Handle data volume snapshots only
+			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
+				sourceSnapshotIDs = append(sourceSnapshotIDs, &oldVol.SnapshotID)
+				availableZones = append(availableZones, &targetAZ)
+			}
+		}
+	}
+
+	return sourceSnapshotIDs, availableZones
 }
 
 // CreateVolumes create volumes from snapshots
