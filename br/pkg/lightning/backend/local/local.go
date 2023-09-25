@@ -1716,7 +1716,7 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	if !ok {
 		return 0, 0
 	}
-	return v.KVStatistics()
+	return v.ImportedStatistics()
 }
 
 // ResetEngine reset the engine and reclaim the space.

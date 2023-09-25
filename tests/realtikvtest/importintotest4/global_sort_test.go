@@ -78,8 +78,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.NoError(err)
 	redactedSortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", gcsEndpoint)
 	urlEqual(s.T(), redactedSortStorageURI, jobInfo.Parameters.Options["cloud_storage_uri"].(string))
-	// TODO: enable it when external engine fixed statistics.
-	//s.Equal(6, jobInfo.Summary.ImportedRows)
+	s.Equal(uint64(6), jobInfo.Summary.ImportedRows)
 	globalTaskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
