@@ -3651,19 +3651,19 @@ func TestDNFCondSelectivityWithConst(t *testing.T) {
 		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustQuery("explain format = 'brief' select * from t1 where 0=1 or a=1 or b=1;").Check(testkit.Rows(
 		"TableReader 1.99 root  data:Selection",
-		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"└─Selection 1.99 cop[tikv] or(eq(test.t1.a, 1), eq(test.t1.b, 1))",
 		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustQuery("explain format = 'brief' select * from t1 where null or a=1 or b=1;").Check(testkit.Rows(
 		"TableReader 1.99 root  data:Selection",
-		"└─Selection 1.99 cop[tikv]  or(0, or(eq(test.t1.a, 1), eq(test.t1.b, 1)))",
+		"└─Selection 1.99 cop[tikv] or(eq(test.t1.a, 1), eq(test.t1.b, 1))",
 		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or false or b=1;").Check(testkit.Rows(
 		"TableReader 1.99 root  data:Selection",
-		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(0, eq(test.t1.b, 1)))",
+		"└─Selection 1.99 cop[tikv] or(eq(test.t1.a, 1), eq(test.t1.b, 1))",
 		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustQuery("explain format = 'brief' select * from t1 where a=1 or b=1 or \"false\";").Check(testkit.Rows(
 		"TableReader 1.99 root  data:Selection",
-		"└─Selection 1.99 cop[tikv]  or(eq(test.t1.a, 1), or(eq(test.t1.b, 1), 0))",
+		"└─Selection 1.99 cop[tikv] or(eq(test.t1.a, 1), eq(test.t1.b, 1))",
 		"  └─TableFullScan 129.00 cop[tikv] table:t1 keep order:false"))
 	testKit.MustQuery("explain format = 'brief' select * from t1 where 1=1 or a=1 or b=1;").Check(testkit.Rows(
 		"TableReader 129.00 root  data:Selection",
