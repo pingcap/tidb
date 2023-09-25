@@ -164,6 +164,7 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 		}
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
+<<<<<<< HEAD
 			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
 			d.SetLength(tp.Flen)
 			// If tp.Decimal is unspecified(-1), we should set it to the real
@@ -172,6 +173,17 @@ func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 			// when encoding.
 			if tp.Decimal == types.UnspecifiedLength {
 				d.SetFrac(d.Frac())
+=======
+			dec := r.GetMyDecimal(colIdx)
+			d.SetMysqlDecimal(dec)
+			d.SetLength(tp.GetFlen())
+			// If tp.decimal is unspecified(-1), we should set it to the real
+			// fraction length of the decimal value, if not, the d.Frac will
+			// be set to MAX_UINT16 which will cause unexpected BadNumber error
+			// when encoding.
+			if tp.GetDecimal() == types.UnspecifiedLength {
+				d.SetFrac(int(dec.GetDigitsFrac()))
+>>>>>>> 7e922aa5037 (expression: use precision and frac from MyDecimal instead of datum for encoding (#47195))
 			} else {
 				d.SetFrac(tp.Decimal)
 			}
