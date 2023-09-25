@@ -145,13 +145,14 @@ SplitRegions:
 	log.Info("start to wait for scattering regions",
 		zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 
-	leftCnt := rs.waitForScatterRegions(ctx, scatterRegions, split.ScatterWaitUpperInterval)
+	leftCnt := rs.WaitForScatterRegions(ctx, scatterRegions, split.ScatterWaitUpperInterval)
 	if leftCnt == 0 {
 		log.Info("waiting for scattering regions done",
 			zap.Int("regions", len(scatterRegions)), zap.Duration("take", time.Since(startTime)))
 	} else {
 		log.Warn("waiting for scattering regions timeout",
-			zap.Int("scatterCount", len(scatterRegions)-leftCnt),
+			zap.Int("NotScatterCount", leftCnt),
+			zap.Int("TotalScatterCount", len(scatterRegions)),
 			zap.Int("regions", len(scatterRegions)),
 			zap.Duration("take", time.Since(startTime)))
 	}
@@ -253,7 +254,7 @@ func mapRegionInfoSlice(regionInfos []*split.RegionInfo) map[uint64]*split.Regio
 	return regionInfoMap
 }
 
-func (rs *RegionSplitter) waitForScatterRegions(ctx context.Context, regionInfos []*split.RegionInfo, timeout time.Duration) int {
+func (rs *RegionSplitter) WaitForScatterRegions(ctx context.Context, regionInfos []*split.RegionInfo, timeout time.Duration) int {
 	var (
 		startTime   = time.Now()
 		interval    = split.ScatterWaitInterval
@@ -281,6 +282,10 @@ func (rs *RegionSplitter) waitForScatterRegions(ctx context.Context, regionInfos
 				reScatterRegions = append(reScatterRegions, regionInfo)
 			}
 			// RUNNING_STATUS, just wait and check it in the next loop
+		}
+
+		if len(leftRegions) == 0 {
+			return 0
 		}
 
 		if len(reScatterRegions) > 0 {
@@ -830,7 +835,7 @@ func (helper *LogSplitHelper) Split(ctx context.Context) error {
 		regionSplitter := NewRegionSplitter(helper.client)
 		// It is too expensive to stop recovery and wait for a small number of regions
 		// to complete scatter, so the maximum waiting time is reduced to 1 minute.
-		_ = regionSplitter.waitForScatterRegions(ctx, scatterRegions, time.Minute)
+		_ = regionSplitter.WaitForScatterRegions(ctx, scatterRegions, time.Minute)
 	}()
 
 	iter := helper.iterator()
