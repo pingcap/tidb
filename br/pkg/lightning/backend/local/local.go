@@ -942,6 +942,11 @@ func (local *local) WriteToTiKV(
 			}
 		}
 	}
+	leaderID := region.Leader.GetId()
+	if leaderID == 0 {
+		return nil, Range{}, rangeStats{}, common.ErrNoLeader.GenWithStackByArgs(region.Region.Id, leaderID)
+	}
+
 	begin := time.Now()
 	regionRange := intersectRange(region.Region, Range{start: start, end: end})
 	opt := &pebble.IterOptions{LowerBound: regionRange.start, UpperBound: regionRange.end}
@@ -983,7 +988,6 @@ func (local *local) WriteToTiKV(
 		// annotate the error with peer/store/region info to help debug.
 		return errors.Annotatef(in, "peer %d, store %d, region %d, epoch %s", peer.Id, peer.StoreId, region.Region.Id, region.Region.RegionEpoch.String())
 	}
-	leaderID := region.Leader.GetId()
 	clients := make([]sst.ImportSST_WriteClient, 0, len(region.Region.GetPeers()))
 	allPeers := make([]*metapb.Peer, 0, len(region.Region.GetPeers()))
 	requests := make([]*sst.WriteRequest, 0, len(region.Region.GetPeers()))
@@ -1105,13 +1109,17 @@ func (local *local) WriteToTiKV(
 		}
 	}
 
+	failpoint.Inject("NoLeader", func() {
+		log.FromContext(ctx).Warn("enter failpoint NoLeader")
+		leaderPeerMetas = nil
+	})
+
 	// if there is not leader currently, we should directly return an error
 	if len(leaderPeerMetas) == 0 {
 		log.FromContext(ctx).Warn("write to tikv no leader", logutil.Region(region.Region), logutil.Leader(region.Leader),
 			zap.Uint64("leader_id", leaderID), logutil.SSTMeta(meta),
 			zap.Int64("kv_pairs", totalCount), zap.Int64("total_bytes", size))
-		return nil, Range{}, stats, errors.Errorf("write to tikv with no leader returned, region '%d', leader: %d",
-			region.Region.Id, leaderID)
+		return nil, Range{}, stats, common.ErrNoLeader.GenWithStackByArgs(region.Region.Id, leaderID)
 	}
 
 	log.FromContext(ctx).Debug("write to kv", zap.Reflect("region", region), zap.Uint64("leader", leaderID),
