@@ -33,8 +33,6 @@ const (
 	StatsMetaHistorySourceLoadStats = "load stats"
 	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
 	StatsMetaHistorySourceFlushStats = "flush stats"
-	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
-	StatsMetaHistorySourceExtendedStats = "extended stats"
 	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
 	StatsMetaHistorySourceSchemaChange = "schema change"
 )

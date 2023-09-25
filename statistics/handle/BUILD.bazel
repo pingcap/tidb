@@ -32,6 +32,7 @@ go_library(
         "//statistics",
         "//statistics/handle/autoanalyze",
         "//statistics/handle/cache",
+        "//statistics/handle/extstats",
         "//statistics/handle/globalstats",
         "//statistics/handle/lockstats",
         "//statistics/handle/metrics",
