@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -27,8 +28,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var NewCopContext4Test = NewCopContext
-
 type resultChanForTest struct {
 	ch chan IndexRecordChunk
 }
@@ -37,7 +36,7 @@ func (r *resultChanForTest) AddTask(rs IndexRecordChunk) {
 	r.ch <- rs
 }
 
-func FetchChunk4Test(copCtx *CopContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
+func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
 	batchSize int) *chunk.Chunk {
 	variable.SetDDLReorgBatchSize(int32(batchSize))
 	task := &reorgBackfillTask{
@@ -59,9 +58,11 @@ func FetchChunk4Test(copCtx *CopContext, tbl table.PhysicalTable, startKey, endK
 	return rs.Chunk
 }
 
-func ConvertRowToHandleAndIndexDatum(row chunk.Row, copCtx *CopContext) (kv.Handle, []types.Datum, error) {
-	idxData := extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, nil)
-	handleData := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, nil)
-	handle, err := buildHandle(handleData, copCtx.tblInfo, copCtx.pkInfo, &stmtctx.StatementContext{TimeZone: time.Local})
+func ConvertRowToHandleAndIndexDatum(
+	row chunk.Row, copCtx copr.CopContext, idxID int64) (kv.Handle, []types.Datum, error) {
+	c := copCtx.GetBase()
+	idxData := extractDatumByOffsets(row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, nil)
+	handleData := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, nil)
+	handle, err := buildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, &stmtctx.StatementContext{TimeZone: time.Local})
 	return handle, idxData, err
 }

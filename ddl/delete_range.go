@@ -334,63 +334,70 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		var indexID int64
-		var ifExists bool
+		allIndexIDs := make([]int64, 1)
+		ifExists := make([]bool, 1)
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
-			return errors.Trace(err)
+		if err := job.DecodeArgs(&allIndexIDs[0], &ifExists[0], &partitionIDs); err != nil {
+			if err = job.DecodeArgs(&allIndexIDs, &ifExists, &partitionIDs); err != nil {
+				return errors.Trace(err)
+			}
 		}
 		// Determine the physicalIDs to be added.
 		physicalIDs := []int64{job.TableID}
 		if len(partitionIDs) > 0 {
 			physicalIDs = partitionIDs
 		}
-		// Determine the index IDs to be added.
-		tempIdxID := tablecodec.TempIndexPrefix | indexID
-		var indexIDs []int64
-		if job.State == model.JobStateRollbackDone {
-			indexIDs = []int64{indexID, tempIdxID}
-		} else {
-			indexIDs = []int64{tempIdxID}
-		}
-		for _, pid := range physicalIDs {
-			for _, iid := range indexIDs {
-				startKey := tablecodec.EncodeTableIndexPrefix(pid, iid)
-				endKey := tablecodec.EncodeTableIndexPrefix(pid, iid+1)
-				elemID := ea.allocForIndexID(pid, iid)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("physical ID is %d", pid)); err != nil {
-					return errors.Trace(err)
+		for _, indexID := range allIndexIDs {
+			// Determine the index IDs to be added.
+			tempIdxID := tablecodec.TempIndexPrefix | indexID
+			var indexIDs []int64
+			if job.State == model.JobStateRollbackDone {
+				indexIDs = []int64{indexID, tempIdxID}
+			} else {
+				indexIDs = []int64{tempIdxID}
+			}
+			for _, pid := range physicalIDs {
+				for _, iid := range indexIDs {
+					startKey := tablecodec.EncodeTableIndexPrefix(pid, iid)
+					endKey := tablecodec.EncodeTableIndexPrefix(pid, iid+1)
+					elemID := ea.allocForIndexID(pid, iid)
+					if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("physical ID is %d", pid)); err != nil {
+						return errors.Trace(err)
+					}
 				}
 			}
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
 		var indexName interface{}
-		var ifExists bool
-		var indexID int64
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &ifExists, &indexID, &partitionIDs); err != nil {
-			return errors.Trace(err)
-		}
-
-		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
-		if len(partitionIDs) == 0 {
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			elemID := ea.allocForIndexID(tableID, indexID)
-			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
-		}
-		failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
-			if val.(bool) {
-				panic("drop global index must not delete partition index range")
-			}
-		})
-		for _, pid := range partitionIDs {
-			startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-			elemID := ea.allocForIndexID(pid, indexID)
-			if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
+		ifExists := make([]bool, 1)
+		allIndexIDs := make([]int64, 1)
+		if err := job.DecodeArgs(&indexName, &ifExists[0], &allIndexIDs[0], &partitionIDs); err != nil {
+			if err = job.DecodeArgs(&indexName, &ifExists, &allIndexIDs, &partitionIDs); err != nil {
 				return errors.Trace(err)
+			}
+		}
+		for _, indexID := range allIndexIDs {
+			// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
+			if len(partitionIDs) == 0 {
+				startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+				endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+				elemID := ea.allocForIndexID(tableID, indexID)
+				return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
+			}
+			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+				if val.(bool) {
+					panic("drop global index must not delete partition index range")
+				}
+			})
+			for _, pid := range partitionIDs {
+				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
+				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
+				elemID := ea.allocForIndexID(pid, indexID)
+				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
+					return errors.Trace(err)
+				}
 			}
 		}
 	case model.ActionDropColumn:
