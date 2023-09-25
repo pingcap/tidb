@@ -2059,25 +2059,3 @@ func TestIssue41986(t *testing.T) {
 	// shouldn't report they can't find column error and return the right result.
 	tk.MustQuery("SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;").Check(testkit.Rows("2023-08-25 00:00:00"))
 }
-
-func TestIssue42622(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t0 (c0 int);")
-
-	// should succeed
-	tk.MustQuery(`select *
-	from
-	  (select (92 / 4) as c4) as subq_0
-	where exists (
-		select 1 as c0
-		union all
-		select
-			1 as c0
-		  from
-			(t0 as ref_88)
-		  where (subq_0.c4) >= (subq_0.c4)
-		 );`).Check(testkit.Rows("23.0000"))
-}
