@@ -948,6 +948,7 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 
 		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
 		deleteSQL.WriteString(")")
+		logutil.BgLogger().Info("ywq test deletesql", zap.String("sql", deleteSQL.String()))
 		_, err = ExecSQL(stm.ctx, se, deleteSQL.String())
 		return err
 	})

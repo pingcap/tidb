@@ -76,7 +76,7 @@ func redactCloudStorageURI(
 	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
 	metaBytes, err := json.Marshal(origin)
 	if err != nil {
-		logutil.Logger(ctx).Warn("fail to marshal task meta", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to marshal task meta", zap.Error(err))
 		return
 	}
 	gTask.Meta = metaBytes

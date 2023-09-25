@@ -662,9 +662,9 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	defer ctrl.Finish()
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/waitGCFinished", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
 	DispatchTaskAndCheckSuccess("key1", t, &m)
-	<-dispatcher.WaitGCFinished
+	<-dispatcher.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	tasks, err := mgr.GetGlobalTaskByKeyWithHistory("key1")

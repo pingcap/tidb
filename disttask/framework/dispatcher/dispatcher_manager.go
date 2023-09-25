@@ -312,11 +312,11 @@ func (dm *Manager) doCleanUpRoutine() {
 	logutil.Logger(dm.ctx).Info("cleanUp routine success")
 }
 
-// WaitGCFinished is used to sync the test.
-var WaitGCFinished = make(chan struct{})
+// WaitCleanUpFinished is used to sync the test.
+var WaitCleanUpFinished = make(chan struct{})
 
 func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
-	cleanUpedTasks := make([]*proto.Task, 0)
+	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
 	for _, task := range tasks {
 		cleanUpFactory := getDispatcherCleanUpFactory(task.Type)
@@ -327,20 +327,20 @@ func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 				firstErr = err
 				break
 			}
-			cleanUpedTasks = append(cleanUpedTasks, task)
-			failpoint.Inject("waitGCFinished", func() {
-				WaitGCFinished <- struct{}{}
+			cleanedTasks = append(cleanedTasks, task)
+			failpoint.Inject("WaitCleanUpFinished", func() {
+				WaitCleanUpFinished <- struct{}{}
 			})
 		} else {
-			// if task dosen't register cleanUp function, mark it as cleanUped.
-			cleanUpedTasks = append(cleanUpedTasks, task)
+			// if task doesn't register cleanUp function, mark it as cleaned.
+			cleanedTasks = append(cleanedTasks, task)
 		}
 	}
 	if firstErr != nil {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
-	return dm.taskMgr.TransferTasks2History(cleanUpedTasks)
+	return dm.taskMgr.TransferTasks2History(cleanedTasks)
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.
