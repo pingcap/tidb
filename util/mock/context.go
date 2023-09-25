@@ -463,6 +463,7 @@ func NewContext() *Context {
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
+	vars.EnableHashJoin = true
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
 	vars.StmtCtx.TimeZone = time.UTC
