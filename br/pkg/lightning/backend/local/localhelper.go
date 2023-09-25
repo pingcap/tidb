@@ -348,6 +348,7 @@ func (local *local) SplitAndScatterRegionByRanges(
 	return nil
 }
 
+<<<<<<< HEAD
 func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (map[uint64]int64, error) {
 	if db == nil {
 		return nil, errors.Errorf("db is nil")
@@ -381,6 +382,29 @@ func fetchTableRegionSizeStats(ctx context.Context, db *sql.DB, tableID int64) (
 }
 
 func (local *local) BatchSplitRegions(
+=======
+// ScatterRegion scatter the regions and retry if it fails. It returns error if can not scatter after max_retry.
+func (local *Backend) ScatterRegion(ctx context.Context, regionInfo *split.RegionInfo) error {
+	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
+	err := utils.WithRetry(ctx, func() error {
+		var failedErr error
+		err := local.splitCli.ScatterRegion(ctx, regionInfo)
+		if err != nil {
+			failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scatter region failed")
+		}
+		return failedErr
+	}, backoffer)
+	if err != nil {
+		log.FromContext(ctx).Warn("scatter region failed", zap.Error(ctx.Err()))
+	}
+	return err
+}
+
+// BatchSplitRegions will split regions by the given split keys and tries to
+// scatter new regions. If split/scatter fails because new region is not ready,
+// this function will not return error.
+func (local *Backend) BatchSplitRegions(
+>>>>>>> 61a9bce1103 (pkg/lightning: retry individual scatter region (#46245))
 	ctx context.Context,
 	region *split.RegionInfo,
 	keys [][]byte,
@@ -393,6 +417,7 @@ func (local *local) BatchSplitRegions(
 		return nil, nil, errors.Annotatef(err, "batch split regions failed")
 	}
 	var failedErr error
+<<<<<<< HEAD
 	retryRegions := make([]*split.RegionInfo, 0)
 	scatterRegions := newRegions
 	waitTime := splitRegionBaseBackOffTime
@@ -423,6 +448,64 @@ func (local *local) BatchSplitRegions(
 	}
 
 	return region, newRegions, nil
+=======
+	splitRegions := newRegions
+	// wait for regions to be split
+	backoffer := split.NewWaitRegionOnlineBackoffer().(*split.WaitRegionOnlineBackoffer)
+	failedErr = utils.WithRetry(ctx, func() error {
+		retryRegions := make([]*split.RegionInfo, 0)
+		for _, region := range splitRegions {
+			// Wait for a while until the regions successfully splits.
+			ok, err2 := local.hasRegion(ctx, region.Region.Id)
+			if !ok || err2 != nil {
+				if err2 == nil {
+					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id))
+				} else {
+					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id), zap.Error(err2))
+				}
+				retryRegions = append(retryRegions, region)
+				continue
+			}
+		}
+		if len(retryRegions) == 0 {
+			return nil
+		}
+		// if the number of becomes smaller, we can infer TiKV side really
+		// made some progress so don't increase the retry times.
+		if len(retryRegions) < len(splitRegions) {
+			backoffer.Stat.ReduceRetry()
+		}
+		log.FromContext(ctx).Warn("split region failed", zap.Int("regionCount", len(newRegions)),
+			zap.Int("failedCount", len(retryRegions)))
+		splitRegions = retryRegions
+		// although it's not PDBatchScanRegion, WaitRegionOnlineBackoffer will only
+		// check this error class so we simply reuse it. Will refine WaitRegionOnlineBackoffer
+		// later
+		failedErr = errors.Annotatef(berrors.ErrPDBatchScanRegion, "split region failed")
+		return failedErr
+	}, backoffer)
+
+	if failedErr != nil {
+		log.FromContext(ctx).Warn("split region failed for few regions", zap.Int("regionCount", len(newRegions)), zap.Int("failedCount", len(splitRegions)))
+	}
+
+	if ctx.Err() != nil {
+		return region, newRegions, ctx.Err()
+	}
+
+	// scatter regions
+	failedErr = nil
+	scatterRegions := newRegions
+	for _, region := range scatterRegions {
+		err = local.ScatterRegion(ctx, region)
+		if err != nil && failedErr == nil {
+			failedErr = err
+		}
+	}
+
+	// TODO: there's still change that we may skip scatter if the retry is timeout.
+	return region, newRegions, failedErr
+>>>>>>> 61a9bce1103 (pkg/lightning: retry individual scatter region (#46245))
 }
 
 func (local *local) hasRegion(ctx context.Context, regionID uint64) (bool, error) {
@@ -509,7 +592,7 @@ func (local *local) checkRegionScatteredOrReScatter(ctx context.Context, regionI
 	default:
 		log.FromContext(ctx).Debug("scatter-region operator status is abnormal, will scatter region again",
 			logutil.Region(regionInfo.Region), zap.Stringer("status", resp.GetStatus()))
-		return false, local.splitCli.ScatterRegion(ctx, regionInfo)
+		return false, local.ScatterRegion(ctx, regionInfo)
 	}
 }
 
