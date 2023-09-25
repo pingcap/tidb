@@ -14,7 +14,7 @@
 
 package variable
 
-var isHintUpdatable = map[string]struct{}{
+var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_agg_push_down":                           {},
 	"tidb_opt_derive_topn":                             {},
 	"tidb_opt_broadcast_cartesian_join":                {},
@@ -96,6 +96,13 @@ var isHintUpdatable = map[string]struct{}{
 	"tidb_opt_fix_control":                             {},
 	"tidb_runtime_filter_type":                         {},
 	"tidb_runtime_filter_mode":                         {},
+	"tidb_session_alias":                               {},
+	"tidb_opt_objective":                               {},
+	"mpp_exchange_compression_mode":                    {},
+	"tidb_allow_fallback_to_tikv":                      {},
+	"tiflash_fastscan":                                 {},
+	"tiflash_fine_grained_shuffle_batch_size":          {},
+	"tiflash_find_grained_shuffle_stream_count":        {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
@@ -104,8 +111,8 @@ var isHintUpdatable = map[string]struct{}{
 
 func setHintUpdatable(vars []*SysVar) {
 	for _, v := range vars {
-		if _, ok := isHintUpdatable[v.Name]; ok {
-			v.IsHintUpdatable = true
+		if _, ok := isHintUpdatableVerified[v.Name]; ok {
+			v.IsHintUpdatableVerfied = true
 		}
 	}
 }
