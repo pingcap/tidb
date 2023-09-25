@@ -59,7 +59,6 @@ type Extension interface {
 	GetNextStep(h TaskHandle, task *proto.Task) int64
 }
 
-// / dispatcher factory related code.
 // dispatcherFactoryFn is used to create a dispatcher.
 type dispatcherFactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
 
@@ -96,7 +95,6 @@ func ClearDispatcherFactory() {
 	dispatcherFactoryMap.m = make(map[string]dispatcherFactoryFn)
 }
 
-// / dispatcher clean up related code.
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
 type CleanUpRoutine interface {
 	// CleanUp do the clean up work.

@@ -332,7 +332,6 @@ func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 			failpoint.Inject("waitGCFinished", func() {
 				WaitGCFinished <- struct{}{}
 			})
-
 		}
 	}
 
