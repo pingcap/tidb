@@ -239,14 +239,14 @@ func initflag() {
 	// Ignore errors; CommandLine is set for ExitOnError.
 	// nolint:errcheck
 	fset.Parse(os.Args[1:])
+	if *help {
+		fset.Usage()
+		os.Exit(0)
+	}
 }
 
 func main() {
 	initflag()
-	if *help {
-		flag.Usage()
-		os.Exit(0)
-	}
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
 	if *version {
 		setVersions()
