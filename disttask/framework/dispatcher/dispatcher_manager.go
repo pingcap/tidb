@@ -191,7 +191,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				// the task is not in runningTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
-					metrics.UpdateMetricsForDisptchTask(task)
+					metrics.UpdateMetricsForDispatchTask(task)
 					dm.startDispatcher(task)
 					cnt++
 					continue
@@ -199,7 +199,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.checkConcurrencyOverflow(cnt) {
 					break
 				}
-				metrics.UpdateMetricsForDisptchTask(task)
+				metrics.UpdateMetricsForDispatchTask(task)
 				dm.startDispatcher(task)
 				cnt++
 			}
