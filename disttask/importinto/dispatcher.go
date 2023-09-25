@@ -717,7 +717,7 @@ func cleanUpGlobalSortedData(ctx context.Context, gTask *proto.Task, taskMeta *T
 		logger.Warn("failed to init data store", zap.Error(err))
 	}
 	if err = external.CleanUpFiles(ctx, controller.GlobalSortStore,
-		strconv.Itoa(int(gTask.ID)), uint(taskMeta.Plan.ThreadCnt)); err != nil {
+		strconv.Itoa(int(gTask.ID))); err != nil {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 	}
 }

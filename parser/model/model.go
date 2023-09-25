@@ -129,6 +129,11 @@ type ColumnInfo struct {
 	Version uint64 `json:"version"`
 }
 
+// IsVirtualGenerated checks the column if it is virtual.
+func (c *ColumnInfo) IsVirtualGenerated() bool {
+	return c.IsGenerated() && !c.GeneratedStored
+}
+
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
 	if c == nil {
