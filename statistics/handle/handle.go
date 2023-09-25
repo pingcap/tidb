@@ -86,10 +86,10 @@ type Handle struct {
 	statsCache *cache.StatsCachePointer
 
 	// tableDelta contains all the delta map from collectors when we dump them to KV.
-	tableDelta *tableDelta
+	tableDelta *usage.TableDelta
 
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
-	statsUsage *statsUsage
+	statsUsage *usage.StatsUsage
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -146,8 +146,8 @@ func (h *Handle) Clear() {
 		<-h.ddlEventCh
 	}
 	h.listHead.ClearForTest()
-	h.tableDelta.reset()
-	h.statsUsage.reset()
+	h.tableDelta.Reset()
+	h.statsUsage.Reset()
 }
 
 type sessionPool interface {
@@ -176,8 +176,8 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool ses
 		return nil, err
 	}
 	handle.statsCache = statsCache
-	handle.tableDelta = newTableDelta()
-	handle.statsUsage = newStatsUsage()
+	handle.tableDelta = usage.NewTableDelta()
+	handle.statsUsage = usage.NewStatsUsage()
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)

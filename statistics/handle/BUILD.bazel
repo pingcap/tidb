@@ -82,6 +82,7 @@ go_test(
         "//statistics",
         "//statistics/handle/globalstats",
         "//statistics/handle/internal",
+        "//statistics/handle/usage",
         "//testkit",
         "//testkit/testsetup",
         "//types",

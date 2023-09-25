@@ -37,114 +37,15 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// tableDelta is used to collect tables' change information.
-// All methods of it are thread-safe.
-type tableDelta struct {
-	delta map[int64]variable.TableDelta // map[tableID]delta
-	lock  sync.Mutex
-}
-
-func newTableDelta() *tableDelta {
-	return &tableDelta{
-		delta: make(map[int64]variable.TableDelta),
-	}
-}
-
-func (m *tableDelta) reset() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	m.delta = make(map[int64]variable.TableDelta)
-}
-
-func (m *tableDelta) getDeltaAndReset() map[int64]variable.TableDelta {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	ret := m.delta
-	m.delta = make(map[int64]variable.TableDelta)
-	return ret
-}
-
-func (m *tableDelta) update(id int64, delta int64, count int64, colSize *map[int64]int64) {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	updateTableDeltaMap(m.delta, id, delta, count, colSize)
-}
-
-func updateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64, colSize *map[int64]int64) {
-	item := m[id]
-	item.Delta += delta
-	item.Count += count
-	if item.ColSize == nil {
-		item.ColSize = make(map[int64]int64)
-	}
-	if colSize != nil {
-		for key, val := range *colSize {
-			item.ColSize[key] += val
-		}
-	}
-	m[id] = item
-}
-
-func (m *tableDelta) merge(deltaMap map[int64]variable.TableDelta) {
-	if len(deltaMap) == 0 {
-		return
-	}
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	for id, item := range deltaMap {
-		updateTableDeltaMap(m.delta, id, item.Delta, item.Count, &item.ColSize)
-	}
-}
-
-// statsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).
-// All methods of it are thread-safe.
-type statsUsage struct {
-	usage map[model.TableItemID]time.Time
-	lock  sync.RWMutex
-}
-
-func newStatsUsage() *statsUsage {
-	return &statsUsage{
-		usage: make(map[model.TableItemID]time.Time),
-	}
-}
-
-func (m *statsUsage) reset() {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	m.usage = make(map[model.TableItemID]time.Time)
-}
-
-func (m *statsUsage) getUsageAndReset() map[model.TableItemID]time.Time {
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	ret := m.usage
-	m.usage = make(map[model.TableItemID]time.Time)
-	return ret
-}
-
-func (m *statsUsage) merge(other map[model.TableItemID]time.Time) {
-	if len(other) == 0 {
-		return
-	}
-	m.lock.Lock()
-	defer m.lock.Unlock()
-	for id, t := range other {
-		if mt, ok := m.usage[id]; !ok || mt.Before(t) {
-			m.usage[id] = t
-		}
-	}
-}
-
-func merge(s *SessionStatsCollector, deltaMap *tableDelta, colMap *statsUsage) {
-	deltaMap.merge(s.mapper.getDeltaAndReset())
-	colMap.merge(s.statsUsage.getUsageAndReset())
+func merge(s *SessionStatsCollector, deltaMap *usage.TableDelta, colMap *usage.StatsUsage) {
+	deltaMap.Merge(s.mapper.GetDeltaAndReset())
+	colMap.Merge(s.statsUsage.GetUsageAndReset())
 }
 
 // SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
 type SessionStatsCollector struct {
-	mapper     *tableDelta
-	statsUsage *statsUsage
+	mapper     *usage.TableDelta
+	statsUsage *usage.StatsUsage
 	next       *SessionStatsCollector
 	sync.Mutex
 
@@ -155,8 +56,8 @@ type SessionStatsCollector struct {
 // NewSessionStatsCollector initializes a new SessionStatsCollector.
 func NewSessionStatsCollector() *SessionStatsCollector {
 	return &SessionStatsCollector{
-		mapper:     newTableDelta(),
-		statsUsage: newStatsUsage(),
+		mapper:     usage.NewTableDelta(),
+		statsUsage: usage.NewStatsUsage(),
 	}
 }
 
@@ -171,15 +72,15 @@ func (s *SessionStatsCollector) Delete() {
 func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper.update(id, delta, count, colSize)
+	s.mapper.Update(id, delta, count, colSize)
 }
 
 // ClearForTest clears the mapper for test.
 func (s *SessionStatsCollector) ClearForTest() {
 	s.Lock()
 	defer s.Unlock()
-	s.mapper = newTableDelta()
-	s.statsUsage = newStatsUsage()
+	s.mapper = usage.NewTableDelta()
+	s.statsUsage = usage.NewStatsUsage()
 	s.next = nil
 	s.deleted = false
 }
@@ -188,7 +89,7 @@ func (s *SessionStatsCollector) ClearForTest() {
 func (s *SessionStatsCollector) UpdateColStatsUsage(colMap map[model.TableItemID]time.Time) {
 	s.Lock()
 	defer s.Unlock()
-	s.statsUsage.merge(colMap)
+	s.statsUsage.Merge(colMap)
 }
 
 // NewSessionStatsCollector allocates a stats collector for a session.
@@ -196,9 +97,9 @@ func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
 	h.listHead.Lock()
 	defer h.listHead.Unlock()
 	newCollector := &SessionStatsCollector{
-		mapper:     newTableDelta(),
+		mapper:     usage.NewTableDelta(),
 		next:       h.listHead.next,
-		statsUsage: newStatsUsage(),
+		statsUsage: usage.NewStatsUsage(),
 	}
 	h.listHead.next = newCollector
 	return newCollector
@@ -302,8 +203,8 @@ const (
 // sweepList will loop over the list, merge each session's local stats into handle
 // and remove closed session's collector.
 func (h *Handle) sweepList() {
-	deltaMap := newTableDelta()
-	colMap := newStatsUsage()
+	deltaMap := usage.NewTableDelta()
+	colMap := usage.NewStatsUsage()
 	prev := h.listHead
 	prev.Lock()
 	for curr := prev.next; curr != nil; curr = curr.next {
@@ -321,17 +222,17 @@ func (h *Handle) sweepList() {
 		}
 	}
 	prev.Unlock()
-	h.tableDelta.merge(deltaMap.getDeltaAndReset())
-	h.statsUsage.merge(colMap.getUsageAndReset())
+	h.tableDelta.Merge(deltaMap.GetDeltaAndReset())
+	h.statsUsage.Merge(colMap.GetUsageAndReset())
 }
 
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 	h.sweepList()
-	deltaMap := h.tableDelta.getDeltaAndReset()
+	deltaMap := h.tableDelta.GetDeltaAndReset()
 	defer func() {
-		h.tableDelta.merge(deltaMap)
+		h.tableDelta.Merge(deltaMap)
 	}()
 
 	se, err := h.pool.Get()
@@ -351,7 +252,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			return errors.Trace(err)
 		}
 		if updated {
-			updateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
+			usage.UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
 		}
 		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
 			delete(deltaMap, id)
@@ -516,9 +417,9 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 		return nil
 	}
 	h.sweepList()
-	colMap := h.statsUsage.getUsageAndReset()
+	colMap := h.statsUsage.GetUsageAndReset()
 	defer func() {
-		h.statsUsage.merge(colMap)
+		h.statsUsage.Merge(colMap)
 	}()
 	type pair struct {
 		lastUsedAt string
