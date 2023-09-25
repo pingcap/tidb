@@ -3370,12 +3370,24 @@ func TestAnalyzePartitionVerify(t *testing.T) {
 	require.Len(t, result.Rows(), 4+4*10) // 4 columns * 10 partiion+ 4 global columns
 	for _, row := range result.Rows() {
 		if row[2] == "global" {
-			if row[6] != "1" && row[6] != "1000" {
-				t.Fatal(row[6])
+			if row[3] == "b" {
+				if row[6] != "1" { // global column b has 1 distinct value
+					t.Fatal(row[6])
+				}
+			} else {
+				if row[6] != "1000" {
+					t.Fatal(row[6])
+				}
 			}
 		} else {
-			if row[6] != "1" && row[6] != "100" {
-				t.Fail()
+			if row[3] == "b" {
+				if row[6] != "1" {
+					t.Fatal(row[6])
+				}
+			} else {
+				if row[6] != "100" {
+					t.Fatal(row[6])
+				}
 			}
 		}
 	}
