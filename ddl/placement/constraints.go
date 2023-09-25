@@ -15,7 +15,12 @@
 package placement
 
 import (
+	"cmp"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -109,4 +114,35 @@ func (constraints *Constraints) Add(label Constraint) error {
 		*constraints = append(*constraints, label)
 	}
 	return nil
+}
+
+// FingerPrint returns a unique string for the constraints.
+func (constraints *Constraints) FingerPrint() string {
+	copied := make(Constraints, len(*constraints))
+	copy(copied, *constraints)
+	slices.SortStableFunc(copied, func(i, j Constraint) int {
+		a, b := constraintToString(&i), constraintToString(&j)
+		return cmp.Compare(a, b)
+	})
+	var combinedConstraints string
+	for _, constraint := range copied {
+		combinedConstraints += constraintToString(&constraint)
+	}
+
+	// Calculate the SHA256 hash of the concatenated constraints
+	hash := sha256.Sum256([]byte(combinedConstraints))
+
+	// Encode the hash as a base64 string
+	hashStr := base64.StdEncoding.EncodeToString(hash[:])
+
+	return hashStr
+}
+
+func constraintToString(c *Constraint) string {
+	// Sort the values in the constraint
+	sortedValues := make([]string, len(c.Values))
+	copy(sortedValues, c.Values)
+	sort.Strings(sortedValues)
+	sortedValuesStr := strings.Join(sortedValues, ",")
+	return c.Key + "|" + string(c.Op) + "|" + sortedValuesStr
 }
