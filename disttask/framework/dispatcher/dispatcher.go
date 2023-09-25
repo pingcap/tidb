@@ -57,6 +57,8 @@ var (
 // TaskHandle provides the interface for operations needed by Dispatcher.
 // Then we can use dispatcher's function in Dispatcher interface.
 type TaskHandle interface {
+	// GetPreviousSchedulerIDs gets previous scheduler IDs.
+	GetPreviousSchedulerIDs(_ context.Context, taskID int64, step int64) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step int64) ([][]byte, error)
 	storage.SessionExecutor
@@ -65,9 +67,13 @@ type TaskHandle interface {
 // Dispatcher manages the lifetime of a task
 // including submitting subtasks and updating the status of a task.
 type Dispatcher interface {
+	// Init initializes the dispatcher, should be called before ExecuteTask.
+	// if Init returns error, dispatcher manager will fail the task directly,
+	// so the returned error should be a fatal error.
+	Init() error
+	// ExecuteTask start to schedule a task.
 	ExecuteTask()
-	// Close closes the dispatcher, not routine-safe, and should be called
-	// after ExecuteTask finished.
+	// Close closes the dispatcher, should be called if Init returns nil.
 	Close()
 }
 
@@ -114,7 +120,12 @@ func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, server
 	}
 }
 
-// ExecuteTask start to schedule a task.
+// Init implements the Dispatcher interface.
+func (*BaseDispatcher) Init() error {
+	return nil
+}
+
+// ExecuteTask implements the Dispatcher interface.
 func (d *BaseDispatcher) ExecuteTask() {
 	logutil.Logger(d.logCtx).Info("execute one task",
 		zap.String("state", d.Task.State), zap.Uint64("concurrency", d.Task.Concurrency))
@@ -156,9 +167,40 @@ func (d *BaseDispatcher) scheduleTask() {
 					}
 				}
 			})
+
+			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
+				if val.(bool) && d.Task.State == proto.TaskStatePending {
+					_, err := d.taskMgr.PauseTask(d.Task.Key)
+					if err != nil {
+						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
+					}
+					d.Task.State = proto.TaskStatePausing
+				}
+			})
+
+			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
+				if val.(bool) && d.Task.State == proto.TaskStateRunning {
+					_, err := d.taskMgr.PauseTask(d.Task.Key)
+					if err != nil {
+						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
+					}
+					d.Task.State = proto.TaskStatePausing
+				}
+			})
+
 			switch d.Task.State {
 			case proto.TaskStateCancelling:
 				err = d.onCancelling()
+			case proto.TaskStatePausing:
+				err = d.onPausing()
+			case proto.TaskStatePaused:
+				err = d.onPaused()
+				// close the dispatcher.
+				if err == nil {
+					return
+				}
+			case proto.TaskStateResuming:
+				err = d.onResuming()
 			case proto.TaskStateReverting:
 				err = d.onReverting()
 			case proto.TaskStatePending:
@@ -191,6 +233,52 @@ func (d *BaseDispatcher) onCancelling() error {
 	logutil.Logger(d.logCtx).Info("on cancelling state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
 	errs := []error{errors.New("cancel")}
 	return d.onErrHandlingStage(errs)
+}
+
+// handle task in pausing state, cancel all running subtasks.
+func (d *BaseDispatcher) onPausing() error {
+	logutil.Logger(d.logCtx).Info("on pausing state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending) // ywq todo remove
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	if cnt == 0 {
+		logutil.Logger(d.logCtx).Info("all running subtasks paused, update the task to paused state")
+		return d.updateTask(proto.TaskStatePaused, nil, RetrySQLTimes)
+	}
+	logutil.Logger(d.logCtx).Debug("on pausing state, this task keeps current state", zap.String("state", d.Task.State))
+	return nil
+}
+
+// handle task in paused state
+func (d *BaseDispatcher) onPaused() error {
+	logutil.Logger(d.logCtx).Info("on paused state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	return nil
+}
+
+// TestSyncChan is used to sync the test.
+var TestSyncChan = make(chan struct{})
+
+// handle task in resuming state
+func (d *BaseDispatcher) onResuming() error {
+	logutil.Logger(d.logCtx).Info("on resuming state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStatePaused)
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	if cnt == 0 {
+		// Finish the resuming process.
+		logutil.Logger(d.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
+		err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
+		failpoint.Inject("syncAfterResume", func() {
+			TestSyncChan <- struct{}{}
+		})
+		return err
+	}
+
+	return d.taskMgr.ResumeSubtasks(d.Task.ID)
 }
 
 // handle task in reverting state, check all revert subtasks finished.
@@ -328,6 +416,7 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
 	})
+
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
 		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.Task, newSubTasks, prevState)
@@ -387,7 +476,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		failpoint.Return(errors.New("mockDynamicDispatchErr"))
 	})
 
-	nextStep := d.GetNextStep(d.Task)
+	nextStep := d.GetNextStep(d, d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
 		zap.Int64("current-step", d.Task.Step),
 		zap.Int64("next-step", nextStep))
@@ -433,7 +522,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 
 	for {
 		// 3. generate a batch of subtasks.
-		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task)
+		metas, err := d.OnNextSubtasksBatch(d.ctx, d, d.Task, nextStep)
 		if err != nil {
 			logutil.Logger(d.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 			return d.handlePlanErr(err)
@@ -589,6 +678,11 @@ func (d *BaseDispatcher) GetPreviousSubtaskMetas(taskID int64, step int64) ([][]
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
+}
+
+// GetPreviousSchedulerIDs gets scheduler IDs that run previous step.
+func (d *BaseDispatcher) GetPreviousSchedulerIDs(_ context.Context, taskID int64, step int64) ([]string, error) {
+	return d.taskMgr.GetSchedulerIDsByTaskIDAndStep(taskID, step)
 }
 
 // WithNewSession executes the function with a new session.

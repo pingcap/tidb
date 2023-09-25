@@ -129,6 +129,11 @@ type ColumnInfo struct {
 	Version uint64 `json:"version"`
 }
 
+// IsVirtualGenerated checks the column if it is virtual.
+func (c *ColumnInfo) IsVirtualGenerated() bool {
+	return c.IsGenerated() && !c.GeneratedStored
+}
+
 // Clone clones ColumnInfo.
 func (c *ColumnInfo) Clone() *ColumnInfo {
 	if c == nil {
@@ -1168,8 +1173,9 @@ func (p PartitionType) String() string {
 
 // ExchangePartitionInfo provides exchange partition info.
 type ExchangePartitionInfo struct {
-	ExchangePartitionID    int64 `json:"exchange_partition_id"`
-	ExchangePartitionDefID int64 `json:"exchange_partition_def_id"`
+	// It is nt tableID when table which has the info is a partition table, else pt tableID.
+	ExchangePartitionTableID int64 `json:"exchange_partition_id"`
+	ExchangePartitionDefID   int64 `json:"exchange_partition_def_id"`
 	// Deprecated, not used
 	XXXExchangePartitionFlag bool `json:"exchange_partition_flag"`
 }

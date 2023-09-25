@@ -2373,6 +2373,44 @@ func TestDropPartitionWithGlobalIndex(t *testing.T) {
 	require.Equal(t, 2, cnt)
 }
 
+func TestDropMultiPartitionWithGlobalIndex(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test_global")
+	tk.MustExec(`create table test_global ( a int, b int, c int)
+	partition by range( a ) (
+		partition p1 values less than (10),
+		partition p2 values less than (20),
+		partition p3 values less than (30)
+	);`)
+	tt := external.GetTableByName(t, tk, "test", "test_global")
+	pid := tt.Meta().Partition.Definitions[1].ID
+
+	tk.MustExec("Alter Table test_global Add Unique Index idx_b (b);")
+	tk.MustExec("Alter Table test_global Add Unique Index idx_c (c);")
+	tk.MustExec(`INSERT INTO test_global VALUES (1, 1, 1), (2, 2, 2), (11, 3, 3), (12, 4, 4), (21, 21, 21), (29, 29, 29)`)
+
+	tk.MustExec("alter table test_global drop partition p1, p2;")
+	result := tk.MustQuery("select * from test_global;")
+	result.Sort().Check(testkit.Rows("21 21 21", "29 29 29"))
+
+	tt = external.GetTableByName(t, tk, "test", "test_global")
+	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 2, cnt)
+
+	idxInfo = tt.Meta().FindIndexByName("idx_c")
+	require.NotNil(t, idxInfo)
+	cnt = checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, pid)
+	require.Equal(t, 2, cnt)
+}
+
 func TestGlobalIndexInsertInDropPartition(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -3407,6 +3445,118 @@ func TestExchangePartitionValidation(t *testing.T) {
 	tk.MustContainErrMsg(`alter table t1p exchange partition p202307 with table t1 with validation`,
 		"[ddl:1737]Found a row that does not match the partition")
 	tk.MustExec(`insert into t1 values ("2023-08-06","0001")`)
+}
+
+func TestExchangePartitionCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create database db_one`)
+	tk.MustExec(`create database db_two`)
+
+	ntSQL := "create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED)"
+	ptSQL := "create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )"
+	alterSQL := "alter table db_two.pt exchange partition p1 with table db_one.nt"
+	dropSQL := "drop table db_one.nt, db_two.pt"
+	errMsg := "[ddl:1737]Found a row that does not match the partition"
+
+	type record struct {
+		a int
+		b int
+	}
+	inputs := []struct {
+		t  []record
+		pt []record
+		ok bool
+	}{
+		{
+			t:  []record{{60, 60}},
+			ok: true,
+		},
+		{
+			t:  []record{{80, 60}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 80}},
+			ok: false,
+		},
+		{
+			t:  []record{{80, 80}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 120}},
+			ok: true,
+		},
+		{
+			t:  []record{{80, 120}},
+			ok: false,
+		},
+		{
+			pt: []record{{60, 60}},
+			ok: true,
+		},
+		{
+			pt: []record{{60, 50}},
+			ok: false,
+		},
+		// Record in partition p0(less than (50)).
+		{
+			pt: []record{{30, 50}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}},
+			pt: []record{{70, 70}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}, {60, 120}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}, {80, 120}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 60}},
+			pt: []record{{70, 70}, {30, 50}, {60, 50}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 60}, {60, 80}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: false,
+		},
+	}
+	for _, input := range inputs {
+		tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
+		tk.MustExec(ntSQL)
+		for _, r := range input.t {
+			tk.MustExec(fmt.Sprintf("insert into db_one.nt values (%d, %d)", r.a, r.b))
+		}
+		tk.MustExec(ptSQL)
+		for _, r := range input.pt {
+			tk.MustExec(fmt.Sprintf("insert into db_two.pt values (%d, %d)", r.a, r.b))
+		}
+		if input.ok {
+			tk.MustExec(alterSQL)
+			tk.MustExec(dropSQL)
+			continue
+		}
+		tk.MustContainErrMsg(alterSQL, errMsg)
+		tk.MustExec(`set @@global.tidb_enable_check_constraint = 0`)
+		tk.MustExec(alterSQL)
+		tk.MustExec(dropSQL)
+	}
 }
 
 func TestExchangePartitionPlacementPolicy(t *testing.T) {

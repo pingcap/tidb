@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -81,7 +82,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				logutil.Logger(s.logCtx).Info("scheduler exits", zap.Error(ctx.Err()))
 				return
 			case <-ticker.C:
-				canceled, err := s.taskTable.IsSchedulerCanceled(s.taskID, s.id)
+				canceled, err := s.taskTable.IsSchedulerCanceled(s.id, s.taskID)
 				if err != nil {
 					continue
 				}
@@ -165,17 +166,24 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		wg.Wait()
 	}()
 
+	subtasks, err := s.taskTable.GetSubtasksInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
+	if err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	for _, subtask := range subtasks {
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+
 	for {
 		// check if any error occurs.
 		if err := s.getError(); err != nil {
 			break
 		}
-		// Considering manager restart scene, scheduler needs to handle running subtasks.
-		subtask, err := s.taskTable.GetSubtaskInStates(
-			s.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRunning)
+		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
 		if err != nil {
-			logutil.Logger(s.logCtx).Warn("GetSubtaskInStates meets error", zap.Error(err))
+			logutil.Logger(s.logCtx).Warn("GetFirstSubtaskInStates meets error", zap.Error(err))
 			continue
 		}
 		if subtask == nil {
@@ -190,11 +198,13 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			}
 			continue
 		}
-		s.startSubtask(subtask.ID)
+
+		s.startSubtaskAndUpdateState(subtask)
 		if err := s.getError(); err != nil {
-			logutil.Logger(s.logCtx).Warn("startSubtask meets error", zap.Error(err))
+			logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
 			continue
 		}
+
 		failpoint.Inject("mockCleanScheduler", func() {
 			v, ok := testContexts.Load(s.id)
 			if ok {
@@ -219,9 +229,9 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 	if err != nil {
 		s.onError(err)
 		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, s.getError())
 		} else if errors.Cause(err) != context.Canceled {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()
 		return
@@ -296,16 +306,14 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 	})
 	if err := s.getError(); err != nil {
 		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, s.getError())
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, s.getError())
 		} else if errors.Cause(err) != context.Canceled {
-			s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateFailed, s.getError())
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()
 		return
 	}
-	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
-		s.onError(err)
-	}
+	s.finishSubtaskAndUpdateState(subtask)
 	failpoint.Inject("syncAfterSubtaskFinish", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -323,7 +331,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 
 	// We should cancel all subtasks before rolling back
 	for {
-		subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRunning)
+		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			s.onError(err)
 			return s.getError()
@@ -333,7 +341,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 			break
 		}
 
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateCanceled, nil)
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		if err = s.getError(); err != nil {
 			return err
 		}
@@ -344,7 +352,7 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		s.onError(err)
 		return s.getError()
 	}
-	subtask, err := s.taskTable.GetSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStateRevertPending)
+	subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStateRevertPending)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -353,19 +361,30 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
-	s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverting, nil)
+	s.updateSubtaskStateAndError(subtask, proto.TaskStateReverting, nil)
 	if err := s.getError(); err != nil {
 		return err
 	}
 
 	err = executor.Rollback(rollbackCtx)
 	if err != nil {
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateRevertFailed, nil)
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateRevertFailed, nil)
 		s.onError(err)
 	} else {
-		s.updateSubtaskStateAndError(subtask.ID, proto.TaskStateReverted, nil)
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateReverted, nil)
 	}
 	return s.getError()
+}
+
+// Pause pause the scheduler task.
+func (s *BaseScheduler) Pause(_ context.Context, task *proto.Task) error {
+	logutil.Logger(s.logCtx).Info("scheduler pause subtasks")
+	// pause all running subtasks.
+	if err := s.taskTable.PauseSubtasks(s.id, task.ID); err != nil {
+		s.onError(err)
+		return s.getError()
+	}
+	return nil
 }
 
 // Close closes the scheduler when all the subtasks are complete.
@@ -438,16 +457,38 @@ func (s *BaseScheduler) resetError() {
 	s.mu.handled = false
 }
 
-func (s *BaseScheduler) startSubtask(id int64) {
-	err := s.taskTable.StartSubtask(id)
+func (s *BaseScheduler) startSubtaskAndUpdateState(subtask *proto.Subtask) {
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
+	err := s.taskTable.StartSubtask(subtask.ID)
 	if err != nil {
 		s.onError(err)
+	}
+	subtask.State = proto.TaskStateRunning
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	metrics.StartDistTaskSubTask(subtask)
+}
+
+func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
+	err := s.taskTable.UpdateSubtaskStateAndError(subtask.ID, state, subTaskErr)
+	if err != nil {
+		s.onError(err)
+	}
+	subtask.State = state
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	if !subtask.IsFinished() {
+		metrics.StartDistTaskSubTask(subtask)
 	}
 }
 
-func (s *BaseScheduler) updateSubtaskStateAndError(subtaskID int64, state string, subTaskErr error) {
-	err := s.taskTable.UpdateSubtaskStateAndError(subtaskID, state, subTaskErr)
-	if err != nil {
+func (s *BaseScheduler) finishSubtaskAndUpdateState(subtask *proto.Subtask) {
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
+	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
 		s.onError(err)
 	}
+	subtask.State = proto.TaskStateSucceed
+	metrics.IncDistTaskSubTaskCnt(subtask)
 }

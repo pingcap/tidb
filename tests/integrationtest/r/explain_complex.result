@@ -276,7 +276,7 @@ insert into Tab_C values(2,'C01',22);
 insert into Tab_C values(4,'C01',5);
 explain select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 id	estRows	task	access object	operator info
-Projection_11	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name, explain_complex.tab_a.amt, explain_complex.tab_c.amt, ifnull(explain_complex.tab_c.amt, 0)->Column#13
+Projection_11	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name, explain_complex.tab_a.amt, explain_complex.tab_c.amt, ifnull(explain_complex.tab_c.amt, 0.00)->Column#13
 └─IndexJoin_16	15.62	root		left outer join, inner:TableReader_13, outer key:explain_complex.tab_a.cid, inner key:explain_complex.tab_c.id, equal cond:eq(explain_complex.tab_a.cid, explain_complex.tab_c.id), left cond:eq(explain_complex.tab_a.type, "01")
   ├─IndexJoin_27(Build)	12.50	root		left outer join, inner:TableReader_24, outer key:explain_complex.tab_a.bid, inner key:explain_complex.tab_b.id, equal cond:eq(explain_complex.tab_a.bid, explain_complex.tab_b.id)
   │ ├─TableReader_36(Build)	10.00	root		data:Selection_35
@@ -289,5 +289,5 @@ Projection_11	15.62	root		explain_complex.tab_a.name, explain_complex.tab_b.name
 select Tab_A.name AAA,Tab_B.name BBB,Tab_A.amt Aamt, Tab_C.amt Bamt,IFNULL(Tab_C.amt, 0) FROM Tab_A left join Tab_B on Tab_A.bid=Tab_B.id left join Tab_C on Tab_A.cid=Tab_C.id and Tab_A.type='01' where Tab_A.num=112;
 AAA	BBB	Aamt	Bamt	IFNULL(Tab_C.amt, 0)
 A01	B01	111.00	22.00	22.00
-A02	B02	111.00	NULL	0
+A02	B02	111.00	NULL	0.00
 set @@sql_mode=default;

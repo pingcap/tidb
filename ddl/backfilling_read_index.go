@@ -58,6 +58,7 @@ type readIndexSummary struct {
 	totalSize uint64
 	dataFiles []string
 	statFiles []string
+	stats     []external.MultipleFilesStat
 	mu        sync.Mutex
 }
 
@@ -91,7 +92,8 @@ func (*readIndexExecutor) Init(_ context.Context) error {
 
 func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.BgLogger().Info("read index executor run subtask",
-		zap.String("category", "ddl"))
+		zap.String("category", "ddl"),
+		zap.Bool("use cloud", len(r.cloudStorageURI) > 0))
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
@@ -142,6 +144,8 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
+	r.bc.ResetWorkers(r.job.ID, r.index.ID)
+
 	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
 	return nil
 }
@@ -178,6 +182,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	subtaskMeta.TotalKVSize = s.totalSize
 	subtaskMeta.DataFiles = s.dataFiles
 	subtaskMeta.StatFiles = s.statFiles
+	subtaskMeta.MultipleFilesStats = s.stats
 	logutil.Logger(ctx).Info("get key boundary on subtask finished",
 		zap.String("min", hex.EncodeToString(s.minKey)),
 		zap.String("max", hex.EncodeToString(s.maxKey)),
@@ -260,6 +265,7 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 			s.maxKey = summary.Max.Clone()
 		}
 		s.totalSize += summary.TotalSize
+		s.stats = append(s.stats, summary.MultipleFilesStats...)
 		for _, f := range summary.MultipleFilesStats {
 			for _, filename := range f.Filenames {
 				s.dataFiles = append(s.dataFiles, filename[0])
@@ -270,7 +276,5 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 	}
 	counter := metrics.BackfillTotalCounter.WithLabelValues(
 		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
-	return NewWriteIndexToExternalStoragePipeline(
-		opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID,
-		tbl, r.index, start, end, totalRowCount, counter, onClose)
+	return NewWriteIndexToExternalStoragePipeline(opCtx, d.store, r.cloudStorageURI, r.d.sessPool, sessCtx, r.job.ID, subtaskID, tbl, r.index, start, end, totalRowCount, counter, onClose, r.bc)
 }
