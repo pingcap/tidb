@@ -27,6 +27,7 @@ import (
 const (
 	pollingPendingSnapshotInterval = 30 * time.Second
 	errCodeTooManyPendingSnapshots = "PendingSnapshotLimitExceeded"
+	maxConcurrentFSRJob            = 200
 )
 
 type EC2Session struct {
@@ -280,6 +281,78 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 	}
 	_ = eg.Wait()
 	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int32("deleted", deletedCnt.Load()))
+}
+
+// EnableDataFSR enables FSR for data volume snapshots
+func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta) error {
+	var sourceSnapshotIDs, availableZones []*string
+	for i := range meta.TiKVComponent.Stores {
+		store := meta.TiKVComponent.Stores[i]
+		for j := range store.Volumes {
+			oldVol := store.Volumes[j]
+			// Handle data volume snapshots only
+			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
+				sourceSnapshotIDs = append(sourceSnapshotIDs, &oldVol.SnapshotID)
+				availableZones = append(availableZones, &oldVol.VolumeAZ)
+			}
+		}
+	}
+
+	log.Info("Start enable FSR for", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs))
+
+	resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
+		AvailabilityZones: availableZones,
+		SourceSnapshotIds: sourceSnapshotIDs,
+	})
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(resp.Unsuccessful) > 0 {
+		log.Warn("not all snapshots enabled FSR")
+		return errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+	}
+
+	log.Info("Enable FSR succeed")
+
+	return nil
+}
+
+// DisableDataFSR disables FSR for data volume snapshots
+func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta) error {
+	var sourceSnapshotIDs, availableZones []*string
+	for i := range meta.TiKVComponent.Stores {
+		store := meta.TiKVComponent.Stores[i]
+		for j := range store.Volumes {
+			oldVol := store.Volumes[j]
+			// Handle data volume snapshots only
+			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
+				sourceSnapshotIDs = append(sourceSnapshotIDs, &oldVol.SnapshotID)
+				availableZones = append(availableZones, &oldVol.VolumeAZ)
+			}
+		}
+	}
+
+	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs))
+
+	resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
+		AvailabilityZones: availableZones,
+		SourceSnapshotIds: sourceSnapshotIDs,
+	})
+
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if len(resp.Unsuccessful) > 0 {
+		log.Warn("not all snapshots disabled FSR")
+		return errors.Errorf("Some snapshot fails to disable FSR, such as %s, error code is %v", resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+	}
+
+	log.Info("disable FSR succeed")
+
+	return nil
 }
 
 // CreateVolumes create volumes from snapshots
