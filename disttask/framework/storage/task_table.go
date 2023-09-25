@@ -924,7 +924,6 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 					return err
 				}
 			}
-			logutil.BgLogger().Info("ywq test", zap.Any("any", task.StartTime.Local().Local().Unix()))
 			if err := sqlexec.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
 				task.ID, task.Key, task.Type, task.DispatcherID,
 				task.State, task.StartTime, task.StateUpdateTime,
