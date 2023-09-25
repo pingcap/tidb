@@ -2957,8 +2957,6 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateDoneRunawayWatchTable)
 	// create dist_framework_meta
 	mustExecute(s, CreateDistFrameworkMeta)
-
-	mustExecute(s, CreateGlobalTaskHistory)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
