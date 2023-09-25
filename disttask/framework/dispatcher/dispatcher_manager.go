@@ -39,7 +39,7 @@ var (
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// defaultGCInterval
 	// ywq todo refine interval
-	defaultGCInterval = 1 * time.Second
+	defaultGCInterval = 10 * time.Minute
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -95,20 +95,20 @@ type Manager struct {
 	inited   bool
 	serverID string
 
+	finishCh chan struct{}
+
 	runningTasks struct {
 		syncutil.RWMutex
 		taskIDs     map[int64]struct{}
 		dispatchers map[int64]Dispatcher
 	}
-	finishedTaskCh chan *proto.Task
 }
 
 // NewManager creates a dispatcher struct.
 func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID string) (*Manager, error) {
 	dispatcherManager := &Manager{
-		taskMgr:        taskTable,
-		finishedTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
-		serverID:       serverID,
+		taskMgr:  taskTable,
+		serverID: serverID,
 	}
 	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -118,6 +118,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 	dispatcherManager.ctx, dispatcherManager.cancel = context.WithCancel(ctx)
 	dispatcherManager.runningTasks.taskIDs = make(map[int64]struct{})
 	dispatcherManager.runningTasks.dispatchers = make(map[int64]Dispatcher)
+	dispatcherManager.finishCh = make(chan struct{}, DefaultDispatchConcurrency)
 
 	return dispatcherManager, nil
 }
@@ -126,7 +127,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
 	dm.wg.Run(dm.gcSubtaskHistoryTableLoop)
-	dm.wg.Run(dm.gcTaskLoop)
+	dm.wg.Run(dm.cleanUpLoop)
 	dm.inited = true
 }
 
@@ -137,6 +138,7 @@ func (dm *Manager) Stop() {
 	dm.wg.Wait()
 	dm.clearRunningTasks()
 	dm.inited = false
+	close(dm.finishCh)
 }
 
 // Inited check the manager inited.
@@ -248,35 +250,6 @@ func (dm *Manager) gcSubtaskHistoryTableLoop() {
 	}
 }
 
-func (dm *Manager) gcTaskLoop() {
-	logutil.Logger(dm.ctx).Info("task gc loop start")
-	ticker := time.NewTicker(defaultGCInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-dm.ctx.Done():
-			logutil.BgLogger().Info("task gc loop exits", zap.Error(dm.ctx.Err()))
-			return
-		case <-ticker.C:
-			tasks, err := dm.taskMgr.GetGlobalTasksInStates(
-				proto.TaskStateFailed,
-				proto.TaskStateReverted,
-				proto.TaskStateSucceed,
-			)
-			if err != nil {
-				logutil.BgLogger().Warn("task gc failed", zap.Error(err))
-				continue
-			}
-			err = dm.gcFinishedTasks(tasks)
-			if err != nil {
-				logutil.BgLogger().Warn("task gc failed", zap.Error(err))
-			} else {
-				logutil.Logger(dm.ctx).Info("task gc success")
-			}
-		}
-	}
-}
-
 func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 	if cnt >= DefaultDispatchConcurrency {
 		logutil.BgLogger().Info("dispatch task loop, running task cnt is more than concurrency limitation",
@@ -300,10 +273,50 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
+		dm.finishCh <- struct{}{}
 	})
 }
 
-func (dm *Manager) gcFinishedTasks(tasks []*proto.Task) error {
+func (dm *Manager) cleanUpLoop() {
+	logutil.Logger(dm.ctx).Info("cleanUp loop start")
+	ticker := time.NewTicker(defaultGCInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-dm.ctx.Done():
+			logutil.BgLogger().Info("cleanUp loop exits", zap.Error(dm.ctx.Err()))
+			return
+		case <-dm.finishCh:
+			dm.doCleanUpRoutine()
+		case <-ticker.C:
+			dm.doCleanUpRoutine()
+		}
+	}
+}
+
+func (dm *Manager) doCleanUpRoutine() {
+	logutil.Logger(dm.ctx).Info("cleanUp routine start")
+	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed,
+	)
+	if err != nil {
+		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		return
+	}
+	err = dm.cleanUpFinishedTasks(tasks)
+	if err != nil {
+		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		return
+	}
+	logutil.Logger(dm.ctx).Info("cleanUp routine success")
+}
+
+// WaitGCFinished is used to sync the test.
+var WaitGCFinished = make(chan struct{})
+
+func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 	for _, task := range tasks {
 		cleanUpFactory := GetDispatcherCleanUpFactory(task.Type)
 		if cleanUpFactory != nil {
@@ -312,6 +325,15 @@ func (dm *Manager) gcFinishedTasks(tasks []*proto.Task) error {
 			if err != nil {
 				return err
 			}
+			// update task meta.
+			_, err = dm.taskMgr.UpdateGlobalTaskAndAddSubTasks(task, nil, task.State)
+			if err != nil {
+				return err
+			}
+			failpoint.Inject("waitGCFinished", func() {
+				WaitGCFinished <- struct{}{}
+			})
+
 		}
 	}
 

@@ -66,6 +66,8 @@ func (c *ImportCleanUpS3) CleanUp() error {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
+
+	redactSensitiveInfo(c.task, taskMeta)
 	return nil
 }
 

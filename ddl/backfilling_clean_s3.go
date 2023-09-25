@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -47,6 +48,9 @@ func (c *BackfillCleanUpS3) CleanUp() error {
 	if err := json.Unmarshal(c.task.Meta, &gTaskMeta); err != nil {
 		return err
 	}
+	if len(gTaskMeta.CloudStorageURI) == 0 {
+		return nil
+	}
 	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
 	if err != nil {
 		logutil.Logger(c.ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
@@ -63,5 +67,20 @@ func (c *BackfillCleanUpS3) CleanUp() error {
 		logutil.Logger(c.ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
 	}
+	redactCloudStorageURI(c.ctx, c.task, &gTaskMeta)
 	return nil
+}
+
+func redactCloudStorageURI(
+	ctx context.Context,
+	gTask *proto.Task,
+	origin *BackfillGlobalMeta,
+) {
+	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
+	metaBytes, err := json.Marshal(origin)
+	if err != nil {
+		logutil.Logger(ctx).Warn("fail to marshal task meta", zap.Error(err))
+		return
+	}
+	gTask.Meta = metaBytes
 }

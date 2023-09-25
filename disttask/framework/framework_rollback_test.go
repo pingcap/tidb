@@ -78,7 +78,7 @@ func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	mockCleanupRountine.EXPECT().CleanUp().DoAndReturn(nil).AnyTimes()
+	mockCleanupRountine.EXPECT().CleanUp().Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Rollback(gomock.Any()).DoAndReturn(

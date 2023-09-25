@@ -660,7 +660,6 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logger,
 	taskHandle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *TaskMeta) error {
 	dsp.unregisterTask(ctx, gTask)
-	redactSensitiveInfo(gTask, taskMeta)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
@@ -678,7 +677,6 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)
-	redactSensitiveInfo(gTask, taskMeta)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,

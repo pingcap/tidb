@@ -79,7 +79,13 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 			}
 
 			if found == nil {
-				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
+				found, err = globalTaskManager.GetTaskByIDFromHistory(globalTask.ID)
+				if err != nil {
+					return errors.Errorf("cannot get global task from history with ID %d, err %s", globalTask.ID, err.Error())
+				}
+				if found == nil {
+					return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
+				}
 			}
 
 			switch found.State {

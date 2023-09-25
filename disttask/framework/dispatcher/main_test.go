@@ -21,22 +21,6 @@ import (
 	"go.uber.org/goleak"
 )
 
-// DispatcherForTest exports for testing.
-type DispatcherManagerForTest interface {
-	GetRunningTaskCnt() int
-	DelRunningTask(globalTaskID int64)
-}
-
-// GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
-func (dm *Manager) GetRunningTaskCnt() int {
-	return dm.getRunningTaskCnt()
-}
-
-// DelRunningGTask implements Dispatcher.DelRunningGTask interface.
-func (dm *Manager) DelRunningTask(globalTaskID int64) {
-	dm.delRunningTask(globalTaskID)
-}
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 

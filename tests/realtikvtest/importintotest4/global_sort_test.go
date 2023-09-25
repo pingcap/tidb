@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/disttask/importinto"
 	"github.com/pingcap/tidb/executor/importer"
@@ -70,7 +71,9 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	))
 
 	// check all sorted data cleaned up
-	// ywq todo sync notify the cleanup
+	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/dispatcher/waitGCFinished", "return()")
+	<-dispatcher.WaitGCFinished
+
 	_, files, err := s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)
@@ -99,6 +102,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		"1 foo1 bar1 123", "2 foo2 bar2 456", "3 foo3 bar3 789",
 		"4 foo4 bar4 123", "5 foo5 bar5 223", "6 foo6 bar6 323",
 	))
+	<-dispatcher.WaitGCFinished
 
 	// failed task, should clean up all sorted data too.
 	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
@@ -113,6 +117,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		return globalTask.State == "failed"
 	}, 10*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
+	<-dispatcher.WaitGCFinished
+
 	_, files, err = s.server.ListObjectsWithOptions("sorted", fakestorage.ListOptions{Prefix: "import"})
 	s.NoError(err)
 	s.Len(files, 0)

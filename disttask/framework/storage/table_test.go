@@ -481,7 +481,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 
-	// test GC
+	// test GC history table.
 	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
