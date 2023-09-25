@@ -882,47 +882,47 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 		return nil
 	}
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
-		insertSql := new(strings.Builder)
-		if err := sqlexec.FormatSQL(insertSql, "insert into mysql.tidb_global_task_history select * from mysql.tidb_global_task where id in ("); err != nil {
+		insertSQL := new(strings.Builder)
+		if err := sqlexec.FormatSQL(insertSQL, "insert into mysql.tidb_global_task_history select * from mysql.tidb_global_task where id in ("); err != nil {
 			return err
 		}
 		for i, task := range tasks {
 			if i != 0 {
-				if err := sqlexec.FormatSQL(insertSql, ","); err != nil {
+				if err := sqlexec.FormatSQL(insertSQL, ","); err != nil {
 					return err
 				}
 			}
-			if err := sqlexec.FormatSQL(insertSql, "%?", task.ID); err != nil {
+			if err := sqlexec.FormatSQL(insertSQL, "%?", task.ID); err != nil {
 				return err
 			}
 		}
-		if err := sqlexec.FormatSQL(insertSql, ")"); err != nil {
+		if err := sqlexec.FormatSQL(insertSQL, ")"); err != nil {
 			return err
 		}
-		_, err := ExecSQL(stm.ctx, se, insertSql.String())
+		_, err := ExecSQL(stm.ctx, se, insertSQL.String())
 		if err != nil {
 			return err
 		}
 
 		// delete taskIDs tasks
-		deleteSql := new(strings.Builder)
-		if err := sqlexec.FormatSQL(deleteSql, "delete from mysql.tidb_global_task where id in("); err != nil {
+		deleteSQL := new(strings.Builder)
+		if err := sqlexec.FormatSQL(deleteSQL, "delete from mysql.tidb_global_task where id in("); err != nil {
 			return err
 		}
 		for i, task := range tasks {
 			if i != 0 {
-				if err := sqlexec.FormatSQL(deleteSql, ","); err != nil {
+				if err := sqlexec.FormatSQL(deleteSQL, ","); err != nil {
 					return err
 				}
 			}
-			if err := sqlexec.FormatSQL(deleteSql, "%?", task.ID); err != nil {
+			if err := sqlexec.FormatSQL(deleteSQL, "%?", task.ID); err != nil {
 				return err
 			}
 		}
-		if err := sqlexec.FormatSQL(deleteSql, ")"); err != nil {
+		if err := sqlexec.FormatSQL(deleteSQL, ")"); err != nil {
 			return err
 		}
-		_, err = ExecSQL(stm.ctx, se, deleteSql.String())
+		_, err = ExecSQL(stm.ctx, se, deleteSQL.String())
 		return err
 	})
 }

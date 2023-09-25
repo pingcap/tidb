@@ -53,7 +53,7 @@ func GetSubtasksByTaskIDForTest(stm *TaskManager, taskID int64) ([]*proto.Subtas
 	return subtasks, nil
 }
 
-// GetSubtasksFromHistoryForTest gets subtasks from history table for test.
+// GetTasksFromHistoryForTest gets tasks from history table for test.
 func GetTasksFromHistoryForTest(stm *TaskManager) (int, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx,
 		"select * from mysql.tidb_global_task_history")
