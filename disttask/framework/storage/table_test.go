@@ -481,7 +481,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 
-	// test GC
+	// test GC history table.
 	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
@@ -492,11 +492,55 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask4, proto.TaskStateFailed, nil))
 	require.NoError(t, sm.TransferSubTasks2History(taskID2))
 
-	require.NoError(t, sm.GC())
+	require.NoError(t, sm.GCSubtasks())
 
 	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
 	require.NoError(t, err)
 	require.Equal(t, 1, historySubTasksCnt)
+}
+
+func TestTaskHistoryTable(t *testing.T) {
+	pool := GetResourcePool(t)
+	gm := GetTaskManager(t, pool)
+	defer pool.Close()
+
+	_, err := gm.AddNewGlobalTask("1", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	taskID, err := gm.AddNewGlobalTask("2", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+
+	tasks, err := gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(tasks))
+
+	require.NoError(t, gm.TransferTasks2History(tasks))
+
+	tasks, err = gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(tasks))
+	num, err := storage.GetTasksFromHistoryForTest(gm)
+	require.NoError(t, err)
+	require.Equal(t, 2, num)
+
+	task, err := gm.GetTaskByIDWithHistory(taskID)
+	require.NoError(t, err)
+	require.NotNil(t, task)
+
+	task, err = gm.GetGlobalTaskByKeyWithHistory("1")
+	require.NoError(t, err)
+	require.NotNil(t, task)
+
+	// task with fail transfer
+	_, err = gm.AddNewGlobalTask("3", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	tasks, err = gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tasks))
+	tasks[0].Error = errors.New("mock err")
+	require.NoError(t, gm.TransferTasks2History(tasks))
+	num, err = storage.GetTasksFromHistoryForTest(gm)
+	require.NoError(t, err)
+	require.Equal(t, 3, num)
 }
 
 func TestPauseAndResume(t *testing.T) {

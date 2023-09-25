@@ -43,6 +43,7 @@ go_test(
         "//ddl/ingest",
         "//ddl/testutil",
         "//ddl/util/callback",
+        "//disttask/framework/dispatcher",
         "//disttask/operator",
         "//domain",
         "//errno",

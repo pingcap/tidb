@@ -138,6 +138,8 @@ const (
 	TaskTypeExample3 = "Example2"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
+	// Backfill is TaskType of add index Backfilling process.
+	Backfill = "backfill"
 )
 
 // Type2Int converts task type to int.

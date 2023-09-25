@@ -73,7 +73,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
+			found, err := globalTaskManager.GetTaskByIDWithHistory(globalTask.ID)
 			if err != nil {
 				return errors.Errorf("cannot get global task with ID %d, err %s", globalTask.ID, err.Error())
 			}

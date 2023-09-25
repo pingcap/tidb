@@ -39,8 +39,6 @@ const (
 	MaxSubtaskConcurrency = 256
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
-	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
-	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 )
 
 var (
