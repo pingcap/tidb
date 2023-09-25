@@ -160,7 +160,7 @@ func RemoveLockedPartitions(
 			skippedPartitions = append(skippedPartitions, pidNames[pid])
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, pid); err != nil {
+		if err := updateStatsAndUnlockPartition(ctx, exec, pid, tid); err != nil {
 			return "", err
 		}
 	}
@@ -191,6 +191,40 @@ func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLEx
 		useCurrentSession,
 		DeleteLockSQL, tid,
 	)
+	return err
+}
+
+// updateStatsAndUnlockPartition also update the stats to the table level.
+func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, partitionId int64, tid int64) error {
+	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, partitionId, exec)
+	if err != nil {
+		return err
+	}
+
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		version, count, modifyCount, partitionId,
+	); err != nil {
+		return err
+	}
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		version, count, modifyCount, tid,
+	); err != nil {
+		return err
+	}
+	cache.TableRowStatsCache.Invalidate(partitionId)
+
+	_, _, err = exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		DeleteLockSQL, partitionId,
+	)
+
 	return err
 }
 
