@@ -88,7 +88,6 @@ go_test(
         "mock_globalaccessor_test.go",
         "removed_test.go",
         "session_test.go",
-        "setvar_test.go",
         "statusvar_test.go",
         "sysvar_test.go",
         "variable_test.go",

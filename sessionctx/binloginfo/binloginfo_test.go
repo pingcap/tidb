@@ -530,10 +530,11 @@ func TestPessimisticLockThenCommit(t *testing.T) {
 }
 
 func TestDeleteSchema(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	s := createBinlogSuite(t)
 
-	tk := testkit.NewTestKit(t, store)
+	tk := testkit.NewTestKit(t, s.store)
 	tk.MustExec("use test")
+	tk.Session().GetSessionVars().BinlogClient = s.client
 	tk.MustExec("CREATE TABLE `b1` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `split_job_id` varchar(30) DEFAULT NULL, PRIMARY KEY (`id`), KEY `b1` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
 	tk.MustExec("CREATE TABLE `b2` (`id` int(11) NOT NULL AUTO_INCREMENT, `job_id` varchar(50) NOT NULL, `batch_class` varchar(20) DEFAULT NULL, PRIMARY KEY (`id`), UNIQUE KEY `bu` (`job_id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4")
 	tk.MustExec("insert into b2 (job_id, batch_class) values (2, 'TEST');")
