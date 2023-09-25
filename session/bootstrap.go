@@ -582,6 +582,24 @@ const (
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
+
+	// CreateGlobalTaskHistory is a table about history global task.
+	CreateGlobalTaskHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task_history (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    	task_key VARCHAR(256) NOT NULL,
+		type VARCHAR(256) NOT NULL,
+		dispatcher_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time TIMESTAMP,
+		state_update_time TIMESTAMP,
+		meta LONGBLOB,
+		concurrency INT(11),
+		step INT(11),
+		error BLOB,
+		key(state),
+      	UNIQUE KEY task_key(task_key)
+	);`
+
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
@@ -988,11 +1006,15 @@ const (
 	// version 175
 	//   update normalized bindings of `in (?)` to `in (...)` to solve #44298.
 	version175 = 175
+
+	// version 176
+	// add `mysql.tidb_global_task_history`.
+	version176 = 176
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version175
+var currentBootstrapVersion int64 = version176
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -2799,6 +2821,13 @@ func upgradeToVer175(s Session, ver int64) {
 	}
 }
 
+func upgradeToVer176(s Session, ver int64) {
+	if ver >= version176 {
+		return
+	}
+	mustExecute(s, CreateGlobalTaskHistory)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2912,6 +2941,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
+	// Create tidb_global_task_history table
+	mustExecute(s, CreateGlobalTaskHistory)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
