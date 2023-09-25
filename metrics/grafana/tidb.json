@@ -337,7 +337,7 @@
         "timeFrom": null,
         "timeRegions": [],
         "timeShift": null,
-        "title": "Task Dispatching Duraion",
+        "title": "Task Dispatching Duration",
         "tooltip": {
           "shared": true,
           "sort": 0,
