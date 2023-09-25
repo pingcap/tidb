@@ -377,7 +377,7 @@
         }
       }
     ],
-      "title": "DistDDL Dispatcher",
+      "title": "Dist Task Dispatcher",
       "type": "row"
     },
     {
