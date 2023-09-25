@@ -204,7 +204,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 		// iterate columns in this table, and collect the virtual columns that depend on the needed columns
 		for _, col := range tbl.Cols() {
 			// only handles virtual columns
-			if !col.IsGenerated() || col.GeneratedStored {
+			if !col.IsVirtualGenerated() {
 				continue
 			}
 			// If this column is already needed, then skip it.
