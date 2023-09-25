@@ -8,6 +8,7 @@ import (
 	context "context"
 	reflect "reflect"
 
+	backend "github.com/pingcap/tidb/br/pkg/lightning/backend"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -35,15 +36,15 @@ func (m *MockMiniTaskExecutor) EXPECT() *MockMiniTaskExecutorMockRecorder {
 }
 
 // Run mocks base method.
-func (m *MockMiniTaskExecutor) Run(arg0 context.Context) error {
+func (m *MockMiniTaskExecutor) Run(arg0 context.Context, arg1, arg2 backend.EngineWriter) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Run", arg0)
+	ret := m.ctrl.Call(m, "Run", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // Run indicates an expected call of Run.
-func (mr *MockMiniTaskExecutorMockRecorder) Run(arg0 interface{}) *gomock.Call {
+func (mr *MockMiniTaskExecutorMockRecorder) Run(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockMiniTaskExecutor)(nil).Run), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockMiniTaskExecutor)(nil).Run), arg0, arg1, arg2)
 }

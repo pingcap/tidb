@@ -21,11 +21,14 @@ import (
 	"io"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/jfcg/sorty/v2"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/kv"
@@ -41,10 +44,12 @@ func TestWriter(t *testing.T) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 
-	writer := NewWriterBuilder().
+	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		Build(memStore, "/test", "0")
+
+	writer := NewEngineWriter(w)
 
 	kvCnt := rand.Intn(10) + 10
 	kvs := make([]common.KvPair, kvCnt)
@@ -58,12 +63,9 @@ func TestWriter(t *testing.T) {
 		_, err = rand.Read(kvs[i].Val)
 		require.NoError(t, err)
 	}
-	for _, pair := range kvs {
-		err := writer.WriteRow(ctx, pair.Key, pair.Val, nil)
-		require.NoError(t, err)
-	}
 
-	err := writer.Close(ctx)
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
 	require.NoError(t, err)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
@@ -235,6 +237,19 @@ func TestMultiFileStat(t *testing.T) {
 	require.EqualValues(t, 3, s.MaxOverlappingNum)
 }
 
+func TestMultiFileStatOverlap(t *testing.T) {
+	s1 := MultipleFilesStat{MinKey: dbkv.Key{1}, MaxKey: dbkv.Key{100}, MaxOverlappingNum: 100}
+	s2 := MultipleFilesStat{MinKey: dbkv.Key{5}, MaxKey: dbkv.Key{102}, MaxOverlappingNum: 90}
+	s3 := MultipleFilesStat{MinKey: dbkv.Key{111}, MaxKey: dbkv.Key{200}, MaxOverlappingNum: 200}
+	require.EqualValues(t, 200, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+
+	s3.MaxOverlappingNum = 70
+	require.EqualValues(t, 190, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+
+	s3.MinKey = dbkv.Key{0}
+	require.EqualValues(t, 260, GetMaxOverlappingTotal([]MultipleFilesStat{s1, s2, s3}))
+}
+
 func TestWriterMultiFileStat(t *testing.T) {
 	oldMultiFileStatNum := multiFileStatNum
 	t.Cleanup(func() {
@@ -400,4 +415,40 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.Equal(t, expected, summary.MultipleFilesStats[2])
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
+}
+
+func TestWriterSort(t *testing.T) {
+	commonPrefix := "abcabcabcabcabcabcabcabc"
+
+	kvs := make([]common.KvPair, 1000000)
+	for i := 0; i < 1000000; i++ {
+		kvs[i].Key = []byte(commonPrefix + strconv.Itoa(int(rand.Int31())))
+		kvs[i].Val = []byte(commonPrefix)
+	}
+
+	kvs2 := make([]common.KvPair, 1000000)
+	copy(kvs2, kvs)
+
+	ts := time.Now()
+	sorty.MaxGor = 8
+	sorty.Sort(len(kvs), func(i, j, r, s int) bool {
+		if bytes.Compare(kvs[i].Key, kvs[j].Key) < 0 { // strict comparator like < or >
+			if r != s {
+				kvs[r], kvs[s] = kvs[s], kvs[r]
+			}
+			return true
+		}
+		return false
+	})
+	println("thread quick sort", time.Since(ts).String())
+
+	ts = time.Now()
+	slices.SortFunc(kvs2, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	println("quick sort", time.Since(ts).String())
+
+	for i := 0; i < 1000000; i++ {
+		require.True(t, bytes.Compare(kvs[i].Key, kvs2[i].Key) == 0)
+	}
 }

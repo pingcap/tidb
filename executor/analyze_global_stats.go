@@ -53,10 +53,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
-
 	for tableID := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
-		tableAllPartitionStats := make(map[int64]*statistics.Table)
 
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
@@ -83,8 +81,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID,
-					info.isIndex, info.histIDs,
-					tableAllPartitionStats,
+					info.isIndex == 1,
+					info.histIDs,
 				)
 				if err != nil {
 					logutil.BgLogger().Warn("merge global stats failed",

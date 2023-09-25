@@ -2058,3 +2058,32 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1,2,3,4)")
 	planFromBinding(seCurVer, "select * from test.t where a in (7) and b in(1,2,3,4)")
 }
+
+func TestTiDBUpgradeToVer176(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver175 := version175
+	seV175 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver175))
+	require.NoError(t, err)
+	MustExec(t, seV175, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver175))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV175)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver175), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV175)
+	require.NoError(t, err)
+	require.Less(t, int64(ver175), ver)
+	dom.Close()
+}

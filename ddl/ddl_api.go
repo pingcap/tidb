@@ -4903,7 +4903,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
-		if isVirtualGeneratedColumn(sourceCol) != isVirtualGeneratedColumn(targetCol) {
+		if sourceCol.IsVirtualGenerated() != targetCol.IsVirtualGenerated() {
 			return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		// It should strictyle compare expressions for generated columns
@@ -7158,6 +7158,12 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 				colInfo.FieldType.SetDecimal(types.MaxFsp)
 			}
 		}
+		// For an array, the collation is set to "binary". The collation has no effect on the array itself (as it's usually
+		// regarded as a JSON), but will influence how TiKV handles the index value.
+		if colInfo.FieldType.IsArray() {
+			colInfo.SetCharset("binary")
+			colInfo.SetCollate("binary")
+		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range FindColumnNamesInExpr(idxPart.Expr) {
 			colInfo.Dependences[colName.Name.L] = struct{}{}
@@ -8474,7 +8480,7 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 // AddResourceGroup implements the DDL interface, creates a resource group.
 func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
 	if err != nil {
 		return err

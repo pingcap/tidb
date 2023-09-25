@@ -42,13 +42,13 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
+	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
@@ -57,7 +57,9 @@ import (
 
 // Handle can update stats info periodically.
 type Handle struct {
-	pool sessionPool
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
+	pool  sessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
@@ -75,7 +77,7 @@ type Handle struct {
 	ddlEventCh chan *ddlUtil.Event
 
 	// idxUsageListHead contains all the index usage collectors required by session.
-	idxUsageListHead *SessionIndexUsageCollector
+	idxUsageListHead *usage.SessionIndexUsageCollector
 
 	// listHead contains all the stats collector required by session.
 	listHead *SessionStatsCollector
@@ -90,15 +92,8 @@ type Handle struct {
 	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
 	statsUsage *statsUsage
 
-	globalstatushandler *globalstats.GlobalStatusHandler
-
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
-
-	mu struct {
-		ctx sessionctx.Context
-		syncutil.RWMutex
-	}
 
 	schemaMu struct {
 		// pid2tid is the map from partition ID to table ID.
@@ -129,20 +124,6 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 	})
 }
 
-func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, analyzeSnapshot bool, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		optFuncs := []sqlexec.OptionFuncAlias{
-			execOptionForAnalyze[statsVer],
-			sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
-			sqlexec.GetPartitionPruneModeOption(string(h.CurrentPruneMode())),
-			sqlexec.ExecOptionUseCurSession,
-			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
-		}
-		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
-	})
-}
-
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
@@ -156,26 +137,18 @@ func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, 
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
-	// TODO: Here h.mu seems to protect all the fields of Handle. Is is reasonable?
-	h.mu.Lock()
 	cache, err := cache.NewStatsCache()
 	if err != nil {
 		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
-		h.mu.Unlock()
 		return
 	}
 	h.statsCache.Replace(cache)
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.mu.ctx.GetSessionVars().InitChunkSize = 1
-	h.mu.ctx.GetSessionVars().MaxChunkSize = 1
-	h.mu.ctx.GetSessionVars().EnableChunkRPC = false
-	h.mu.ctx.GetSessionVars().SetProjectionConcurrency(0)
 	h.listHead.ClearForTest()
 	h.tableDelta.reset()
 	h.statsUsage.reset()
-	h.mu.Unlock()
 }
 
 type sessionPool interface {
@@ -184,14 +157,14 @@ type sessionPool interface {
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
+func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
-	gpool := gp.New(math.MaxInt16, time.Minute)
+
 	handle := &Handle{
-		globalstatushandler:     globalstats.NewGlobalStatusHandler(gpool),
+		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		listHead:                NewSessionStatsCollector(),
-		idxUsageListHead:        &SessionIndexUsageCollector{mapper: make(indexUsageMap)},
+		idxUsageListHead:        usage.NewSessionIndexUsageCollector(nil),
 		pool:                    pool,
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
@@ -199,7 +172,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	}
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	handle.mu.ctx = ctx
 	statsCache, err := cache.NewStatsCachePointer()
 	if err != nil {
 		return nil, err
@@ -211,10 +183,6 @@ func NewHandle(ctx, initStatsCtx sessionctx.Context, lease time.Duration, pool s
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
-	err = handle.RefreshVars()
-	if err != nil {
-		return nil, err
-	}
 	return handle, nil
 }
 
@@ -320,11 +288,10 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
-// UpdateSessionVar updates the necessary session variables for the stats reader.
-func (h *Handle) UpdateSessionVar() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	verInString, err := h.mu.ctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
+func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// analyzer version
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
 		return err
 	}
@@ -332,16 +299,54 @@ func (h *Handle) UpdateSessionVar() error {
 	if err != nil {
 		return err
 	}
-	h.mu.ctx.GetSessionVars().AnalyzeVersion = int(ver)
-	return err
+	sctx.GetSessionVars().AnalyzeVersion = int(ver)
+
+	// enable historical stats
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
+
+	// partition mode
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
+
+	// enable analyze snapshot
+	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
+
+	// enable skip column types
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+
+	// skip missing partition stats
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
+	return nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
+func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
+	sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
-	physicalID int64, isIndex int, histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
-	return h.globalstatushandler.MergePartitionStats2GlobalStatsByTableID(sc, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	physicalID int64,
+	isIndex bool,
+	histIDs []int64,
+) (globalStats *globalstats.GlobalStats, err error) {
+	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -360,11 +365,24 @@ func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDe
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
-	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema, globalTableInfo *model.TableInfo,
-	isIndex int, histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table) (globalStats *globalstats.GlobalStats, err error) {
-	return h.globalstatushandler.MergePartitionStats2GlobalStats(sc, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+func (h *Handle) mergePartitionStats2GlobalStats(
+	opts map[ast.AnalyzeOptionType]uint64,
+	is infoschema.InfoSchema,
+	globalTableInfo *model.TableInfo,
+	isIndex bool,
+	histIDs []int64,
+) (*globalstats.GlobalStats, error) {
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	defer h.pool.Put(se)
+	sc := se.(sessionctx.Context)
+
+	if err := UpdateSCtxVarsForStats(sc); err != nil {
+		return nil, err
+	}
+	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
@@ -740,9 +758,13 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return SaveTableStatsToStorage(h.mu.ctx, results, analyzeSnapshot, source)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	return SaveTableStatsToStorage(sctx, results, analyzeSnapshot, source)
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
@@ -978,10 +1000,15 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -989,12 +1016,11 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
-	version := txn.StartTS()
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
 		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
@@ -1031,7 +1057,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
 	}
-	sc := h.mu.ctx.GetSessionVars().StmtCtx
+	sc := se.(sessionctx.Context).GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
 	lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, isIndex, hg)
 	if err != nil {
@@ -1058,10 +1084,15 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 			h.recordHistoricalStatsMeta(tableID, statsVer, source)
 		}
 	}()
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -1069,11 +1100,10 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
 	cache.TableRowStatsCache.Invalidate(tableID)
@@ -1101,20 +1131,17 @@ func (h *Handle) statsMetaByTableIDFromStorage(tableID int64, snapshot uint64) (
 }
 
 func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *statistics.StatsReader, err error) {
-	h.mu.Lock()
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("getGlobalStatsReader panic %v", r)
-		}
-		if err != nil {
-			h.mu.Unlock()
-		}
-	}()
-	return statistics.GetStatsReader(snapshot, h.mu.ctx.(sqlexec.RestrictedSQLExecutor))
+	se, err := h.pool.Get()
+	if err != nil {
+		return nil, err
+	}
+	exec := se.(sqlexec.RestrictedSQLExecutor)
+	return statistics.GetStatsReader(snapshot, exec, func() {
+		h.pool.Put(se)
+	})
 }
 
-func (h *Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
-	defer h.mu.Unlock()
+func (*Handle) releaseGlobalStatsReader(reader *statistics.StatsReader) error {
 	return reader.Close()
 }
 
@@ -1132,10 +1159,15 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 		return errors.Trace(err)
 	}
 	strColIDs := string(bytes)
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -1162,11 +1194,10 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
 		}
 	}
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
 	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
@@ -1212,9 +1243,13 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
 	}
 
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -1226,11 +1261,10 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		}
 		err = err1
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	if _, err = exec.ExecuteInternal(ctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
 		return err
 	}
@@ -1360,9 +1394,16 @@ func (h *Handle) fillExtStatsCorrVals(item *statistics.ExtendedStatsItem, cols [
 		item.ScalarVals = 0
 		return item
 	}
-	h.mu.Lock()
-	sc := h.mu.ctx.GetSessionVars().StmtCtx
-	h.mu.Unlock()
+
+	se, seErr := h.pool.Get()
+	if seErr != nil {
+		logutil.BgLogger().Error("fail to get session", zap.String("category", "stats"), zap.Error(seErr))
+		return nil
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	sc := sctx.GetSessionVars().StmtCtx
+
 	var err error
 	samplesX, err = statistics.SortSampleItems(sc, samplesX)
 	if err != nil {
@@ -1413,10 +1454,15 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	if extStats == nil || len(extStats.Stats) == 0 {
 		return nil
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
@@ -1424,11 +1470,10 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	version, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	version := txn.StartTS()
 	for name, item := range extStats.Stats {
 		bytes, err := json.Marshal(item.ColIDs)
 		if err != nil {
@@ -1454,18 +1499,6 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		statsVer = version
 	}
 	return nil
-}
-
-// CurrentPruneMode indicates whether tbl support runtime prune for table and first partition id.
-func (h *Handle) CurrentPruneMode() variable.PartitionPruneMode {
-	return variable.PartitionPruneMode(h.mu.ctx.GetSessionVars().PartitionPruneMode.Load())
-}
-
-// RefreshVars uses to pull PartitionPruneMethod vars from kv storage.
-func (h *Handle) RefreshVars() error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.mu.ctx.RefreshVars(context.Background())
 }
 
 // CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
@@ -1642,9 +1675,14 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	if err != nil {
 		return version, errors.Trace(err)
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
+	se, err := h.pool.Get()
+	if err != nil {
+		return 0, err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return version, errors.Trace(err)
@@ -1663,26 +1701,28 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, nil
 }
 
-func checkHistoricalStatsEnable(sctx sessionctx.Context) (enable bool, err error) {
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	return variable.TiDBOptOn(val), nil
-}
-
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return checkHistoricalStatsEnable(h.mu.ctx)
+	se, err := h.pool.Get()
+	if err != nil {
+		return false, err
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
+		return false, err
+	}
+	return sctx.GetSessionVars().EnableHistoricalStats, nil
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.RestrictedSQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.RestrictedSQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	jobInfo := job.JobInfo
 	const textMaxLength = 65535
@@ -1690,7 +1730,7 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 		jobInfo = jobInfo[:textMaxLength]
 	}
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
+	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
 	if err != nil {
 		return err
 	}
@@ -1738,6 +1778,18 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 
 // Close stops the background
 func (h *Handle) Close() {
-	h.globalstatushandler.Close()
+	h.gpool.Close()
 	h.statsCache.Load().Close()
+}
+
+func getSessionTxnStartTS(se interface{}) (uint64, error) {
+	sctx, ok := se.(sessionctx.Context)
+	if !ok {
+		return 0, errors.New("se is not sessionctx.Context")
+	}
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return 0, err
+	}
+	return txn.StartTS(), nil
 }

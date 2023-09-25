@@ -1969,6 +1969,7 @@ func (n *LoadDataStmt) Accept(v Visitor) (Node, bool) {
 }
 
 type LoadDataOpt struct {
+	// Name is the name of the option, will be converted to lower case during parse.
 	Name string
 	// only literal is allowed, we use ExprNode to support negative number
 	Value ExprNode

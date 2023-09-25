@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/usage"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -239,7 +240,7 @@ type session struct {
 	mppClient kv.MPPClient
 
 	// indexUsageCollector collects index usage information.
-	idxUsageCollector *handle.SessionIndexUsageCollector
+	idxUsageCollector *usage.SessionIndexUsageCollector
 
 	functionUsageMu struct {
 		syncutil.RWMutex
@@ -465,7 +466,7 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 	if s.idxUsageCollector == nil {
 		return
 	}
-	s.idxUsageCollector.Update(tblID, idxID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
+	s.idxUsageCollector.Update(tblID, idxID, &usage.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
@@ -3003,16 +3004,6 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 		return true
 	}
 	return false
-}
-
-// RefreshVars implements the sessionctx.Context interface.
-func (s *session) RefreshVars(_ context.Context) error {
-	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
-	if err != nil {
-		return err
-	}
-	s.sessionVars.PartitionPruneMode.Store(pruneMode)
-	return nil
 }
 
 // SetSessionStatesHandler implements the Session.SetSessionStatesHandler interface.

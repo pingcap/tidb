@@ -1172,6 +1172,17 @@ func TestTiDBServerMemoryLimitGCTrigger(t *testing.T) {
 	require.Error(t, err)
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "51%")
 	require.NoError(t, err)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMaxValue, "50")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "200")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "1000")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "100")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMaxValue, "200")
+	require.NoError(t, err)
 }
 
 func TestSetAggPushDownGlobally(t *testing.T) {
@@ -1358,28 +1369,6 @@ func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, DefTiFlashReplicaRead, val)
-}
-
-func TestSetEnableTiFlashPipeline(t *testing.T) {
-	vars := NewSessionVars(nil)
-	mock := NewMockGlobalAccessor4Tests()
-	mock.SessionVars = vars
-	vars.GlobalVarsAccessor = mock
-	enablePipeline := GetSysVar(TiDBEnableTiFlashPipelineMode)
-	// Check default value
-	require.Equal(t, "ON", enablePipeline.Value)
-
-	err := mock.SetGlobalSysVar(context.Background(), TiDBEnableTiFlashPipelineMode, "OFF")
-	require.NoError(t, err)
-	val, err := mock.GetGlobalSysVar(TiDBEnableTiFlashPipelineMode)
-	require.NoError(t, err)
-	require.Equal(t, "OFF", val)
-
-	err = mock.SetGlobalSysVar(context.Background(), TiDBEnableTiFlashPipelineMode, "ON")
-	require.NoError(t, err)
-	val, err = mock.GetGlobalSysVar(TiDBEnableTiFlashPipelineMode)
-	require.NoError(t, err)
-	require.Equal(t, "ON", val)
 }
 
 func TestSetTiDBCloudStorageURI(t *testing.T) {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -37,8 +38,9 @@ import (
 
 const gcLastTSVarName = "tidb_stats_gc_last_ts"
 
-// GCStats will garbage collect the useless stats info. For dropped tables, we will first update their version so that
-// other tidb could know that table is deleted.
+// GCStats will garbage collect the useless stats' info.
+// For dropped tables, we will first update their version
+// so that other tidb could know that table is deleted.
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	ctx := context.Background()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
@@ -49,6 +51,8 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 	if now < offset {
 		return nil
 	}
+
+	// Get the last gc time.
 	gcVer := now - offset
 	lastGC, err := h.GetLastGCTimestamp(ctx)
 	if err != nil {
@@ -60,6 +64,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 		}
 		err = h.writeGCTimestampToKV(ctx, gcVer)
 	}()
+
 	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
 	if err != nil {
 		return errors.Trace(err)
@@ -75,11 +80,13 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 			}
 		}
 	}
+
 	if err := h.ClearOutdatedHistoryStats(); err != nil {
 		logutil.BgLogger().Warn("failed to gc outdated historical stats",
 			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
 			zap.Error(err))
 	}
+
 	return h.removeDeletedExtendedStats(gcVer)
 }
 
@@ -196,9 +203,12 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 // ClearOutdatedHistoryStats clear outdated historical stats
 func (h *Handle) ClearOutdatedHistoryStats() error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
@@ -228,11 +238,15 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 }
 
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err := exec.ExecuteInternal(ctx, "begin pessimistic")
+
+	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -251,11 +265,14 @@ func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
@@ -263,11 +280,10 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
 	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
 	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
 		return err
@@ -300,9 +316,12 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -311,11 +330,10 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	defer func() {
 		err = finishTransaction(ctx, exec, err)
 	}()
-	txn, err := h.mu.ctx.Txn(true)
+	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	startTS := txn.StartTS()
 	for _, statsID := range statsIDs {
 		// We only update the version so that other tidb will know that this table is deleted.
 		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
@@ -342,14 +360,20 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.analyze_options where table_id = %?", statsID); err != nil {
 			return err
 		}
+		if _, err = exec.ExecuteInternal(ctx, lockstats.DeleteLockSQL, statsID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
 
 func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	exec := h.mu.ctx.(sqlexec.SQLExecutor)
+	se, err := h.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer h.pool.Put(se)
+	exec := se.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
