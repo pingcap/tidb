@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -476,32 +475,6 @@ func TestAggregation(t *testing.T) {
 	tk.MustQuery("select  stddev_pop(distinct id) from t1;").Check(testkit.Rows("0.5"))
 }
 
-func TestAggPrune(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, b varchar(50), c int)")
-	tk.MustExec("insert into t values(1, '1ff', NULL), (2, '234.02', 1)")
-	tk.MustQuery("select id, sum(b) from t group by id").Check(testkit.Rows("1 1", "2 234.02"))
-	tk.MustQuery("select sum(b) from t").Check(testkit.Rows("235.02"))
-	tk.MustQuery("select id, count(c) from t group by id").Check(testkit.Rows("1 0", "2 1"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, b float, c float)")
-	tk.MustExec("insert into t values(1, 1, 3), (2, 1, 6)")
-	tk.MustQuery("select sum(b/c) from t group by id").Check(testkit.Rows("0.3333333333333333", "0.16666666666666666"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, b float, c float, d float)")
-	tk.MustExec("insert into t values(1, 1, 3, NULL), (2, 1, NULL, 6), (3, NULL, 1, 2), (4, NULL, NULL, 1), (5, NULL, 2, NULL), (6, 3, NULL, NULL), (7, NULL, NULL, NULL), (8, 1, 2 ,3)")
-	tk.MustQuery("select count(distinct b, c, d) from t group by id").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "1"))
-	tk.MustQuery("select approx_count_distinct( b, c, d) from t group by id order by id").Check(testkit.Rows("0", "0", "0", "0", "0", "0", "0", "1"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b varchar(10))")
-	tk.MustExec("insert into t value(1, 11),(3, NULL)")
-	tk.MustQuery("SELECT a, MIN(b), MAX(b) FROM t GROUP BY a").Check(testkit.Rows("1 11 11", "3 <nil> <nil>"))
-}
-
 func TestGroupConcatAggr(t *testing.T) {
 	var err error
 	// issue #5411
@@ -659,35 +632,6 @@ func TestSelectDistinct(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-func TestAggPushDown(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int)")
-	tk.MustExec("alter table t add index idx(a, b, c)")
-	// test for empty table
-	tk.MustQuery("select count(a) from t group by a;").Check(testkit.Rows())
-	tk.MustQuery("select count(a) from t;").Check(testkit.Rows("0"))
-	// test for one row
-	tk.MustExec("insert t values(0,0,0)")
-	tk.MustQuery("select distinct b from t").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(b) from t group by a;").Check(testkit.Rows("1"))
-	// test for rows
-	tk.MustExec("insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);")
-	tk.MustQuery("select count(a) from t where b>0 group by a, b;").Sort().Check(testkit.Rows("1", "1", "1", "3"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a;").Check(testkit.Rows("3", "1", "1", "1"))
-	tk.MustQuery("select count(a) from t where b>0 group by a, b order by a limit 1;").Check(testkit.Rows("3"))
-
-	tk.MustExec("drop table if exists t, tt")
-	tk.MustExec("create table t(a int primary key, b int, c int)")
-	tk.MustExec("create table tt(a int primary key, b int, c int)")
-	tk.MustExec("insert into t values(1, 1, 1), (2, 1, 1)")
-	tk.MustExec("insert into tt values(1, 2, 1)")
-	tk.MustQuery("select max(a.b), max(b.b) from t a join tt b on a.a = b.a group by a.c").Check(testkit.Rows("1 2"))
-	tk.MustQuery("select a, count(b) from (select * from t union all select * from tt) k group by a order by a").Check(testkit.Rows("1 2", "2 1"))
-}
-
 func TestOnlyFullGroupBy(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -806,18 +750,6 @@ func TestOnlyFullGroupBy(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrAmbiguous), "err %v", err)
 }
 
-func TestIssue16279(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
-	tk.MustExec("drop table if exists s")
-	tk.MustExec("create table s(a int);")
-	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') from s group by date_format(a, '%Y-%m-%d');")
-	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by date_format(a, '%Y-%m-%d');")
-	tk.MustQuery("select count(a) , date_format(a, '%Y-%m-%d') as xx from s group by xx")
-}
-
 func TestIssue24676(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -834,39 +766,6 @@ func TestIssue24676(t *testing.T) {
 	require.Truef(t, terror.ErrorEqual(err, plannercore.ErrFieldNotInGroupBy), "err %v", err)
 }
 
-func TestAggPushDownPartitionTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec(`CREATE TABLE t1 (
-		a int(11) DEFAULT NULL,
-		b tinyint(4) NOT NULL,
-		PRIMARY KEY (b)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-	PARTITION BY RANGE ( b ) (
-		PARTITION p0 VALUES LESS THAN (10),
-		PARTITION p1 VALUES LESS THAN (20),
-		PARTITION p2 VALUES LESS THAN (30),
-		PARTITION p3 VALUES LESS THAN (40),
-		PARTITION p4 VALUES LESS THAN (MAXVALUE)
-	)`)
-	tk.MustExec("insert into t1 values (0, 0), (1, 1), (1, 2), (1, 3), (2, 4), (2, 5), (2, 6), (3, 7), (3, 10), (3, 11), (12, 12), (12, 13), (14, 14), (14, 15), (20, 20), (20, 21), (20, 22), (23, 23), (23, 24), (23, 25), (31, 30), (31, 31), (31, 32), (33, 33), (33, 34), (33, 35), (36, 36), (80, 80), (90, 90), (100, 100)")
-	tk.MustExec("set @@tidb_opt_agg_push_down = 1")
-	tk.MustQuery("select /*+ AGG_TO_COP() */ sum(a), sum(b) from t1 where a < 40 group by a").Sort().Check(testkit.Rows(
-		"0 0",
-		"24 25",
-		"28 29",
-		"3 6",
-		"36 36",
-		"6 15",
-		"60 63",
-		"69 72",
-		"9 28",
-		"93 93",
-		"99 102"))
-}
-
 func TestIssue13652(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -880,98 +779,6 @@ func TestIssue13652(t *testing.T) {
 	tk.MustQuery("select a from t group by ((+a))")
 	tk.MustGetErrMsg("select a from t group by (-a)",
 		"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
-}
-
-func TestIssue14947(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustQuery("select ((+a+1)) as tmp from t group by tmp")
-}
-
-func TestHaving(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set sql_mode = 'STRICT_TRANS_TABLES,NO_ENGINE_SUBSTITUTION'")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
-	tk.MustExec("insert into t values (1,2,3), (2, 3, 1), (3, 1, 2)")
-
-	tk.MustQuery("select c1 as c2, c3 from t having c2 = 2").Check(testkit.Rows("2 1"))
-	tk.MustQuery("select c1 as c2, c3 from t group by c2 having c2 = 2;").Check(testkit.Rows("1 3"))
-	tk.MustQuery("select c1 as c2, c3 from t group by c2 having sum(c2) = 2;").Check(testkit.Rows("1 3"))
-	tk.MustQuery("select c1 as c2, c3 from t group by c3 having sum(c2) = 2;").Check(testkit.Rows("1 3"))
-	tk.MustQuery("select c1 as c2, c3 from t group by c3 having sum(0) + c2 = 2;").Check(testkit.Rows("2 1"))
-	tk.MustQuery("select c1 as a from t having c1 = 1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select t.c1 from t having c1 = 1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select a.c1 from t as a having c1 = 1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select c1 as a from t group by c3 having sum(a) = 1;").Check(testkit.Rows("1"))
-	tk.MustQuery("select c1 as a from t group by c3 having sum(a) + a = 2;").Check(testkit.Rows("1"))
-	tk.MustQuery("select a.c1 as c, a.c1 as d from t as a, t as b having c1 = 1 limit 1;").Check(testkit.Rows("1 1"))
-
-	tk.MustQuery("select sum(c1) as s from t group by c1 having sum(c1) order by s").Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery("select sum(c1) - 1 as s from t group by c1 having sum(c1) - 1 order by s").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select 1 from t group by c1 having sum(abs(c2 + c3)) = c1").Check(testkit.Rows("1"))
-}
-
-func TestAggEliminator(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table t(a int primary key, b int)")
-	tk.MustQuery("select min(a), min(a) from t").Check(testkit.Rows("<nil> <nil>"))
-	tk.MustExec("insert into t values(1, -1), (2, -2), (3, 1), (4, NULL)")
-	tk.MustQuery("select max(a) from t").Check(testkit.Rows("4"))
-	tk.MustQuery("select min(b) from t").Check(testkit.Rows("-2"))
-	tk.MustQuery("select max(b*b) from t").Check(testkit.Rows("4"))
-	tk.MustQuery("select min(b*b) from t").Check(testkit.Rows("1"))
-	tk.MustQuery("select group_concat(b, b) from t group by a").Sort().Check(testkit.Rows("-1-1", "-2-2", "11", "<nil>"))
-}
-
-func TestClusterIndexMaxMinEliminator(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t (a int, b int, c int, primary key(a, b));")
-	for i := 0; i < 10+1; i++ {
-		tk.MustExec("insert into t values (?, ?, ?)", i, i, i)
-	}
-	tk.MustQuery("select max(a), min(a+b) from t;").Check(testkit.Rows("10 0"))
-	tk.MustQuery("select max(a+b), min(a+b) from t;").Check(testkit.Rows("20 0"))
-	tk.MustQuery("select min(a), max(a), min(b), max(b) from t;").Check(testkit.Rows("0 10 0 10"))
-}
-
-func TestMaxMinFloatScalaFunc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec(`DROP TABLE IF EXISTS T;`)
-	tk.MustExec(`CREATE TABLE T(A VARCHAR(10), B VARCHAR(10), C FLOAT);`)
-	tk.MustExec(`INSERT INTO T VALUES('0', "val_b", 12.191);`)
-	tk.MustQuery(`SELECT MAX(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
-	tk.MustQuery(`SELECT MIN(CASE B WHEN 'val_b'  THEN C ELSE 0 END) val_b FROM T WHERE cast(A as signed) = 0 GROUP BY a;`).Check(testkit.Rows("12.190999984741211"))
-}
-
-func TestBuildProjBelowAgg(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (i int);")
-	tk.MustExec("insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);")
-	rs := tk.MustQuery("select i+1 as a, count(i+2), sum(i+3), group_concat(i+4), bit_or(i+5) from t group by i, hex(i+6) order by a")
-	rs.Check(testkit.Rows(
-		"2 3 12 5,5,5 6",
-		"3 3 15 6,6,6 7",
-		"4 3 18 7,7,7 8"))
 }
 
 func TestInjectProjBelowTopN(t *testing.T) {
@@ -992,111 +799,6 @@ func TestInjectProjBelowTopN(t *testing.T) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
-}
-
-func TestFirstRowEnum(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test;`)
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a enum('a', 'b'));`)
-	tk.MustExec(`insert into t values('a');`)
-	tk.MustQuery(`select a from t group by a;`).Check(testkit.Rows(
-		`a`,
-	))
-}
-
-func TestAggJSON(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a datetime, b json, index idx(a));`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:00', '["a", "b", 1]');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:01', '["a", "b", 1]');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:02', '["a", "b", 1]');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:03', '{"k1": "value", "k2": [10, 20]}');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:04', '{"k1": "value", "k2": [10, 20]}');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:05', '{"k1": "value", "k2": [10, 20]}');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:06', '"hello"');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:07', '"hello"');`)
-	tk.MustExec(`insert into t values('2019-03-20 21:50:08', '"hello"');`)
-	tk.MustExec(`set @@sql_mode='';`)
-	tk.MustQuery(`select b from t group by a order by a;`).Check(testkit.Rows(
-		`["a", "b", 1]`,
-		`["a", "b", 1]`,
-		`["a", "b", 1]`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`"hello"`,
-		`"hello"`,
-		`"hello"`,
-	))
-	tk.MustQuery(`select min(b) from t group by a order by a;`).Check(testkit.Rows(
-		`["a", "b", 1]`,
-		`["a", "b", 1]`,
-		`["a", "b", 1]`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`"hello"`,
-		`"hello"`,
-		`"hello"`,
-	))
-	tk.MustQuery(`select max(b) from t group by a order by a;`).Check(testkit.Rows(
-		`["a", "b", 1]`,
-		`["a", "b", 1]`,
-		`["a", "b", 1]`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`{"k1": "value", "k2": [10, 20]}`,
-		`"hello"`,
-		`"hello"`,
-		`"hello"`,
-	))
-}
-
-func TestIssue10099(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a char(10), b char(10))")
-	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
-	tk.MustQuery("select count(distinct a, b) from t").Check(testkit.Rows("2"))
-	tk.MustQuery("select approx_count_distinct( a, b) from t").Check(testkit.Rows("2"))
-}
-
-func TestIssue10098(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec("create table t(a char(10), b char(10))")
-	tk.MustExec("insert into t values('1', '222'), ('12', '22')")
-	tk.MustQuery("select group_concat(distinct a, b) from t").Check(testkit.Rows("1222,1222"))
-}
-
-func TestIssue10608(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t, s;`)
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("create table s(a int, b int)")
-	tk.MustExec("insert into s values(100292, 508931), (120002, 508932)")
-	tk.MustExec("insert into t values(508931), (508932)")
-	tk.MustQuery("select (select  /*+ stream_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
-	tk.MustQuery("select (select  /*+ hash_agg() */ group_concat(concat(123,'-')) from t where t.a = s.b group by t.a) as t from s;").Check(testkit.Rows("123-", "123-"))
-
-	tk.MustExec("CREATE TABLE `t49`(`c0` char(1) DEFAULT '1',  `c2` char(1) DEFAULT NULL,  UNIQUE KEY `c2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("INSERT INTO `t49` VALUES ('0','0'),('0','1');")
-	tk.MustExec("CREATE TABLE `t0` (`c0` blob DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("INSERT INTO `t0` VALUES (_binary ']'),(_binary '777926278'),(_binary '0.2136404982804636'),(_binary '1901362489'),(_binary '1558203848'),(''),(_binary '1830406335'),(''),(_binary '0'),(NULL),(_binary '601930250'),(_binary '1558203848'),(_binary '-122008948'),(_binary '-2053608489'),(_binary 'hb/vt  <7'),(_binary 'RC&2*'),(_binary '1'),(_binary '-1722334316'),(_binary '1830406335'),(_binary '1372126029'),(_binary '882291196'),(NULL),(_binary '-399693596');")
-	tk.MustExec("CREATE ALGORITHM=TEMPTABLE DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v0` (`c0`, `c1`, `c2`) AS SELECT NULL AS `NULL`,`t49`.`c2` AS `c2`,(((CASE _UTF8MB4'I되EkfIO퀶' WHEN NULL THEN `t49`.`c0` WHEN `t49`.`c2` THEN `t0`.`c0` ELSE (CASE `t49`.`c0` WHEN _UTF8MB4'%' THEN 1035293362 ELSE _UTF8MB4',' END) END))<<(`t49`.`c0`)) AS `(((CASE 'I되EkfIO퀶' WHEN NULL THEN t49.c0 WHEN t49.c2 THEN t0.c0 ELSE (CASE t49.c0 WHEN '%' THEN 1035293362 ELSE ',' END ) END ))<<(t49.c0))` FROM (`t0`) JOIN `t49` WHERE TRUE;")
-	tk.MustQuery("SELECT /*+ STREAM_AGG()*/v0.c0 FROM t49, v0 LEFT OUTER JOIN t0 ON ('Iw') GROUP BY true;").
-		Check(testkit.Rows("<nil>"))
 }
 
 func TestIssue12759HashAggCalledByApply(t *testing.T) {
@@ -1126,98 +828,6 @@ func TestIssue12759HashAggCalledByApply(t *testing.T) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
-}
-
-func TestPR15242ShallowCopy(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a json);`)
-	tk.MustExec(`insert into t values ('{"id": 1,"score":23}');`)
-	tk.MustExec(`insert into t values ('{"id": 2,"score":23}');`)
-	tk.MustExec(`insert into t values ('{"id": 1,"score":233}');`)
-	tk.MustExec(`insert into t values ('{"id": 2,"score":233}');`)
-	tk.MustExec(`insert into t values ('{"id": 3,"score":233}');`)
-	tk.Session().GetSessionVars().MaxChunkSize = 2
-	tk.MustQuery(`select max(JSON_EXTRACT(a, '$.score')) as max_score,JSON_EXTRACT(a,'$.id') as id from t group by id order by id;`).Check(testkit.Rows("233 1", "233 2", "233 3"))
-}
-
-func TestIssue15690(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.Session().GetSessionVars().MaxChunkSize = 2
-	// check for INT type
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a int);`)
-	tk.MustExec(`insert into t values(null),(null);`)
-	tk.MustExec(`insert into t values(0),(2),(2),(4),(8);`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "0", "2", "4", "8"))
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-
-	// check for FLOAT type
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a float);`)
-	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
-	tk.MustExec(`insert into t values(1.1),(1.1);`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "1.1"))
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-	// check for DECIMAL type
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a decimal(5,1));`)
-	tk.MustExec(`insert into t values(null),(null),(null);`)
-	tk.MustExec(`insert into t values(1.1),(2.2),(2.2);`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "1.1", "2.2"))
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-
-	// check for DATETIME type
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a datetime);`)
-	tk.MustExec(`insert into t values(null);`)
-	tk.MustExec(`insert into t values("2019-03-20 21:50:00"),("2019-03-20 21:50:01"), ("2019-03-20 21:50:00");`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "2019-03-20 21:50:00", "2019-03-20 21:50:01"))
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-
-	// check for JSON type
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a json);`)
-	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>"))
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-
-	// check for char type
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(a char);`)
-	tk.MustExec(`insert into t values(null),(null),(null),(null);`)
-	tk.MustExec(`insert into t values('a'),('b');`)
-	tk.MustQuery(`select /*+ stream_agg() */ distinct * from t;`).Check(testkit.Rows("<nil>", "a", "b"))
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-}
-
-func TestIssue15958(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.Session().GetSessionVars().MaxChunkSize = 2
-	tk.MustExec(`drop table if exists t;`)
-	tk.MustExec(`create table t(y year);`)
-	tk.MustExec(`insert into t values (2020), (2000), (2050);`)
-	tk.MustQuery(`select sum(y) from t`).Check(testkit.Rows("6070"))
-	tk.MustQuery(`select avg(y) from t`).Check(testkit.Rows("2023.3333"))
-}
-
-func TestIssue17216(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec(`CREATE TABLE t1 (
-	  pk int(11) NOT NULL,
-	  col1 decimal(40,20) DEFAULT NULL
-	)`)
-	tk.MustExec(`INSERT INTO t1 VALUES (2084,0.02040000000000000000),(35324,0.02190000000000000000),(43760,0.00510000000000000000),(46084,0.01400000000000000000),(46312,0.00560000000000000000),(61632,0.02730000000000000000),(94676,0.00660000000000000000),(102244,0.01810000000000000000),(113144,0.02140000000000000000),(157024,0.02750000000000000000),(157144,0.01750000000000000000),(182076,0.02370000000000000000),(188696,0.02330000000000000000),(833,0.00390000000000000000),(6701,0.00230000000000000000),(8533,0.01690000000000000000),(13801,0.01360000000000000000),(20797,0.00680000000000000000),(36677,0.00550000000000000000),(46305,0.01290000000000000000),(76113,0.00430000000000000000),(76753,0.02400000000000000000),(92393,0.01720000000000000000),(111733,0.02690000000000000000),(152757,0.00250000000000000000),(162393,0.02760000000000000000),(167169,0.00440000000000000000),(168097,0.01360000000000000000),(180309,0.01720000000000000000),(19918,0.02620000000000000000),(58674,0.01820000000000000000),(67454,0.01510000000000000000),(70870,0.02880000000000000000),(89614,0.02530000000000000000),(106742,0.00180000000000000000),(107886,0.01580000000000000000),(147506,0.02230000000000000000),(148366,0.01340000000000000000),(167258,0.01860000000000000000),(194438,0.00500000000000000000),(10307,0.02850000000000000000),(14539,0.02210000000000000000),(27703,0.00050000000000000000),(32495,0.00680000000000000000),(39235,0.01450000000000000000),(52379,0.01640000000000000000),(54551,0.01910000000000000000),(85659,0.02330000000000000000),(104483,0.02670000000000000000),(109911,0.02040000000000000000),(114523,0.02110000000000000000),(119495,0.02120000000000000000),(137603,0.01910000000000000000),(154031,0.02580000000000000000);`)
-	tk.MustQuery("SELECT count(distinct col1) FROM t1").Check(testkit.Rows("48"))
 }
 
 func TestHashAggRuntimeStat(t *testing.T) {
@@ -1399,71 +1009,6 @@ func TestIssue20658(t *testing.T) {
 	}
 }
 
-func TestIssue23277(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists t;")
-
-	tk.MustExec("create table t(a tinyint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a smallint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a mediumint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a int(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-
-	tk.MustExec("create table t(a bigint(1));")
-	tk.MustExec("insert into t values (-120), (127);")
-	tk.MustQuery("select avg(a) from t group by a").Sort().Check(testkit.Rows("-120.0000", "127.0000"))
-	tk.MustExec("drop table t;")
-}
-
-func TestAvgDecimal(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists td;")
-	tk.MustExec("create table td (col_bigint bigint(20), col_smallint smallint(6));")
-	tk.MustExec("insert into td values (null, 22876);")
-	tk.MustExec("insert into td values (9220557287087669248, 32767);")
-	tk.MustExec("insert into td values (28030, 32767);")
-	tk.MustExec("insert into td values (-3309864251140603904,32767);")
-	tk.MustExec("insert into td values (4,0);")
-	tk.MustExec("insert into td values (null,0);")
-	tk.MustExec("insert into td values (4,-23828);")
-	tk.MustExec("insert into td values (54720,32767);")
-	tk.MustExec("insert into td values (0,29815);")
-	tk.MustExec("insert into td values (10017,-32661);")
-	tk.MustQuery(" SELECT AVG( col_bigint / col_smallint) AS field1 FROM td;").Sort().Check(testkit.Rows("25769363061037.62077260"))
-	tk.MustQuery(" SELECT AVG(col_bigint) OVER (PARTITION BY col_smallint) as field2 FROM td where col_smallint = -23828;").Sort().Check(testkit.Rows("4.0000"))
-	tk.MustExec("drop table td;")
-}
-
-// https://github.com/pingcap/tidb/issues/23314
-func TestIssue23314(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(col1 time(2) NOT NULL)")
-	tk.MustExec("insert into t1 values(\"16:40:20.01\")")
-	res := tk.MustQuery("select col1 from t1 group by col1")
-	res.Check(testkit.Rows("16:40:20.01"))
-}
-
 func TestAggInDisk(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1583,136 +1128,4 @@ func TestRandomPanicConsume(t *testing.T) {
 			require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 		}
 	}
-}
-
-func TestIssue35295(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t100")
-	// This bug only happens on partition prune mode = 'static'
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustExec(`CREATE TABLE t100 (
-ID bigint(20) unsigned NOT NULL AUTO_INCREMENT,
-col1 int(10) NOT NULL DEFAULT '0' COMMENT 'test',
-money bigint(20) NOT NULL COMMENT 'test',
-logtime datetime NOT NULL COMMENT '记录时间',
-PRIMARY KEY (ID,logtime)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=1 COMMENT='test'
-PARTITION BY RANGE COLUMNS(logtime) (
-PARTITION p20220608 VALUES LESS THAN ("20220609"),
-PARTITION p20220609 VALUES LESS THAN ("20220610"),
-PARTITION p20220610 VALUES LESS THAN ("20220611"),
-PARTITION p20220611 VALUES LESS THAN ("20220612"),
-PARTITION p20220612 VALUES LESS THAN ("20220613"),
-PARTITION p20220613 VALUES LESS THAN ("20220614"),
-PARTITION p20220614 VALUES LESS THAN ("20220615"),
-PARTITION p20220615 VALUES LESS THAN ("20220616"),
-PARTITION p20220616 VALUES LESS THAN ("20220617"),
-PARTITION p20220617 VALUES LESS THAN ("20220618"),
-PARTITION p20220618 VALUES LESS THAN ("20220619"),
-PARTITION p20220619 VALUES LESS THAN ("20220620"),
-PARTITION p20220620 VALUES LESS THAN ("20220621"),
-PARTITION p20220621 VALUES LESS THAN ("20220622"),
-PARTITION p20220622 VALUES LESS THAN ("20220623"),
-PARTITION p20220623 VALUES LESS THAN ("20220624"),
-PARTITION p20220624 VALUES LESS THAN ("20220625")
- );`)
-	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-09 00:00:00');")
-	tk.MustExec("insert into t100(col1,money,logtime) values (100,10,'2022-06-10 00:00:00');")
-	tk.MustQuery("SELECT /*+STREAM_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
-	tk.MustQuery("SELECT /*+HASH_AGG()*/ col1,sum(money) FROM t100 WHERE logtime>='2022-06-09 00:00:00' AND col1=100 ;").Check(testkit.Rows("100 20"))
-}
-
-// https://github.com/pingcap/tidb/issues/27751
-func TestIssue27751(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table test.t(nname char(20));")
-	tk.MustExec("insert into test.t values ('2'),(null),('11'),('2'),(null),('2'),(null),('11'),('33');")
-	tk.MustExec("set @@group_concat_max_len=0;")
-	tk.MustQuery("select group_concat(nname order by 1 separator '#' ) from t;").Check(testkit.Rows("11#1"))
-	tk.MustQuery("select group_concat(nname order by 1 desc separator '#' ) from t;").Check(testkit.Rows("33#2"))
-}
-
-func TestIssue44795(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`DROP TABLE IF EXISTS c`)
-
-	// case from tcph.
-	tk.MustExec("CREATE TABLE `customer` (" +
-		"  `C_CUSTKEY` bigint(20) NOT NULL," +
-		"  `C_NAME` varchar(25) NOT NULL," +
-		"  `C_ADDRESS` varchar(40) NOT NULL," +
-		"  `C_NATIONKEY` bigint(20) NOT NULL," +
-		"  `C_PHONE` char(15) NOT NULL," +
-		"  `C_ACCTBAL` decimal(15,2) NOT NULL," +
-		"  `C_MKTSEGMENT` char(10) NOT NULL," +
-		"  `C_COMMENT` varchar(117) NOT NULL," +
-		"  PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-
-	tk.MustExec("CREATE TABLE `orders` (" +
-		"  `O_ORDERKEY` bigint(20) NOT NULL," +
-		"  `O_CUSTKEY` bigint(20) NOT NULL," +
-		"  `O_ORDERSTATUS` char(1) NOT NULL," +
-		"  `O_TOTALPRICE` decimal(15,2) NOT NULL," +
-		"  `O_ORDERDATE` date NOT NULL," +
-		"  `O_ORDERPRIORITY` char(15) NOT NULL," +
-		"  `O_CLERK` char(15) NOT NULL," +
-		"  `O_SHIPPRIORITY` bigint(20) NOT NULL," +
-		"  `O_COMMENT` varchar(79) NOT NULL," +
-		"  PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin")
-
-	tk.MustExec("set tidb_opt_agg_push_down=ON;")
-
-	tk.MustQuery("explain format='brief' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer " +
-		"left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;").Check(testkit.Rows(
-		"Projection 8000.00 root  test.customer.c_custkey, Column#18",
-		"└─HashAgg 8000.00 root  group by:test.customer.c_custkey, funcs:count(Column#19)->Column#18, funcs:firstrow(test.customer.c_custkey)->test.customer.c_custkey",
-		"  └─HashJoin 10000.00 root  left outer join, equal:[eq(test.customer.c_custkey, test.orders.o_custkey)]",
-		"    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
-		"    │ └─TableFullScan 10000.00 cop[tikv] table:customer keep order:false, stats:pseudo",
-		"    └─HashAgg(Probe) 6400.00 root  group by:test.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(test.orders.o_custkey)->test.orders.o_custkey",
-		"      └─TableReader 6400.00 root  data:HashAgg",
-		"        └─HashAgg 6400.00 cop[tikv]  group by:test.orders.o_custkey, funcs:count(test.orders.o_orderkey)->Column#20",
-		"          └─Selection 8000.00 cop[tikv]  not(like(test.orders.o_comment, \"%special%requests%\", 92))",
-		"            └─TableFullScan 10000.00 cop[tikv] table:orders keep order:false, stats:pseudo"))
-}
-
-func TestIssue26885(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`SET sql_mode = 'NO_ENGINE_SUBSTITUTION';`)
-	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
-
-	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', '', 'b'));")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "", "a", "", ""))
-	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
-	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
-
-	tk.MustExec("alter table t1 add index idx(c1); ")
-	tk.MustQuery("select c1 + 0 from t1").Sort().Check(testkit.Rows("0", "1", "2", "2", "3"))
-	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
-
-	tk.MustExec(`DROP TABLE IF EXISTS t1;`)
-	tk.MustExec("CREATE TABLE t1 (c1 ENUM('a', 'b', 'c'));")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('a');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('b');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES ('c');")
-	tk.MustExec("INSERT INTO t1 (c1) VALUES (0);")
-	tk.MustQuery("select * from t1").Check(testkit.Rows("b", "a", "b", "c", ""))
-	tk.MustQuery("SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;").Check(testkit.Rows("0 1", "1 1", "2 2", "3 1"))
 }
