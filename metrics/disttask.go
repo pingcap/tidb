@@ -16,13 +16,19 @@ package metrics
 
 import (
 	"fmt"
-  "time"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+const (
+	lblTaskStatus = "status"
+	lblTaskType   = "task_type"
+	lblTaskID     = "task_id"
+	lblSubTaskID  = "subtask_id"
+)
 
 // status for task
 const (
@@ -30,14 +36,6 @@ const (
 	WaitingStatus     = "waiting"
 	RunningStatus     = "running"
 	CompletedStatus   = "completed"
-)
-
-// labels for task metrics
-const (
-	lblTaskStatus = "status"
-	lblTaskType   = "task_type"
-	lblTaskID     = "task_id"
-	lblSubTaskID  = "subtask_id"
 )
 
 var (
