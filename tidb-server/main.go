@@ -185,7 +185,7 @@ var (
 	help                        *bool
 )
 
-func initflag() {
+func initflag() *flag.FlagSet {
 	fset := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	version = flagBoolean(fset, nmVersion, false, "print version information and exit")
 	configPath = fset.String(nmConfig, "", "config file path")
@@ -243,11 +243,12 @@ func initflag() {
 		fset.Usage()
 		os.Exit(0)
 	}
+	return fset
 }
 
 func main() {
-	initflag()
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
+	fset := initflag()
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
 		setVersions()
 		fmt.Println(printer.GetTiDBInfo())
@@ -491,15 +492,15 @@ func flagBoolean(fset *flag.FlagSet, name string, defaultVal bool, usage string)
 	if !defaultVal {
 		// Fix #4125, golang do not print default false value in usage, so we append it.
 		usage = fmt.Sprintf("%s (default false)", usage)
-		return flag.Bool(name, defaultVal, usage)
+		return fset.Bool(name, defaultVal, usage)
 	}
-	return flag.Bool(name, defaultVal, usage)
+	return fset.Bool(name, defaultVal, usage)
 }
 
 // overrideConfig considers command arguments and overrides some config items in the Config.
-func overrideConfig(cfg *config.Config) {
+func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	actualFlags := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) {
+	fset.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
 	})
 
