@@ -436,19 +436,6 @@ func TestMergeGlobalTopN(t *testing.T) {
 		("test t global b 1 3 5")))
 }
 
-func TestExtendedStatsDefaultSwitch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int, c int, d int)")
-	err := tk.ExecToErr("alter table t add stats_extended s1 correlation(b,c)")
-	require.Equal(t, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF", err.Error())
-	err = tk.ExecToErr("alter table t drop stats_extended s1")
-	require.Equal(t, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF", err.Error())
-	err = tk.ExecToErr("admin reload stats_extended")
-	require.Equal(t, "Extended statistics feature is not generally available now, and tidb_enable_extended_stats is OFF", err.Error())
-}
-
 func TestExtendedStatsOps(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1022,30 +1009,6 @@ func TestGCIndexUsageInformation(t *testing.T) {
 	tk.MustQuery(querySQL).Check(testkit.Rows("0"))
 }
 
-func TestExtendedStatsPartitionTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1(a int, b int, c int) partition by range(a) (partition p0 values less than (5), partition p1 values less than (10))")
-	tk.MustExec("create table t2(a int, b int, c int) partition by hash(a) partitions 4")
-	err := tk.ExecToErr("alter table t1 add stats_extended s1 correlation(b,c)")
-	require.Equal(t, "Extended statistics on partitioned tables are not supported now", err.Error())
-	err = tk.ExecToErr("alter table t2 add stats_extended s1 correlation(b,c)")
-	require.Equal(t, "Extended statistics on partitioned tables are not supported now", err.Error())
-}
-
-func TestHideIndexUsageSyncLease(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	// NOTICE: remove this test when index usage is GA.
-	tk := testkit.NewTestKit(t, store)
-	rs := tk.MustQuery("select @@tidb_config").Rows()
-	for _, r := range rs {
-		require.False(t, strings.Contains(strings.ToLower(r[0].(string)), "index-usage-sync-lease"))
-	}
-}
-
 func TestRepetitiveAddDropExtendedStats(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1083,28 +1046,6 @@ func TestRepetitiveAddDropExtendedStats(t *testing.T) {
 	))
 	result = tk.MustQuery("show stats_extended where db_name = 'test' and table_name = 't'")
 	require.Len(t, result.Rows(), 1)
-}
-
-func TestDuplicateExtendedStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set session tidb_enable_extended_stats = on")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c int)")
-	err := tk.ExecToErr("alter table t add stats_extended s1 correlation(a,a)")
-	require.Error(t, err)
-	require.Equal(t, "Cannot create extended statistics on duplicate column names 'a'", err.Error())
-	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	err = tk.ExecToErr("alter table t add stats_extended s1 correlation(a,c)")
-	require.Error(t, err)
-	require.Equal(t, "extended statistics 's1' for the specified table already exists", err.Error())
-	err = tk.ExecToErr("alter table t add stats_extended s2 correlation(a,b)")
-	require.Error(t, err)
-	require.Equal(t, "extended statistics 's2' with same type on same columns already exists", err.Error())
-	err = tk.ExecToErr("alter table t add stats_extended s2 correlation(b,a)")
-	require.Error(t, err)
-	require.Equal(t, "extended statistics 's2' with same type on same columns already exists", err.Error())
-	tk.MustExec("alter table t add stats_extended s2 correlation(a,c)")
 }
 
 func TestDuplicateFMSketch(t *testing.T) {
@@ -1452,64 +1393,6 @@ func TestIssues24349(t *testing.T) {
 		"test t global b 0 0 3 1 1 2 0",
 		"test t global b 0 1 10 1 4 4 0",
 	))
-}
-
-func TestIssues24401(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-
-	// normal table with static prune mode
-	testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testKit.MustExec("create table t(a int, index(a))")
-	testKit.MustExec("insert into t values (1), (2), (3)")
-	testKit.MustExec("analyze table t")
-	testKit.MustQuery("select * from mysql.stats_fm_sketch").Check(testkit.Rows())
-
-	// partition table with static prune mode
-	testKit.MustExec("create table tp(a int, index(a)) partition by hash(a) partitions 3")
-	testKit.MustExec("insert into tp values (1), (2), (3)")
-	testKit.MustExec("analyze table tp")
-	rows := testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
-	require.Equal(t, 6, len(rows))
-
-	// normal table with dynamic prune mode
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	defer testKit.MustExec("set @@tidb_partition_prune_mode='static'")
-	testKit.MustExec("analyze table t")
-	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
-	require.Equal(t, 6, len(rows))
-
-	// partition table with dynamic prune mode
-	testKit.MustExec("analyze table tp")
-	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
-	lenRows := len(rows)
-	require.Equal(t, 6, lenRows)
-
-	// check fm-sketch won't increase infinitely
-	testKit.MustExec("insert into t values (10), (20), (30), (12), (23), (23), (4344)")
-	testKit.MustExec("analyze table tp")
-	rows = testKit.MustQuery("select * from mysql.stats_fm_sketch").Rows()
-	require.Len(t, rows, lenRows)
-}
-
-func TestIssues27147(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-
-	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int, b int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
-	testKit.MustExec("alter table t add index idx((a+5));")
-	err := testKit.ExecToErr("analyze table t;")
-	require.Equal(t, nil, err)
-
-	testKit.MustExec("drop table if exists t1")
-	testKit.MustExec("create table t1 (a int, b int as (a+1) virtual, c int) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than maxvalue);")
-	testKit.MustExec("alter table t1 add index idx((a+5));")
-	err = testKit.ExecToErr("analyze table t1;")
-	require.Equal(t, nil, err)
 }
 
 func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.T) {
