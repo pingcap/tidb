@@ -698,7 +698,6 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 				}
 			}
 		}
-
 		return nil
 	})
 
