@@ -38,7 +38,7 @@ func newImportCleanUpS3() dispatcher.CleanUpRoutine {
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (c *ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+func (*ImportCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
 	taskMeta := &TaskMeta{}

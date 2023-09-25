@@ -39,7 +39,7 @@ func newBackfillCleanUpS3() dispatcher.CleanUpRoutine {
 }
 
 // CleanUp implements the CleanUpRoutine.CleanUp interface.
-func (c *BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
 	var gTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(task.Meta, &gTaskMeta); err != nil {
 		return err
