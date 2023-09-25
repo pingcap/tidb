@@ -195,8 +195,8 @@ func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLEx
 }
 
 // updateStatsAndUnlockPartition also update the stats to the table level.
-func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, partitionId int64, tid int64) error {
-	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, partitionId, exec)
+func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, partitionID int64, tid int64) error {
+	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, partitionID, exec)
 	if err != nil {
 		return err
 	}
@@ -205,7 +205,7 @@ func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedS
 		ctx,
 		useCurrentSession,
 		updateDeltaSQL,
-		version, count, modifyCount, partitionId,
+		version, count, modifyCount, partitionID,
 	); err != nil {
 		return err
 	}
@@ -217,12 +217,12 @@ func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedS
 	); err != nil {
 		return err
 	}
-	cache.TableRowStatsCache.Invalidate(partitionId)
+	cache.TableRowStatsCache.Invalidate(partitionID)
 
 	_, _, err = exec.ExecRestrictedSQL(
 		ctx,
 		useCurrentSession,
-		DeleteLockSQL, partitionId,
+		DeleteLockSQL, partitionID,
 	)
 
 	return err
