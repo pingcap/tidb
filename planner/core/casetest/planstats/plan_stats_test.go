@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package planstats_test
 
 import (
 	"context"
@@ -367,7 +367,7 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		InputColNames  []string
 		OutputColNames []string
 	}
-	testData := plannercore.GetPlanStatsData()
+	testData := GetPlanStatsData()
 	testData.LoadTestCases(t, &input, &output)
 
 	for i, testCase := range input {

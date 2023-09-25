@@ -37,7 +37,6 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 	testDataMap.LoadTestSuiteData("testdata", "rule_constant_propagation_suite")
-	testDataMap.LoadTestSuiteData("testdata", "plan_stats_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -72,8 +71,4 @@ func GetJoinReorderData() testdata.TestData {
 
 func GetRuleConstantPropagationData() testdata.TestData {
 	return testDataMap["rule_constant_propagation_suite"]
-}
-
-func GetPlanStatsData() testdata.TestData {
-	return testDataMap["plan_stats_suite"]
 }
