@@ -124,24 +124,6 @@ func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...in
 	})
 }
 
-func (h *Handle) execRestrictedSQLWithStatsVer(ctx context.Context, statsVer int, procTrackID uint64, analyzeSnapshot bool, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-	pruneMode, err := h.GetCurrentPruneMode()
-	if err != nil {
-		return nil, nil, err
-	}
-	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		optFuncs := []sqlexec.OptionFuncAlias{
-			execOptionForAnalyze[statsVer],
-			sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
-			sqlexec.GetPartitionPruneModeOption(pruneMode),
-			sqlexec.ExecOptionUseCurSession,
-			sqlexec.ExecOptionWithSysProcTrack(procTrackID, h.sysProcTracker.Track, h.sysProcTracker.UnTrack),
-		}
-		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
-	})
-}
-
 func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	return h.withRestrictedSQLExecutor(ctx, func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
@@ -363,9 +345,8 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
 	physicalID int64,
 	isIndex bool,
 	histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table,
 ) (globalStats *globalstats.GlobalStats, err error) {
-	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, tablePartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -390,7 +371,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
 ) (*globalstats.GlobalStats, error) {
 	se, err := h.pool.Get()
 	if err != nil {
@@ -402,7 +382,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	if err := UpdateSCtxVarsForStats(sc); err != nil {
 		return nil, err
 	}
-	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {

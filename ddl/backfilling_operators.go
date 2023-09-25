@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -202,10 +203,16 @@ func NewWriteIndexToExternalStoragePipeline(
 		shareMu = bcctx.GetLocalBackend().GetMutex()
 	}
 
+	memTotal, err := memory.MemTotal()
+	if err != nil {
+		return nil, err
+	}
+	memSize := (memTotal / 2) / uint64(len(indexes))
+
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
-		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu)
+		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu, memSize)
 	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
@@ -483,6 +490,7 @@ func NewWriteExternalStoreOperator(
 	concurrency int,
 	onClose external.OnCloseFunc,
 	shareMu *sync.Mutex,
+	memoryQuota uint64,
 ) *WriteExternalStoreOperator {
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
@@ -493,12 +501,15 @@ func NewWriteExternalStoreOperator(
 			for _, index := range indexes {
 				builder := external.NewWriterBuilder().
 					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(index.Meta().Unique).SetMutex(shareMu)
+					SetKeyDuplicationEncoding(index.Meta().Unique).
+					SetMutex(shareMu).
+					SetMemorySizeLimit(memoryQuota)
 				writerID := uuid.New().String()
 				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
 				writer := builder.Build(store, prefix, writerID)
 				writers = append(writers, writer)
 			}
+
 			return &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,

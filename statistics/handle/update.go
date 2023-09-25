@@ -18,10 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	"math"
-	"math/rand"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -29,19 +26,15 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/timeutil"
-	"go.uber.org/zap"
 )
 
 // tableDelta is used to collect tables' change information.
@@ -226,12 +219,12 @@ const maxInsertLength = 1024 * 1024
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
-	return h.callWithExec(func(exec sqlexec.RestrictedSQLExecutor) error {
-		return usage.DumpIndexUsageToKV(exec, h.idxUsageListHead)
+	return h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
+		return usage.DumpIndexUsageToKV(sctx, exec, h.idxUsageListHead)
 	})
 }
 
-func (h *Handle) callWithExec(f func(exec sqlexec.RestrictedSQLExecutor) error) (err error) {
+func (h *Handle) callWithExec(f func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error) (err error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return err
@@ -247,7 +240,7 @@ func (h *Handle) callWithExec(f func(exec sqlexec.RestrictedSQLExecutor) error) 
 	}
 
 	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return f(exec)
+	return f(sctx, exec)
 }
 
 // GCIndexUsage will delete the usage information of those indexes that do not exist.
@@ -575,258 +568,20 @@ const (
 	StatsPrompt = "stats"
 )
 
-// AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
-var AutoAnalyzeMinCnt int64 = 1000
-
-// TableAnalyzed checks if the table is analyzed.
-func TableAnalyzed(tbl *statistics.Table) bool {
-	for _, col := range tbl.Columns {
-		if col.IsAnalyzed() {
-			return true
-		}
-	}
-	for _, idx := range tbl.Indices {
-		if idx.IsAnalyzed() {
-			return true
-		}
-	}
-	return false
-}
-
-// NeedAnalyzeTable checks if we need to analyze the table:
-//  1. If the table has never been analyzed, we need to analyze it when it has
-//     not been modified for a while.
-//  2. If the table had been analyzed before, we need to analyze it when
-//     "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio" and the current time is
-//     between `start` and `end`.
-func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := TableAnalyzed(tbl)
-	if !analyzed {
-		return true, "table unanalyzed"
-	}
-	// Auto analyze is disabled.
-	if autoAnalyzeRatio == 0 {
-		return false, ""
-	}
-	// No need to analyze it.
-	tblCnt := float64(tbl.RealtimeCount)
-	if histCnt := tbl.GetAnalyzeRowCount(); histCnt > 0 {
-		tblCnt = histCnt
-	}
-	if float64(tbl.ModifyCount)/tblCnt <= autoAnalyzeRatio {
-		return false, ""
-	}
-	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
-}
-
-func (h *Handle) getAutoAnalyzeParameters() map[string]string {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	rows, _, err := h.execRestrictedSQL(ctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
-	if err != nil {
-		return map[string]string{}
-	}
-	parameters := make(map[string]string, len(rows))
-	for _, row := range rows {
-		parameters[row.GetString(0)] = row.GetString(1)
-	}
-	return parameters
-}
-
-func parseAutoAnalyzeRatio(ratio string) float64 {
-	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
-	if err != nil {
-		return variable.DefAutoAnalyzeRatio
-	}
-	return math.Max(autoAnalyzeRatio, 0)
-}
-
-func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
-	if start == "" {
-		start = variable.DefAutoAnalyzeStartTime
-	}
-	if end == "" {
-		end = variable.DefAutoAnalyzeEndTime
-	}
-	s, err := time.ParseInLocation(variable.FullDayTimeFormat, start, time.UTC)
-	if err != nil {
-		return s, s, errors.Trace(err)
-	}
-	e, err := time.ParseInLocation(variable.FullDayTimeFormat, end, time.UTC)
-	return s, e, err
-}
-
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
-		}
-	}()
-	dbs := is.AllSchemaNames()
-	parameters := h.getAutoAnalyzeParameters()
-	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
-	if err != nil {
-		logutil.BgLogger().Error("parse auto analyze period failed", zap.String("category", "stats"), zap.Error(err))
-		return false
-	}
-	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
-		return false
-	}
-
-	se, err := h.pool.Get()
-	if err != nil {
-		logutil.BgLogger().Error("get session from session pool failed", zap.String("category", "stats"), zap.Error(err))
-		return false
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil {
-		logutil.BgLogger().Error("update session variables for stats failed", zap.String("category", "stats"), zap.Error(err))
-		return false
-	}
-	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
-	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
-	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
-	rd.Shuffle(len(dbs), func(i, j int) {
-		dbs[i], dbs[j] = dbs[j], dbs[i]
+	_ = h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
+		analyzed = autoanalyze.HandleAutoAnalyze(sctx, exec, &autoanalyze.Opt{
+			StatsLease:              h.Lease(),
+			GetLockedTables:         h.GetLockedTables,
+			GetTableStats:           h.GetTableStats,
+			GetPartitionStats:       h.GetPartitionStats,
+			SysProcTracker:          h.sysProcTracker,
+			AutoAnalyzeProcIDGetter: h.autoAnalyzeProcIDGetter,
+		}, is)
+		return nil
 	})
-	for _, db := range dbs {
-		if util.IsMemOrSysDB(strings.ToLower(db)) {
-			continue
-		}
-		tbls := is.SchemaTables(model.NewCIStr(db))
-		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
-		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
-		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
-		// TODO: Design a priority queue to place the table which needs analyze most in the front.
-		rd.Shuffle(len(tbls), func(i, j int) {
-			tbls[i], tbls[j] = tbls[j], tbls[i]
-		})
-
-		// We need to check every partition of every table to see if it needs to be analyzed.
-		tidsAndPids := make([]int64, 0, len(tbls))
-		for _, tbl := range tbls {
-			tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
-			tblInfo := tbl.Meta()
-			pi := tblInfo.GetPartitionInfo()
-			if pi != nil {
-				for _, def := range pi.Definitions {
-					tidsAndPids = append(tidsAndPids, def.ID)
-				}
-			}
-		}
-
-		lockedTables, err := h.GetLockedTables(tidsAndPids...)
-		if err != nil {
-			logutil.BgLogger().Error("check table lock failed",
-				zap.String("category", "stats"), zap.Error(err))
-			continue
-		}
-
-		for _, tbl := range tbls {
-			// If table locked, skip analyze all partitions of the table.
-			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
-			if _, ok := lockedTables[tbl.Meta().ID]; ok {
-				continue
-			}
-			tblInfo := tbl.Meta()
-			if tblInfo.IsView() {
-				continue
-			}
-			pi := tblInfo.GetPartitionInfo()
-			if pi == nil {
-				statsTbl := h.GetTableStats(tblInfo)
-				sql := "analyze table %n.%n"
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O)
-				if analyzed {
-					// analyze one table at a time to let it get the freshest parameters.
-					// others will be analyzed next round which is just 3s later.
-					return true
-				}
-				continue
-			}
-			// Only analyze the partition that has not been locked.
-			var partitionDefs []model.PartitionDefinition
-			for _, def := range pi.Definitions {
-				if _, ok := lockedTables[def.ID]; !ok {
-					partitionDefs = append(partitionDefs, def)
-				}
-			}
-			if pruneMode == variable.Dynamic {
-				analyzed := h.autoAnalyzePartitionTableInDynamicMode(tblInfo, partitionDefs, db, autoAnalyzeRatio, analyzeSnapshot)
-				if analyzed {
-					return true
-				}
-				continue
-			}
-			for _, def := range partitionDefs {
-				sql := "analyze table %n.%n partition %n"
-				statsTbl := h.GetPartitionStats(tblInfo, def.ID)
-				analyzed := h.autoAnalyzeTable(tblInfo, statsTbl, autoAnalyzeRatio, analyzeSnapshot, sql, db, tblInfo.Name.O, def.Name.O)
-				if analyzed {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}
-
-func (h *Handle) autoAnalyzeTable(tblInfo *model.TableInfo, statsTbl *statistics.Table, ratio float64, analyzeSnapshot bool, sql string, params ...interface{}) bool {
-	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
-		return false
-	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*h.Lease(), ratio); needAnalyze {
-		escaped, err := sqlexec.EscapeSQL(sql, params...)
-		if err != nil {
-			return false
-		}
-		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
-		tableStatsVer, err := h.GetCurrentAnalyzeVersion()
-		if err != nil {
-			logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
-			return false
-		}
-		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
-		return true
-	}
-	for _, idx := range tblInfo.Indices {
-		if _, ok := statsTbl.Indices[idx.ID]; !ok && idx.State == model.StatePublic {
-			sqlWithIdx := sql + " index %n"
-			paramsWithIdx := append(params, idx.Name.O)
-			escaped, err := sqlexec.EscapeSQL(sqlWithIdx, paramsWithIdx...)
-			if err != nil {
-				return false
-			}
-			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
-			tableStatsVer, err := h.GetCurrentAnalyzeVersion()
-			if err != nil {
-				logutil.BgLogger().Error("fail to get analyze version", zap.String("category", "stats"), zap.Error(err))
-				return false
-			}
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sqlWithIdx, paramsWithIdx...)
-			return true
-		}
-	}
-	return false
-}
-
-// GetCurrentAnalyzeVersion returns the current analyze version.
-func (h *Handle) GetCurrentAnalyzeVersion() (int, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return 0, err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil {
-		return 0, err
-	}
-	return sctx.GetSessionVars().AnalyzeVersion, nil
+	return
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
@@ -841,117 +596,4 @@ func (h *Handle) GetCurrentPruneMode() (string, error) {
 		return "", err
 	}
 	return sctx.GetSessionVars().PartitionPruneMode.Load(), nil
-}
-
-func (h *Handle) autoAnalyzePartitionTableInDynamicMode(tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition, db string, ratio float64, analyzeSnapshot bool) bool {
-	tableStatsVer, err := h.GetCurrentAnalyzeVersion()
-	if err != nil {
-		logutil.BgLogger().Info("fail to get analyze version", zap.String("category", "stats"),
-			zap.String("table", tblInfo.Name.String()),
-			zap.Error(err))
-		return false
-	}
-	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	partitionNames := make([]interface{}, 0, len(partitionDefs))
-	for _, def := range partitionDefs {
-		partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
-		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
-			continue
-		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*h.Lease(), ratio); needAnalyze {
-			partitionNames = append(partitionNames, def.Name.O)
-			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
-		}
-	}
-	getSQL := func(prefix, suffix string, numPartitions int) string {
-		var sqlBuilder strings.Builder
-		sqlBuilder.WriteString(prefix)
-		for i := 0; i < numPartitions; i++ {
-			if i != 0 {
-				sqlBuilder.WriteString(",")
-			}
-			sqlBuilder.WriteString(" %n")
-		}
-		sqlBuilder.WriteString(suffix)
-		return sqlBuilder.String()
-	}
-	if len(partitionNames) > 0 {
-		logutil.BgLogger().Info("start to auto analyze", zap.String("category", "stats"),
-			zap.String("table", tblInfo.Name.String()),
-			zap.Any("partitions", partitionNames),
-			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
-		statsTbl := h.GetTableStats(tblInfo)
-		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
-			start := i
-			end := start + analyzePartitionBatchSize
-			if end >= len(partitionNames) {
-				end = len(partitionNames)
-			}
-			sql := getSQL("analyze table %n.%n partition", "", end-start)
-			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
-			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
-				zap.String("table", tblInfo.Name.String()),
-				zap.Any("partitions", partitionNames[start:end]))
-			h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
-		}
-		return true
-	}
-	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
-			continue
-		}
-		for _, def := range partitionDefs {
-			partitionStatsTbl := h.GetPartitionStats(tblInfo, def.ID)
-			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
-				partitionNames = append(partitionNames, def.Name.O)
-				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
-			}
-		}
-		if len(partitionNames) > 0 {
-			statsTbl := h.GetTableStats(tblInfo)
-			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
-				start := i
-				end := start + analyzePartitionBatchSize
-				if end >= len(partitionNames) {
-					end = len(partitionNames)
-				}
-				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
-				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
-				params = append(params, idx.Name.O)
-				logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"),
-					zap.String("table", tblInfo.Name.String()),
-					zap.String("index", idx.Name.String()),
-					zap.Any("partitions", partitionNames[start:end]))
-				h.execAutoAnalyze(tableStatsVer, analyzeSnapshot, sql, params...)
-			}
-			return true
-		}
-	}
-	return false
-}
-
-var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
-	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
-}
-
-func (h *Handle) execAutoAnalyze(statsVer int, analyzeSnapshot bool, sql string, params ...interface{}) {
-	startTime := time.Now()
-	autoAnalyzeProcID := h.autoAnalyzeProcIDGetter()
-	_, _, err := h.execRestrictedSQLWithStatsVer(context.Background(), statsVer, autoAnalyzeProcID, analyzeSnapshot, sql, params...)
-	dur := time.Since(startTime)
-	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
-	if err != nil {
-		escaped, err1 := sqlexec.EscapeSQL(sql, params...)
-		if err1 != nil {
-			escaped = ""
-		}
-		logutil.BgLogger().Error("auto analyze failed", zap.String("category", "stats"), zap.String("sql", escaped), zap.Duration("cost_time", dur), zap.Error(err))
-		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
-	} else {
-		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
-	}
 }

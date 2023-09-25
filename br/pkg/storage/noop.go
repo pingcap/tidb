@@ -34,7 +34,7 @@ func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 }
 
 // Open a Reader by file path.
-func (*noopStorage) Open(_ context.Context, _ string) (ExternalFileReader, error) {
+func (*noopStorage) Open(_ context.Context, _ string, _ *ReaderOption) (ExternalFileReader, error) {
 	return noopReader{}, nil
 }
 
@@ -73,6 +73,10 @@ func (noopReader) Close() error {
 
 func (noopReader) Seek(offset int64, _ int) (int64, error) {
 	return offset, nil
+}
+
+func (noopReader) GetFileSize() (int64, error) {
+	return 0, nil
 }
 
 type noopWriter struct{}
