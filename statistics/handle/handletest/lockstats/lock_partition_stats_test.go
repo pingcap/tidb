@@ -15,6 +15,7 @@
 package lockstats
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -450,6 +451,68 @@ func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 	// Check the new partition is locked.
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip analyze locked table: test.t partition (p2)",
+	))
+}
+
+func TestGlobalStatsShouldNotCountTheLockedPartition(t *testing.T) {
+	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
+	handle := dom.StatsHandle()
+	// Get partition stats.
+	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
+	partitionStats := handle.GetPartitionStats(tbl, p0Id)
+	for _, col := range partitionStats.Columns {
+		require.True(t, col.IsStatsInitialized())
+	}
+
+	tk.MustExec("lock stats t partition p0")
+	rows := tk.MustQuery(selectTableLockSQL).Rows()
+	num, _ := strconv.Atoi(rows[0][0].(string))
+	require.Equal(t, 1, num)
+
+	rows = tk.MustQuery("show stats_locked").Rows()
+	require.Len(t, rows, 1)
+
+	tk.MustExec("insert into t(a, b) values(1,'a')")
+	tk.MustExec("insert into t(a, b) values(15,'b')")
+
+	tk.MustExec("analyze table test.t partition p0")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip analyze locked table: test.t partition (p0)",
+	))
+
+	tk.MustExec("analyze table test.t")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip analyze locked table: test.t partition (p0)",
+	))
+	tblStats := handle.GetTableStats(tbl)
+	require.Equal(t, int64(1), tblStats.RealtimeCount)
+
+	// Check the stats_meta.
+	tk.MustQuery(fmt.Sprint("select modify_count,count from mysql.stats_meta where table_id = ", tbl.ID)).Check(testkit.Rows(
+		"0 1",
+	))
+
+	// Insert again.
+	tk.MustExec("insert into t(a, b) values(2,'a')")
+	tk.MustExec("insert into t(a, b) values(16,'b')")
+	tk.MustExec("analyze table test.t")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 skip analyze locked table: test.t partition (p0)",
+	))
+	tblStats = handle.GetTableStats(tbl)
+	require.Equal(t, int64(2), tblStats.RealtimeCount)
+	// Check the stats_meta.
+	tk.MustQuery(fmt.Sprint("select modify_count,count from mysql.stats_meta where table_id = ", tbl.ID)).Check(testkit.Rows(
+		"0 2",
+	))
+
+	// Unlock the partition.
+	tk.MustExec("unlock stats t partition p0")
+	tk.MustExec("analyze table test.t")
+
+	// Check the stats_meta.
+	tk.MustQuery(fmt.Sprint("select modify_count,count from mysql.stats_meta where table_id = ", tbl.ID)).Check(testkit.Rows(
+		"0 4",
 	))
 }
 

@@ -433,11 +433,14 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			return
 		}
 		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-		// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-		if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
-			return
+		// If the partition is locked, we don't need to update the global-stats.
+		if !isPartitionLocked {
+			// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+			if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
+				return
+			}
+			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
-		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 	} else {
 		// This is a non-partitioned table.
 		// Check if it's locked.
