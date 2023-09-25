@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -117,10 +118,11 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
 	// 8. cancel
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockCancelContext", "1*return()"))
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne, []interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp, Step: proto.StepOne}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
-	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(context.Canceled)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateCanceled, gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 
@@ -134,6 +136,7 @@ func TestSchedulerRun(t *testing.T) {
 	time.Sleep(time.Second)
 	runCancel()
 	wg.Wait()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockCancelContext"))
 }
 
 func TestSchedulerRollback(t *testing.T) {
@@ -285,10 +288,4 @@ func TestScheduler(t *testing.T) {
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateReverted, nil).Return(nil)
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
-}
-
-func TestCancel(t *testing.T) {
-	ctx, cancel := context.WithCancelCause(context.Background())
-	cancel(errors.New("test error"))
-	require.Equal(t, context.Cause(ctx).Error(), "test error")
 }

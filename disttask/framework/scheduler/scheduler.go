@@ -54,7 +54,7 @@ type BaseScheduler struct {
 		// handled indicates whether the error has been updated to one of the subtask.
 		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
-		runtimeCancel context.CancelFunc
+		runtimeCancel context.CancelCauseFunc
 	}
 }
 
@@ -70,7 +70,7 @@ func NewBaseScheduler(_ context.Context, id string, taskID int64, taskTable Task
 	return schedulerImpl
 }
 
-func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelFunc) {
+func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelCauseFunc) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -89,7 +89,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				if canceled {
 					logutil.Logger(s.logCtx).Info("scheduler canceled")
 					if cancelFn != nil {
-						cancelFn()
+						cancelFn(errors.New("cancel"))
 					}
 				}
 			}
@@ -126,8 +126,8 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		s.onError(ctx.Err())
 		return s.getError()
 	}
-	runCtx, runCancel := context.WithCancel(ctx)
-	defer runCancel()
+	runCtx, runCancel := context.WithCancelCause(ctx)
+	defer runCancel(errors.New("cancel subtask"))
 	s.registerCancelFunc(runCancel)
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
@@ -223,7 +223,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 	err := scheduler.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			err = context.Canceled
+			err = errors.New("cancel subtasks")
 		}
 	})
 	if err != nil {
@@ -236,9 +236,13 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 		s.markErrorHandled()
 		return
 	}
+	failpoint.Inject("MockCancelContext", func() {
+		if s.mu.runtimeCancel != nil {
+			s.mu.runtimeCancel(errors.New("cancel subtasks"))
+		}
+	})
 	if ctx.Err() != nil {
 		s.onError(ctx.Err())
-		return
 	}
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
@@ -301,7 +305,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 	}
 	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			s.onError(context.Canceled)
+			s.onError(errors.New("cancel subtasks"))
 		}
 	})
 	if err := s.getError(); err != nil {
@@ -322,8 +326,8 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 
 // Rollback rollbacks the scheduler task.
 func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
-	rollbackCtx, rollbackCancel := context.WithCancel(ctx)
-	defer rollbackCancel()
+	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
+	defer rollbackCancel(errors.New("rollback"))
 	s.registerCancelFunc(rollbackCancel)
 
 	s.resetError()
@@ -413,7 +417,7 @@ func runSummaryCollectLoop(
 	return nil, func() {}, nil
 }
 
-func (s *BaseScheduler) registerCancelFunc(cancel context.CancelFunc) {
+func (s *BaseScheduler) registerCancelFunc(cancel context.CancelCauseFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.runtimeCancel = cancel
@@ -434,7 +438,7 @@ func (s *BaseScheduler) onError(err error) {
 	}
 
 	if s.mu.runtimeCancel != nil {
-		s.mu.runtimeCancel()
+		s.mu.runtimeCancel(err)
 	}
 }
 

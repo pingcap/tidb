@@ -84,7 +84,7 @@ func TestManageTask(t *testing.T) {
 
 	// test pause.
 	m.addHandlingTask(3)
-	ctx4, cancel4 := context.WithCancel(context.Background())
+	ctx4, cancel4 := context.WithCancelCause(context.Background())
 	m.registerCancelFunc(1, cancel4)
 	mockTaskTable.EXPECT().PauseSubtasks("test", int64(1)).Return(nil)
 	m.onPausingTasks([]*proto.Task{{ID: 1}})
