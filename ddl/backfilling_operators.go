@@ -170,7 +170,7 @@ func NewWriteIndexToExternalStoragePipeline(ctx *OperatorCtx, store kv.Storage, 
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		return nil, err
 	}

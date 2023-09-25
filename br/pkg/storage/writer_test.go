@@ -129,7 +129,7 @@ func TestCompressReaderWriter(t *testing.T) {
 		require.Equal(t, strings.Join(test.content, ""), bf.String())
 
 		// test withCompression Open
-		r, err = storage.Open(ctx, fileName)
+		r, err = storage.Open(ctx, fileName, nil)
 		require.NoError(t, err)
 		content, err := io.ReadAll(r)
 		require.NoError(t, err)

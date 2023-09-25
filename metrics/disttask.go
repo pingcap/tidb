@@ -16,12 +16,13 @@ package metrics
 
 import (
 	"fmt"
+  "time"
 	"strconv"
-	"time"
 
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
 
 // status for task
 const (
