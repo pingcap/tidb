@@ -50,6 +50,9 @@ func (c *ImportCleanUpS3) CleanUp() error {
 	if err != nil {
 		return err
 	}
+	if taskMeta.Plan.CloudStorageURI == "" {
+		return nil
+	}
 	defer callLog.End(zap.InfoLevel, nil)
 
 	controller, err := buildController(&taskMeta.Plan, taskMeta.Stmt)
@@ -66,7 +69,7 @@ func (c *ImportCleanUpS3) CleanUp() error {
 		logger.Warn("failed to clean up files of task", zap.Error(err))
 		return err
 	}
-
+	// Only redact sensitive info after cleanUpFiles success.
 	redactSensitiveInfo(c.task, taskMeta)
 	return nil
 }

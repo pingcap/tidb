@@ -36,7 +36,7 @@ type BackfillCleanUpS3 struct {
 	task *proto.Task
 }
 
-func newBackCleanUpS3(ctx context.Context, task *proto.Task) dispatcher.CleanUpRoutine {
+func newBackfillCleanUpS3(ctx context.Context, task *proto.Task) dispatcher.CleanUpRoutine {
 	return &BackfillCleanUpS3{
 		ctx:  ctx,
 		task: task,

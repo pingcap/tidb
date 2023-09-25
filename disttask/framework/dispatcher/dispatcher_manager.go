@@ -37,9 +37,8 @@ var (
 	checkTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
-	// defaultGCInterval
-	// ywq todo refine interval
-	defaultGCInterval = 10 * time.Minute
+	// defaultCleanUpInterval is the interval of cleanUp routine.
+	defaultCleanUpInterval = 10 * time.Minute
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -279,7 +278,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 
 func (dm *Manager) cleanUpLoop() {
 	logutil.Logger(dm.ctx).Info("cleanUp loop start")
-	ticker := time.NewTicker(defaultGCInterval)
+	ticker := time.NewTicker(defaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
 		select {
