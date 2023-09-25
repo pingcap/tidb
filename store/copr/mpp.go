@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
