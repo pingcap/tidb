@@ -687,23 +687,6 @@ const (
 		PRIMARY KEY (id),
 		KEY (created_by),
 		KEY (status));`
-
-	// CreateGlobalTaskHistory is a table about history global task.
-	CreateGlobalTaskHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task_history (
-		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
-    	task_key VARCHAR(256) NOT NULL,
-		type VARCHAR(256) NOT NULL,
-		dispatcher_id VARCHAR(256),
-		state VARCHAR(64) NOT NULL,
-		start_time TIMESTAMP,
-		state_update_time TIMESTAMP,
-		meta LONGBLOB,
-		concurrency INT(11),
-		step INT(11),
-		error BLOB,
-		key(state),
-      	UNIQUE KEY task_key(task_key)
-	);`
 )
 
 // CreateTimers is a table to store all timers for tidb
