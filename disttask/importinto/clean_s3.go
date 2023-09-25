@@ -27,6 +27,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var _ dispatcher.CleanUpRoutine = (*ImportCleanUpS3)(nil)
+
 type ImportCleanUpS3 struct {
 	ctx  context.Context
 	task *proto.Task
@@ -39,6 +41,7 @@ func newImportCleanUpS3(ctx context.Context, task *proto.Task) dispatcher.CleanU
 	}
 }
 
+// CleanUp implements the CleanUpRoutine.CleanUp interface.
 func (c *ImportCleanUpS3) CleanUp() error {
 	// we can only clean up files after all write&ingest subtasks are finished,
 	// since they might share the same file.
@@ -50,6 +53,7 @@ func (c *ImportCleanUpS3) CleanUp() error {
 	if err != nil {
 		return err
 	}
+	// Not use cloud storage, no need to cleanUp.
 	if taskMeta.Plan.CloudStorageURI == "" {
 		return nil
 	}

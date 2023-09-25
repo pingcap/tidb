@@ -43,11 +43,13 @@ func newBackfillCleanUpS3(ctx context.Context, task *proto.Task) dispatcher.Clea
 	}
 }
 
+// CleanUp implements the CleanUpRoutine.CleanUp interface.
 func (c *BackfillCleanUpS3) CleanUp() error {
 	var gTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(c.task.Meta, &gTaskMeta); err != nil {
 		return err
 	}
+	// Not use cloud storage, no need to cleanUp.
 	if len(gTaskMeta.CloudStorageURI) == 0 {
 		return nil
 	}
