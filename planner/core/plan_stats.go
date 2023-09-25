@@ -168,8 +168,8 @@ func SyncWaitStatsLoad(plan LogicalPlan) error {
 // the same as the logic for generating the access paths, which will make the logic here very complicated.
 //
 // Note 2: Only direct dependencies are considered here.
-// If a virtual column depends on another virtual column, and the
-// latter depends on the needed columns, then the former will not be collected.
+// If a virtual column depends on another virtual column, and the latter depends on the needed columns, then the former
+// will not be collected.
 // For example: create table t(a int, b int, c int as (a+b), d int as (c+1)); If a is needed, then c will be collected,
 // but d will not be collected.
 // It's because currently it's impossible that statistics related to indirectly depending columns are actually needed.
@@ -178,24 +178,24 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 	generatedCols := make([]model.TableItemID, 0)
 
 	// group the neededItems by table id
-	tblID2neededCols := make(map[int64][]model.TableItemID, len(tblID2Tbl))
+	tblID2neededColIDs := make(map[int64][]int64, len(tblID2Tbl))
 	for _, item := range neededItems {
 		if item.IsIndex {
 			continue
 		}
-		tblID2neededCols[item.TableID] = append(tblID2neededCols[item.TableID], item)
+		tblID2neededColIDs[item.TableID] = append(tblID2neededColIDs[item.TableID], item.ID)
 	}
 
 	// process them by table id
-	for tblID, colItems := range tblID2neededCols {
+	for tblID, colIDs := range tblID2neededColIDs {
 		tbl := tblID2Tbl[tblID]
 		if tbl == nil {
 			continue
 		}
 		// collect the needed columns on this table into a set for faster lookup
-		colNameSet := make(map[string]struct{}, len(colItems))
-		for _, colItem := range colItems {
-			name := tbl.Meta().FindColumnNameByID(colItem.ID)
+		colNameSet := make(map[string]struct{}, len(colIDs))
+		for _, colID := range colIDs {
+			name := tbl.Meta().FindColumnNameByID(colID)
 			if name == "" {
 				continue
 			}
