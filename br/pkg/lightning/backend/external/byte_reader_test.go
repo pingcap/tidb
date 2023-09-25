@@ -160,7 +160,7 @@ func TestByteReaderClone(t *testing.T) {
 	require.Len(t, x2, 1)
 	require.Equal(t, byte('0'), x1[0])
 	require.Equal(t, byte('2'), x2[0])
-	require.NoError(t, br.reload()) // Perform a reload to overwrite buffer.
+	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
 	x1, x2 = *y1, *y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)
@@ -181,7 +181,7 @@ func TestByteReaderClone(t *testing.T) {
 	require.Equal(t, byte('0'), x1[0])
 	require.Equal(t, byte('2'), x2[0])
 	br.cloneSlices()
-	require.NoError(t, br.reload()) // Perform a reload to overwrite buffer.
+	require.NoError(t, br.reload()) // Perform a read to overwrite buffer.
 	x1, x2 = *y1, *y2
 	require.Len(t, x1, 2)
 	require.Len(t, x2, 1)

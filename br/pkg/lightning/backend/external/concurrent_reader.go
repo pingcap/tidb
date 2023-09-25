@@ -26,17 +26,17 @@ import (
 
 // singeFileReader is a concurrent reader for a single file.
 type singeFileReader struct {
-	ctx               context.Context
-	concurrency       int
-	readBufferSize    int
-	currentFileOffset int64
-	bufferReadOffset  int64
-	bufferMaxOffset   int64
-
-	fileSize int64
-	name     string
+	ctx              context.Context
+	concurrency      int
+	readBufferSize   int
+	bufferReadOffset int64
+	bufferMaxOffset  int64
 
 	storage storage.ExternalStorage
+	name    string
+
+	offset   int64
+	fileSize int64
 }
 
 // newSingeFileReader creates a new singeFileReader.
@@ -53,20 +53,19 @@ func newSingeFileReader(
 		return nil, nil
 	}
 	return &singeFileReader{
-		ctx:               ctx,
-		concurrency:       concurrency,
-		readBufferSize:    readBufferSize,
-		currentFileOffset: offset,
-		fileSize:          fileSize,
-		name:              name,
-		storage:           st,
-		buffer:            nil,
+		ctx:            ctx,
+		concurrency:    concurrency,
+		readBufferSize: readBufferSize,
+		offset:         offset,
+		fileSize:       fileSize,
+		name:           name,
+		storage:        st,
 	}, nil
 }
 
-// reload reloads the buffer.
-func (r *singeFileReader) reload() error {
-	if r.currentFileOffset >= r.fileSize {
+// read reloads the buffer.
+func (r *singeFileReader) read(buf []byte) (int64, error) {
+	if r.offset >= r.fileSize {
 		return io.EOF
 	}
 
@@ -75,7 +74,7 @@ func (r *singeFileReader) reload() error {
 		i := i
 		eg.Go(func() error {
 			bufStart := i * r.readBufferSize
-			fileStart := r.currentFileOffset + int64(bufStart)
+			fileStart := r.offset + int64(bufStart)
 			fileEnd := fileStart + int64(r.readBufferSize)
 			if fileEnd > r.fileSize {
 				fileEnd = r.fileSize
@@ -108,23 +107,14 @@ func (r *singeFileReader) reload() error {
 		return err
 	}
 
-	if r.currentFileOffset+int64(r.readBufferSize*r.concurrency) > r.fileSize {
-		r.bufferMaxOffset = r.fileSize - r.currentFileOffset
-		r.currentFileOffset = r.fileSize
+	if r.offset+int64(r.readBufferSize*r.concurrency) > r.fileSize {
+		r.bufferMaxOffset = r.fileSize - r.offset
+		r.offset = r.fileSize
 	} else {
 		r.bufferMaxOffset = int64(r.readBufferSize * r.concurrency)
-		r.currentFileOffset += int64(r.readBufferSize * r.concurrency)
+		r.offset += int64(r.readBufferSize * r.concurrency)
 	}
 	r.bufferReadOffset = 0
 
 	return nil
-}
-
-// next returns the next n bytes.
-func (r *singeFileReader) next(n int) []byte {
-	end := min(r.bufferReadOffset+int64(n), r.bufferMaxOffset)
-	ret := r.buffer[r.bufferReadOffset:end]
-	r.bufferReadOffset += int64(len(ret))
-
-	return ret
 }

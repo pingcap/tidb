@@ -237,7 +237,7 @@ func (r *byteReader) next(n int) []byte {
 func (r *byteReader) reload() error {
 	to := r.concurrentReader.expected
 	now := r.concurrentReader.now
-	// in reload only false -> true is possible
+	// in read only false -> true is possible
 	if !now && to {
 		r.logger.Info("switch reader mode", zap.Bool("use concurrent mode", true))
 		err := r.switchToConcurrentReader()
@@ -248,7 +248,7 @@ func (r *byteReader) reload() error {
 
 	if r.concurrentReader.now {
 		r.concurrentReader.reloadCnt++
-		return r.concurrentReader.reader.reload(r.concurrentReader.largeBuf)
+		return r.concurrentReader.reader.read(r.concurrentReader.largeBuf)
 	}
 	nBytes, err := io.ReadFull(r.storageReader, r.curBuf[0:])
 	if err != nil {
@@ -259,7 +259,7 @@ func (r *byteReader) reload() error {
 			// The last batch.
 			r.curBuf = r.curBuf[:nBytes]
 		default:
-			r.logger.Warn("other error during reload", zap.Error(err))
+			r.logger.Warn("other error during read", zap.Error(err))
 			return err
 		}
 	}
