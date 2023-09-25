@@ -505,6 +505,18 @@ func (t *Table) IsOutdated() bool {
 	return false
 }
 
+// ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
+func (t *Table) ReleaseAndPutToPool() {
+	for _, col := range t.Columns {
+		col.FMSketch.DestroyAndPutToPool()
+	}
+	maps.Clear(t.Columns)
+	for _, idx := range t.Indices {
+		idx.FMSketch.DestroyAndPutToPool()
+	}
+	maps.Clear(t.Indices)
+}
+
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.
 func (coll *HistColl) ID2UniqueID(columns []*expression.Column) *HistColl {
 	cols := make(map[int64]*Column)

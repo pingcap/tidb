@@ -39,7 +39,7 @@ type byteReader struct {
 
 	retPointers []*[]byte
 
-	useConcurrentReaderCurrent atomic.Bool
+	useConcurrentReaderCurrent bool
 	useConcurrentReader        atomic.Bool
 
 	currFileOffset int64
@@ -51,8 +51,8 @@ func openStoreReaderAndSeek(
 	store storage.ExternalStorage,
 	name string,
 	initFileOffset uint64,
-) (storage.ReadSeekCloser, error) {
-	storageReader, err := store.Open(ctx, name)
+) (storage.ExternalFileReader, error) {
+	storageReader, err := store.Open(ctx, name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +77,11 @@ func newByteReader(
 			_ = r.Close()
 		}
 	}()
-	conReader, err := newSingeFileReader(ctx, st, name, 8, ConcurrentReaderBufferSize)
+	fileSize, err := storageReader.GetFileSize()
+	if err != nil {
+		return nil, err
+	}
+	conReader, err := newSingeFileReader(ctx, st, name, fileSize, 8, ConcurrentReaderBufferSize)
 	if err != nil {
 		return nil, err
 	}
@@ -109,13 +113,13 @@ func (r *byteReader) switchToConcurrentReaderImpl() error {
 	r.conReader.currentFileOffset = currOffset
 	r.conReader.bufferReadOffset = 0
 
-	r.useConcurrentReaderCurrent.Store(true)
 	r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
+	r.useConcurrentReaderCurrent = true
 	return nil
 }
 
 func (r *byteReader) switchToNormalReaderImpl() error {
-	r.useConcurrentReaderCurrent.Store(false)
+	r.useConcurrentReaderCurrent = false
 	r.currFileOffset = r.conReader.currentFileOffset
 	r.conReader.buffer = nil
 	_, err := r.storageReader.Seek(r.currFileOffset, io.SeekStart)
@@ -176,7 +180,7 @@ func (r *byteReader) cloneSlices() {
 }
 
 func (r *byteReader) next(n int) []byte {
-	if r.useConcurrentReaderCurrent.Load() {
+	if r.useConcurrentReaderCurrent {
 		return r.conReader.next(n)
 	}
 	end := mathutil.Min(r.bufOffset+n, len(r.buf))
@@ -187,7 +191,7 @@ func (r *byteReader) next(n int) []byte {
 
 func (r *byteReader) reload() error {
 	to := r.useConcurrentReader.Load()
-	now := r.useConcurrentReaderCurrent.Load()
+	now := r.useConcurrentReaderCurrent
 	if to != now {
 		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", to))
 		if to {

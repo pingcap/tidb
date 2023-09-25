@@ -184,7 +184,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, updateSubtaskErr.Error())
 
-	// rollback failed
+	// 5. rollback failed
 	rollbackErr := errors.New("rollback error")
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil)
@@ -196,7 +196,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, rollbackErr.Error())
 
-	// rollback success
+	// 6. rollback success
 	mockSubtaskTable.EXPECT().GetSubtaskInStates("id", taskID, proto.StepOne,
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(&proto.Subtask{ID: 1}, nil)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(int64(1), proto.TaskStateCanceled, nil).Return(nil)
@@ -212,6 +212,30 @@ func TestSchedulerRollback(t *testing.T) {
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(int64(3), proto.TaskStateReverted, nil).Return(nil)
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
+}
+
+func TestSchedulerPause(t *testing.T) {
+	tp := "test_scheduler_pause"
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
+	mockExtension := mock.NewMockExtension(ctrl)
+
+	// pause success.
+	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable)
+	scheduler.Extension = mockExtension
+	mockSubtaskTable.EXPECT().PauseSubtasks("id", int64(1)).Return(nil)
+	require.NoError(t, scheduler.Pause(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp}))
+
+	// pause error.
+	pauseErr := errors.New("pause error")
+	mockSubtaskTable.EXPECT().PauseSubtasks("id", int64(1)).Return(pauseErr)
+	err := scheduler.Pause(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp})
+	require.EqualError(t, err, pauseErr.Error())
 }
 
 func TestScheduler(t *testing.T) {

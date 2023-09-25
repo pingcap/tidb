@@ -78,6 +78,17 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: "rate(process_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
 		Labels: []string{"instance", "job"},
 	},
+	"tiflash_process_cpu_usage": {
+		PromQL: "rate(tiflash_proxy_process_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
+		Labels: []string{"instance", "job"},
+	},
+	"tiflash_cpu_quota": {
+		PromQL: "tiflash_system_current_metric_LogicalCPUCores{$LABEL_CONDITIONS}",
+		Labels: []string{"instance"},
+	},
+	"tiflash_resource_manager_resource_unit": {
+		PromQL: "sum(rate(tiflash_compute_request_unit[$RANGE_DURATION]))",
+	},
 	"tidb_connection_count": {
 		PromQL:  "tidb_server_connections{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance"},
@@ -866,7 +877,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels: []string{"instance", "type"},
 	},
 	"resource_manager_resource_unit": {
-		PromQL:  `sum(rate(resource_manager_resource_unit_read_request_unit_sum[$RANGE_DURATION])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum[$RANGE_DURATION]))`,
+		PromQL:  `sum(rate(resource_manager_resource_unit_read_request_unit_sum{type=~"|tp"}[$RANGE_DURATION])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{type=~"|tp"}[$RANGE_DURATION]))`,
 		Comment: "The Total RU consumption per second",
 	},
 	"tikv_engine_size": {

@@ -420,33 +420,39 @@ type BackendConfig struct {
 	ResourceGroupName         string
 	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
+	// whether disable automatic compactions of pebble db of engine.
+	// deduplicate pebble db is not affected by this option.
+	// see DisableAutomaticCompactions of pebble.Options for more details.
+	// default true.
+	DisableAutomaticCompactions bool
 }
 
 // NewBackendConfig creates a new BackendConfig.
 func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
-		PDAddr:                    cfg.TiDB.PdAddr,
-		LocalStoreDir:             cfg.TikvImporter.SortedKVDir,
-		MaxConnPerStore:           cfg.TikvImporter.RangeConcurrency,
-		ConnCompressType:          cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:         cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:          int64(cfg.TikvImporter.SendKVSize),
-		RegionSplitBatchSize:      cfg.TikvImporter.RegionSplitBatchSize,
-		RegionSplitConcurrency:    cfg.TikvImporter.RegionSplitConcurrency,
-		CheckpointEnabled:         cfg.Checkpoint.Enable,
-		MemTableSize:              int(cfg.TikvImporter.EngineMemCacheSize),
-		LocalWriterMemCacheSize:   int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		ShouldCheckTiKV:           cfg.App.CheckRequirements,
-		DupeDetectEnabled:         cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:        common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
-		StoreWriteBWLimit:         int(cfg.TikvImporter.StoreWriteBWLimit),
-		ShouldCheckWriteStall:     cfg.Cron.SwitchMode.Duration == 0,
-		MaxOpenFiles:              maxOpenFiles,
-		KeyspaceName:              keyspaceName,
-		PausePDSchedulerScope:     cfg.TikvImporter.PausePDSchedulerScope,
-		ResourceGroupName:         resourceGroupName,
-		TaskType:                  taskType,
-		RaftKV2SwitchModeDuration: raftKV2SwitchModeDuration,
+		PDAddr:                      cfg.TiDB.PdAddr,
+		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:      cfg.TikvImporter.RegionSplitConcurrency,
+		CheckpointEnabled:           cfg.Checkpoint.Enable,
+		MemTableSize:                int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize:     int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:             cfg.App.CheckRequirements,
+		DupeDetectEnabled:           cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:           int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:       cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:                maxOpenFiles,
+		KeyspaceName:                keyspaceName,
+		PausePDSchedulerScope:       cfg.TikvImporter.PausePDSchedulerScope,
+		ResourceGroupName:           resourceGroupName,
+		TaskType:                    taskType,
+		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
+		DisableAutomaticCompactions: true,
 	}
 }
 
@@ -477,6 +483,8 @@ type Backend struct {
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
+	mu sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -856,6 +864,7 @@ func (local *Backend) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
+		DisableAutomaticCompactions: local.DisableAutomaticCompactions,
 	}
 	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
 	opt.Levels = []pebble.LevelOptions{
@@ -939,7 +948,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		store, err := storage.New(ctx, storeBackend, nil)
+		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
 		if err != nil {
 			return err
 		}
@@ -1206,6 +1215,7 @@ func (local *Backend) generateAndSendJob(
 				return err
 			}
 			for _, job := range jobs {
+				data.IncRef()
 				jobWg.Add(1)
 				select {
 				case <-egCtx.Done():
@@ -1339,7 +1349,12 @@ func (local *Backend) startWorker(
 					return err2
 				}
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				jobWg.Add(len(jobs) - 1)
+				newJobCnt := len(jobs) - 1
+				jobWg.Add(newJobCnt)
+				for newJobCnt > 0 {
+					job.ingestData.IncRef()
+					newJobCnt--
+				}
 				for _, j := range jobs {
 					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
@@ -1469,7 +1484,7 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
 			regionSplitSize = kvRegionSplitSize
@@ -1549,7 +1564,12 @@ func (local *Backend) ImportEngine(
 
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
-	return getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+}
+
+// GetMutex returns the mutex of the backend.
+func (local *Backend) GetMutex() *sync.Mutex {
+	return &local.mu
 }
 
 // expose these variables to unit test.
@@ -1687,6 +1707,16 @@ func (local *Backend) GetImportedKVCount(engineUUID uuid.UUID) int64 {
 	}
 	e := v.(*Engine)
 	return e.importedKVCount.Load()
+}
+
+// GetExternalEngineKVStatistics returns kv statistics of some engine.
+func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
+	totalKVSize int64, totalKVCount int64) {
+	v, ok := local.externalEngine[engineUUID]
+	if !ok {
+		return 0, 0
+	}
+	return v.ImportedStatistics()
 }
 
 // ResetEngine reset the engine and reclaim the space.
@@ -1927,8 +1957,8 @@ func getSplitConfFromStore(ctx context.Context, host string, tls *common.TLS) (
 	return splitSize, nested.Coprocessor.RegionSplitKeys, nil
 }
 
-// return region split size, region split keys, error
-func getRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
+// GetRegionSplitSizeKeys return region split size, region split keys, error
+func GetRegionSplitSizeKeys(ctx context.Context, cli pd.Client, tls *common.TLS) (
 	regionSplitSize int64, regionSplitKeys int64, err error) {
 	stores, err := cli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {

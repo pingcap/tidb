@@ -293,12 +293,11 @@ select json_object(b, a) from t;
 select json_objectagg(b, a) from t;
 
 # TestCastJSONOpaqueValueToNumeric
+--enable_warnings
 select cast(cast(b'010101' as json) as signed);
-show warnings;
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as signed);
-show warnings;
 select cast(json_extract(json_objectagg('a', b'010101'), '$.a') as double);
-show warnings;
+--disable_warnings
 
 # TestCompareJSONWithOtherType
 drop table if exists t;
