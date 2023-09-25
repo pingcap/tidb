@@ -77,6 +77,8 @@ func (dsp *rollbackDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *pro
 func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Rollback(gomock.Any()).DoAndReturn(
@@ -92,7 +94,7 @@ func registerRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map
 		}).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, &rollbackDispatcherExt{})
+	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, &rollbackDispatcherExt{})
 	rollbackCnt.Store(0)
 }
 

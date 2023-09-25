@@ -13,7 +13,7 @@ go_test(
     ],
     flaky = True,
     race = "off",
-    shard_count = 30,
+    shard_count = 31,
     deps = [
         "//disttask/framework/dispatcher",
         "//disttask/framework/handle",

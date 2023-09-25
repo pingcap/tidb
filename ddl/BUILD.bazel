@@ -12,6 +12,7 @@ go_library(
     name = "ddl",
     srcs = [
         "backfilling.go",
+        "backfilling_clean_s3.go",
         "backfilling_dispatcher.go",
         "backfilling_dist_scheduler.go",
         "backfilling_import_cloud.go",

@@ -21,7 +21,6 @@ import (
 	"encoding/json"
 	"math"
 	"sort"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -81,13 +79,6 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 
 	job := &gTaskMeta.Job
 	useExtStore := len(gTaskMeta.CloudStorageURI) > 0
-	defer func() {
-		// Only redact when the task is complete.
-		if len(taskMeta) == 0 && useExtStore {
-			cleanupCloudStorageFiles(ctx, &gTaskMeta)
-			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
-		}
-	}()
 
 	tblInfo, err := getTblInfo(h.d, job)
 	if err != nil {
@@ -182,7 +173,7 @@ func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *
 	return serverInfos, nil
 }
 
-// IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
+// IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
 func (*backfillingDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
@@ -493,37 +484,4 @@ func getSummaryFromLastStep(
 		}
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
-}
-
-func cleanupCloudStorageFiles(ctx context.Context, gTaskMeta *BackfillGlobalMeta) {
-	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
-	if err != nil {
-		logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
-		return
-	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
-	if err != nil {
-		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
-		return
-	}
-	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
-	err = external.CleanUpFiles(ctx, extStore, prefix)
-	if err != nil {
-		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
-		return
-	}
-}
-
-func redactCloudStorageURI(
-	ctx context.Context,
-	gTask *proto.Task,
-	origin *BackfillGlobalMeta,
-) {
-	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
-	metaBytes, err := json.Marshal(origin)
-	if err != nil {
-		logutil.Logger(ctx).Warn("fail to marshal task meta", zap.Error(err))
-		return
-	}
-	gTask.Meta = metaBytes
 }

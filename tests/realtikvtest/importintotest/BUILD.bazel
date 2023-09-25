@@ -24,6 +24,7 @@ go_test(
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
         "//config",
+        "//disttask/framework/dispatcher",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler",
         "//disttask/framework/storage",

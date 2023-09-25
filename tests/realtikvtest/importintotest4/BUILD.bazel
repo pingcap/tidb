@@ -13,6 +13,7 @@ go_test(
     deps = [
         "//br/pkg/lightning/config",
         "//config",
+        "//disttask/framework/dispatcher",
         "//disttask/framework/storage",
         "//disttask/importinto",
         "//executor/importer",

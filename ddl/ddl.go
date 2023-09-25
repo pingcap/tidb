@@ -706,6 +706,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
 			})
+		dispatcher.RegisterDispatcherCleanUpFactory(BackfillTaskType, newBackfillCleanUpS3)
 	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.

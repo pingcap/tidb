@@ -199,9 +199,9 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 // AddGlobalTaskWithSession adds a new task to global task table with session.
 func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
 	_, err = ExecSQL(stm.ctx, se,
-		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, state_update_time)
-		values (%?, %?, %?, %?, %?, %?, %?)`,
-		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta, time.Now().UTC().String())
+		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, start_time, state_update_time)
+		values (%?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())`,
+		key, tp, proto.TaskStatePending, concurrency, proto.StepInit, meta)
 	if err != nil {
 		return 0, err
 	}
@@ -248,6 +248,23 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 	return task, nil
 }
 
+// GetGlobalTasksFromHistoryInStates gets the tasks in history table in the states.
+func (stm *TaskManager) GetGlobalTasksFromHistoryInStates(states ...interface{}) (task []*proto.Task, err error) {
+	if len(states) == 0 {
+		return task, nil
+	}
+
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, row2GlobeTask(r))
+	}
+	return task, nil
+}
+
 // GetGlobalTaskByID gets the task by the global task ID.
 func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where id = %?", taskID)
@@ -261,9 +278,37 @@ func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err e
 	return row2GlobeTask(rs[0]), nil
 }
 
-// GetGlobalTaskByKey gets the task by the task key
+// GetTaskByIDWithHistory gets the task by the global task ID from both tidb_global_task and tidb_global_task_history.
+func (stm *TaskManager) GetTaskByIDWithHistory(taskID int64) (task *proto.Task, err error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where id = %? "+
+		"union select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where id = %?", taskID, taskID)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	return row2GlobeTask(rs[0]), nil
+}
+
+// GetGlobalTaskByKey gets the task by the task key.
 func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where task_key = %?", key)
+	if err != nil {
+		return task, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	return row2GlobeTask(rs[0]), nil
+}
+
+// GetGlobalTaskByKeyWithHistory gets the task from history table by the task key.
+func (stm *TaskManager) GetGlobalTaskByKeyWithHistory(key string) (task *proto.Task, err error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where task_key = %?"+
+		"union select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where task_key = %?", key, key)
 	if err != nil {
 		return task, err
 	}
@@ -864,8 +909,8 @@ func (stm *TaskManager) TransferSubTasks2History(taskID int64) error {
 	})
 }
 
-// GC deletes the history subtask which is older than the given days.
-func (stm *TaskManager) GC() error {
+// GCSubtasks deletes the history subtask which is older than the given days.
+func (stm *TaskManager) GCSubtasks() error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
 	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
 		if val, ok := val.(int); ok {
@@ -877,6 +922,54 @@ func (stm *TaskManager) GC() error {
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
 	)
 	return err
+}
+
+// TransferTasks2History transfer the selected tasks into tidb_global_task_history table by taskIDs.
+func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		insertSQL := new(strings.Builder)
+		if err := sqlexec.FormatSQL(insertSQL, "insert into mysql.tidb_global_task_history"+
+			"(id, task_key, type, dispatcher_id, state, start_time, state_update_time,"+
+			"meta, concurrency, step, error) values"); err != nil {
+			return err
+		}
+
+		for i, task := range tasks {
+			if i != 0 {
+				if err := sqlexec.FormatSQL(insertSQL, ","); err != nil {
+					return err
+				}
+			}
+			if err := sqlexec.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+				task.ID, task.Key, task.Type, task.DispatcherID,
+				task.State, task.StartTime, task.StateUpdateTime,
+				task.Meta, task.Concurrency, task.Step, serializeErr(task.Error)); err != nil {
+				return err
+			}
+		}
+		_, err := ExecSQL(stm.ctx, se, insertSQL.String())
+		if err != nil {
+			return err
+		}
+
+		// delete taskIDs tasks
+		deleteSQL := new(strings.Builder)
+		if err := sqlexec.FormatSQL(deleteSQL, "delete from mysql.tidb_global_task where id in("); err != nil {
+			return err
+		}
+		deleteElems := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			deleteElems = append(deleteElems, fmt.Sprintf("%d", task.ID))
+		}
+
+		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
+		deleteSQL.WriteString(")")
+		_, err = ExecSQL(stm.ctx, se, deleteSQL.String())
+		return err
+	})
 }
 
 // GetNodesByRole gets nodes map from dist_framework_meta by role.

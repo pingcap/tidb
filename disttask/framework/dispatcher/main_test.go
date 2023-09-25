@@ -25,6 +25,7 @@ import (
 type DispatcherManagerForTest interface {
 	GetRunningTaskCnt() int
 	DelRunningTask(globalTaskID int64)
+	DoCleanUpRoutine()
 }
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
@@ -35,6 +36,11 @@ func (dm *Manager) GetRunningTaskCnt() int {
 // DelRunningGTask implements Dispatcher.DelRunningGTask interface.
 func (dm *Manager) DelRunningTask(globalTaskID int64) {
 	dm.delRunningTask(globalTaskID)
+}
+
+// DoCleanUpRoutine implements Dispatcher.DoCleanUpRoutine interface.
+func (dm *Manager) DoCleanUpRoutine() {
+	dm.doCleanUpRoutine()
 }
 
 func TestMain(m *testing.M) {
