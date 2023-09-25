@@ -16,9 +16,9 @@ select * from partition_basic partition (p1);
 id
 7
 select * from partition_basic partition (p5);
-Error 1735: Unknown partition 'p5' in table 'partition_basic'
+Error 1735 (HY000): Unknown partition 'p5' in table 'partition_basic'
 update partition_basic set id = 666 where id = 7;
-Error 1526: Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value from column_list
 update partition_basic set id = 9 where id = 7;
 delete from partition_basic where id = 7;
 delete from partition_basic where id = 9;
@@ -33,7 +33,7 @@ PARTITION p20190401 VALUES LESS THAN ('2019-04-02'),
 PARTITION p20190402 VALUES LESS THAN ('2019-04-03')
 );
 INSERT INTO t_month_data_monitor VALUES (4, '2019-04-04');
-Error 1526: Table has no partition for value from column_list
+Error 1526 (HY000): Table has no partition for value from column_list
 drop table if exists t_range_locate;
 CREATE TABLE t_range_locate (
 id int(20) NOT NULL AUTO_INCREMENT,
@@ -44,7 +44,7 @@ PARTITION p0 VALUES LESS THAN (1024),
 PARTITION p1 VALUES LESS THAN (4096)
 );
 INSERT INTO t_range_locate VALUES (5000, '2019-04-04');
-Error 1526: Table has no partition for value 5000
+Error 1526 (HY000): Table has no partition for value 5000
 drop table if exists t_extra;
 CREATE TABLE t_extra (
 id int(20) NOT NULL AUTO_INCREMENT,
@@ -112,7 +112,7 @@ SELECT count(*) FROM t_range PARTITION (p2);
 count(*)
 2
 INSERT INTO t_range VALUES (4, NULL);
-Error 1526: Table has no partition for value 4
+Error 1526 (HY000): Table has no partition for value 4
 SET @@time_zone = 'Asia/Shanghai';
 drop table if exists timezone_test;
 CREATE TABLE timezone_test (
@@ -187,13 +187,13 @@ id	creation_dt
 set @@time_zone = DEFAULT;
 drop table if exists t7;
 create table t7 (a int) partition by range (mod((select * from t), 5)) (partition p1 values less than (1));
-Error 1564: This partition function is not allowed
+Error 1564 (HY000): This partition function is not allowed
 create table t7 (a int) partition by range (1 + (select * from t)) (partition p1 values less than (1));
-Error 1564: This partition function is not allowed
+Error 1564 (HY000): This partition function is not allowed
 create table t7 (a int) partition by range (a + row(1, 2, 3)) (partition p1 values less than (1));
-Error 1564: This partition function is not allowed
+Error 1564 (HY000): This partition function is not allowed
 create table t7 (a int) partition by range (-(select * from t)) (partition p1 values less than (1));
-Error 1564: This partition function is not allowed
+Error 1564 (HY000): This partition function is not allowed
 drop table if exists t2;
 drop table if exists tu;
 CREATE TABLE tu (c1 BIGINT UNSIGNED) PARTITION BY RANGE(c1 - 10) (
@@ -202,7 +202,7 @@ PARTITION p1 VALUES LESS THAN (0),
 PARTITION p2 VALUES LESS THAN (5),
 PARTITION p3 VALUES LESS THAN (10),
 PARTITION p4 VALUES LESS THAN (MAXVALUE));
-Error 1563: Partition constant is out of partition function domain
+Error 1563 (HY000): Partition constant is out of partition function domain
 SET @@sql_mode='NO_UNSIGNED_SUBTRACTION';
 create table t2 (a bigint unsigned) partition by range (a) (
 partition p1 values less than (0),
@@ -217,7 +217,7 @@ PARTITION p1 VALUES LESS THAN (0),
 PARTITION p2 VALUES LESS THAN (5),
 PARTITION p3 VALUES LESS THAN (10),
 PARTITION p4 VALUES LESS THAN (MAXVALUE));
-Error 1563: Partition constant is out of partition function domain
+Error 1563 (HY000): Partition constant is out of partition function domain
 drop table if exists tu;
 drop table if exists t2;
 set sql_mode = DEFAULT;
@@ -301,12 +301,12 @@ create table t_21574 (`key` int, `table` int) partition by list columns (`key`,`
 drop tables if exists t_24746;
 create table t_24746 (a int, b varchar(60), c int, primary key(a)) partition by range(a) (partition p0 values less than (5),partition p1 values less than (10), partition p2 values less than maxvalue);
 insert into t_24746 partition (p1) values(4,'ERROR, not matching partition p1',4);
-Error 1748: Found a row not matching the given partition set
+Error 1748 (HY000): Found a row not matching the given partition set
 insert into t_24746 partition (p0) values(4,'OK, first row in correct partition',4);
 insert into t_24746 partition (p0) values(4,'DUPLICATE, in p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to write to p1';
-Error 1748: Found a row not matching the given partition set
+Error 1748 (HY000): Found a row not matching the given partition set
 insert into t_24746 partition (p1) values(4,'ERROR, not allowed to read from partition p0',4) on duplicate key update a = a + 1, b = 'ERROR, not allowed to read from p0!';
-Error 1748: Found a row not matching the given partition set
+Error 1748 (HY000): Found a row not matching the given partition set
 drop table t_24746;
 drop table if exists tkey1, tkey_string, tkey_string2, tkey_json, tkey_linear, tkey_algorithm1, tkey_algorithm2, tkey_algorithm3;
 drop table if exists tkey_subpartition1, tkey10, tkey11, tkey12, tkey12_2, tkey13, tkey14, tkey15, tkey16;
@@ -326,15 +326,15 @@ id5 BLOB not null,
 id6 TEXT not null,
 name varchar(16)
 ) PARTITION BY KEY(id5) partitions 4;
-Error 1659: Field 'id5' is of a not allowed type for this type of partitioning
+Error 1659 (HY000): Field 'id5' is of a not allowed type for this type of partitioning
 create table tkey_string2(
 id5 BLOB not null,
 id6 TEXT not null,
 name varchar(16)
 ) PARTITION BY KEY(id6) partitions 4;
-Error 1659: Field 'id6' is of a not allowed type for this type of partitioning
+Error 1659 (HY000): Field 'id6' is of a not allowed type for this type of partitioning
 CREATE TABLE tkey_json (c1 JSON) PARTITION BY KEY(c1) partitions 4;
-Error 1659: Field 'c1' is of a not allowed type for this type of partitioning
+Error 1659 (HY000): Field 'c1' is of a not allowed type for this type of partitioning
 CREATE TABLE tkey_linear (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY LINEAR KEY(col3) PARTITIONS 5;
 Level	Code	Message
 Warning	8200	LINEAR KEY is not supported, using non-linear KEY instead
@@ -343,7 +343,7 @@ CREATE TABLE tkey_algorithm2 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KE
 CREATE TABLE tkey_algorithm3 (col1 INT, col2 CHAR(5), col3 DATE) PARTITION BY KEY ALGORITHM=3 (col3) PARTITIONS 5;
 [parser:1149]You have an error in your SQL syntax; check the manual that corresponds to your MySQL server version for the right syntax to use
 CREATE TABLE tkey_subpartition1 (a INT not null,b VARCHAR(12) not null,c CHAR(14) not null,primary key (a, b, c)) PARTITION BY KEY (a) SUBPARTITION BY KEY(b) SUBPARTITIONS 2;
-Error 1500: It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning
+Error 1500 (HY000): It is only possible to mix RANGE/LIST partitioning with HASH/KEY partitioning for subpartitioning
 CREATE TABLE tkey_subpartition1 (JYRQ INT not null,KHH VARCHAR(12) not null,ZJZH CHAR(14) not null,primary key (JYRQ, KHH, ZJZH))PARTITION BY RANGE(JYRQ)
 SUBPARTITION BY KEY(KHH) SUBPARTITIONS 2
 (PARTITION p0 VALUES LESS THAN (8),
@@ -509,16 +509,16 @@ count(*)
 drop table if exists tkey29, tkey30, tkey31;
 CREATE TABLE tkey29 (col1 INT NOT NULL,col2 DATE NOT NULL,col3 VARCHAR(12) NOT NULL,col4 INT NOT NULL,UNIQUE KEY (col3)) CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY KEY(col3) PARTITIONS 4;
 INSERT INTO tkey29 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'linpin ', 5);
-Error 1062: Duplicate entry 'linpin ' for key 'tkey29.col3'
+Error 1062 (23000): Duplicate entry 'linpin ' for key 'tkey29.col3'
 INSERT INTO tkey29 VALUES(3, '2023-02-22', 'abc', 1), (4, '2023-02-22', 'ABC ', 5);
 CREATE TABLE tkey30 (col1 INT NOT NULL,col2 DATE NOT NULL,col3 VARCHAR(12) NOT NULL,col4 INT NOT NULL,UNIQUE KEY (col3)) CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci PARTITION BY KEY(col3) PARTITIONS 4;
 INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN', 5);
-Error 1062: Duplicate entry 'LINPIN' for key 'tkey30.col3'
+Error 1062 (23000): Duplicate entry 'LINPIN' for key 'tkey30.col3'
 INSERT INTO tkey30 VALUES(1, '2023-02-22', 'linpin', 1), (1, '2023-02-22', 'LINPIN ', 5);
-Error 1062: Duplicate entry 'LINPIN ' for key 'tkey30.col3'
+Error 1062 (23000): Duplicate entry 'LINPIN ' for key 'tkey30.col3'
 CREATE TABLE tkey31 (col1 INT NOT NULL,col2 DATE NOT NULL,col3 VARCHAR(12) NOT NULL,col4 INT NOT NULL,UNIQUE KEY (col3)) CHARSET=gbk COLLATE=gbk_chinese_ci PARTITION BY KEY(col3) PARTITIONS 4;
 INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (1, '2023-02-22', '刘德华 ', 5);
-Error 1062: Duplicate entry '刘德华 ' for key 'tkey31.col3'
+Error 1062 (23000): Duplicate entry '刘德华 ' for key 'tkey31.col3'
 INSERT INTO tkey31 VALUES(1, '2023-02-22', '刘德华', 1), (5, '2023-02-22', '张学友', 5),(6, '2023-02-22', '艾伦', 6), (7, '2023-02-22', '宁采臣', 7);
 SELECT * FROM tkey31 partition(p0);
 col1	col2	col3	col4
@@ -555,7 +555,7 @@ col1 INT NOT NULL,col2 INT NOT NULL,col3 INT NOT NULL,col4 INT NOT NULL,primary 
 INSERT INTO tkey16 values(1,1,1,1),(1,1,2,2),(3,3,3,3),(3,3,4,3),(4,4,4,4),(5,5,5,5),(6,6,6,6),(7,7,7,7),(8,8,8,8),(9,9,9,9),(10,10,10,5),(11,11,11,6),(12,12,12,12),(13,13,13,13),(14,14,14,14);
 ALTER TABLE tkey14 ADD PARTITION PARTITIONS 1;
 ALTER TABLE tkey14 DROP PARTITION p4;
-Error 1512: DROP PARTITION can only be used on RANGE/LIST partitions
+Error 1512 (HY000): DROP PARTITION can only be used on RANGE/LIST partitions
 ALTER TABLE tkey14 TRUNCATE PARTITION p3;
 SELECT COUNT(*) FROM tkey14 partition(p3);
 COUNT(*)
@@ -563,21 +563,21 @@ COUNT(*)
 ALTER TABLE tkey16 COALESCE PARTITION 2;
 ALTER TABLE tkey14 ANALYZE PARTITION p3;
 ALTER TABLE tkey14 CHECK PARTITION p2;
-Error 8200: Unsupported check partition
+Error 8200 (HY000): Unsupported check partition
 ALTER TABLE tkey14 OPTIMIZE PARTITION p2;
-Error 8200: Unsupported optimize partition
+Error 8200 (HY000): Unsupported optimize partition
 ALTER TABLE tkey14 REBUILD PARTITION p2;
-Error 8200: Unsupported rebuild partition
+Error 8200 (HY000): Unsupported rebuild partition
 ALTER TABLE tkey14 EXCHANGE PARTITION p3 WITH TABLE tkey15;
-Error 8200: Unsupported partition type of table tkey14 when exchanging partition
+Error 8200 (HY000): Unsupported partition type of table tkey14 when exchanging partition
 ALTER TABLE tkey16 REORGANIZE PARTITION;
-Error 8200: Unsupported reorganize partition
+Error 8200 (HY000): Unsupported reorganize partition
 ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p0,PARTITION p1);
-Error 8200: Unsupported reorganize partition
+Error 8200 (HY000): Unsupported reorganize partition
 ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p0);
-Error 8200: Unsupported reorganize partition
+Error 8200 (HY000): Unsupported reorganize partition
 ALTER TABLE tkey16 REORGANIZE PARTITION p0 INTO (PARTITION p4);
-Error 8200: Unsupported reorganize partition
+Error 8200 (HY000): Unsupported reorganize partition
 ALTER TABLE tkey15 PARTITION BY KEY(col3) PARTITIONS 4;
 ALTER TABLE tkey16 REMOVE PARTITIONING;
 CREATE TABLE tkey17 (id INT NOT NULL PRIMARY KEY,name VARCHAR(20))PARTITION BY KEY()PARTITIONS 2;
@@ -586,11 +586,11 @@ Warning	8200	Unsupported partition type KEY, treat as normal table
 drop tables if exists t_44966;
 create table t_44966 (a bigint unsigned) partition by range (a) (partition p0 values less than (10));
 insert into t_44966 values (0xffffffffffffffff);
-Error 1526: Table has no partition for value 18446744073709551615
+Error 1526 (HY000): Table has no partition for value 18446744073709551615
 drop tables if exists t_44966;
 create table t_44966 (a bigint unsigned) partition by list (a) (partition p0 values in (1,2));
 insert into t_44966 values (0xffffffffffffffff);
-Error 1526: Table has no partition for value 18446744073709551615
+Error 1526 (HY000): Table has no partition for value 18446744073709551615
 drop table if exists t;
 create table t (a int) partition by range(a) (partition p0 values less than (0), partition p1M values less than (1000000));
 insert into t values (-1),(0),(1);

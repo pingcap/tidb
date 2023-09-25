@@ -1120,12 +1120,12 @@ rollback;
 drop table if exists t;
 create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (10));
 alter table t add partition (partition p1 values less than (a));
-Error 1054: Unknown column 'a' in 'expression'
+Error 1054 (42S22): Unknown column 'a' in 'expression'
 select * from t;
 a
 drop table if exists t;
 create table t (a int) partition by range(a) (PARTITION p0 VALUES LESS THAN (a));
-Error 1054: Unknown column 'a' in 'expression'
+Error 1054 (42S22): Unknown column 'a' in 'expression'
 DROP TABLE IF EXISTS `table_float`;
 DROP TABLE IF EXISTS `table_int_float_varchar`;
 CREATE TABLE `table_float` (`id_1` int(16) NOT NULL AUTO_INCREMENT,`col_float_1` float DEFAULT NULL,PRIMARY KEY (`id_1`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=97635;
@@ -1204,7 +1204,7 @@ drop table if exists t;
 create table t(id int primary key, c int, d timestamp null default null);
 insert into t values(1, 2, '2038-01-18 20:20:30');
 update t set d = adddate(d, interval 1 day) where id < 10;
-Error 1292: Incorrect timestamp value: '2038-01-19 20:20:30'
+Error 1292 (22007): Incorrect timestamp value: '2038-01-19 20:20:30'
 drop view if exists t15847;
 CREATE VIEW t15847(c0) AS SELECT NULL;
 SELECT * FROM t15847 WHERE (NOT (IF(t15847.c0, NULL, NULL)));
@@ -1705,7 +1705,7 @@ create table t(a int);
 insert into t values(1),(1),(2),(2);
 set tidb_window_concurrency = 1;
 select (FIRST_VALUE(1) over (partition by v.a)) as c3 from (select a from t where t.a = (select a from t t2 where t.a = t2.a)) as v;
-Error 1242: Subquery returns more than 1 row
+Error 1242 (21000): Subquery returns more than 1 row
 drop table if exists t1,t2;
 CREATE TABLE `t1` (
 `c1` enum('Alice','Bob','Charlie','David') NOT NULL,
@@ -1728,18 +1728,18 @@ c1	c2	c3
 drop table if exists t1;
 CREATE TABLE t1 (a text)character set utf8 ;
 INSERT INTO t1 VALUES  (REPEAT(0125,200000000));
-Error 1301: Result of repeat() was larger than max_allowed_packet (67108864) - truncated
+Error 1301 (HY000): Result of repeat() was larger than max_allowed_packet (67108864) - truncated
 select * from t1;
 a
 insert into t1 (a) values ('a'),('b');
 insert into t1 select REPEAT(a,200000000) from t1;
-Error 1301: Result of repeat() was larger than max_allowed_packet (67108864) - truncated
+Error 1301 (HY000): Result of repeat() was larger than max_allowed_packet (67108864) - truncated
 select a from t1 order by a;
 a
 a
 b
 insert into t1 values  (cast("a" as binary(4294967295)));
-Error 1301: Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated
+Error 1301 (HY000): Result of cast_as_binary() was larger than max_allowed_packet (67108864) - truncated
 select a from t1 order by a;
 a
 a
@@ -2149,11 +2149,11 @@ approx_count_distinct(b, c)
 1
 drop table if exists t;
 create table t(a enum('a', 'a ')) charset utf8 collate utf8_bin;
-Error 1291: Column 'a' has duplicated value 'a' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'a' in ENUM
 create table t(a enum('a', 'Á')) charset utf8 collate utf8_general_ci;
-Error 1291: Column 'a' has duplicated value 'Á' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'Á' in ENUM
 create table t(a enum('a', 'a ')) charset utf8mb4 collate utf8mb4_bin;
-Error 1291: Column 'a' has duplicated value 'a' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'a' in ENUM
 create table t(a enum('a', 'A')) charset utf8 collate utf8_bin;
 drop table if exists t3;
 create table t3(a enum('a', 'A')) charset utf8mb4 collate utf8mb4_bin;
@@ -2261,17 +2261,17 @@ select 'b' between 'a' and b'110';
 drop table if exists t;
 create table t(a set('a', 'b', 'c'));
 alter table t change a a set('a', 'b', 'c', 'c');
-Error 1291: Column 'a' has duplicated value 'c' in SET
+Error 1291 (HY000): Column 'a' has duplicated value 'c' in SET
 drop table if exists t;
 create table t(a enum('a', 'b', 'c'));
 alter table t change a a enum('a', 'b', 'c', 'c');
-Error 1291: Column 'a' has duplicated value 'c' in ENUM
+Error 1291 (HY000): Column 'a' has duplicated value 'c' in ENUM
 drop table if exists t;
 create table t(a set('a', 'b', 'c'));
 alter table t change a a set('a', 'b', 'c', 'd');
 insert into t values('d');
 alter table t change a a set('a', 'b', 'c', 'e', 'f');
-Error 1265: Data truncated for column 'a', value is 'd'
+Error 1265 (01000): Data truncated for column 'a', value is 'd'
 set @@character_set_client=utf8mb4;
 set @@collation_connection=utf8_bin;
 CREATE VIEW tview_1 AS SELECT 'a' AS `id`;
@@ -2319,11 +2319,11 @@ select t2.b from (select t1.a as b from t1 union all select t1.a as b from t1) t
 b
 set names default;
 select case 1 when 1 then 'a' collate utf8mb4_unicode_ci else 'b' collate utf8mb4_general_ci end;
-Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
 select case when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci end;
-Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'case'
 select case 1 when 1 then 'a' collate utf8mb4_unicode_ci when 2 then 'b' collate utf8mb4_general_ci else 'b' collate utf8mb4_bin end;
-Error 1270: Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_bin,EXPLICIT) for operation 'case'
+Error 1270 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,EXPLICIT), (utf8mb4_general_ci,EXPLICIT), (utf8mb4_bin,EXPLICIT) for operation 'case'
 drop table if exists t0,t1;
 create table t0(col1 varchar(255));
 create table t1(col1 int(11));

@@ -84,9 +84,9 @@ hex(weight_string(a collate utf8mb4_bin))
 E4B8AD
 E4B8AD
 select weight_string(a collate utf8_general_ci) from t order by id;
-Error 1253: COLLATION 'utf8_general_ci' is not valid for CHARACTER SET 'utf8mb4'
+Error 1253 (42000): COLLATION 'utf8_general_ci' is not valid for CHARACTER SET 'utf8mb4'
 select weight_string('中' collate utf8_bin);
-Error 1253: COLLATION 'utf8_bin' is not valid for CHARACTER SET 'utf8mb4'
+Error 1253 (42000): COLLATION 'utf8_bin' is not valid for CHARACTER SET 'utf8mb4'
 select degrees(0), degrees(1);
 degrees(0)	degrees(1)
 0	57.29577951308232
@@ -295,7 +295,7 @@ select cot('1tidb');
 cot('1tidb')
 0.6420926159343308
 select cot(0);
-Error 1690: DOUBLE value is out of range in 'cot(0)'
+Error 1690 (22003): DOUBLE value is out of range in 'cot(0)'
 select exp(0), exp(1), exp(-1), exp(1.2), exp(NULL);
 exp(0)	exp(1)	exp(-1)	exp(1.2)	exp(NULL)
 1	2.718281828459045	0.36787944117144233	3.3201169227365472	NULL
@@ -303,12 +303,12 @@ select exp('tidb'), exp('1tidb');
 exp('tidb')	exp('1tidb')
 1	2.718281828459045
 select exp(1000000);
-Error 1690: DOUBLE value is out of range in 'exp(1e+06)'
+Error 1690 (22003): DOUBLE value is out of range in 'exp(1e+06)'
 drop table if exists t;
 create table t(a float);
 insert into t values(1000000);
 select exp(a) from t;
-Error 1690: DOUBLE value is out of range in 'exp(expression__builtin.t.a)'
+Error 1690 (22003): DOUBLE value is out of range in 'exp(expression__builtin.t.a)'
 SELECT CONV('a', 16, 2);
 CONV('a', 16, 2)
 1010
@@ -392,7 +392,7 @@ SELECT ABS(NULL);
 ABS(NULL)
 NULL
 SELECT ABS(-9223372036854775808);
-Error 1690: BIGINT value is out of range in 'abs(-9223372036854775808)'
+Error 1690 (22003): BIGINT value is out of range in 'abs(-9223372036854775808)'
 SELECT ROUND(2.5), ROUND(-2.5), ROUND(25E-1);
 ROUND(2.5)	ROUND(-2.5)	ROUND(25E-1)
 3	-3	2
@@ -496,7 +496,7 @@ SELECT POW(0, 0.1), POW(0, 0.5), POW(0, 1);
 POW(0, 0.1)	POW(0, 0.5)	POW(0, 1)
 0	0	0
 SELECT POW(0, -1);
-Error 1690: DOUBLE value is out of range in 'pow(0, -1)'
+Error 1690 (22003): DOUBLE value is out of range in 'pow(0, -1)'
 SELECT SIGN('12'), SIGN(1.2e1), SIGN(12), SIGN(0.0000012);
 SIGN('12')	SIGN(1.2e1)	SIGN(12)	SIGN(0.0000012)
 1	1	1	1
@@ -918,49 +918,49 @@ NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: '10009010'
 insert into t select cast('10009010' as time);
-Error 1292: Truncated incorrect time value: '10009010'
+Error 1292 (22007): Truncated incorrect time value: '10009010'
 select cast('239010' as time);
 cast('239010' as time)
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: '239010'
 insert into t select cast('239010' as time);
-Error 1292: Truncated incorrect time value: '239010'
+Error 1292 (22007): Truncated incorrect time value: '239010'
 select cast('233070' as time);
 cast('233070' as time)
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: '233070'
 insert into t select cast('233070' as time);
-Error 1292: Truncated incorrect time value: '233070'
+Error 1292 (22007): Truncated incorrect time value: '233070'
 select cast('23:90:10' as time);
 cast('23:90:10' as time)
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: '23:90:10'
 insert into t select cast('23:90:10' as time);
-Error 1292: Truncated incorrect time value: '23:90:10'
+Error 1292 (22007): Truncated incorrect time value: '23:90:10'
 select cast('23:30:70' as time);
 cast('23:30:70' as time)
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: '23:30:70'
 insert into t select cast('23:30:70' as time);
-Error 1292: Truncated incorrect time value: '23:30:70'
+Error 1292 (22007): Truncated incorrect time value: '23:30:70'
 select cast('239010.2' as time);
 cast('239010.2' as time)
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: '239010.2'
 insert into t select cast('239010.2' as time);
-Error 1292: Truncated incorrect time value: '239010.2'
+Error 1292 (22007): Truncated incorrect time value: '239010.2'
 select cast('233070.8' as time);
 cast('233070.8' as time)
 NULL
 Level	Code	Message
 Warning	1292	Truncated incorrect time value: '233070.8'
 insert into t select cast('233070.8' as time);
-Error 1292: Truncated incorrect time value: '233070.8'
+Error 1292 (22007): Truncated incorrect time value: '233070.8'
 select cast('18446744073709551616' as unsigned);
 cast('18446744073709551616' as unsigned)
 18446744073709551615
@@ -1160,7 +1160,7 @@ select cast(s1 as decimal(8, 2)) from t1;
 cast(s1 as decimal(8, 2))
 111111.00
 insert into t1 values(cast('111111.00' as decimal(7, 2)));
-Error 1690: DECIMAL value is out of range in '(7, 2)'
+Error 1690 (22003): DECIMAL value is out of range in '(7, 2)'
 select CAST(0x8fffffffffffffff as signed) a,
 CAST(0xfffffffffffffffe as signed) b,
 CAST(0xffffffffffffffff as unsigned) c;
@@ -1187,11 +1187,11 @@ select -9223372036854775808;
 drop table if exists t;
 create table t(a bigint(30));
 insert into t values(-9223372036854775809);
-Error 1264: Out of range value for column 'a' at row 1
+Error 1264 (22003): Out of range value for column 'a' at row 1
 select cast(12.1 as decimal(3, 4));
-Error 1427: For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1').
+Error 1427 (42000): For float(M,D), double(M,D) or decimal(M,D), M must be >= D (column '12.1').
 SELECT CAST(1 AS DATETIME(7));
-Error 1426: Too big precision 7 specified for column 'CAST'. Maximum is 6.
+Error 1426 (42000): Too big precision 7 specified for column 'CAST'. Maximum is 6.
 select unhex('4D7953514C');
 unhex('4D7953514C')
 MySQL
@@ -1582,13 +1582,13 @@ select cast(9223372036854775807 as unsigned) + cast(1 as signed);
 cast(9223372036854775807 as unsigned) + cast(1 as signed)
 9223372036854775808
 select cast(9223372036854775807 as signed) + cast(9223372036854775809 as unsigned);
-Error 1690: BIGINT UNSIGNED value is out of range in '(9223372036854775807 + 9223372036854775809)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(9223372036854775807 + 9223372036854775809)'
 select cast(9223372036854775809 as unsigned) + cast(9223372036854775807 as signed);
-Error 1690: BIGINT UNSIGNED value is out of range in '(9223372036854775809 + 9223372036854775807)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(9223372036854775809 + 9223372036854775807)'
 select cast(-9223372036854775807 as signed) + cast(9223372036854775806 as unsigned);
-Error 1690: BIGINT UNSIGNED value is out of range in '(-9223372036854775807 + 9223372036854775806)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(-9223372036854775807 + 9223372036854775806)'
 select cast(9223372036854775806 as unsigned) + cast(-9223372036854775807 as signed);
-Error 1690: BIGINT UNSIGNED value is out of range in '(9223372036854775806 + -9223372036854775807)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(9223372036854775806 + -9223372036854775807)'
 select 1 / '2007' div 1;
 1 / '2007' div 1
 0
@@ -2284,11 +2284,11 @@ DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);
 INSERT INTO t SELECT 1<<63, 1<<63;
 SELECT a+b FROM t;
-Error 1690: BIGINT UNSIGNED value is out of range in '(expression__builtin.t.a + expression__builtin.t.b)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(expression__builtin.t.a + expression__builtin.t.b)'
 select cast(-3 as signed) + cast(2 as unsigned);
-Error 1690: BIGINT UNSIGNED value is out of range in '(-3 + 2)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(-3 + 2)'
 select cast(2 as unsigned) + cast(-3 as signed);
-Error 1690: BIGINT UNSIGNED value is out of range in '(2 + -3)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(2 + -3)'
 DROP TABLE IF EXISTS t;
 CREATE TABLE t(a DECIMAL(4, 2), b DECIMAL(5, 3));
 INSERT INTO t(a, b) VALUES(1.09, 1.999), (-1.1, -0.1);
@@ -2307,29 +2307,29 @@ DROP TABLE IF EXISTS t;
 CREATE TABLE t(a BIGINT UNSIGNED, b BIGINT UNSIGNED);
 INSERT INTO t SELECT 1, 4;
 SELECT a-b FROM t;
-Error 1690: BIGINT UNSIGNED value is out of range in '(expression__builtin.t.a - expression__builtin.t.b)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(expression__builtin.t.a - expression__builtin.t.b)'
 select cast(1 as unsigned) - cast(4 as unsigned);
-Error 1690: BIGINT UNSIGNED value is out of range in '(1 - 4)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(1 - 4)'
 select cast(-1 as signed) - cast(-1 as unsigned);
-Error 1690: BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(-1 - 18446744073709551615)'
 select cast(1 as signed) - cast(-1 as unsigned);
-Error 1690: BIGINT UNSIGNED value is out of range in '(1 - 18446744073709551615)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(1 - 18446744073709551615)'
 select cast(-1 as unsigned) - cast(-1 as signed);
-Error 1690: BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(18446744073709551615 - -1)'
 select cast(-9223372036854775808 as unsigned) - (-9223372036854775808);
-Error 1690: BIGINT UNSIGNED value is out of range in '(9223372036854775808 - -9223372036854775808)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(9223372036854775808 - -9223372036854775808)'
 select cast(12 as unsigned) - (14);
-Error 1690: BIGINT UNSIGNED value is out of range in '(12 - 14)'
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '(12 - 14)'
 select cast(9223372036854775807 as signed) - cast(-1 as signed);
-Error 1690: BIGINT value is out of range in '(9223372036854775807 - -1)'
+Error 1690 (22003): BIGINT value is out of range in '(9223372036854775807 - -1)'
 select cast(-9223372036854775808 as signed) - cast(1 as signed);
-Error 1690: BIGINT value is out of range in '(-9223372036854775808 - 1)'
+Error 1690 (22003): BIGINT value is out of range in '(-9223372036854775808 - 1)'
 select cast(12 as signed) - cast(-9223372036854775808 as signed);
-Error 1690: BIGINT value is out of range in '(12 - -9223372036854775808)'
+Error 1690 (22003): BIGINT value is out of range in '(12 - -9223372036854775808)'
 create table tb5(a int(10));
 insert into tb5 (a) values (10);
 select * from tb5 where a - -9223372036854775808;
-Error 1690: BIGINT value is out of range in '(Column#0 - -9223372036854775808)'
+Error 1690 (22003): BIGINT value is out of range in '(Column#0 - -9223372036854775808)'
 drop table tb5;
 select cast(-9223372036854775808 as unsigned) - (-9223372036854775807);
 cast(-9223372036854775808 as unsigned) - (-9223372036854775807)
@@ -2350,7 +2350,7 @@ select 1234567890 * 1234567890;
 1234567890 * 1234567890
 1524157875019052100
 select 1234567890 * 12345671890;
-Error 1690: BIGINT value is out of range in '(1234567890 * 12345671890)'
+Error 1690 (22003): BIGINT value is out of range in '(1234567890 * 12345671890)'
 select cast(1234567890 as unsigned int) * 12345671890;
 cast(1234567890 as unsigned int) * 12345671890
 15241570095869612100
@@ -2358,11 +2358,11 @@ select 123344532434234234267890.0 * 1234567118923479823749823749.230;
 123344532434234234267890.0 * 1234567118923479823749823749.230
 152277104042296270209916846800130443726237424001224.7000
 select 123344532434234234267890.0 * 12345671189234798237498232384982309489238402830480239849238048239084749.230;
-Error 1690: DECIMAL value is out of range in '(123344532434234234267890.0 * 12345671189234798237498232384982309489238402830480239849238048239084749.230)'
+Error 1690 (22003): DECIMAL value is out of range in '(123344532434234234267890.0 * 12345671189234798237498232384982309489238402830480239849238048239084749.230)'
 select 1.797693134862315708145274237317043567981e+308 * 1.1;
-Error 1690: DOUBLE value is out of range in '(1.7976931348623157e+308 * 1.1)'
+Error 1690 (22003): DOUBLE value is out of range in '(1.7976931348623157e+308 * 1.1)'
 select 1.797693134862315708145274237317043567981e+308 * -1.1;
-Error 1690: DOUBLE value is out of range in '(1.7976931348623157e+308 * -1.1)'
+Error 1690 (22003): DOUBLE value is out of range in '(1.7976931348623157e+308 * -1.1)'
 select 0.0 * -1;
 0.0 * -1
 0.0
@@ -2375,7 +2375,7 @@ a/b	a/12	a/-0.01	b/12	b/-0.01	b/0.000	NULL/b	b/NULL	NULL/NULL
 Level	Code	Message
 Warning	1365	Division by 0
 select 1e200/1e-200;
-Error 1690: DOUBLE value is out of range in '(1e+200 / 1e-200)'
+Error 1690 (22003): DOUBLE value is out of range in '(1e+200 / 1e-200)'
 SELECT 13 DIV 12, 13 DIV 0.01, -13 DIV 2, 13 DIV NULL, NULL DIV 13, NULL DIV NULL;
 13 DIV 12	13 DIV 0.01	-13 DIV 2	13 DIV NULL	NULL DIV 13	NULL DIV NULL
 1	1300	-6	NULL	NULL	NULL
@@ -2391,7 +2391,7 @@ Warning	1292	Truncated incorrect DECIMAL value: '1.7976931348623157e+308'
 Warning	1292	Truncated incorrect DECIMAL value: '1.7976931348623157e+308'
 Warning	1365	Division by 0
 select 1e300 DIV 1.5;
-Error 1690: BIGINT value is out of range in '(999999999999999999999999999999999999999999999999999999999999999999999999999999999 DIV 1.5)'
+Error 1690 (22003): BIGINT value is out of range in '(999999999999999999999999999999999999999999999999999999999999999999999999999999999 DIV 1.5)'
 drop table if exists t;
 CREATE TABLE t (c_varchar varchar(255), c_time time, nonzero int, zero int, c_int_unsigned int unsigned, c_timestamp timestamp, c_enum enum('a','b','c'));
 INSERT INTO t VALUE('abc', '12:00:00', 12, 0, 5, '2017-08-05 18:19:03', 'b');
@@ -2453,7 +2453,7 @@ select 0.000 % 0.11234500000000000000;
 0.000 % 0.11234500000000000000
 0.00000000000000000000
 INSERT INTO t VALUE(12 MOD 0);
-Error 1365: Division by 0
+Error 1365 (22012): Division by 0
 select sum(1.2e2) * 0.1;
 sum(1.2e2) * 0.1
 12
@@ -2617,7 +2617,7 @@ hello,h
 Level	Code	Message
 Warning	1260	Some rows were cut by GROUPCONCAT(expression__builtin.t.a)
 insert into d select group_concat(a) from t;
-Error 1260: Some rows were cut by GROUPCONCAT(expression__builtin.t.a)
+Error 1260 (HY000): Some rows were cut by GROUPCONCAT(expression__builtin.t.a)
 set sql_mode='';
 insert into d select group_concat(a) from t;
 Level	Code	Message
@@ -2732,23 +2732,23 @@ date '0000-00-00'
 0000-00-00
 set sql_mode = 'NO_ZERO_DATE';
 select date '0000-00-00';
-Error 1292: Incorrect date value: '0000-00-00'
+Error 1292 (22007): Incorrect date value: '0000-00-00'
 set sql_mode = '';
 select date '2007-10-00';
 date '2007-10-00'
 2007-10-00
 set sql_mode = 'NO_ZERO_IN_DATE';
 select date '2007-10-00';
-Error 1292: Incorrect date value: '2007-10-00'
+Error 1292 (22007): Incorrect date value: '2007-10-00'
 set sql_mode = 'NO_ZERO_DATE';
 select date '2007-10-00';
 date '2007-10-00'
 2007-10-00
 set sql_mode = 'NO_ZERO_IN_DATE,NO_ZERO_DATE';
 select date '2007-10-00';
-Error 1292: Incorrect date value: '2007-10-00'
+Error 1292 (22007): Incorrect date value: '2007-10-00'
 select date '0000-00-00';
-Error 1292: Incorrect date value: '0000-00-00'
+Error 1292 (22007): Incorrect date value: '0000-00-00'
 select date'1998~01~02';
 date'1998~01~02'
 1998-01-02
@@ -2756,15 +2756,15 @@ select date'731124', date '011124';
 date'731124'	date '011124'
 1973-11-24	2001-11-24
 select date '0000-00-00 00:00:00';
-Error 1292: Incorrect date value: '0000-00-00 00:00:00'
+Error 1292 (22007): Incorrect date value: '0000-00-00 00:00:00'
 select date '2017-99-99';
-Error 1292: Incorrect datetime value: '2017-99-99'
+Error 1292 (22007): Incorrect datetime value: '2017-99-99'
 select date '2017-2-31';
-Error 1292: Incorrect datetime value: '2017-2-31'
+Error 1292 (22007): Incorrect datetime value: '2017-2-31'
 select date '201712-31';
-Error 1292: Incorrect date value: '201712-31'
+Error 1292 (22007): Incorrect date value: '201712-31'
 select date 'abcdefg';
-Error 1292: Incorrect date value: 'abcdefg'
+Error 1292 (22007): Incorrect date value: 'abcdefg'
 set sql_mode = default;
 drop table if exists t;
 create table t (a bit(10));
@@ -2794,17 +2794,17 @@ SELECT NAME_CONST('come', -1.0);
 come
 -1.0
 select name_const(a,b) from t;
-Error 1210: Incorrect arguments to NAME_CONST
+Error 1210 (HY000): Incorrect arguments to NAME_CONST
 select name_const(a,"hello") from t;
-Error 1210: Incorrect arguments to NAME_CONST
+Error 1210 (HY000): Incorrect arguments to NAME_CONST
 select name_const("hello", b) from t;
-Error 1210: Incorrect arguments to NAME_CONST
+Error 1210 (HY000): Incorrect arguments to NAME_CONST
 select name_const("hello", 1+1) from t;
-Error 1210: Incorrect arguments to NAME_CONST
+Error 1210 (HY000): Incorrect arguments to NAME_CONST
 select name_const(concat('a', 'b'), 555) from t;
-Error 1210: Incorrect arguments to NAME_CONST
+Error 1210 (HY000): Incorrect arguments to NAME_CONST
 select name_const(555) from t;
-Error 1582: Incorrect parameter count in the call to native function 'name_const'
+Error 1582 (42000): Incorrect parameter count in the call to native function 'name_const'
 select name_const("hello", 1);
 hello
 1
