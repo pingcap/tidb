@@ -304,8 +304,8 @@ func (stm *TaskManager) GetGlobalTaskByKey(key string) (task *proto.Task, err er
 	return row2GlobeTask(rs[0]), nil
 }
 
-// GetGlobalTaskHistoryByKey gets the task from history table by the task key.
-func (stm *TaskManager) GetGlobalTaskHistoryByKey(key string) (task *proto.Task, err error) {
+// GetGlobalTaskByKeyFromHistory gets the task from history table by the task key.
+func (stm *TaskManager) GetGlobalTaskByKeyFromHistory(key string) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where task_key = %?", key)
 	if err != nil {
 		return task, err

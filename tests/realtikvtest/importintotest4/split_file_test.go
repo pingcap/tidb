@@ -60,6 +60,11 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.NoError(err)
 	globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	s.NoError(err2)
+	if globalTask == nil {
+		globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyFromHistory(taskKey)
+	}
+	s.NoError(err2)
+
 	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepImport)
 	s.NoError(err2)
 	s.Len(subtasks, 3)

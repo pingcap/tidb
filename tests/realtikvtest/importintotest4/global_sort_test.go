@@ -114,6 +114,10 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.Eventually(func() bool {
 		globalTask, err2 = globalTaskManager.GetGlobalTaskByKey(importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
+		if globalTask == nil {
+			globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyFromHistory(taskKey)
+		}
+		s.NoError(err2)
 		return globalTask.State == "failed"
 	}, 10*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up

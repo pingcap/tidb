@@ -220,7 +220,7 @@ func WaitTaskExit(t *testing.T, taskKey string) *proto.Task {
 		require.NoError(t, err)
 
 		if task == nil {
-			task, err = mgr.GetGlobalTaskHistoryByKey(taskKey)
+			task, err = mgr.GetGlobalTaskByKeyFromHistory(taskKey)
 			require.NoError(t, err)
 			require.NotNil(t, task)
 		}
@@ -288,9 +288,12 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 				}
 				time.Sleep(time.Second)
 				task, err = mgr.GetGlobalTaskByID(taskID[0])
-				tasks[0] = task
+				if task == nil {
+					task, err = mgr.GetTaskByIDFromHistory(taskID[i])
+				}
 				require.NoError(t, err)
 				require.NotNil(t, task)
+				tasks[0] = task
 				if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
 					break
 				}
@@ -311,9 +314,13 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 			}
 			time.Sleep(time.Second)
 			task, err = mgr.GetGlobalTaskByID(taskID[i])
-			tasks[i] = task
+			if task == nil {
+				task, err = mgr.GetTaskByIDFromHistory(taskID[i])
+			}
 			require.NoError(t, err)
 			require.NotNil(t, task)
+			tasks[i] = task
+
 			if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
 				break
 			}

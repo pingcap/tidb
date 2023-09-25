@@ -403,6 +403,10 @@ func (s *mockGCSSuite) TestCancelJob() {
 		taskKey := importinto.TaskKey(jobID)
 		globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
 		s.NoError(err)
+		if globalTask == nil {
+			globalTask, err = globalTaskManager.GetGlobalTaskByKeyFromHistory(taskKey)
+		}
+		s.NoError(err)
 		return globalTask
 	}
 
@@ -494,6 +498,10 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		s.NoError(err2)
+		if globalTask == nil {
+			globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyFromHistory(taskKey)
+		}
 		s.NoError(err2)
 		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepPostProcess)
 		s.NoError(err2)
@@ -623,6 +631,10 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
 		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		s.NoError(err2)
+		if globalTask == nil {
+			globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyFromHistory(taskKey)
+		}
 		s.NoError(err2)
 		return globalTask.State == proto.TaskStateReverted
 	}, 5*time.Second, 1*time.Second)

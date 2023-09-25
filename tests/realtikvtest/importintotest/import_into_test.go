@@ -779,6 +779,10 @@ func (s *mockGCSSuite) checkTaskMetaRedacted(jobID int64) {
 	s.NoError(err)
 	globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	s.NoError(err2)
+	if globalTask == nil {
+		globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyFromHistory(taskKey)
+		s.NoError(err2)
+	}
 	s.Regexp(`[?&]access-key=xxxxxx`, string(globalTask.Meta))
 	s.Contains(string(globalTask.Meta), "secret-access-key=xxxxxx")
 	s.NotContains(string(globalTask.Meta), "aaaaaa")
