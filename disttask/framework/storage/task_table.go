@@ -927,7 +927,7 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 			if err := sqlexec.FormatSQL(insertSQL, "(%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
 				task.ID, task.Key, task.Type, task.DispatcherID,
 				task.State, task.StartTime, task.StateUpdateTime,
-				task.Meta, task.Concurrency, task.Step, task.Error); err != nil {
+				task.Meta, task.Concurrency, task.Step, serializeErr(task.Error)); err != nil {
 				return err
 			}
 		}
@@ -948,7 +948,6 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 
 		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
 		deleteSQL.WriteString(")")
-		logutil.BgLogger().Info("ywq test deletesql", zap.String("sql", deleteSQL.String()))
 		_, err = ExecSQL(stm.ctx, se, deleteSQL.String())
 		return err
 	})

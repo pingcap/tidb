@@ -529,6 +529,18 @@ func TestTaskHistoryTable(t *testing.T) {
 	task, err = gm.GetGlobalTaskByKeyWithHistory("1")
 	require.NoError(t, err)
 	require.NotNil(t, task)
+
+	// task with fail transfer
+	taskID, err = gm.AddNewGlobalTask("3", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	tasks, err = gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tasks))
+	tasks[0].Error = errors.New("mock err")
+	require.NoError(t, gm.TransferTasks2History(tasks))
+	num, err = storage.GetTasksFromHistoryForTest(gm)
+	require.NoError(t, err)
+	require.Equal(t, 3, num)
 }
 
 func TestPauseAndResume(t *testing.T) {

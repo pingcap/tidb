@@ -293,6 +293,13 @@ func (dm *Manager) cleanUpLoop() {
 	}
 }
 
+// WaitCleanUpFinished is used to sync the test.
+var WaitCleanUpFinished = make(chan struct{})
+
+// doCleanUpRoutine processes clean up routine defined by each type of tasks.
+// For example:
+//
+//	tasks with global sort should clean up tmp files stored on S3.
 func (dm *Manager) doCleanUpRoutine() {
 	logutil.Logger(dm.ctx).Info("cleanUp routine start")
 	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
@@ -309,11 +316,11 @@ func (dm *Manager) doCleanUpRoutine() {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
 		return
 	}
+	failpoint.Inject("WaitCleanUpFinished", func() {
+		WaitCleanUpFinished <- struct{}{}
+	})
 	logutil.Logger(dm.ctx).Info("cleanUp routine success")
 }
-
-// WaitCleanUpFinished is used to sync the test.
-var WaitCleanUpFinished = make(chan struct{})
 
 func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
@@ -328,9 +335,6 @@ func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 				break
 			}
 			cleanedTasks = append(cleanedTasks, task)
-			failpoint.Inject("WaitCleanUpFinished", func() {
-				WaitCleanUpFinished <- struct{}{}
-			})
 		} else {
 			// if task doesn't register cleanUp function, mark it as cleaned.
 			cleanedTasks = append(cleanedTasks, task)

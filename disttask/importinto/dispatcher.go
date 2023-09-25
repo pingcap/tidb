@@ -690,7 +690,6 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 }
 
 func redactSensitiveInfo(gTask *proto.Task, taskMeta *TaskMeta) {
-	logutil.BgLogger().Info("ywq test redact")
 	taskMeta.Stmt = ""
 	taskMeta.Plan.Path = ast.RedactURL(taskMeta.Plan.Path)
 	if taskMeta.Plan.CloudStorageURI != "" {
