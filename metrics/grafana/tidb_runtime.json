@@ -1577,7 +1577,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Distributed DDL SubTask Pending Duration",
+          "title": "Distributed Task SubTask Pending Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1679,7 +1679,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Distributed DDL Pending SubTask Cnt",
+          "title": "Distributed Task Pending SubTask Cnt",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1782,7 +1782,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Distributed DDL SubTask Running Duration",
+          "title": "Distributed Task SubTask Running Duration",
           "tooltip": {
             "shared": true,
             "sort": 0,

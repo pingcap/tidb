@@ -479,7 +479,9 @@ func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state
 	}
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
-	metrics.StartDistTaskSubTask(subtask)
+	if !subtask.IsFinished() {
+		metrics.StartDistTaskSubTask(subtask)
+	}
 }
 
 func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask) {
@@ -490,5 +492,4 @@ func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask) {
 	}
 	subtask.State = proto.TaskStateSucceed
 	metrics.IncDistTaskSubTaskCnt(subtask)
-	metrics.StartDistTaskSubTask(subtask)
 }

@@ -13764,7 +13764,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "Test-Cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -13859,7 +13859,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "Test-Cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -13954,7 +13954,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "Test-Cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
@@ -14049,7 +14049,7 @@
           "bars": false,
           "dashLength": 10,
           "dashes": false,
-          "datasource": "Test-Cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "description": "",
           "fieldConfig": {
             "defaults": {},
@@ -14094,7 +14094,7 @@
               "exemplar": true,
               "expr": "increase(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"succeed\"}[1m])",
               "interval": "",
-              "legendFormat": "{{scheduler_id}}",
+              "legendFormat": "{{instance}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
@@ -14141,7 +14141,7 @@
           }
         },
         {
-          "datasource": "Test-Cluster",
+          "datasource": "${DS_TEST-CLUSTER}",
           "fieldConfig": {
             "defaults": {
               "color": {
@@ -14193,7 +14193,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (scheduler_id)",
+              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (instance)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
