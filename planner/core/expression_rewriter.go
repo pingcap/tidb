@@ -2338,10 +2338,7 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		sc.AppendWarning(errors.Errorf("infoschema not found when decoding key: %X", key))
 		return s
 	}
-	tbl, _ := is.TableByID(tableID)
-	if tbl == nil {
-		tbl, _, _ = is.FindTableByPartitionID(tableID)
-	}
+	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
 	loc := ctx.GetSessionVars().Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)

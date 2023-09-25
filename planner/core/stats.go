@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -225,10 +226,7 @@ func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (full
 	var tbl table.Table
 	var partDef *model.PartitionDefinition
 
-	tbl, ok := is.TableByID(id)
-	if !ok {
-		tbl, _, partDef = is.FindTableByPartitionID(id)
-	}
+	tbl, partDef = infoschema.FindTableByTblOrPartID(is, id)
 	if tbl == nil || tbl.Meta() == nil {
 		return
 	}

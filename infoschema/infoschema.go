@@ -761,3 +761,17 @@ func (ts *SessionExtendedInfoSchema) DetachTemporaryTableInfoSchema() *SessionEx
 		MdlTables:  ts.MdlTables,
 	}
 }
+
+// FindTableByTblOrPartID looks for table.Table for the given id in the InfoSchema.
+// The id can be either a table id or a partition id.
+// If the id is a table id, the corresponding table.Table will be returned, and the second return value is nil.
+// If the id is a partition id, the corresponding table.Table and PartitionDefinition will be returned.
+// If the id is not found in the InfoSchema, nil will be returned for both return values.
+func FindTableByTblOrPartID(is InfoSchema, id int64) (table.Table, *model.PartitionDefinition) {
+	tbl, ok := is.TableByID(id)
+	if ok {
+		return tbl, nil
+	}
+	tbl, _, partDef := is.FindTableByPartitionID(id)
+	return tbl, partDef
+}
