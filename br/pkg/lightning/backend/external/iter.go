@@ -321,7 +321,7 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
-			rd.byteReader.largeBufferPool = memPool.NewBuffer()
+			rd.byteReader.concurrentReader.largeBufferPool = memPool.NewBuffer()
 			return &kvReaderProxy{p: paths[i], r: rd}, nil
 		})
 	}

@@ -82,6 +82,6 @@ func noEOF(err error) error {
 }
 
 func (r *kvReader) Close() error {
-	r.byteReader.largeBufferPool.Destroy()
+	r.byteReader.concurrentReader.largeBufferPool.Destroy()
 	return r.byteReader.Close()
 }

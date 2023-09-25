@@ -18,7 +18,6 @@ import (
 	"context"
 	"io"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/logutil"
@@ -39,15 +38,21 @@ type byteReader struct {
 	ctx           context.Context
 	storageReader storage.ReadSeekCloser
 
-	buf             []byte
-	bufOffset       int
-	largeBufferPool *membuf.Buffer
-	largeBuf        []byte
+	// curBuf is either smallBuf or concurrentReader.largeBuf.
+	curBuf       []byte
+	curBufOffset int
+	smallBuf     []byte
 
 	retPointers []*[]byte
 
+	concurrentReader struct {
+		now      bool
+		expected bool
+
+		largeBufferPool *membuf.Buffer
+		largeBuf        []byte
+	}
 	//useConcurrentReaderCurrent bool
-	//useConcurrentReader        atomic.Bool
 	//
 	//currFileOffset int64
 	//conReader      *singeFileReader
@@ -84,21 +89,13 @@ func newByteReader(
 			_ = r.Close()
 		}
 	}()
-	fileSize, err := storageReader.GetFileSize()
-	if err != nil {
-		return nil, err
-	}
-	conReader, err := newSingeFileReader(ctx, st, name, fileSize, ConcurrentReaderConcurrency, ConcurrentReaderBufferSize)
-	if err != nil {
-		return nil, err
-	}
 	r = &byteReader{
 		ctx:           ctx,
 		storageReader: storageReader,
-		buf:           make([]byte, bufSize),
-		bufOffset:     0,
-		conReader:     conReader,
+		smallBuf:      make([]byte, bufSize),
+		curBufOffset:  0,
 	}
+	r.curBuf = r.smallBuf
 	r.needLargePrefetch(defaultUseConcurrency)
 	return r, r.reload()
 }
@@ -106,13 +103,14 @@ func newByteReader(
 // needLargePrefetch is used to help implement sortedReader.needLargePrefetch.
 // See the comment of the interface.
 func (r *byteReader) needLargePrefetch(useConcurrent bool) {
-	r.useConcurrentReader.Store(useConcurrent)
+	here
+	r.concurrentReader.expected = useConcurrent
 }
 
-func (r *byteReader) switchToConcurrentReaderImpl() error {
-	if r.conReader == nil {
-		return errors.New("can't use the concurrent mode because reader is not initialized correctly")
-	}
+func (r *byteReader) switchToConcurrentReader() error {
+	// because it will be called only when buffered data of storageReader is used
+	// up, we can use seek(0, io.SeekCurrent) to get the offset for concurrent
+	// reader
 	currOffset, err := r.storageReader.Seek(0, io.SeekCurrent)
 	if err != nil {
 		return err
@@ -188,22 +186,27 @@ func (r *byteReader) cloneSlices() {
 }
 
 func (r *byteReader) next(n int) []byte {
-	if r.useConcurrentReaderCurrent {
-		return r.conReader.next(n)
-	}
-	end := mathutil.Min(r.bufOffset+n, len(r.buf))
-	ret := r.buf[r.bufOffset:end]
-	r.bufOffset += len(ret)
+	end := mathutil.Min(r.curBufOffset+n, len(r.curBuf))
+	ret := r.curBuf[r.curBufOffset:end]
+	r.curBufOffset += len(ret)
 	return ret
 }
 
 func (r *byteReader) reload() error {
-	to := r.useConcurrentReader.Load()
-	now := r.useConcurrentReaderCurrent
+	to := r.concurrentReader.expected
+	now := r.concurrentReader.now
+	// in reload only false -> true is possible
+	if !now && to {
+		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", true))
+		err := r.switchToConcurrentReader()
+		if err != nil {
+			return err
+		}
+	}
+
 	if to != now {
-		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", to))
 		if to {
-			err := r.switchToConcurrentReaderImpl()
+			err := r.switchToConcurrentReader()
 			if err != nil {
 				return err
 			}
