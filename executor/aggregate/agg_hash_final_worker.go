@@ -52,7 +52,9 @@ type HashAggFinalWorker struct {
 	// It means that all partial workers have be finished when we receive data from this chan
 	partialAndFinalNotifier chan struct{}
 
-	spillHelper *parallelHashAggSpillHelper
+	spillHelper        *parallelHashAggSpillHelper
+	isSpilledTriggered bool
+	spilledDataChan    chan *HashAggIntermData
 
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
@@ -62,18 +64,35 @@ type HashAggFinalWorker struct {
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
-	select {
-	case <-w.finishCh:
-		return nil, false
-	case input, ok = <-w.inputCh:
-		if !ok {
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: getPartialInput_0", zap.String("xzx", "xzx"))
+		select {
+		case <-w.finishCh:
 			return nil, false
+		case input, ok = <-w.spilledDataChan:
+			// logutil.BgLogger().Info("xzxdebug: getPartialInput_1", zap.String("xzx", "xzx"))
+			if !ok {
+				// logutil.BgLogger().Info("xzxdebug: getPartialInput_2", zap.String("xzx", "xzx"))
+				return nil, false
+			}
+		}
+	} else {
+		select {
+		case <-w.finishCh:
+			return nil, false
+		case input, ok = <-w.inputCh:
+			if !ok {
+				return nil, false
+			}
 		}
 	}
 	return
 }
 
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: consumeIntermData 0", zap.String("xzx", "xzx"))
+	}
 	var (
 		input            *HashAggIntermData
 		ok               bool
@@ -81,8 +100,15 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 		groupKeys        []string
 		sc               = sctx.GetSessionVars().StmtCtx
 	)
-	for {
+
+	loopJudge := true
+	for loopJudge {
+		// As we restore only one partition each time, so we should execute in this loop only once
+		loopJudge = !w.isSpilledTriggered
 		waitStart := time.Now()
+		if w.isSpilledTriggered {
+			// logutil.BgLogger().Info("xzxdebug: consumeIntermData 1", zap.String("xzx", "xzx"))
+		}
 		input, ok = w.getPartialInput()
 		if w.stats != nil {
 			w.stats.WaitTime += int64(time.Since(waitStart))
@@ -127,11 +153,18 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			w.stats.TaskNum++
 		}
 	}
+	return nil
 }
 
 func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	waitStart := time.Now()
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final_worker_loadFinalResult 1", zap.String("xzx", "xzx"))
+	}
 	result, finished := w.receiveFinalResultHolder()
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final_worker_loadFinalResult 2", zap.String("xzx", "xzx"))
+	}
 	if w.stats != nil {
 		w.stats.WaitTime += int64(time.Since(waitStart))
 	}
@@ -158,13 +191,25 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 		}
 		if result.IsFull() {
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
+			if w.isSpilledTriggered {
+				// logutil.BgLogger().Info("xzxdebug: final_worker_loadFinalResult_receiveFinalResultHolder 1", zap.String("xzx", "xzx"))
+			}
 			result, finished = w.receiveFinalResultHolder()
+			if w.isSpilledTriggered {
+				// logutil.BgLogger().Info("xzxdebug: final_worker_loadFinalResult_receiveFinalResultHolder 2", zap.String("xzx", "xzx"))
+			}
 			if finished {
 				return
 			}
 		}
 	}
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final_worker_loadFinalResult_outputCh 1", zap.String("xzx", "xzx"))
+	}
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final_worker_loadFinalResult_outputCh 2", zap.String("xzx", "xzx"))
+	}
 	if w.stats != nil {
 		w.stats.ExecTime += int64(time.Since(execStart))
 	}
@@ -243,33 +288,51 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 	}
 
 	spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionNum)
+	// logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition 1", zap.String("xzx", "xzx"))
 	for _, diskIO := range spilledFilesIO {
 		memDelta, err := w.restoreFromOneSpillFile(ctx, &restoredData, diskIO)
 		if err != nil {
 			return false, err
 		}
 
-		// TODO What it will do when out of memory quota?
+		// TODO What it will do when out of memory quota? As the spill has been triggered.
 		w.memTracker.Consume(memDelta)
 	}
-
-	w.inputCh <- &restoredData
+	// logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition 2", zap.String("xzx", "xzx"))
+	w.spilledDataChan <- &restoredData
+	// logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition 3", zap.String("xzx", "xzx"))
 	return true, nil
 }
 
-func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) {
+func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) error {
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend 0", zap.String("xzx", "xzx"))
+	}
 	if err := w.consumeIntermData(ctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
+		if w.isSpilledTriggered {
+			// logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend 1", zap.String("xzx", "xzx"))
+		}
+		return err
+	}
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend 2", zap.String("xzx", "xzx"))
 	}
 	w.loadFinalResult(ctx)
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend 3", zap.String("xzx", "xzx"))
+	}
+	return nil
 }
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
+	w.spilledDataChan = make(chan *HashAggIntermData, 1)
 	start := time.Now()
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.outputCh, r)
 		}
+		close(w.spilledDataChan)
 		if w.stats != nil {
 			w.stats.WorkerTime += int64(time.Since(start))
 		}
@@ -281,22 +344,34 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	<-w.partialAndFinalNotifier
 	// logutil.BgLogger().Info("xzxdebug: final worker wait for notification<", zap.String("xzx", "xzx"))
 
-	if w.spillHelper.isSpillTriggered() {
-		// logutil.BgLogger().Info("xzxdebug: final worker starts to spill", zap.String("xzx", "xzx"))
+	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
+	if w.isSpilledTriggered {
+		// logutil.BgLogger().Info("xzxdebug: final worker enter spill", zap.String("xzx", "xzx"))
 		for {
+			// logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition>", zap.String("xzx", "xzx"))
 			hasData, err := w.restoreOnePartition(ctx)
+			// logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition<", zap.String("xzx", "xzx"))
 			if err != nil {
 				w.outputCh <- &AfFinalResult{err: err}
+				// logutil.BgLogger().Info("xzxdebug: final_worker_spill_1", zap.String("xzx", "xzx"))
 				return
 			}
 
 			if !hasData {
+				// logutil.BgLogger().Info("xzxdebug: final_worker_spill_2", zap.String("xzx", "xzx"))
 				return
 			}
-			w.mergeResultsAndSend(ctx)
+			// logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend in spill>", zap.String("xzx", "xzx"))
+			err = w.mergeResultsAndSend(ctx)
+			// logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend in spill<", zap.String("xzx", "xzx"))
+			if err != nil {
+				// logutil.BgLogger().Info("xzxdebug: final_worker_spill_3", zap.String("xzx", "xzx"))
+				return
+			}
 		}
 	} else {
 		// logutil.BgLogger().Info("xzxdebug: final worker starts to merge", zap.String("xzx", "xzx"))
 		w.mergeResultsAndSend(ctx)
 	}
+	// logutil.BgLogger().Info("xzxdebug: final worker tasks done", zap.String("xzx", "xzx"))
 }

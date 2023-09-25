@@ -15,7 +15,6 @@
 package aggregate
 
 import (
-	"fmt"
 	"sync"
 	"time"
 
@@ -143,8 +142,13 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		w.workerSync.waitForRunningWorkers()
 		// logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers<", zap.String("xzx", "xzx"))
 
+		// logutil.BgLogger().Info("xzxdebug: ready_shuffles_data1_1", zap.String("xzx", "xzx"))
 		if !hasError {
-			if w.spillHelper.isSpillTriggered() {
+			isSpilled := w.spillHelper.isSpillTriggered()
+			// msg := fmt.Sprintf("xzxdebug: ready_shuffles_data_2, isSpilled: %t, need_shuffle: %t", isSpilled, needShuffle)
+			logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
+			if isSpilled {
+				// logutil.BgLogger().Info("xzxdebug: partial_spill_data", zap.String("xzx", "xzx"))
 				// Do not put `w.spillHelper.needSpill()` and `len(w.groupKey) > 0` judgement in one line
 				if len(w.groupKey) > 0 {
 					if err := w.spillDataToDisk(); err != nil {
@@ -154,6 +158,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 				}
 				w.spillHelper.addListInDisks(w.spilledChunksIO)
 			} else if needShuffle {
+				// logutil.BgLogger().Info("xzxdebug: partial shuffles data", zap.String("xzx", "xzx"))
 				w.shuffleIntermData(sc, finalConcurrency)
 			}
 		}
@@ -271,14 +276,14 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 }
 
 func (w *HashAggPartialWorker) spillDataToDisk() error {
-	enterMsg := fmt.Sprintf("xzxdebug: enter spillDataToDisk, w addr: %p", w)
-	exitMsg := fmt.Sprintf("xzxdebug: exit spillDataToDisk, w addr: %p", w)
-	logutil.BgLogger().Info(enterMsg, zap.String("xzx", "xzx"))
+	// enterMsg := fmt.Sprintf("xzxdebug: enter spillDataToDisk, w addr: %p", w)
+	// exitMsg := fmt.Sprintf("xzxdebug: exit spillDataToDisk, w addr: %p", w)
+	// logutil.BgLogger().Info(enterMsg, zap.String("xzx", "xzx"))
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
-		logutil.BgLogger().Info(exitMsg, zap.String("xzx", "xzx"))
+		// logutil.BgLogger().Info(exitMsg, zap.String("xzx", "xzx"))
 	}()
 	if len(w.partialResultsMap) == 0 {
 		return nil
