@@ -236,7 +236,20 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 			log.Error("failed to create all volumes, cleaning up created volume")
 			ec2Session.DeleteVolumes(volumeIDMap)
 		}
+
+		err = ec2Session.DisableDataFSR(h.metaInfo)
 	}()
+
+	// Turn on FSR for TiKV data snapshots
+	if h.cfg.UseFSR {
+		err = ec2Session.EnableDataFSR(h.metaInfo)
+		if err != nil {
+			return nil, 0, errors.Trace(err)
+		}
+
+		log.Info("FSR for data volume snapshots are enabled")
+	}
+
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
 		string(h.cfg.VolumeType), h.cfg.VolumeIOPS, h.cfg.VolumeThroughput, h.cfg.TargetAZ)
 	if err != nil {
