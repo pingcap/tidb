@@ -370,7 +370,7 @@ func refineCETrace(sctx sessionctx.Context) {
 	traceRecords := stmtCtx.OptimizerCETrace
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
-		tbl, _ := findTableByTblOrPartID(is, rec.TableID)
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, rec.TableID)
 		if tbl != nil {
 			rec.TableName = tbl.Meta().Name.O
 			continue

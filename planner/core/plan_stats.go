@@ -52,7 +52,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	is := sessiontxn.GetTxnManager(plan.SCtx()).GetTxnInfoSchema()
 	tblID2Tbl := make(map[int64]table.Table)
 	for _, neededCol := range histNeededColumns {
-		tbl, _ := findTableByTblOrPartID(is, neededCol.TableID)
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, neededCol.TableID)
 		if tbl == nil {
 			continue
 		}
