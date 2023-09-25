@@ -123,9 +123,7 @@ func MergePartitionStats2GlobalStats(
 		}
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
-		var err1 error
-		partitionStats, err1 = loadTablePartitionStatsFn(tableInfo, &def)
+		partitionStats, err1 := loadTablePartitionStatsFn(tableInfo, &def)
 		if err1 != nil {
 			if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
 				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
