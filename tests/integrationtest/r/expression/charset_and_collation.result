@@ -247,9 +247,9 @@ COERCIBILITY(@straaa)
 drop table if exists charset_test;
 create table charset_test(id int auto_increment primary key, c1 varchar(255) character set ascii);
 insert into charset_test(c1) values ('aaa�abcdef');
-Error 1366: Incorrect string value '\xEF\xBF\xBD' for column 'c1'
+Error 1366 (HY000): Incorrect string value '\xEF\xBF\xBD' for column 'c1'
 insert into charset_test(c1) values ('aaa�');
-Error 1366: Incorrect string value '\xEF\xBF\xBD' for column 'c1'
+Error 1366 (HY000): Incorrect string value '\xEF\xBF\xBD' for column 'c1'
 drop table if exists t_ci;
 create table t_ci(a varchar(10) collate utf8mb4_general_ci, unique key(a));
 insert into t_ci values ('a');
@@ -405,7 +405,7 @@ B
 sa
 ß
 select 'a' collate utf8mb4_bin = 'a' collate utf8mb4_general_ci;
-Error 1267: Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation '='
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation '='
 drop table if exists t;
 create table t (
 mb4general varchar(10) charset utf8mb4 collate utf8mb4_general_ci,
@@ -569,17 +569,17 @@ select coercibility(concat(i, user())) from t;
 coercibility(concat(i, user()))
 3
 select * from t where mb4unicode = mb4general;
-Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation '='
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation '='
 select * from t where unicode = general;
-Error 1267: Illegal mix of collations (utf8_unicode_ci,IMPLICIT) and (utf8_general_ci,IMPLICIT) for operation '='
+Error 1267 (HY000): Illegal mix of collations (utf8_unicode_ci,IMPLICIT) and (utf8_general_ci,IMPLICIT) for operation '='
 select concat(mb4general) = concat(mb4unicode) from t;
-Error 1267: Illegal mix of collations (utf8mb4_general_ci,IMPLICIT) and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_general_ci,IMPLICIT) and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
 select * from t t1, t t2 where t1.mb4unicode = t2.mb4general;
-Error 1267: Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation '='
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_unicode_ci,IMPLICIT) and (utf8mb4_general_ci,IMPLICIT) for operation '='
 select field('s', mb4general, mb4unicode, mb4bin) from t;
-Error 1271: Illegal mix of collations for operation 'field'
+Error 1271 (HY000): Illegal mix of collations for operation 'field'
 select concat(mb4unicode, mb4general) = mb4unicode from t;
-Error 1267: Illegal mix of collations (utf8mb4_bin,NONE) and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_bin,NONE) and (utf8mb4_unicode_ci,IMPLICIT) for operation '='
 set names default;
 drop table if exists t;
 create table t(name char(255) primary key, b int, c int, index idx(name), unique index uidx(name));
@@ -859,7 +859,7 @@ select 'a' like 'A' collate utf8mb4_unicode_ci;
 'a' like 'A' collate utf8mb4_unicode_ci
 1
 select 'a' collate utf8mb4_bin like 'A' collate utf8mb4_unicode_ci;
-Error 1267: Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_unicode_ci,EXPLICIT) for operation 'like'
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_unicode_ci,EXPLICIT) for operation 'like'
 select '😛' collate utf8mb4_general_ci like '😋';
 '😛' collate utf8mb4_general_ci like '😋'
 1
@@ -1252,11 +1252,11 @@ select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin);
 concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_bin)
 ab
 select concat('a' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci);
-Error 1267: Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'concat'
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation 'concat'
 drop table if exists t;
 create table t(a char);
 select * from t t1 join t t2 on t1.a collate utf8mb4_bin = t2.a collate utf8mb4_general_ci;
-Error 1267: Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation '='
+Error 1267 (HY000): Illegal mix of collations (utf8mb4_bin,EXPLICIT) and (utf8mb4_general_ci,EXPLICIT) for operation '='
 DROP TABLE IF EXISTS t1;
 CREATE TABLE t1 ( a int, p1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,p2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , p3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,p4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci ,n1 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_bin,n2 VARCHAR(255) CHARACTER SET utf8 COLLATE utf8_general_ci , n3 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin,n4 VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci );
 insert into t1 (a,p1,p2,p3,p4,n1,n2,n3,n4) values(1,'  0aA1!测试テストמבחן  ','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0aA1!测试テストמבחן 	','  0Aa1!测试テストמבחן  ','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	','  0Aa1!测试テストמבחן 	');
