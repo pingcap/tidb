@@ -18,10 +18,13 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
 
+	"github.com/johannesboyne/gofakes3"
+	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/executor/importer"
@@ -144,5 +147,21 @@ func TestCheckRequirements(t *testing.T) {
 	// remove CDC task, pass
 	_, err = etcdCli.Delete(ctx, cdcKey)
 	require.NoError(t, err)
+	require.NoError(t, c.CheckRequirements(ctx, conn))
+
+	// with global sort
+	c.Plan.CloudStorageURI = ":"
+	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
+	c.Plan.CloudStorageURI = "sdsdsdsd://sdsdsdsd"
+	require.ErrorIs(t, c.CheckRequirements(ctx, conn), exeerrors.ErrLoadDataInvalidURI)
+	c.Plan.CloudStorageURI = "local:///tmp"
+	require.ErrorContains(t, c.CheckRequirements(ctx, conn), "unsupported cloud storage uri scheme: local")
+	// this mock cannot mock credential check, so we just skip it.
+	backend := s3mem.New()
+	faker := gofakes3.New(backend)
+	ts := httptest.NewServer(faker.Server())
+	defer ts.Close()
+	require.NoError(t, backend.CreateBucket("test-bucket"))
+	c.Plan.CloudStorageURI = fmt.Sprintf("s3://test-bucket/path?region=us-east-1&endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", ts.URL)
 	require.NoError(t, c.CheckRequirements(ctx, conn))
 }

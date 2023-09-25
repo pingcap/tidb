@@ -22,20 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPrettyFileNames(t *testing.T) {
-	filenames := []string{
-		"/tmp/br/backup/1/1_1.sst",
-		"/tmp/br/2/1_2.sst",
-		"/tmp/123/1/1_3",
-	}
-	expected := []string{
-		"1/1_1.sst",
-		"2/1_2.sst",
-		"1/1_3",
-	}
-	require.Equal(t, expected, prettyFileNames(filenames))
-}
-
 func TestSeekPropsOffsets(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
@@ -209,7 +195,7 @@ func TestCleanUpFiles(t *testing.T) {
 		"/subtask/0/0", "/subtask/0/1", "/subtask/0/2",
 	}, dataFiles)
 
-	require.NoError(t, CleanUpFiles(ctx, store, "/subtask", 10))
+	require.NoError(t, CleanUpFiles(ctx, store, "/subtask"))
 
 	dataFiles, statFiles, err = GetAllFileNames(ctx, store, "/subtask")
 	require.NoError(t, err)

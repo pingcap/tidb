@@ -107,7 +107,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
-	s.logger.Info("index writer memory size limit",
+	s.logger.Info("memory size limit per index writer per concurrency",
 		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
 	return nil
 }

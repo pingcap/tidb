@@ -2822,6 +2822,21 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 	return partitionByCols
 }
 
+// Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
+func (lw *LogicalWindow) checkComparisonForTiFlash(frameBound *FrameBound) bool {
+	if len(frameBound.CompareCols) > 0 {
+		orderByEvalType := lw.OrderBy[0].Col.GetType().EvalType()
+		calFuncEvalType := frameBound.CalcFuncs[0].GetType().EvalType()
+
+		if orderByEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
+			return false
+		} else if calFuncEvalType == types.ETDuration && (orderByEvalType == types.ETDatetime || orderByEvalType == types.ETTimestamp) {
+			return false
+		}
+	}
+	return true
+}
+
 func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
 		return nil
@@ -2848,6 +2863,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		if !allSupported {
 			return nil
 		}
+
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
 			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -2859,9 +2875,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
-			lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"MPP mode may be blocked because window function frame can't be pushed down, because TiFlash does not support range frame type yet.")
-			return nil
+
+			if !lw.checkComparisonForTiFlash(lw.Frame.Start) || !lw.checkComparisonForTiFlash(lw.Frame.End) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.")
+				return nil
+			}
 		}
 	}
 

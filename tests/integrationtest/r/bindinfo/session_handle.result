@@ -1,0 +1,33 @@
+drop table if exists t, t2;
+create global temporary table t(a int, b int, key(a), key(b)) on commit delete rows;
+create table t2(a int, b int, key(a), key(b));
+create session binding for select * from t where b = 123 using select * from t ignore index(b) where b = 123;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for insert into t select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for replace into t select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+drop table if exists tmp2;
+create temporary table tmp2 (a int, b int, key(a), key(b));
+create session binding for select * from tmp2 where b = 123 using select * from t ignore index(b) where b = 123;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for insert into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for replace into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for update tmp2 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+create binding for delete from tmp2 where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1;
+Error 8006 (HY000): `create binding` is unsupported on temporary tables.
+drop table if exists t1;
+create table t1 (a int, b varchar(20));
+insert into t1 values (1, '111111111111111');
+insert into t1 values (2, '222222222222222');
+create binding for select group_concat(b) from bindinfo__session_handle.t1 using select /*+ SET_VAR(group_concat_max_len = 4) */ group_concat(b) from bindinfo__session_handle.t1 ;
+select group_concat(b) from bindinfo__session_handle.t1;
+group_concat(b)
+1111
