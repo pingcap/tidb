@@ -1668,7 +1668,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_disttask_ddl_subtask_cnt{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"pending\"}",
+              "expr": "tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"pending\"}",
               "interval": "",
               "legendFormat": "pending_subtasks",
               "queryType": "randomWalk",

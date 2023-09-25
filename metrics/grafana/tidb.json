@@ -13806,7 +13806,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_ddl_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|revert_pending|reverting|paused\"}) by (task_id)",
+              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|revert_pending|reverting|paused\"}) by (task_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
@@ -13817,7 +13817,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Running Dist DDL Subtasks",
+          "title": "Running Dist Task Subtasks",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -13901,7 +13901,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_ddl_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"succeed|failed|canceled|reverted|revert_failed\"}) by (task_id)",
+              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"succeed|failed|canceled|reverted|revert_failed\"}) by (task_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
@@ -13912,7 +13912,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Finished Dist DDL Subtasks",
+          "title": "Finished Dist Task Subtasks",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -13996,7 +13996,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum by (task_id) (increase(tidb_disttask_ddl_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"succeed\"}[1m]))",
+              "expr": "sum by (task_id) (increase(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"succeed\"}[1m]))",
               "interval": "",
               "legendFormat": "task_id_{{task_id}}",
               "queryType": "randomWalk",
@@ -14092,7 +14092,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "increase(tidb_disttask_ddl_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"succeed\"}[1m])",
+              "expr": "increase(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"succeed\"}[1m])",
               "interval": "",
               "legendFormat": "{{scheduler_id}}",
               "queryType": "randomWalk",
@@ -14193,14 +14193,14 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_ddl_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (scheduler_id)",
+              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (scheduler_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
               "refId": "A"
             }
           ],
-          "title": "Distributed DDL Running Subtask Distribution on TiDB Nodes",
+          "title": "Distributed Task Running Subtask Distribution on TiDB Nodes",
           "type": "piechart"
         }
       ],

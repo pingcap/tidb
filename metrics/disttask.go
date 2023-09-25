@@ -30,9 +30,9 @@ const (
 )
 
 var (
-	// DistTaskSubTaskCntGauge is the gauge of dist ddl subtask count.
+	// DistTaskSubTaskCntGauge is the gauge of dist task subtask count.
 	DistTaskSubTaskCntGauge *prometheus.GaugeVec
-	// DistTaskSubTaskStartTimeGauge is the gauge of dist ddl subtask start time.
+	// DistTaskSubTaskStartTimeGauge is the gauge of dist task subtask start time.
 	DistTaskSubTaskStartTimeGauge *prometheus.GaugeVec
 )
 
@@ -42,7 +42,7 @@ func InitDistTaskMetrics() {
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "disttask",
-			Name:      "ddl_subtask_cnt",
+			Name:      "subtask_cnt",
 			Help:      "Gauge of ddl subtask count.",
 		}, []string{lblTaskType, lblTaskID, lblSchedulerID, lblTaskStatus})
 
