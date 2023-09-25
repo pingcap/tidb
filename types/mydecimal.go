@@ -502,7 +502,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 			}
 			if exponent < math.MinInt32/2 && err != ErrOverflow {
 				*d = zeroMyDecimal
-				err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
+				err = ErrTruncated
 			}
 			if err != ErrOverflow {
 				shiftErr := d.Shift(int(exponent))
@@ -513,15 +513,12 @@ func (d *MyDecimal) FromString(str []byte) error {
 						d.negative = negative
 					}
 					err = shiftErr
-					if err == ErrTruncated {
-						err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
-					}
 				}
 			}
 		} else {
 			trimstr := strings.TrimSpace(string(str[endIdx:]))
 			if len(trimstr) != 0 {
-				err = ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
+				err = ErrTruncated
 			}
 		}
 	}
