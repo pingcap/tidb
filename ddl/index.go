@@ -1610,6 +1610,8 @@ func genKeyExistsErr(key, value []byte, idxInfo *model.IndexInfo, tblInfo *model
 	return kv.ErrKeyExists.FastGenByArgs(strings.Join(valueStr, "-"), indexName)
 }
 
+// batchCheckUniqueKey checks the unique keys in the batch.
+// Note that `idxRecords` may belong to multiple indexes.
 func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords []*indexRecord) error {
 	w.initBatchCheckBufs(len(idxRecords))
 	stmtCtx := w.sessCtx.GetSessionVars().StmtCtx
@@ -1618,8 +1620,8 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 	for i, record := range idxRecords {
 		idx := w.indexes[i%len(w.indexes)]
 		if !idx.Meta().Unique {
-			// non-unique key need not to check, just overwrite it,
-			// because in most case, backfilling indices is not exists.
+			// non-unique key need not to check, use `nil` as a placeholder to keep
+			// `idxRecords[i]` belonging to `indexes[i%len(indexes)]`.
 			w.batchCheckKeys = append(w.batchCheckKeys, nil)
 			w.batchCheckValues = append(w.batchCheckValues, nil)
 			w.distinctCheckFlags = append(w.distinctCheckFlags, false)
