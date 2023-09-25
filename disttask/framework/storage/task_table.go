@@ -668,15 +668,25 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 				subtaskState = proto.TaskStateRevertPending
 			}
 
-			for _, subtask := range subtasks {
-				// TODO: insert subtasks in batch
-				_, err = ExecSQL(stm.ctx, se, `insert into mysql.tidb_background_subtask
-					(step, task_key, exec_id, meta, state, type, checkpoint, summary)
-					values (%?, %?, %?, %?, %?, %?, %?, %?)`,
-					subtask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}")
-				if err != nil {
+			sql := new(strings.Builder)
+			if err := sqlexec.FormatSQL(sql, "insert into mysql.tidb_background_subtask \n"+
+				"(step, task_key, exec_id, meta, state, type, checkpoint, summary) values "); err != nil {
+				return err
+			}
+			for i, subtask := range subtasks {
+				if i != 0 {
+					if err := sqlexec.FormatSQL(sql, ","); err != nil {
+						return err
+					}
+				}
+				if err := sqlexec.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, %?)",
+					subtask.Step, gTask.ID, subtask.SchedulerID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), []byte{}, "{}"); err != nil {
 					return err
 				}
+			}
+			_, err := ExecSQL(stm.ctx, se, sql.String())
+			if err != nil {
+				return nil
 			}
 		}
 		return nil
