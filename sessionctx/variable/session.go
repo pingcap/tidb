@@ -1244,8 +1244,8 @@ type SessionVars struct {
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
 
-	// EnableHashjoin indicates whether to enable hash join.
-	EnableHashJoin bool
+	// DisableHashJoin indicates whether to disable hash join.
+	DisableHashJoin bool
 
 	// EnableHistoricalStats indicates whether to enable historical statistics.
 	EnableHistoricalStats bool
