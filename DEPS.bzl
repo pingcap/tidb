@@ -1656,19 +1656,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_dolthub_swiss",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/dolthub/swiss",
-        sha256 = "e911b7cea9aaed1255544fb8b53c19780f91b713e6d0fc71fb310232e4800dcc",
-        strip_prefix = "github.com/dolthub/swiss@v0.2.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
-            "http://ats.apps.svc/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_dustin_go_humanize",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/dustin/go-humanize",

@@ -18,13 +18,13 @@ import (
 	"hash"
 	"sync"
 
-	"github.com/dolthub/swiss"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"golang.org/x/exp/maps"
 )
 
 var murmur3Pool = sync.Pool{
@@ -36,7 +36,7 @@ var murmur3Pool = sync.Pool{
 var fmSketchPool = sync.Pool{
 	New: func() any {
 		return &FMSketch{
-			hashset: swiss.NewMap[uint64, bool](uint32(128)),
+			hashset: make(map[uint64]bool),
 			maxSize: 0,
 		}
 	},
@@ -44,7 +44,7 @@ var fmSketchPool = sync.Pool{
 
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
-	hashset *swiss.Map[uint64, bool]
+	hashset map[uint64]bool
 	mask    uint64
 	maxSize int
 }
@@ -62,12 +62,10 @@ func (s *FMSketch) Copy() *FMSketch {
 		return nil
 	}
 	result := NewFMSketch(s.maxSize)
-	s.hashset.Iter(func(key uint64, value bool) bool {
-		result.hashset.Put(key, value)
-		return false
-	})
+	for key, value := range s.hashset {
+		result.hashset[key] = value
+	}
 	result.mask = s.mask
-	result.maxSize = s.maxSize
 	return result
 }
 
@@ -76,22 +74,21 @@ func (s *FMSketch) NDV() int64 {
 	if s == nil {
 		return 0
 	}
-	return int64(s.mask+1) * int64(s.hashset.Count())
+	return int64(s.mask+1) * int64(len(s.hashset))
 }
 
 func (s *FMSketch) insertHashValue(hashVal uint64) {
 	if (hashVal & s.mask) != 0 {
 		return
 	}
-	s.hashset.Put(hashVal, true)
-	if s.hashset.Count() > s.maxSize {
+	s.hashset[hashVal] = true
+	if len(s.hashset) > s.maxSize {
 		s.mask = s.mask*2 + 1
-		s.hashset.Iter(func(k uint64, _ bool) (stop bool) {
-			if (k & s.mask) != 0 {
-				s.hashset.Delete(k)
+		for key := range s.hashset {
+			if (key & s.mask) != 0 {
+				delete(s.hashset, key)
 			}
-			return false
-		})
+		}
 	}
 }
 
@@ -140,17 +137,15 @@ func (s *FMSketch) MergeFMSketch(rs *FMSketch) {
 	}
 	if s.mask < rs.mask {
 		s.mask = rs.mask
-		s.hashset.Iter(func(key uint64, _ bool) bool {
+		for key := range s.hashset {
 			if (key & s.mask) != 0 {
-				s.hashset.Delete(key)
+				delete(s.hashset, key)
 			}
-			return false
-		})
+		}
 	}
-	rs.hashset.Iter(func(key uint64, _ bool) bool {
+	for key := range rs.hashset {
 		s.insertHashValue(key)
-		return false
-	})
+	}
 }
 
 // FMSketchToProto converts FMSketch to its protobuf representation.
@@ -158,10 +153,9 @@ func FMSketchToProto(s *FMSketch) *tipb.FMSketch {
 	protoSketch := new(tipb.FMSketch)
 	if s != nil {
 		protoSketch.Mask = s.mask
-		s.hashset.Iter(func(val uint64, _ bool) bool {
+		for val := range s.hashset {
 			protoSketch.Hashset = append(protoSketch.Hashset, val)
-			return false
-		})
+		}
 	}
 	return protoSketch
 }
@@ -174,7 +168,7 @@ func FMSketchFromProto(protoSketch *tipb.FMSketch) *FMSketch {
 	sketch := fmSketchPool.Get().(*FMSketch)
 	sketch.mask = protoSketch.Mask
 	for _, val := range protoSketch.Hashset {
-		sketch.hashset.Put(val, true)
+		sketch.hashset[val] = true
 	}
 	return sketch
 }
@@ -208,12 +202,12 @@ func DecodeFMSketch(data []byte) (*FMSketch, error) {
 func (s *FMSketch) MemoryUsage() (sum int64) {
 	// As for the variables mask(uint64) and maxSize(int) each will consume 8 bytes. This is the origin of the constant 16.
 	// And for the variables hashset(map[uint64]bool), each element in map will consume 9 bytes(8[uint64] + 1[bool]).
-	sum = int64(16 + 9*s.hashset.Count())
+	sum = int64(16 + 9*len(s.hashset))
 	return
 }
 
 func (s *FMSketch) reset() {
-	s.hashset.Clear()
+	maps.Clear(s.hashset)
 	s.mask = 0
 	s.maxSize = 0
 }

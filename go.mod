@@ -35,7 +35,6 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1
 	github.com/dgryski/go-farm v0.0.0-20200201041132-a6ae2369ad13
 	github.com/docker/go-units v0.4.0
-	github.com/dolthub/swiss v0.2.1
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.15.0
@@ -142,7 +141,6 @@ require (
 )
 
 require (
-	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
