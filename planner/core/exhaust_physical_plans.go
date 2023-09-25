@@ -392,7 +392,7 @@ var ForceUseOuterBuild4Test = atomic.NewBool(false)
 var ForcedHashLeftJoin4Test = atomic.NewBool(false)
 
 func (p *LogicalJoin) shouldSkipHashJoin() bool {
-	return (p.preferJoinType&preferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().EnableHashJoin == false)
+	return (p.preferJoinType&preferNoHashJoin) > 0 || (!p.SCtx().GetSessionVars().EnableHashJoin)
 }
 
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []PhysicalPlan, forced bool) {
