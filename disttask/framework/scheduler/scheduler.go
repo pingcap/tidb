@@ -200,9 +200,9 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			continue
 		}
 
-		s.startSubtask(subtask)
+		s.startSubtaskAndUpdateState(subtask)
 		if err := s.getError(); err != nil {
-			logutil.Logger(s.logCtx).Warn("startSubtask meets error", zap.Error(err))
+			logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
 			continue
 		}
 
@@ -314,7 +314,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 		s.markErrorHandled()
 		return
 	}
-	s.finishSubtask(subtask)
+	s.finishSubtaskAndUpdateState(subtask)
 	failpoint.Inject("syncAfterSubtaskFinish", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -458,7 +458,7 @@ func (s *BaseScheduler) resetError() {
 	s.mu.handled = false
 }
 
-func (s *BaseScheduler) startSubtask(subtask *proto.Subtask) {
+func (s *BaseScheduler) startSubtaskAndUpdateState(subtask *proto.Subtask) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	err := s.taskTable.StartSubtask(subtask.ID)
@@ -484,7 +484,7 @@ func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state
 	}
 }
 
-func (s *BaseScheduler) finishSubtask(subtask *proto.Subtask) {
+func (s *BaseScheduler) finishSubtaskAndUpdateState(subtask *proto.Subtask) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
