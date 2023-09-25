@@ -327,10 +327,23 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 }
 
 func mergeAddIndex(info *model.MultiSchemaInfo) {
-	for _, subJob := range info.SubJobs {
+	consistentUnique := false
+	for i, subJob := range info.SubJobs {
 		if subJob.Type == model.ActionAddForeignKey {
 			// Foreign key requires the order of adding indexes is unchanged.
 			return
+		}
+		if subJob.Type == model.ActionAddIndex {
+			if i == 0 {
+				consistentUnique = subJob.Args[0].(bool)
+			} else {
+				if consistentUnique != subJob.Args[0].(bool) {
+					// Some indexes are unique, others are not.
+					// There are problems with the mix usage of unique and non-unique backend,
+					// we don't merge these sub-jobs for now.
+					return
+				}
+			}
 		}
 	}
 	var newSubJob *model.SubJob

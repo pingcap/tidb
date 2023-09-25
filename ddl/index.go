@@ -635,7 +635,7 @@ SwitchIndexState:
 	case model.StateNone:
 		// none -> delete only
 		var reorgTp model.ReorgType
-		reorgTp, err = pickBackfillType(w.ctx, job, d)
+		reorgTp, err = pickBackfillType(w.ctx, job, allIndexInfos[0].Unique, d)
 		if err != nil {
 			if !errorIsRetryable(err, job) {
 				job.State = model.JobStateCancelled
@@ -746,7 +746,7 @@ SwitchIndexState:
 }
 
 // pickBackfillType determines which backfill process will be used.
-func pickBackfillType(ctx context.Context, job *model.Job, d *ddlCtx) (model.ReorgType, error) {
+func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCtx) (model.ReorgType, error) {
 	if job.ReorgMeta.ReorgTp != model.ReorgTypeNone {
 		// The backfill task has been started.
 		// Don't change the backfill type.
@@ -768,9 +768,9 @@ func pickBackfillType(ctx context.Context, job *model.Job, d *ddlCtx) (model.Reo
 				return model.ReorgTypeNone, err
 			}
 			if variable.EnableDistTask.Load() {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
 			} else {
-				_, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, nil, job.ReorgMeta.ResourceGroupName)
+				_, err = ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, nil, job.ReorgMeta.ResourceGroupName)
 			}
 			if err != nil {
 				return model.ReorgTypeNone, err
@@ -877,7 +877,7 @@ func doReorgWorkForCreateIndexMultiSchema(w *worker, d *ddlCtx, t *meta.Meta, jo
 func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 	tbl table.Table, allIndexInfos []*model.IndexInfo) (done bool, ver int64, err error) {
 	var reorgTp model.ReorgType
-	reorgTp, err = pickBackfillType(w.ctx, job, d)
+	reorgTp, err = pickBackfillType(w.ctx, job, allIndexInfos[0].Unique, d)
 	if err != nil {
 		return false, ver, err
 	}
@@ -955,7 +955,7 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return true, 0, nil
 	}
 	ctx := logutil.WithCategory(w.ctx, "ddl-ingest")
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, nil, job.ReorgMeta.ResourceGroupName)
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, allIndexInfos[0].Unique, job.ID, nil, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -2022,7 +2022,7 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := logutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, nil, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, indexInfo.Unique, reorgInfo.ID, nil, reorgInfo.ReorgMeta.ResourceGroupName)
 				if err != nil {
 					return err
 				}

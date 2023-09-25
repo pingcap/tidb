@@ -132,7 +132,17 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	job := &bgm.Job
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
+	_, tbl, err := d.getTableByTxn(d.store, job.SchemaID, job.TableID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// We only support adding multiple unique indexes or multiple non-unique indexes,
+	// we use the first index uniqueness here.
+	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleIDs[0])
+	if idx == nil {
+		return errors.Trace(errors.New("index info not found"))
+	}
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)
 	}
