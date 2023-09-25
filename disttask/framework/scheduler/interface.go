@@ -26,7 +26,8 @@ type TaskTable interface {
 	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
 	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
 
-	GetSubtaskInStates(tidbID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error)
+	GetSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) ([]*proto.Subtask, error)
+	GetFirstSubtaskInStates(instanceID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error)
 	StartManager(tidbID string, role string) error
 	StartSubtask(subtaskID int64) error
 	UpdateSubtaskStateAndError(subtaskID int64, state string, err error) error

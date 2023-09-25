@@ -16,6 +16,7 @@ go_library(
         "//disttask/framework/scheduler/execute",
         "//disttask/framework/storage",
         "//domain/infosync",
+        "//metrics",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
         "//util/logutil",

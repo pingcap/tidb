@@ -6,6 +6,7 @@ go_library(
         "bindinfo.go",
         "ddl.go",
         "distsql.go",
+        "disttask.go",
         "domain.go",
         "executor.go",
         "gc_worker.go",
@@ -28,6 +29,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/metric",
+        "//disttask/framework/proto",
         "//parser/terror",
         "//timer/metrics",
         "//util/logutil",
