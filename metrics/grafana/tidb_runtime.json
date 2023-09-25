@@ -1566,7 +1566,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "time()-tidb_disttask_ddl_subtask_start_time{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"pending\"}",
+              "expr": "time()-tidb_disttask_subtask_start_time{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"pending\"}",
               "interval": "",
               "legendFormat": "{{status}}_subtask_id_{{subtask_id}}",
               "queryType": "randomWalk",
@@ -1771,7 +1771,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "time()-tidb_disttask_ddl_subtask_start_time{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"running\"}",
+              "expr": "time()-tidb_disttask_subtask_start_time{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"running\"}",
               "interval": "",
               "legendFormat": "{{status}}_subtask_id_{{subtask_id}}",
               "queryType": "randomWalk",
