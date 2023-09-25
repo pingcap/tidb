@@ -343,6 +343,11 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			if len(tasks) == taskCnt {
 				break
 			}
+			historyTasks, err := mgr.GetGlobalTasksFromHistoryInStates(expectedState)
+			require.NoError(t, err)
+			if len(tasks)+len(historyTasks) == taskCnt {
+				break
+			}
 			time.Sleep(time.Millisecond * 50)
 		}
 		require.Less(t, i, cnt)

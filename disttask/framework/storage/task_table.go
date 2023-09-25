@@ -248,6 +248,23 @@ func (stm *TaskManager) GetGlobalTasksInStates(states ...interface{}) (task []*p
 	return task, nil
 }
 
+// GetGlobalTasksFromHistoryInStates gets the tasks in history table in the states.
+func (stm *TaskManager) GetGlobalTasksFromHistoryInStates(states ...interface{}) (task []*proto.Task, err error) {
+	if len(states) == 0 {
+		return task, nil
+	}
+
+	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task_history where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, row2GlobeTask(r))
+	}
+	return task, nil
+}
+
 // GetGlobalTaskByID gets the task by the global task ID.
 func (stm *TaskManager) GetGlobalTaskByID(taskID int64) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx, "select id, task_key, type, dispatcher_id, state, start_time, state_update_time, meta, concurrency, step, error from mysql.tidb_global_task where id = %?", taskID)
