@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -55,6 +56,7 @@ func (dm *Manager) setRunningTask(task *proto.Task, dispatcher Dispatcher) {
 	defer dm.runningTasks.Unlock()
 	dm.runningTasks.taskIDs[task.ID] = struct{}{}
 	dm.runningTasks.dispatchers[task.ID] = dispatcher
+	metrics.UpdateMetricsForRunTask(task)
 }
 
 func (dm *Manager) isRunningTask(taskID int64) bool {
@@ -183,6 +185,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
+				metrics.DistTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
@@ -196,6 +199,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				// the task is not in runningTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
+					metrics.UpdateMetricsForDispatchTask(task)
 					dm.startDispatcher(task)
 					cnt++
 					continue
@@ -203,6 +207,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.checkConcurrencyOverflow(cnt) {
 					break
 				}
+				metrics.UpdateMetricsForDispatchTask(task)
 				dm.startDispatcher(task)
 				cnt++
 			}

@@ -265,6 +265,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
 
+	prometheus.MustRegister(DistTaskGauge)
+	prometheus.MustRegister(DistTaskStarttimeGauge)
 	prometheus.MustRegister(DistTaskSubTaskCntGauge)
 	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
 
