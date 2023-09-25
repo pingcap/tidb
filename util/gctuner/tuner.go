@@ -28,8 +28,7 @@ var (
 	minGCPercent atomic.Uint32
 
 	// EnableGOGCTuner is to control whether enable the GOGC tuner.
-	EnableGOGCTuner atomic.Bool
-
+	EnableGOGCTuner  atomic.Bool
 	defaultGCPercent uint32 = 100
 )
 
@@ -43,9 +42,19 @@ func SetMaxGCPercent(percent uint32) {
 	maxGCPercent.Store(percent)
 }
 
+// MaxGCPercent get the max cost of memory.
+func MaxGCPercent() uint32 {
+	return maxGCPercent.Load()
+}
+
 // SetMinGCPercent sets the max cost of memory.
 func SetMinGCPercent(percent uint32) {
 	minGCPercent.Store(percent)
+}
+
+// MinGCPercent get the min cost of memory.
+func MinGCPercent() uint32 {
+	return minGCPercent.Load()
 }
 
 func init() {

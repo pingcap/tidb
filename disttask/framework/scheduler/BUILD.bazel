@@ -36,7 +36,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "on",
-    shard_count = 7,
+    shard_count = 8,
     deps = [
         "//disttask/framework/mock",
         "//disttask/framework/mock/execute",

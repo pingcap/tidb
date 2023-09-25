@@ -26,6 +26,16 @@ func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
 	return len(rs), nil
 }
 
+// GetSubtasksFromHistoryByTaskIDForTest gets subtasks by taskID from history table for test.
+func GetSubtasksFromHistoryByTaskIDForTest(stm *TaskManager, taskID int64) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select * from mysql.tidb_background_subtask_history where task_key = %?", taskID)
+	if err != nil {
+		return 0, err
+	}
+	return len(rs), nil
+}
+
 // GetSubtasksByTaskIDForTest gets subtasks by taskID for test.
 func GetSubtasksByTaskIDForTest(stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(stm.ctx,

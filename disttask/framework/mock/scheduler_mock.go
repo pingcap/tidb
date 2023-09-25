@@ -125,7 +125,7 @@ func (mr *MockTaskTableMockRecorder) HasSubtasksInStates(arg0, arg1, arg2 interf
 }
 
 // IsSchedulerCanceled mocks base method.
-func (m *MockTaskTable) IsSchedulerCanceled(arg0 int64, arg1 string) (bool, error) {
+func (m *MockTaskTable) IsSchedulerCanceled(arg0 string, arg1 int64) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "IsSchedulerCanceled", arg0, arg1)
 	ret0, _ := ret[0].(bool)
@@ -137,6 +137,20 @@ func (m *MockTaskTable) IsSchedulerCanceled(arg0 int64, arg1 string) (bool, erro
 func (mr *MockTaskTableMockRecorder) IsSchedulerCanceled(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsSchedulerCanceled", reflect.TypeOf((*MockTaskTable)(nil).IsSchedulerCanceled), arg0, arg1)
+}
+
+// PauseSubtasks mocks base method.
+func (m *MockTaskTable) PauseSubtasks(arg0 string, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PauseSubtasks", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PauseSubtasks indicates an expected call of PauseSubtasks.
+func (mr *MockTaskTableMockRecorder) PauseSubtasks(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PauseSubtasks", reflect.TypeOf((*MockTaskTable)(nil).PauseSubtasks), arg0, arg1)
 }
 
 // StartManager mocks base method.
@@ -305,6 +319,20 @@ func (m *MockScheduler) Init(arg0 context.Context) error {
 func (mr *MockSchedulerMockRecorder) Init(arg0 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockScheduler)(nil).Init), arg0)
+}
+
+// Pause mocks base method.
+func (m *MockScheduler) Pause(arg0 context.Context, arg1 *proto.Task) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "Pause", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// Pause indicates an expected call of Pause.
+func (mr *MockSchedulerMockRecorder) Pause(arg0, arg1 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pause", reflect.TypeOf((*MockScheduler)(nil).Pause), arg0, arg1)
 }
 
 // Rollback mocks base method.

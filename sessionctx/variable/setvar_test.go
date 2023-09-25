@@ -130,6 +130,18 @@ func TestSetVarNonStringOrEnum(t *testing.T) {
 	tk2.MustQuery("select /*+ set_var(max_execution_time=100) */ @@max_execution_time").Check(testkit.Rows("100"))
 	// The value is the changed value 2000, not the default value 0 or the global value 1000.
 	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("2000"))
+
+	tk2.MustExec("explain analyze select /*+ set_var(max_execution_time=100) */ @@max_execution_time")
+	// The value is the changed value 2000, not the default value 0 or the global value 1000.
+	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("2000"))
+
+	tk2.MustExec("use test")
+	tk2.MustExec("create table t(a int)")
+	tk2.MustExec("create global binding for select * from t where a = 1 and sleep(0.1) using select /*+ SET_VAR(max_execution_time=500) */ * from t where a = 1 and sleep(0.1)")
+	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("2000"))
+	tk2.MustQuery("select * from t where a = 1 and sleep(0.1)").Check(testkit.Rows())
+	tk2.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	tk2.MustQuery("select @@max_execution_time").Check(testkit.Rows("2000"))
 }
 
 func TestSetVarStringOrEnum(t *testing.T) {

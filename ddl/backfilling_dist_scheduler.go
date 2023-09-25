@@ -45,14 +45,8 @@ type BackfillSubTaskMeta struct {
 	StartKey        []byte `json:"start_key"`
 	EndKey          []byte `json:"end_key"`
 
-	DataFiles      []string `json:"data_files"`
-	StatFiles      []string `json:"stat_files"`
-	RangeSplitKeys [][]byte `json:"range_split_keys"`
-	MinKey         []byte   `json:"min_key"`
-	MaxKey         []byte   `json:"max_key"`
-	TotalKVSize    uint64   `json:"total_kv_size"`
-	// MultipleFilesStats is the output of subtask, it will be used by the next subtask.
-	MultipleFilesStats []external.MultipleFilesStat `json:"multiple_files_stats"`
+	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+	external.SortedKVMeta `json:",inline"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.

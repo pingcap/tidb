@@ -19,8 +19,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -29,7 +27,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func TestGenerateSkippedMessage(t *testing.T) {
+func TestGenerateSkippedTablesMessage(t *testing.T) {
 	tests := []struct {
 		name          string
 		totalTableIDs []int64
@@ -81,7 +79,71 @@ func TestGenerateSkippedMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := generateSkippedMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
+			msg := generateStableSkippedTablesMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
+			require.Equal(t, tt.expectedMsg, msg)
+		})
+	}
+}
+
+func TestGenerateSkippedPartitionsMessage(t *testing.T) {
+	tests := []struct {
+		name              string
+		tableName         string
+		totalPartitionIDs []int64
+		partitions        []string
+		action            string
+		status            string
+		expectedMsg       string
+	}{
+		{
+			name:              "no duplicate partitions when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "",
+		},
+		{
+			name:              "one duplicate table when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1},
+			partitions:        []string{"t1"},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "skip locking locked partition of table test.t: t1",
+		},
+		{
+			name:              "multiple duplicate partitions when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3, 4},
+			partitions:        []string{"t1", "t2", "t3"},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "skip locking locked partitions of table test.t: t1, t2, t3, other partitions locked successfully",
+		},
+		{
+			name:              "all partitions are duplicate when locking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3, 4},
+			partitions:        []string{"t1", "t2", "t3", "t4"},
+			action:            lockAction,
+			status:            lockedStatus,
+			expectedMsg:       "skip locking locked partitions of table test.t: t1, t2, t3, t4",
+		},
+		{
+			name:              "all partitions are duplicate when unlocking",
+			tableName:         "test.t",
+			totalPartitionIDs: []int64{1, 2, 3, 4},
+			partitions:        []string{"t1", "t2", "t3", "t4"},
+			action:            unlockAction,
+			status:            unlockedStatus,
+			expectedMsg:       "skip unlocking unlocked partitions of table test.t: t1, t2, t3, t4",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := generateStableSkippedPartitionsMessage(tt.totalPartitionIDs, tt.tableName, tt.partitions, tt.action, tt.status)
 			require.Equal(t, tt.expectedMsg, msg)
 		})
 	}
@@ -162,14 +224,19 @@ func TestAddLockedTables(t *testing.T) {
 		"COMMIT",
 	)
 
+	tidsAndNames := map[int64]string{
+		1: "test.t1",
+		2: "test.t2",
+		3: "test.t3",
+	}
+	pidAndNames := map[int64]string{
+		4: "p1",
+	}
+
 	msg, err := AddLockedTables(
 		exec,
-		[]int64{1, 2, 3},
-		[]int64{4},
-		[]*ast.TableName{
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t1")},
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t2")},
-			{Schema: model.NewCIStr("test"), Name: model.NewCIStr("t3")}},
+		tidsAndNames,
+		pidAndNames,
 	)
 	require.NoError(t, err)
 	require.Equal(t, "skip locking locked tables: test.t1, other tables locked successfully", msg)

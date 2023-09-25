@@ -5,5 +5,8 @@ go_library(
     srcs = ["import_mock.go"],
     importpath = "github.com/pingcap/tidb/disttask/importinto/mock",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_mock//gomock"],
+    deps = [
+        "//br/pkg/lightning/backend",
+        "@org_uber_go_mock//gomock",
+    ],
 )

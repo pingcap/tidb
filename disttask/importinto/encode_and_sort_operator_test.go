@@ -24,8 +24,16 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/disttask/importinto/mock"
 	"github.com/pingcap/tidb/disttask/operator"
+	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/parser/model"
+	utilmock "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"go.uber.org/zap"
@@ -54,15 +62,37 @@ func TestEncodeAndSortOperator(t *testing.T) {
 		return executor
 	}
 
+	executorForParam := &importStepExecutor{
+		taskID: 1,
+		taskMeta: &TaskMeta{
+			Plan: importer.Plan{
+				ThreadCnt: 2,
+			},
+		},
+		tableImporter: &importer.TableImporter{
+			LoadDataController: &importer.LoadDataController{
+				Plan: &importer.Plan{
+					CloudStorageURI: "s3://test-bucket/test-path",
+				},
+			},
+		},
+		logger: logger,
+	}
+
+	sharedVars := &SharedVars{
+		SortedDataMeta:   &external.SortedKVMeta{},
+		SortedIndexMetas: map[int64]*external.SortedKVMeta{},
+	}
+
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), 3, logger)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, sharedVars, 3, 0)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
 
 	// cancel on error
 	mockErr := errors.New("mock err")
-	executor.EXPECT().Run(gomock.Any()).Return(mockErr)
+	executor.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockErr)
 	source.Channel() <- &importStepMinimalTask{}
 	require.Eventually(t, func() bool {
 		return op.hasError()
@@ -75,7 +105,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), 2, logger)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, sharedVars, 2, 0)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -89,20 +119,22 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 	// wait until 2 executor start running, else workerpool will be cancelled.
-	executor1.EXPECT().Run(gomock.Any()).DoAndReturn(func(context.Context) error {
-		wg.Done()
-		wg.Wait()
-		return mockErr2
-	})
-	executor2.EXPECT().Run(gomock.Any()).DoAndReturn(func(context.Context) error {
-		wg.Done()
-		wg.Wait()
-		// wait error in executor1 has been processed
-		require.Eventually(t, func() bool {
-			return op.hasError()
-		}, 3*time.Second, 300*time.Millisecond)
-		return errors.New("mock error should be logged")
-	})
+	executor1.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+			wg.Done()
+			wg.Wait()
+			return mockErr2
+		})
+	executor2.EXPECT().Run(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(context.Context, backend.EngineWriter, backend.EngineWriter) error {
+			wg.Done()
+			wg.Wait()
+			// wait error in executor1 has been processed
+			require.Eventually(t, func() bool {
+				return op.hasError()
+			}, 3*time.Second, 300*time.Millisecond)
+			return errors.New("mock error should be logged")
+		})
 	require.NoError(t, op.Open())
 	// send 2 tasks
 	source.Channel() <- &importStepMinimalTask{}
@@ -114,4 +146,63 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	content, err := os.ReadFile(logFileName)
 	require.NoError(t, err)
 	require.Contains(t, string(content), "mock error should be logged")
+}
+
+func TestGetWriterMemorySizeLimit(t *testing.T) {
+	cases := []struct {
+		createSQL             string
+		numOfIndexGenKV       int
+		writerMemorySizeLimit uint64
+	}{
+		{
+			createSQL:             "create table t (a int)",
+			numOfIndexGenKV:       0,
+			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+		},
+		{
+			createSQL:             "create table t (a int primary key clustered)",
+			numOfIndexGenKV:       0,
+			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+		},
+		{
+			createSQL:             "create table t (a int primary key nonclustered)",
+			numOfIndexGenKV:       1,
+			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+		},
+		{
+			createSQL:             "create table t (a int primary key clustered, b int, key(b))",
+			numOfIndexGenKV:       1,
+			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+		},
+		{
+			createSQL:             "create table t (a int primary key clustered, b int, key(b), key(a,b))",
+			numOfIndexGenKV:       2,
+			writerMemorySizeLimit: external.DefaultMemSizeLimit,
+		},
+		{
+			createSQL:             "create table t (a int primary key clustered, b int, c int, key(b,c), unique(b), unique(c), key(a,b))",
+			numOfIndexGenKV:       4,
+			writerMemorySizeLimit: indexKVTotalBufSize / 4,
+		},
+		{
+			createSQL:             "create table t (a int, b int, c int, primary key(a,b,c) nonclustered, key(b,c), unique(b), unique(c), key(a,b))",
+			numOfIndexGenKV:       5,
+			writerMemorySizeLimit: indexKVTotalBufSize / 5,
+		},
+	}
+
+	for _, c := range cases {
+		p := parser.New()
+		node, err := p.ParseOneStmt(c.createSQL, "", "")
+		require.NoError(t, err)
+		sctx := utilmock.NewContext()
+		info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+		require.NoError(t, err)
+		info.State = model.StatePublic
+
+		require.Equal(t, c.numOfIndexGenKV, getNumOfIndexGenKV(info), c.createSQL)
+		require.Equal(t, c.writerMemorySizeLimit, getWriterMemorySizeLimit(&importer.Plan{
+			DesiredTableInfo: info,
+		}), c.createSQL)
+	}
 }
