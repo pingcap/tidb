@@ -1171,7 +1171,7 @@ func isAllRemovedConfigItems(items []string) bool {
 // The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
 // overwritten to 3000 and ignore the port number in the config file.
-func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCmdArgs func(*Config, fset *flag.FlagSet), fset *flag.FlagSet) {
+func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCmdArgs func(*Config, *flag.FlagSet), fset *flag.FlagSet) {
 	cfg := GetGlobalConfig()
 	var err error
 	if confPath != "" {
