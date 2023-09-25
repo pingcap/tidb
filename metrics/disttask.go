@@ -128,7 +128,7 @@ func UpdateMetricsForAddTask(task *proto.Task) {
 	DistTaskStarttimeGauge.WithLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 }
 
-// UpdateMetricsForDisptchTask update metrics when a task is added
+// UpdateMetricsForDispatchTask update metrics when a task is added
 func UpdateMetricsForDispatchTask(task *proto.Task) {
 	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Dec()
 	DistTaskStarttimeGauge.DeleteLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID))
