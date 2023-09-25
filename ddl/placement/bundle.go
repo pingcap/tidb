@@ -367,7 +367,7 @@ func transformableLeaderConstraint(groups map[string]*constraintsGroup) error {
 	// the leader's priority is certain, so we can merge the transformable rules into one.
 	// eg:
 	//  - [ group1 (L F), group2 (F) ], after merging is [group1 (2*V), group2 (F)], we still know the leader prefers group1.
-	//  - [ group1(L, F), group2(V) ],  after merging is [group1 (2*V), group2 (V)], we can't know leader priority after merge.
+	//  - [ group1 (L F), group2 (V) ], after merging is [group1 (2*V), group2 (V)], we can't know leader priority after merge.
 	if leaderGroup != nil && canBecameLeaderNum == 1 {
 		leaderGroup.MergeTransformableRoles()
 	}
