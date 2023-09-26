@@ -45,6 +45,7 @@ type JSONTable struct {
 	IsHistoricalStats bool                   `json:"is_historical_stats"`
 }
 
+// JSONExtendedStats is used for dumping extended statistics.
 type JSONExtendedStats struct {
 	StatsName  string  `json:"stats_name"`
 	StringVals string  `json:"string_vals"`
