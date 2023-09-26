@@ -213,7 +213,14 @@ func (s *FMSketch) MemoryUsage() (sum int64) {
 }
 
 func (s *FMSketch) reset() {
-	s.hashset.Clear()
+	set := make([]uint64, 0, s.hashset.Count())
+	s.hashset.Iter(func(k uint64, v bool) (stop bool) {
+		set = append(set, k)
+		return false
+	})
+	for _, k := range set {
+		s.hashset.Delete(k)
+	}
 	s.mask = 0
 	s.maxSize = 0
 }
