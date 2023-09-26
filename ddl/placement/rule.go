@@ -39,6 +39,12 @@ const (
 	Learner PeerRoleType = "learner"
 )
 
+const (
+	attributePrefix = "#"
+	// AttributeEvictLeader is used to evict leader from a store.
+	attributeEvictLeader = "evict-leader"
+)
+
 // RuleGroupConfig defines basic config of rule group
 type RuleGroupConfig struct {
 	ID       string `json:"id"`
@@ -200,12 +206,29 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 		}
 
 		for labels, cnt := range constraints2 {
-			labelConstraints, err := NewConstraints(strings.Split(labels, ","))
+			innerLabels := strings.Split(labels, ",")
+			overrideRole := role
+			newLabels := make([]string, 0, len(innerLabels))
+			for _, str := range innerLabels {
+				if strings.HasPrefix(str, attributePrefix) {
+					switch str[1:] {
+					case attributeEvictLeader:
+						if role == Voter {
+							overrideRole = Follower
+						}
+					default:
+						return rules, fmt.Errorf("%w: unsupported attribute '%s'", ErrUnsupportedConstraint, str)
+					}
+					continue
+				}
+				newLabels = append(newLabels, str)
+			}
+			labelConstraints, err := NewConstraints(newLabels)
 			if err != nil {
 				return rules, err
 			}
 
-			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
+			rules = append(rules, NewRule(overrideRole, uint64(cnt), labelConstraints))
 		}
 		return rules, nil
 	}
