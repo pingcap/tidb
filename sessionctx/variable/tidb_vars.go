@@ -801,6 +801,32 @@ const (
 
 	// TiDBOptFixControl makes the user able to control some details of the optimizer behavior.
 	TiDBOptFixControl = "tidb_opt_fix_control"
+<<<<<<< HEAD
+=======
+
+	// TiFlashReplicaRead is used to set the policy of TiFlash replica read when the query needs the TiFlash engine.
+	TiFlashReplicaRead = "tiflash_replica_read"
+
+	// TiDBLockUnchangedKeys indicates whether to lock duplicate keys in INSERT IGNORE and REPLACE statements,
+	// or unchanged unique keys in UPDATE statements, see PR #42210 and #42713
+	TiDBLockUnchangedKeys = "tidb_lock_unchanged_keys"
+
+	// TiDBFastCheckTable enables fast check table.
+	TiDBFastCheckTable = "tidb_enable_fast_table_check"
+
+	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
+	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
+
+	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
+	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBOptEnableHashJoin indicates whether to enable hash join.
+	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
+
+	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// Please see comments of SessionVars.OptObjective for details.
+	TiDBOptObjective = "tidb_opt_objective"
+>>>>>>> 95fa30ce7dc (planner:  variable `tidb_opt_enable_hash_join` to skip hash join (#46575))
 )
 
 // TiDB vars that have only global scope
@@ -1143,6 +1169,7 @@ const (
 	DefTiDBServerMemoryLimitGCTrigger            = 0.7
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
+<<<<<<< HEAD
 	DefTiDBGOGCTunerThreshold                float64 = 0.6
 	DefTiDBOptPrefixIndexSingleScan                  = true
 	DefTiDBExternalTS                                = 0
@@ -1167,6 +1194,70 @@ const (
 	DefTiDBTTLJobScheduleWindowEndTime               = "23:59 +0000"
 	DefTiDBTTLScanWorkerCount                        = 4
 	DefTiDBTTLDeleteWorkerCount                      = 4
+=======
+	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBGOGCMaxValue                               = 500
+	DefTiDBGOGCMinValue                               = 100
+	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBExternalTS                                 = 0
+	DefTiDBEnableExternalTSRead                       = false
+	DefTiDBEnableReusechunk                           = true
+	DefTiDBUseAlloc                                   = false
+	DefTiDBEnablePlanReplayerCapture                  = true
+	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
+	DefTiDBTTLJobEnable                               = true
+	DefTiDBTTLScanBatchSize                           = 500
+	DefTiDBTTLScanBatchMaxSize                        = 10240
+	DefTiDBTTLScanBatchMinSize                        = 1
+	DefTiDBTTLDeleteBatchSize                         = 100
+	DefTiDBTTLDeleteBatchMaxSize                      = 10240
+	DefTiDBTTLDeleteBatchMinSize                      = 1
+	DefTiDBTTLDeleteRateLimit                         = 0
+	DefTiDBTTLRunningTasks                            = -1
+	DefPasswordReuseHistory                           = 0
+	DefPasswordReuseTime                              = 0
+	DefTiDBStoreBatchSize                             = 4
+	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
+	DefTiDBEnableHistoricalStatsForCapture            = false
+	DefTiDBTTLJobScheduleWindowStartTime              = "00:00 +0000"
+	DefTiDBTTLJobScheduleWindowEndTime                = "23:59 +0000"
+	DefTiDBTTLScanWorkerCount                         = 4
+	DefTiDBTTLDeleteWorkerCount                       = 4
+	DefaultExchangeCompressionMode                    = kv.ExchangeCompressionModeUnspecified
+	DefTiDBEnableResourceControl                      = true
+	DefTiDBPessimisticTransactionFairLocking          = false
+	DefTiDBEnablePlanCacheForParamLimit               = true
+	DefTiFlashComputeDispatchPolicy                   = tiflashcompute.DispatchPolicyConsistentHashStr
+	DefTiDBEnablePlanCacheForSubquery                 = true
+	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
+	DefTiDBOptEnableLateMaterialization               = true
+	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptEnableMPPSharedCTEExecution             = false
+	DefTiDBPlanCacheInvalidationOnFreshStats          = true
+	DefTiDBEnableRowLevelChecksum                     = false
+	DefAuthenticationLDAPSASLAuthMethodName           = "SCRAM-SHA-1"
+	DefAuthenticationLDAPSASLServerPort               = 389
+	DefAuthenticationLDAPSASLTLS                      = false
+	DefAuthenticationLDAPSASLUserSearchAttr           = "uid"
+	DefAuthenticationLDAPSASLInitPoolSize             = 10
+	DefAuthenticationLDAPSASLMaxPoolSize              = 1000
+	DefAuthenticationLDAPSimpleAuthMethodName         = "SIMPLE"
+	DefAuthenticationLDAPSimpleServerPort             = 389
+	DefAuthenticationLDAPSimpleTLS                    = false
+	DefAuthenticationLDAPSimpleUserSearchAttr         = "uid"
+	DefAuthenticationLDAPSimpleInitPoolSize           = 10
+	DefAuthenticationLDAPSimpleMaxPoolSize            = 1000
+	DefTiFlashReplicaRead                             = tiflash.AllReplicaStr
+	DefTiDBEnableFastCheckTable                       = true
+	DefRuntimeFilterType                              = "IN"
+	DefRuntimeFilterMode                              = "OFF"
+	DefTiDBLockUnchangedKeys                          = true
+	DefTiDBEnableCheckConstraint                      = false
+	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBOptObjective                               = OptObjectiveModerate
+	DefTiDBSchemaVersionCacheLimit                    = 16
+>>>>>>> 95fa30ce7dc (planner:  variable `tidb_opt_enable_hash_join` to skip hash join (#46575))
 )
 
 // Process global variables.
