@@ -113,7 +113,7 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	// run fail.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockScanRecordError", "return(true)"))
 	tk.ExecToErr("alter table t add index idx1(a);")
-	checkFilesCleanUped(t, sortStorageURI, jobID)
+	checkFilesCleanedUp(t, sortStorageURI, jobID)
 
 	dom.DDL().SetHook(origin)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockScanRecordError"))
