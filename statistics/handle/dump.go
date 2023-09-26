@@ -16,6 +16,7 @@ package handle
 
 import (
 	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
