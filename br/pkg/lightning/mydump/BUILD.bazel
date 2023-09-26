@@ -85,6 +85,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@com_github_xitongsys_parquet_go//parquet",
         "@com_github_xitongsys_parquet_go//writer",
         "@com_github_xitongsys_parquet_go_source//local",
         "@org_uber_go_goleak//:goleak",

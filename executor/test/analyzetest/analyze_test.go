@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/testkit"
@@ -940,11 +941,11 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := handle.AutoAnalyzeMinCnt
+	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
 	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal3
+		autoanalyze.AutoAnalyzeMinCnt = originalVal3
 	}()
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1282,11 +1283,11 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := handle.AutoAnalyzeMinCnt
+	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
 	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal3
+		autoanalyze.AutoAnalyzeMinCnt = originalVal3
 	}()
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	originalVal4 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
@@ -2163,9 +2164,9 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -2247,9 +2248,9 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -3008,12 +3009,12 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 		"3 0",
 	))
 
-	originalVal1 := handle.AutoAnalyzeMinCnt
+	originalVal1 := autoanalyze.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal1
+		autoanalyze.AutoAnalyzeMinCnt = originalVal1
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 
@@ -3091,26 +3092,6 @@ func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustExec("delete from mysql.analyze_jobs")
 	tk.MustExec("analyze table t columns a, e")
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, d with 256 buckets, 500 topn, 1 samplerate"))
-}
-
-func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
-	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
-	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(dom.InfoSchema()))
-	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
-
-	originalVal := handle.AutoAnalyzeMinCnt
-	handle.AutoAnalyzeMinCnt = 0
-	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal
-	}()
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
-	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
 }
 
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
@@ -3245,8 +3226,9 @@ func TestAnalyzeMVIndex(t *testing.T) {
 			"6 test t  analyze index ij_char 189 finished",
 		))
 
-	// 3. check stats loading status and async load
-	// 3.1. now, stats on all indexes should be allEvicted, but these queries should trigger async loading
+	// 3. test stats loading
+	// 3.1. turn off sync loading, stats on all indexes should be allEvicted, but these queries should trigger async loading
+	tk.MustExec("set session tidb_stats_load_sync_wait = 0")
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
 		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
@@ -3301,7 +3283,34 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
+	// 3.4. clean up the stats and re-analyze the table
+	tk.MustExec("drop stats t")
+	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
+	// 3.5. turn on the sync loading, stats on mv indexes should be loaded
+	tk.MustExec("set session tidb_stats_load_sync_wait = 1000")
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+
 	// 4. check stats content in the memory
+	require.NoError(t, h.LoadNeededHistograms())
 	tk.MustQuery("show stats_meta").CheckAt([]int{0, 1, 4, 5}, testkit.Rows("test t 0 27"))
 	tk.MustQuery("show stats_histograms").CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
 		// db_name, table_name, column_name, is_index, distinct_count, null_count, avg_col_size, correlation, load_status
@@ -3309,7 +3318,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t ia 1 1 0 0 0 allLoaded",
 		"test t ij_signed 1 11 0 0 0 allLoaded",
 		"test t ij_unsigned 1 6 0 0 0 allLoaded",
-		"test t ij_double 1 7 0 0 0 allEvicted",
+		"test t ij_double 1 7 0 0 0 allLoaded",
 		"test t ij_binary 1 15 0 0 0 allLoaded",
 		"test t ij_char 1 11 0 0 0 allLoaded",
 	))
@@ -3322,6 +3331,9 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t  ij_unsigned 1 0 27",
 		"test t  ij_unsigned 1 3 27",
 		"test t  ij_unsigned 1 4 27",
+		"test t  ij_double 1 -21.5 27",
+		"test t  ij_double 1 -12.000005 8",
+		"test t  ij_double 1 0 27",
 		"test t  ij_binary 1 0000 26",
 		"test t  ij_binary 1 1234 19",
 		"test t  ij_binary 1 3796 1",
@@ -3342,6 +3354,10 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t  ij_unsigned 1 0 16 16 12 12 0",
 		"test t  ij_unsigned 1 1 43 27 600 600 0",
 		"test t  ij_unsigned 1 2 54 11 3112 3112 0",
+		"test t  ij_double 1 0 19 19 0.000005 0.000005 0",
+		"test t  ij_double 1 1 46 27 2.15 2.15 0",
+		"test t  ij_double 1 2 73 27 10.555555 10.555555 0",
+		"test t  ij_double 1 3 92 19 10.9876 10.9876 0",
 		"test t  ij_binary 1 0 8 8 5678 5678 0",
 		"test t  ij_binary 1 1 35 27 aaaaaa aaaaaa 0",
 		"test t  ij_binary 1 2 59 24 asdf asdf 0",

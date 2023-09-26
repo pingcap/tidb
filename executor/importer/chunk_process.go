@@ -17,6 +17,7 @@ package importer
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/docker/go-units"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -347,18 +349,58 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 // writer will take 256MiB buffer on default.
 // this will take a lot of memory, or even OOM.
 type IndexRouteWriter struct {
-	writers       map[int64]*external.Writer
+	// this writer and all wrappedWriters are shared by all deliver routines,
+	// so we need to synchronize them.
+	sync.RWMutex
+	writers       map[int64]*wrappedWriter
 	logger        *zap.Logger
 	writerFactory func(int64) *external.Writer
+}
+
+type wrappedWriter struct {
+	sync.Mutex
+	*external.Writer
+}
+
+func (w *wrappedWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
+	w.Lock()
+	defer w.Unlock()
+	return w.Writer.WriteRow(ctx, idxKey, idxVal, handle)
+}
+
+func (w *wrappedWriter) Close(ctx context.Context) error {
+	w.Lock()
+	defer w.Unlock()
+	return w.Writer.Close(ctx)
 }
 
 // NewIndexRouteWriter creates a new IndexRouteWriter.
 func NewIndexRouteWriter(logger *zap.Logger, writerFactory func(int64) *external.Writer) *IndexRouteWriter {
 	return &IndexRouteWriter{
-		writers:       make(map[int64]*external.Writer),
+		writers:       make(map[int64]*wrappedWriter),
 		logger:        logger,
 		writerFactory: writerFactory,
 	}
+}
+
+func (w *IndexRouteWriter) getWriter(indexID int64) *wrappedWriter {
+	w.RLock()
+	writer, ok := w.writers[indexID]
+	w.RUnlock()
+	if ok {
+		return writer
+	}
+
+	w.Lock()
+	defer w.Unlock()
+	writer, ok = w.writers[indexID]
+	if !ok {
+		writer = &wrappedWriter{
+			Writer: w.writerFactory(indexID),
+		}
+		w.writers[indexID] = writer
+	}
+	return writer
 }
 
 // AppendRows implements backend.EngineWriter interface.
@@ -372,11 +414,7 @@ func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows enco
 		if err != nil {
 			return errors.Trace(err)
 		}
-		writer, ok := w.writers[indexID]
-		if !ok {
-			writer = w.writerFactory(indexID)
-			w.writers[indexID] = writer
-		}
+		writer := w.getWriter(indexID)
 		if err = writer.WriteRow(ctx, item.Key, item.Val, nil); err != nil {
 			return errors.Trace(err)
 		}
@@ -392,6 +430,8 @@ func (*IndexRouteWriter) IsSynced() bool {
 // Close implements backend.EngineWriter interface.
 func (w *IndexRouteWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
 	var firstErr error
+	w.Lock()
+	defer w.Unlock()
 	for _, writer := range w.writers {
 		if err := writer.Close(ctx); err != nil {
 			if firstErr == nil {

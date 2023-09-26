@@ -425,7 +425,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 
-	reader, err := store.Open(ctx, fileName)
+	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 1, "io")
 	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
@@ -504,7 +504,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	errorMgr := errormanager.New(nil, cfg, logger)
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg, errorMgr: errorMgr}
 
-	reader, err := store.Open(ctx, fileName)
+	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
 	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
@@ -603,7 +603,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	cfg.Mydumper.CSV.Header = header
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 
-	reader, err := store.Open(ctx, fileName)
+	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
 	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)
