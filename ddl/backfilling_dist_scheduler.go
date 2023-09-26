@@ -161,8 +161,7 @@ func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *pr
 }
 
 func (*backfillDistScheduler) IsIdempotent(*proto.Subtask) bool {
-	// TODO: implement this later.
-	return false
+	return true
 }
 
 func (s *backfillDistScheduler) Close() {
