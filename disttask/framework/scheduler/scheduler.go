@@ -16,7 +16,6 @@ package scheduler
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -60,12 +59,11 @@ type BaseScheduler struct {
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(_ context.Context, id string, taskID int64, taskTable TaskTable) *BaseScheduler {
-	logPrefix := fmt.Sprintf("id: %s, task_id: %d", id, taskID)
 	schedulerImpl := &BaseScheduler{
 		id:        id,
 		taskID:    taskID,
 		taskTable: taskTable,
-		logCtx:    logutil.WithKeyValue(context.Background(), "scheduler", logPrefix),
+		logCtx:    logutil.WithFields(context.Background(), zap.Int64("task-id", taskID)),
 	}
 	return schedulerImpl
 }
@@ -424,7 +422,7 @@ func (s *BaseScheduler) onError(err error) {
 	if err == nil {
 		return
 	}
-	err = errors.WithStack(err)
+	err = errors.Trace(err)
 	logutil.Logger(s.logCtx).Error("onError", zap.Error(err))
 	s.mu.Lock()
 	defer s.mu.Unlock()

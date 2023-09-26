@@ -16,7 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"time"
 
@@ -79,10 +78,11 @@ type Dispatcher interface {
 // BaseDispatcher is the base struct for Dispatcher.
 // each task type embed this struct and implement the Extension interface.
 type BaseDispatcher struct {
-	ctx      context.Context
-	taskMgr  *storage.TaskManager
-	Task     *proto.Task
-	logCtx   context.Context
+	ctx     context.Context
+	taskMgr *storage.TaskManager
+	Task    *proto.Task
+	logCtx  context.Context
+	// serverID, it's value is ip:port now.
 	serverID string
 	// when RegisterDispatcherFactory, the factory MUST initialize this field.
 	Extension
@@ -104,12 +104,13 @@ var MockOwnerChange func()
 
 // NewBaseDispatcher creates a new BaseDispatcher.
 func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
-	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
+	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
+		zap.String("task-type", task.Type))
 	return &BaseDispatcher{
 		ctx:                   ctx,
 		taskMgr:               taskMgr,
 		Task:                  task,
-		logCtx:                logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
+		logCtx:                logCtx,
 		serverID:              serverID,
 		liveNodes:             nil,
 		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
