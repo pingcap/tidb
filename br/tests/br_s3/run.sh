@@ -82,14 +82,11 @@ for p in $(seq 2); do
   unset BR_LOG_TO_TERM
   ( GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/task/s3-outage-during-writing-file=1*return(\"$sig_file\")" \
       run_br --pd $PD_ADDR backup full -s "s3://mybucket/$DB?endpoint=http://$S3_ENDPOINT$S3_KEY" \
+      --ratelimit 1 \
       --log-file $BACKUP_LOG || \
       ( cat $BACKUP_LOG && BR_LOG_TO_TERM=1 && exit 1 ) ) &
   br_pid=$!
 
-  sleep 3
-  kill -9 $s3_pid
-  sleep 15
-  start_s3
   wait_sig
   kill -9 $s3_pid
   sleep 15
