@@ -1291,120 +1291,6 @@ func TestShowSlow(t *testing.T) {
 	tk.MustQuery(`admin show slow top all 3`)
 }
 
-func TestShowCreateTableAutoRandom(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// Basic show create table.
-	tk.MustExec("create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255))")
-	tk.MustQuery("show create table `auto_random_tbl1`").Check(testkit.RowsWithSep("|",
-		""+
-			"auto_random_tbl1 CREATE TABLE `auto_random_tbl1` (\n"+
-			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,\n"+
-			"  `b` varchar(255) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-
-	// Implicit auto_random value should be shown explicitly.
-	tk.MustExec("create table auto_random_tbl2 (a bigint auto_random primary key, b char)")
-	tk.MustQuery("show create table auto_random_tbl2").Check(testkit.RowsWithSep("|",
-		""+
-			"auto_random_tbl2 CREATE TABLE `auto_random_tbl2` (\n"+
-			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  `b` char(1) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-
-	// Special version comment can be shown in TiDB with new version.
-	tk.MustExec("create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key)")
-	tk.MustQuery("show create table auto_random_tbl3").Check(testkit.RowsWithSep("|",
-		""+
-			"auto_random_tbl3 CREATE TABLE `auto_random_tbl3` (\n"+
-			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-	// Test show auto_random table option.
-	tk.MustExec("create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100")
-	tk.MustQuery("show create table `auto_random_tbl4`").Check(testkit.RowsWithSep("|",
-		""+
-			"auto_random_tbl4 CREATE TABLE `auto_random_tbl4` (\n"+
-			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  `b` varchar(255) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */",
-	))
-	// Test implicit auto_random with auto_random table option.
-	tk.MustExec("create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50")
-	tk.MustQuery("show create table auto_random_tbl5").Check(testkit.RowsWithSep("|",
-		""+
-			"auto_random_tbl5 CREATE TABLE `auto_random_tbl5` (\n"+
-			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  `b` char(1) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */",
-	))
-	// Test auto_random table option already with special comment.
-	tk.MustExec("create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200")
-	tk.MustQuery("show create table auto_random_tbl6").Check(testkit.RowsWithSep("|",
-		""+
-			"auto_random_tbl6 CREATE TABLE `auto_random_tbl6` (\n"+
-			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */",
-	))
-	// Test auto_random table with range bits can be shown correctly.
-	tk.MustExec("create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));")
-	tk.MustQuery("show create table auto_random_tbl7").Check(testkit.RowsWithSep("|",
-		""+
-			"auto_random_tbl7 CREATE TABLE `auto_random_tbl7` (\n"+
-			"  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,\n"+
-			"  `b` varchar(255) DEFAULT NULL,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
-	))
-}
-
-// TestAutoIdCache overrides testAutoRandomSuite to test auto id cache.
-func TestAutoIdCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int auto_increment key) auto_id_cache = 10")
-	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */",
-	))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int auto_increment unique, b int key) auto_id_cache 100")
-	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) NOT NULL AUTO_INCREMENT,\n"+
-			"  `b` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */,\n"+
-			"  UNIQUE KEY `a` (`a`)\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */",
-	))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int key) auto_id_cache 5")
-	tk.MustQuery("show create table t").Check(testkit.RowsWithSep("|",
-		""+
-			"t CREATE TABLE `t` (\n"+
-			"  `a` int(11) NOT NULL,\n"+
-			"  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */\n"+
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */",
-	))
-}
-
 func TestShowCreateStmtIgnoreLocalTemporaryTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1729,28 +1615,6 @@ func TestShowVar(t *testing.T) {
 		testkit.RowsWithSep("|", "sql_mode|NO_BACKSLASH_ESCAPES"))
 }
 
-func TestIssue19507(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));")
-	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testkit.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO"))
-
-	tk.MustExec("CREATE INDEX t2_b_c_index ON t2 (b, c);")
-	tk.MustExec("CREATE INDEX t2_c_b_index ON t2 (c, b);")
-	tk.MustQuery("SHOW INDEX IN t2;").Check(
-		testkit.RowsWithSep("|", "t2|0|PRIMARY|1|a|A|0|<nil>|<nil>||BTREE|||YES|<nil>|YES",
-			"t2|0|c|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
-			"t2|0|b|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO",
-			"t2|1|t2_b_c_index|1|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO",
-			"t2|1|t2_b_c_index|2|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
-			"t2|1|t2_c_b_index|1|c|A|0|<nil>|<nil>||BTREE|||YES|<nil>|NO",
-			"t2|1|t2_c_b_index|2|b|A|0|<nil>|<nil>|YES|BTREE|||YES|<nil>|NO"))
-}
-
 // TestShowPerformanceSchema tests for Issue 19231
 func TestShowPerformanceSchema(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1990,16 +1854,6 @@ func TestShowCollationsLike(t *testing.T) {
 	tk.MustQuery("SHOW COLLATION LIKE 'utf8mb4_bi%'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
 }
 
-func TestShowViewWithWindowFunction(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
-	tk.MustExec("create or replace view test1_v as(select id,row_number() over (partition by num) from test1);")
-	tk.MustQuery("desc test1_v;").Check(testkit.Rows("id int(0) NO  <nil> ", "row_number() over (partition by num) bigint(21) YES  <nil> "))
-}
-
 func TestShowLimitReturnRow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -2053,31 +1907,6 @@ func TestShowLimitReturnRow(t *testing.T) {
 	result = tk.MustQuery("show index from t1 where key_name='idx_b'")
 	rows = result.Rows()
 	require.Equal(t, rows[0][2], "idx_b")
-}
-
-func TestShowTTLOption(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF'")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL \"15:20\" HOUR_MINUTE")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
-
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d'")
-	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `created_at` datetime DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */"))
 }
 
 func TestShowBindingDigestField(t *testing.T) {

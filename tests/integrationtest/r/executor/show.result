@@ -1,0 +1,147 @@
+drop table if exists auto_random_tbl1;
+create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255));
+show create table `auto_random_tbl1`;
+Table	Create Table
+auto_random_tbl1	CREATE TABLE `auto_random_tbl1` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(3) */,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists auto_random_tbl2;
+create table auto_random_tbl2 (a bigint auto_random primary key, b char);
+show create table auto_random_tbl2;
+Table	Create Table
+auto_random_tbl2	CREATE TABLE `auto_random_tbl2` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `b` char(1) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists auto_random_tbl3;
+create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key);
+show create table auto_random_tbl3;
+Table	Create Table
+auto_random_tbl3	CREATE TABLE `auto_random_tbl3` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists auto_random_tbl4;
+create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100;
+show create table `auto_random_tbl4`;
+Table	Create Table
+auto_random_tbl4	CREATE TABLE `auto_random_tbl4` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=100 */
+drop table if exists auto_random_tbl5;
+create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50;
+show create table auto_random_tbl5;
+Table	Create Table
+auto_random_tbl5	CREATE TABLE `auto_random_tbl5` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  `b` char(1) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=50 */
+drop table if exists auto_random_tbl6;
+create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200;
+show create table auto_random_tbl6;
+Table	Create Table
+auto_random_tbl6	CREATE TABLE `auto_random_tbl6` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(5) */,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_rand_base] AUTO_RANDOM_BASE=200 */
+drop table if exists auto_random_tbl7;
+create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));
+show create table auto_random_tbl7;
+Table	Create Table
+auto_random_tbl7	CREATE TABLE `auto_random_tbl7` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(4, 32) */,
+  `b` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a int auto_increment key) auto_id_cache = 10;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL AUTO_INCREMENT,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=10 */
+drop table if exists t;
+create table t(a int auto_increment unique, b int key) auto_id_cache 100;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL AUTO_INCREMENT,
+  `b` int(11) NOT NULL,
+  PRIMARY KEY (`b`) /*T![clustered_index] CLUSTERED */,
+  UNIQUE KEY `a` (`a`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=100 */
+drop table if exists t;
+create table t(a int key) auto_id_cache 5;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) NOT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![auto_id_cache] AUTO_ID_CACHE=5 */
+drop table if exists t2;
+CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));
+SHOW INDEX IN t2;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
+t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+CREATE INDEX t2_b_c_index ON t2 (b, c);
+CREATE INDEX t2_c_b_index ON t2 (c, b);
+SHOW INDEX IN t2;
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+t2	0	PRIMARY	1	a	A	0	NULL	NULL		BTREE			YES	NULL	YES
+t2	0	c	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	0	b	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+t2	1	t2_b_c_index	1	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+t2	1	t2_b_c_index	2	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	1	t2_c_b_index	1	c	A	0	NULL	NULL		BTREE			YES	NULL	NO
+t2	1	t2_c_b_index	2	b	A	0	NULL	NULL	YES	BTREE			YES	NULL	NO
+drop table if exists test1;
+CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+create or replace view test1_v as(select id,row_number() over (partition by num) from test1);
+desc test1_v;
+Field	Type	Null	Key	Default	Extra
+id	int(0)	NO		NULL	
+row_number() over (partition by num)	bigint(21)	YES		NULL	
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 3.14159 HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL "15:20" HOUR_MINUTE;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL _utf8mb4'15:20' HOUR_MINUTE */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d';
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `created_at` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_at` + INTERVAL 100 YEAR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='1d' */
