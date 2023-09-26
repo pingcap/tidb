@@ -3372,15 +3372,15 @@ func TestAnalyzePartitionVerify(t *testing.T) {
 		if row[2] == "global" {
 			if row[3] == "b" {
 				// global column b has 1 distinct value
-				require.Equal(t, 1, row[6])
+				require.Equal(t, "1", row[6])
 			} else {
-				require.Equal(t, 1000, row[6])
+				require.Equal(t, "1000", row[6])
 			}
 		} else {
 			if row[3] == "b" {
-				require.Equal(t, 1, row[6])
+				require.Equal(t, "1", row[6])
 			} else {
-				require.Equal(t, 100, row[6])
+				require.Equal(t, "100", row[6])
 			}
 		}
 	}
