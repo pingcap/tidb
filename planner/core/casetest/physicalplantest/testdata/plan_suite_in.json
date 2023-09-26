@@ -376,24 +376,28 @@
   {
     "name": "TestAggregationHints",
     "cases": [
+      // without Aggregation hints
       {
         "SQL": "select count(*) from t t1, t t2 where t1.a = t2.b"
       },
       {
         "SQL": "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"
       },
+      // with Aggregation hints
       {
         "SQL": "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"
       },
+      // test conflict warning
       {
         "SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ distinct a from t"
       },
+      // additional test
       {
         "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)"
       },
