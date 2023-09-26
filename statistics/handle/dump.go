@@ -240,7 +240,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 	if err != nil || tbl == nil {
 		return nil, err
 	}
-	err = h.callWithExec(func(sctx sessionctx.Context, _ sqlexec.RestrictedSQLExecutor) error {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = storage.StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
 		return err
 	})

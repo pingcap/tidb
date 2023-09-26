@@ -551,7 +551,7 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
 func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
-	return h.callWithExec(func(sctx sessionctx.Context, _ sqlexec.RestrictedSQLExecutor) error {
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return SaveTableStatsToStorage(sctx, results, analyzeSnapshot, source)
 	})
 }
@@ -567,7 +567,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 // TODO: refactor to reduce the number of parameters
 func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error) {
-	return h.callWithExec(func(sctx sessionctx.Context, _ sqlexec.RestrictedSQLExecutor) error {
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.SaveStatsToStorage(sctx, h.recordHistoricalStatsMeta, tableID,
 			count, modifyCount, isIndex, hg, cms, topN, statsVersion, isAnalyzed, updateAnalyzeTime, source)
 	})
@@ -575,7 +575,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 
 // SaveMetaToStorage will save stats_meta to storage.
 func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
-	return h.callWithExec(func(sctx sessionctx.Context, _ sqlexec.RestrictedSQLExecutor) error {
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.SaveMetaToStorage(sctx, h.recordHistoricalStatsMeta, tableID, count, modifyCount, source)
 	})
 }
@@ -597,15 +597,15 @@ func (*Handle) releaseGlobalStatsReader(reader *storage.StatsReader) error {
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
-	return h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
-		return extstats.InsertExtendedStats(sctx, exec, h.recordHistoricalStatsMeta, h.updateStatsCache, h.statsCache.Load(), statsName, colIDs, tp, tableID, ifNotExists)
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return extstats.InsertExtendedStats(sctx, h.recordHistoricalStatsMeta, h.updateStatsCache, h.statsCache.Load(), statsName, colIDs, tp, tableID, ifNotExists)
 	})
 }
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
-	return h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
-		return extstats.MarkExtendedStatsDeleted(sctx, exec, h.recordHistoricalStatsMeta, h.updateStatsCache, h.statsCache.Load(), statsName, tableID, ifExists)
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return extstats.MarkExtendedStatsDeleted(sctx, h.recordHistoricalStatsMeta, h.updateStatsCache, h.statsCache.Load(), statsName, tableID, ifExists)
 	})
 }
 
@@ -645,8 +645,8 @@ func (h *Handle) ReloadExtendedStatistics() error {
 func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
 	var es *statistics.ExtendedStatsColl
 	var err error
-	err = h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
-		es, err = extstats.BuildExtendedStats(sctx, exec, tableID, cols, collectors)
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		es, err = extstats.BuildExtendedStats(sctx, tableID, cols, collectors)
 		return err
 	})
 	return es, err
@@ -654,8 +654,8 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 
 // SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
 func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
-	return h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
-		return extstats.SaveExtendedStatsToStorage(sctx, exec, h.recordHistoricalStatsMeta, tableID, extStats, isLoad)
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return extstats.SaveExtendedStatsToStorage(sctx, h.recordHistoricalStatsMeta, tableID, extStats, isLoad)
 	})
 }
 
@@ -976,7 +976,7 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 	if !tbl.IsInitialized() {
 		return
 	}
-	err := h.callWithExec(func(sctx sessionctx.Context, _ sqlexec.RestrictedSQLExecutor) error {
+	err := h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return history.RecordHistoricalStatsMeta(sctx, tableID, version, source)
 	})
 	if err != nil {
