@@ -326,6 +326,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
 			mergeResult.collector.DestroyAndPutToPool()
 		}
+<<<<<<< HEAD:pkg/executor/analyze_col_v2.go
 		return err
 	})
 	err = taskEg.Wait()
@@ -335,6 +336,18 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			err = stderrors.Join(err, err1)
 		}
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
+=======
+		oldRootCollectorSize := rootRowCollector.Base().MemSize
+		oldRootCollectorCount := rootRowCollector.Base().Count
+		// Merge the result from sub-collectors.
+		rootRowCollector.MergeCollector(mergeResult.collector)
+		newRootCollectorCount := rootRowCollector.Base().Count
+		printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
+			mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
+			"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
+		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
+		mergeResult.collector.DestroyAndPutToPool()
+>>>>>>> 62a048c92c7 (executor: reuse fm sketch when to analyze (#47268)):executor/analyze_col_v2.go
 	}
 	err = mergeEg.Wait()
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
