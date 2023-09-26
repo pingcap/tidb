@@ -43,8 +43,22 @@ const batchInsertSize = 10
 const maxInsertLength = 1024 * 1024
 
 func saveTopNToStorage(ctx context.Context, exec sqlexec.SQLExecutor, tableID int64, isIndex int, histID int64, topN *statistics.TopN) error {
-	if topN == nil {
+	if topN == nil || len(topN.TopN) == 0 {
 		return nil
+	}
+	selectForUpdate := new(strings.Builder)
+	selectForUpdate.WriteString("select count(*) from mysql.stats_buckets where (table_id, is_index, hist_id) in (")
+	for i := 0; i < len(topN.TopN); i++ {
+		if i > 0 {
+			selectForUpdate.WriteString(",")
+		}
+		selectForUpdate.WriteString(
+			sqlexec.MustEscapeSQL("(%?, %?, %?)", tableID, isIndex, i))
+	}
+	selectForUpdate.WriteString(") for update")
+	_, err := exec.ExecuteInternal(ctx, selectForUpdate.String())
+	if err != nil {
+		return err
 	}
 	for i := 0; i < len(topN.TopN); {
 		end := i + batchInsertSize
@@ -74,7 +88,21 @@ func saveTopNToStorage(ctx context.Context, exec sqlexec.SQLExecutor, tableID in
 }
 
 func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stmtctx.StatementContext, tableID int64, isIndex int, hg *statistics.Histogram) (lastAnalyzePos []byte, err error) {
-	if hg == nil {
+	if hg == nil || len(hg.Buckets) == 0 {
+		return
+	}
+	selectForUpdate := new(strings.Builder)
+	selectForUpdate.WriteString("select count(*) from mysql.stats_buckets where (table_id, is_index, hist_id, bucket_id) in (")
+	for i := 0; i < len(hg.Buckets); i++ {
+		if i > 0 {
+			selectForUpdate.WriteString(",")
+		}
+		selectForUpdate.WriteString(
+			sqlexec.MustEscapeSQL("(%?, %?, %?, %?)", tableID, isIndex, hg.ID, i))
+	}
+	selectForUpdate.WriteString(") for update")
+	_, err = exec.ExecuteInternal(ctx, selectForUpdate.String())
+	if err != nil {
 		return
 	}
 	for i := 0; i < len(hg.Buckets); {
