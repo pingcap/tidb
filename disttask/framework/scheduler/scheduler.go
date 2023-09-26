@@ -164,7 +164,8 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		wg.Wait()
 	}()
 
-	subtasks, err := s.taskTable.GetSubtasksInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
+	subtasks, err := s.taskTable.GetSubtasksInStates(s.id, task.ID, task.Step,
+		proto.TaskStatePending, proto.TaskStateRunning)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -180,7 +181,8 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			break
 		}
 
-		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending)
+		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("GetFirstSubtaskInStates meets error", zap.Error(err))
 			continue
@@ -198,10 +200,23 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			continue
 		}
 
-		s.startSubtaskAndUpdateState(subtask)
-		if err := s.getError(); err != nil {
-			logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
-			continue
+		if subtask.State == proto.TaskStateRunning {
+			if !s.IsIdempotent(subtask) {
+				logutil.Logger(s.logCtx).Info("subtask in running state and is not idempotent, fail it",
+					zap.Int64("subtask-id", subtask.ID))
+				subtaskErr := errors.New("subtask in running state and is not idempotent")
+				s.onError(subtaskErr)
+				s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, subtaskErr)
+				s.markErrorHandled()
+				break
+			}
+		} else {
+			// subtask.State == proto.TaskStatePending
+			s.startSubtaskAndUpdateState(subtask)
+			if err := s.getError(); err != nil {
+				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
+				continue
+			}
 		}
 
 		failpoint.Inject("mockCleanScheduler", func() {
@@ -218,8 +233,8 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 	return s.getError()
 }
 
-func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
-	err := scheduler.RunSubtask(ctx, subtask)
+func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
+	err := executor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			err = context.Canceled
@@ -289,12 +304,12 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 			}
 		}
 	})
-	s.onSubtaskFinished(ctx, scheduler, subtask)
+	s.onSubtaskFinished(ctx, executor, subtask)
 }
 
-func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
+func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
 	if err := s.getError(); err == nil {
-		if err = scheduler.OnFinished(ctx, subtask); err != nil {
+		if err = executor.OnFinished(ctx, subtask); err != nil {
 			s.onError(err)
 		}
 	}
@@ -330,7 +345,8 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 
 	// We should cancel all subtasks before rolling back
 	for {
-		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRunning)
+		subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRunning)
 		if err != nil {
 			s.onError(err)
 			return s.getError()
@@ -351,7 +367,8 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		s.onError(err)
 		return s.getError()
 	}
-	subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step, proto.TaskStateRevertPending)
+	subtask, err := s.taskTable.GetFirstSubtaskInStates(s.id, task.ID, task.Step,
+		proto.TaskStateRevertPending, proto.TaskStateReverting)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -360,11 +377,15 @@ func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 		logutil.BgLogger().Warn("scheduler rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
-	s.updateSubtaskStateAndError(subtask, proto.TaskStateReverting, nil)
+	if subtask.State == proto.TaskStateRevertPending {
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateReverting, nil)
+	}
 	if err := s.getError(); err != nil {
 		return err
 	}
 
+	// right now all impl of Rollback is empty, so we don't check idempotent here.
+	// will try to remove this rollback completely in the future.
 	err = executor.Rollback(rollbackCtx)
 	if err != nil {
 		s.updateSubtaskStateAndError(subtask, proto.TaskStateRevertFailed, nil)
