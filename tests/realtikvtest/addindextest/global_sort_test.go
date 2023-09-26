@@ -109,7 +109,7 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	// run success.
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
-	checkFilesCleanUped(t, sortStorageURI, jobID)
+	checkFilesCleanedUp(t, sortStorageURI, jobID)
 	// run fail.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockScanRecordError", "return(true)"))
 	tk.ExecToErr("alter table t add index idx1(a);")
