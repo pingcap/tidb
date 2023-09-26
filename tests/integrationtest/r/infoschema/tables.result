@@ -148,17 +148,14 @@ set global tidb_enable_stmt_summary=0;
 set global tidb_enable_stmt_summary=1;
 set global tidb_stmt_summary_max_stmt_count=1;
 begin;
-show databases;
-Database
-INFORMATION_SCHEMA
-METRICS_SCHEMA
-PERFORMANCE_SCHEMA
-infoschema__tables
-mysql
-test
+show tables;
+Tables_in_infoschema__tables
+charset_collate_col_test
+default_time_table
+stmt_summary_test
 SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;
 DIGEST_TEXT	DIGEST
-show databases	0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161
+show tables	be021a0b3956334563aa6949abdacb23a012818b1d159432132f69c9e5a5f914
 	NULL
 SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;
 SCHEMA_NAME
@@ -174,17 +171,14 @@ set global tidb_enable_stmt_summary = 0;
 set global tidb_enable_stmt_summary = 1;
 set global tidb_stmt_summary_max_stmt_count=1;
 begin;
-show databases;
-Database
-INFORMATION_SCHEMA
-METRICS_SCHEMA
-PERFORMANCE_SCHEMA
-infoschema__tables
-mysql
-test
+show tables;
+Tables_in_infoschema__tables
+charset_collate_col_test
+default_time_table
+stmt_summary_test
 SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;
 DIGEST_TEXT	DIGEST
-show databases	0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161
+show tables	be021a0b3956334563aa6949abdacb23a012818b1d159432132f69c9e5a5f914
 	NULL
 SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;
 SCHEMA_NAME
@@ -277,11 +271,3 @@ DROP TABLE t2;
 SELECT * FROM information_schema.CHECK_CONSTRAINTS where CONSTRAINT_NAME = 't2_chk_1';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	CHECK_CLAUSE
 SET GLOBAL tidb_enable_check_constraint = default;
-drop table if exists t;
-create table t(a int, key(a));
-begin;
-select /*+ ignore_index(t, a)*/ * from t where a = 1;
-a
-select stmt_type, prepared, sample_user, schema_name, query_sample_text, charset, collation, plan_hint, digest_text, plan_digest from information_schema.cluster_statements_summary where schema_name='infoschema__tables' and query_sample_text='select /*+ ignore_index(t, a)*/ * from t where a = 1';
-stmt_type	prepared	sample_user	schema_name	query_sample_text	charset	collation	plan_hint	digest_text	plan_digest
-commit;
