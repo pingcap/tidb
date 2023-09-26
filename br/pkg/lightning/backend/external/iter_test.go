@@ -290,7 +290,7 @@ func BenchmarkValueT(b *testing.B) {
 		opener := func() (*kvReaderProxy, error) {
 			return &kvReaderProxy{r: rd}, nil
 		}
-		it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, []readerOpenerFn[*kvPair, kvReaderProxy]{opener})
+		it, err := newMergeIter[kvPair, kvReaderProxy](ctx, []readerOpenerFn[kvPair, kvReaderProxy]{opener})
 		if err != nil {
 			panic(err)
 		}
@@ -491,5 +491,8 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	afterMem := getMemoryInUse()
 	t.Logf("memory usage: %d -> %d", beforeMem, afterMem)
+	delta := afterMem - beforeMem
+	// before the fix, delta is about 7.5GB
+	require.Less(t, delta, uint64(4*1024*1024*1024))
 	_ = iter.Close()
 }

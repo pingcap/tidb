@@ -29,9 +29,6 @@ import (
 
 type heapElem interface {
 	sortKey() []byte
-	// copyInnerSlices copies the inner slices of the heapElem, to release the
-	// reference to the underlying array of slice.
-	copyInnerSlices()
 }
 
 type sortedReader[T heapElem] interface {
@@ -86,8 +83,6 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 	lastReaderIdx   int
 	err             error
 	hotspotMap      map[int]int
-	lastHotspotIdx  int
-	lastElemFromHot *T
 	checkHotspotCnt int
 
 	logger *zap.Logger
@@ -222,22 +217,19 @@ func (i *mergeIter[T, R]) next() bool {
 
 		// check hotspot every checkPeriod times
 		if i.checkHotspotCnt == checkHotspotPeriod {
-			i.lastHotspotIdx = -1
-			if i.lastElemFromHot != nil {
-				(*i.lastElemFromHot).copyInnerSlices()
-			}
+			lastHotspotIdx := -1
 			for idx, cnt := range i.hotspotMap {
 				// currently only one reader will become hotspot
-				isHotspot := cnt > (checkHotspotPeriod / 2)
-				if isHotspot {
-					i.lastHotspotIdx = idx
+				if cnt > (checkHotspotPeriod / 2) {
+					lastHotspotIdx = idx
+					break
 				}
 			}
 			for idx, rp := range i.readers {
 				if rp == nil {
 					continue
 				}
-				isHotspot := i.lastHotspotIdx == idx
+				isHotspot := lastHotspotIdx == idx
 				err := (*rp).switchConcurrentMode(isHotspot)
 				if err != nil {
 					i.err = err
@@ -250,9 +242,6 @@ func (i *mergeIter[T, R]) next() bool {
 
 		rd := *i.readers[i.lastReaderIdx]
 		e, err := rd.next()
-		if i.lastHotspotIdx == i.lastReaderIdx {
-			i.lastElemFromHot = &e
-		}
 		switch err {
 		case nil:
 			heap.Push(&i.h, mergeHeapElem[T]{elem: e, readerIdx: i.lastReaderIdx})
@@ -288,13 +277,8 @@ type kvPair struct {
 	value []byte
 }
 
-func (p *kvPair) sortKey() []byte {
+func (p kvPair) sortKey() []byte {
 	return p.key
-}
-
-func (p *kvPair) copyInnerSlices() {
-	p.key = append([]byte{}, p.key...)
-	p.value = append([]byte{}, p.value...)
 }
 
 type kvReaderProxy struct {
@@ -306,12 +290,12 @@ func (p kvReaderProxy) path() string {
 	return p.p
 }
 
-func (p kvReaderProxy) next() (*kvPair, error) {
+func (p kvReaderProxy) next() (kvPair, error) {
 	k, v, err := p.r.nextKV()
 	if err != nil {
-		return nil, err
+		return kvPair{}, err
 	}
-	return &kvPair{key: k, value: v}, nil
+	return kvPair{key: k, value: v}, nil
 }
 
 func (p kvReaderProxy) switchConcurrentMode(useConcurrent bool) error {
@@ -324,7 +308,7 @@ func (p kvReaderProxy) close() error {
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
-	iter    *mergeIter[*kvPair, kvReaderProxy]
+	iter    *mergeIter[kvPair, kvReaderProxy]
 	memPool *membuf.Pool
 }
 
@@ -338,7 +322,7 @@ func NewMergeKVIter(
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
 ) (*MergeKVIter, error) {
-	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
+	readerOpeners := make([]readerOpenerFn[kvPair, kvReaderProxy], 0, len(paths))
 	largeBufSize := ConcurrentReaderBufferSize * ConcurrentReaderConcurrency
 	memPool := membuf.NewPool(
 		membuf.WithPoolSize(1), // currently only one reader will become hotspot
@@ -364,7 +348,7 @@ func NewMergeKVIter(
 		})
 	}
 
-	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners)
+	it, err := newMergeIter[kvPair, kvReaderProxy](ctx, readerOpeners)
 	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
@@ -400,10 +384,6 @@ func (i *MergeKVIter) Close() error {
 
 func (p rangeProperty) sortKey() []byte {
 	return p.firstKey
-}
-
-func (p rangeProperty) copyInnerSlices() {
-	// it's noop currently
 }
 
 type statReaderProxy struct {
