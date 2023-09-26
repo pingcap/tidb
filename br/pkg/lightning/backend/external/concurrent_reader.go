@@ -24,8 +24,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// singeFileReader is a concurrent reader for a single file.
-type singeFileReader struct {
+// concurrentFileReader reads a file with multiple chunks concurrently.
+type concurrentFileReader struct {
 	ctx            context.Context
 	concurrency    int
 	readBufferSize int
@@ -37,8 +37,8 @@ type singeFileReader struct {
 	fileSize int64
 }
 
-// newSingeFileReader creates a new singeFileReader.
-func newSingeFileReader(
+// newConcurrentFileReader creates a new concurrentFileReader.
+func newConcurrentFileReader(
 	ctx context.Context,
 	st storage.ExternalStorage,
 	name string,
@@ -46,11 +46,11 @@ func newSingeFileReader(
 	fileSize int64,
 	concurrency int,
 	readBufferSize int,
-) (*singeFileReader, error) {
+) (*concurrentFileReader, error) {
 	if st == nil {
 		return nil, nil
 	}
-	return &singeFileReader{
+	return &concurrentFileReader{
 		ctx:            ctx,
 		concurrency:    concurrency,
 		readBufferSize: readBufferSize,
@@ -62,7 +62,7 @@ func newSingeFileReader(
 }
 
 // read loads the file content concurrently into the buffer.
-func (r *singeFileReader) read(buf []byte) (int64, error) {
+func (r *concurrentFileReader) read(buf []byte) (int64, error) {
 	if r.offset >= r.fileSize {
 		return 0, io.EOF
 	}

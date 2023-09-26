@@ -55,7 +55,7 @@ type byteReader struct {
 		now       bool
 		expected  bool
 		largeBuf  []byte
-		reader    *singeFileReader
+		reader    *concurrentFileReader
 		reloadCnt int
 	}
 
@@ -163,7 +163,7 @@ func (r *byteReader) switchToConcurrentReader() error {
 		return err
 	}
 	readerFields := &r.concurrentReader
-	readerFields.reader, err = newSingeFileReader(
+	readerFields.reader, err = newConcurrentFileReader(
 		r.ctx,
 		readerFields.store,
 		readerFields.filename,
