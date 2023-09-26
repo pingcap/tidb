@@ -236,3 +236,115 @@ func TestRemoveLockedTables(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "skip unlocking unlocked tables: test.t2, test.t3, other tables unlocked successfully", msg)
 }
+
+func TestRemoveLockedPartitions(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		gomock.Eq("BEGIN PESSIMISTIC"),
+	)
+
+	// Return table 2 is locked.
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	c.AppendInt64(0, int64(2))
+	rows := []chunk.Row{c.GetRow(0)}
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		selectSQL,
+	).Return(rows, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		selectDeltaSQL,
+		gomock.Eq([]interface{}{int64(2)}),
+	).Return([]chunk.Row{createStatsDeltaRow(1, 1, 1000)}, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		updateDeltaSQL,
+		gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(2)}),
+	).Return(nil, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		updateDeltaSQL,
+		gomock.Eq([]interface{}{uint64(1000), int64(1), int64(1), int64(1)}),
+	).Return(nil, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		DeleteLockSQL,
+		gomock.Eq([]interface{}{int64(2)}),
+	).Return(nil, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		"COMMIT",
+	)
+
+	pidAndNames := map[int64]string{
+		2: "p1",
+	}
+
+	msg, err := RemoveLockedPartitions(
+		exec,
+		1,
+		"test.t1",
+		pidAndNames,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "", msg)
+}
+
+func TestRemoveLockedPartitionsFailedIfTheWholeTableIsLocked(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		gomock.Eq("BEGIN PESSIMISTIC"),
+	)
+
+	// Return table 2 is locked.
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	c.AppendInt64(0, int64(1))
+	rows := []chunk.Row{c.GetRow(0)}
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		selectSQL,
+	).Return(rows, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		"COMMIT",
+	)
+
+	pidAndNames := map[int64]string{
+		2: "p1",
+	}
+
+	msg, err := RemoveLockedPartitions(
+		exec,
+		1,
+		"test.t1",
+		pidAndNames,
+	)
+	require.NoError(t, err)
+	require.Equal(t, "skip unlocking partitions of locked table: test.t1", msg)
+}

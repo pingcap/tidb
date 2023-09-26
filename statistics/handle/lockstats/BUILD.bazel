@@ -30,7 +30,7 @@ go_test(
     ],
     embed = [":lockstats"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 11,
     deps = [
         "//kv",
         "//parser/mysql",
