@@ -545,13 +545,6 @@ func TestSlowQuery(t *testing.T) {
 	require.Equal(t, sql, rows[0][0])
 }
 
-func TestColumnStatistics(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
-}
-
 func TestTableIfHasColumn(t *testing.T) {
 	columnName := variable.SlowLogHasMoreResults
 	store := testkit.CreateMockStore(t)
