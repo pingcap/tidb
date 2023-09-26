@@ -3380,3 +3380,43 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t  ij_char 1 7 162 27 yuiop yuiop 0",
 	))
 }
+
+func TestAnalyzePartitionVerify(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	sql := "create table t(a int,b varchar(100),c int,INDEX idx_c(c)) PARTITION BY RANGE ( a ) ("
+	for n := 100; n < 1000; n = n + 100 {
+		sql += "PARTITION p" + fmt.Sprint(n) + " VALUES LESS THAN (" + fmt.Sprint(n) + "),"
+	}
+	sql += "PARTITION p" + fmt.Sprint(1000) + " VALUES LESS THAN MAXVALUE)"
+	tk.MustExec(sql)
+	// insert random data into table t
+	insertStr := "insert into t (a,b,c) values(0, 'abc', 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(" ,(%d, '%s', %d)", i, "abc", i)
+	}
+	insertStr += ";"
+	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t")
+
+	result := tk.MustQuery("show stats_histograms where Db_name='test'").Sort()
+	require.NotNil(t, result)
+	require.Len(t, result.Rows(), 4+4*10) // 4 columns * 10 partiion+ 4 global columns
+	for _, row := range result.Rows() {
+		if row[2] == "global" {
+			if row[3] == "b" {
+				// global column b has 1 distinct value
+				require.Equal(t, "1", row[6])
+			} else {
+				require.Equal(t, "1000", row[6])
+			}
+		} else {
+			if row[3] == "b" {
+				require.Equal(t, "1", row[6])
+			} else {
+				require.Equal(t, "100", row[6])
+			}
+		}
+	}
+}
