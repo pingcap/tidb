@@ -691,31 +691,6 @@ func TestUseDB(t *testing.T) {
 	require.Error(t, err)
 }
 
-// func TestRevokePrivileges(t *testing.T) {
-// 	store := createStoreAndPrepareDB(t)
-
-// 	tk := testkit.NewTestKit(t, store)
-// 	tk.MustExec("CREATE USER 'hasgrant'")
-// 	tk.MustExec("CREATE USER 'withoutgrant'")
-// 	tk.MustExec("GRANT ALL ON *.* TO 'hasgrant'")
-// 	tk.MustExec("GRANT ALL ON mysql.* TO 'withoutgrant'")
-// 	// Without grant option
-// 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil, nil))
-// 	require.Error(t, tk.ExecToErr("REVOKE SELECT ON mysql.* FROM 'withoutgrant'"))
-// 	// With grant option
-// 	tk = testkit.NewTestKit(t, store)
-// 	tk.MustExec("GRANT ALL ON *.* TO 'hasgrant' WITH GRANT OPTION")
-// 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "hasgrant", Hostname: "localhost", AuthUsername: "hasgrant", AuthHostname: "%"}, nil, nil, nil))
-// 	tk.MustExec("REVOKE SELECT ON mysql.* FROM 'withoutgrant'")
-// 	tk.MustExec("REVOKE ALL ON mysql.* FROM withoutgrant")
-
-// 	// For issue https://github.com/pingcap/tidb/issues/23850
-// 	tk.MustExec("CREATE USER u4")
-// 	tk.MustExec("GRANT ALL ON *.* TO u4 WITH GRANT OPTION")
-// 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "u4", Hostname: "localhost", AuthUsername: "u4", AuthHostname: "%"}, nil, nil, nil))
-// 	tk.MustExec("REVOKE ALL ON *.* FROM CURRENT_USER()")
-// }
-
 func TestConfigPrivilege(t *testing.T) {
 	store := createStoreAndPrepareDB(t)
 

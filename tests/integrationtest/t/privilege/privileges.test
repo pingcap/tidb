@@ -694,8 +694,8 @@ disconnect ccnobody;
 connect (ccconfig,localhost,ccconfig,,);
 connection ccconfig;
 SHOW GRANTS;
-SELECT * FROM information_schema.cluster_config;
-SELECT * FROM information_schema.cluster_HARDWARE;
+SELECT * FROM information_schema.cluster_config limit 0;
+SELECT * FROM information_schema.cluster_HARDWARE limit 0;
 -- error 1227
 SELECT * FROM information_schema.cluster_INFO;
 -- error 1227
@@ -709,9 +709,9 @@ disconnect ccconfig;
 connect (ccprocess,localhost,ccprocess,,);
 connection ccprocess;
 SHOW GRANTS;
-SELECT * FROM information_schema.CLUSTER_info;
-SELECT * FROM information_schema.CLUSTER_load;
-SELECT * FROM information_schema.CLUSTER_systeminfo;
+SELECT * FROM information_schema.CLUSTER_info limit 0;
+SELECT * FROM information_schema.CLUSTER_load limit 0;
+SELECT * FROM information_schema.CLUSTER_systeminfo limit 0;
 SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%';
 -- error 1227
 SELECT * FROM information_schema.CLUSTER_config;
