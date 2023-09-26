@@ -30,7 +30,6 @@ type singeFileReader struct {
 	concurrency      int
 	readBufferSize   int
 	bufferReadOffset int64
-	bufferMaxOffset  int64
 
 	storage storage.ExternalStorage
 	name    string
@@ -63,38 +62,41 @@ func newSingeFileReader(
 	}, nil
 }
 
-// read reloads the buffer.
+// read loads the file content concurrently into the buffer.
 func (r *singeFileReader) read(buf []byte) (int64, error) {
 	if r.offset >= r.fileSize {
-		return io.EOF
+		return 0, io.EOF
 	}
 
+	bufSize := len(buf)
+	fileSizeRemain := r.fileSize - r.offset
+	bytesRead := min(bufSize, int(fileSizeRemain))
 	eg := errgroup.Group{}
 	for i := 0; i < r.concurrency; i++ {
 		i := i
 		eg.Go(func() error {
 			bufStart := i * r.readBufferSize
-			fileStart := r.offset + int64(bufStart)
-			fileEnd := fileStart + int64(r.readBufferSize)
-			if fileEnd > r.fileSize {
-				fileEnd = r.fileSize
+			bufEnd := bufStart + r.readBufferSize
+			if bufEnd > bytesRead {
+				bufEnd = bytesRead
 			}
-			if fileStart > fileEnd {
+			if bufStart >= bufEnd {
 				return nil
 			}
 
+			fileStart := r.offset + int64(bufStart)
 			_, err := storage.ReadDataInRange(
 				r.ctx,
 				r.storage,
 				r.name,
 				fileStart,
-				r.buffer[bufStart:bufStart+int(fileEnd-fileStart)],
+				buf[bufStart:bufEnd],
 			)
 			if err != nil {
-				log.FromContext(r.ctx).Warn(
-					"read meet error",
+				log.FromContext(r.ctx).Error(
+					"concurrent read meet error",
 					zap.Int64("fileStart", fileStart),
-					zap.Int64("fileEnd", fileEnd),
+					zap.Int("readSize", bufEnd-bufStart),
 					zap.Error(err),
 				)
 				return err
@@ -104,17 +106,9 @@ func (r *singeFileReader) read(buf []byte) (int64, error) {
 	}
 	err := eg.Wait()
 	if err != nil {
-		return err
+		return 0, err
 	}
 
-	if r.offset+int64(r.readBufferSize*r.concurrency) > r.fileSize {
-		r.bufferMaxOffset = r.fileSize - r.offset
-		r.offset = r.fileSize
-	} else {
-		r.bufferMaxOffset = int64(r.readBufferSize * r.concurrency)
-		r.offset += int64(r.readBufferSize * r.concurrency)
-	}
-	r.bufferReadOffset = 0
-
-	return nil
+	r.offset += int64(bytesRead)
+	return int64(bytesRead), nil
 }

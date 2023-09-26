@@ -248,16 +248,21 @@ func (r *byteReader) reload() error {
 
 	if r.concurrentReader.now {
 		r.concurrentReader.reloadCnt++
-		return r.concurrentReader.reader.read(r.concurrentReader.largeBuf)
+		n, err := r.concurrentReader.reader.read(r.concurrentReader.largeBuf)
+		if err != nil {
+			return err
+		}
+		r.curBuf = r.curBuf[:n]
+		return nil
 	}
-	nBytes, err := io.ReadFull(r.storageReader, r.curBuf[0:])
+	n, err := io.ReadFull(r.storageReader, r.curBuf[0:])
 	if err != nil {
 		switch err {
 		case io.EOF:
 			return err
 		case io.ErrUnexpectedEOF:
 			// The last batch.
-			r.curBuf = r.curBuf[:nBytes]
+			r.curBuf = r.curBuf[:n]
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))
 			return err
