@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -86,7 +87,7 @@ func TestRecordHistoryStatsAfterAnalyze(t *testing.T) {
 	for i, row := range rows {
 		data[i] = []byte(row[1].(string))
 	}
-	jsonTbl, err := handle.BlocksToJSONTable(data)
+	jsonTbl, err := storage.BlocksToJSONTable(data)
 	require.NoError(t, err)
 	jsCur, err := json.Marshal(jsonTbl)
 	require.NoError(t, err)

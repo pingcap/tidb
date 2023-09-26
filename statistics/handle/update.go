@@ -120,12 +120,12 @@ const maxInsertLength = 1024 * 1024
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
-	return h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
-		return usage.DumpIndexUsageToKV(sctx, exec, h.idxUsageListHead)
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return usage.DumpIndexUsageToKV(sctx, h.idxUsageListHead)
 	})
 }
 
-func (h *Handle) callWithExec(f func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error) (err error) {
+func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error) (err error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return err
@@ -139,14 +139,12 @@ func (h *Handle) callWithExec(f func(sctx sessionctx.Context, exec sqlexec.Restr
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 		return err
 	}
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return f(sctx, exec)
+	return f(sctx)
 }
 
 // GCIndexUsage will delete the usage information of those indexes that do not exist.
 func (h *Handle) GCIndexUsage() error {
-	return h.callWithExec(usage.GCIndexUsageOnKV)
+	return h.callWithSCtx(usage.GCIndexUsageOnKV)
 }
 
 var (
@@ -475,8 +473,8 @@ const (
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
-	_ = h.callWithExec(func(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
-		analyzed = autoanalyze.HandleAutoAnalyze(sctx, exec, &autoanalyze.Opt{
+	_ = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		analyzed = autoanalyze.HandleAutoAnalyze(sctx, &autoanalyze.Opt{
 			StatsLease:              h.Lease(),
 			GetLockedTables:         h.GetLockedTables,
 			GetTableStats:           h.GetTableStats,

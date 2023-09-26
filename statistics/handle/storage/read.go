@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
@@ -591,4 +592,25 @@ func loadNeededIndexHistograms(reader *StatsReader, statsCache *cache.StatsCache
 	statsCache.UpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
+}
+
+// StatsMetaByTableIDFromStorage gets the stats meta of a table from storage.
+func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	var rows []chunk.Row
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+	if snapshot == 0 {
+		rows, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+			"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
+	} else {
+		rows, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession, sqlexec.ExecOptionWithSnapshot(snapshot)},
+			"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
+	}
+	if err != nil || len(rows) == 0 {
+		return
+	}
+	version = rows[0].GetUint64(0)
+	modifyCount = rows[0].GetInt64(1)
+	count = rows[0].GetInt64(2)
+	return
 }

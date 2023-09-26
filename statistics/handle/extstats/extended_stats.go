@@ -40,7 +40,7 @@ var (
 )
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-func InsertExtendedStats(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor,
+func InsertExtendedStats(sctx sessionctx.Context,
 	recordHistoricalStatsMeta func(tableID int64, version uint64, source string),
 	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
 	currentCache *cache.StatsCache,
@@ -51,6 +51,7 @@ func InsertExtendedStats(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExec
 			recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
@@ -115,7 +116,6 @@ func InsertExtendedStats(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExec
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func MarkExtendedStatsDeleted(sctx sessionctx.Context,
-	exec sqlexec.RestrictedSQLExecutor,
 	recordHistoricalStatsMeta func(tableID int64, version uint64, source string),
 	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
 	currentCache *cache.StatsCache,
@@ -126,6 +126,7 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 			recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 		}
 	}()
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {
@@ -169,9 +170,10 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 }
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
-func BuildExtendedStats(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor,
+func BuildExtendedStats(sctx sessionctx.Context,
 	tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
 	if err != nil {
@@ -280,7 +282,7 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *statistics.ExtendedStat
 }
 
 // SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-func SaveExtendedStatsToStorage(sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor,
+func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	recordHistoricalStatsMeta func(tableID int64, version uint64, source string),
 	tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
 	statsVer := uint64(0)
@@ -293,7 +295,7 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context, exec sqlexec.Restricted
 		return nil
 	}
 
-	sqlExec := exec.(sqlexec.SQLExecutor)
+	sqlExec := sctx.(sqlexec.SQLExecutor)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 
 	_, err = sqlExec.ExecuteInternal(ctx, "begin pessimistic")

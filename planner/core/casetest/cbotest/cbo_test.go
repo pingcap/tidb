@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,7 @@ func loadTableStats(fileName string, dom *domain.Domain) error {
 	if err != nil {
 		return err
 	}
-	statsTbl := &handle.JSONTable{}
+	statsTbl := &storage.JSONTable{}
 	err = json.Unmarshal(bytes, statsTbl)
 	if err != nil {
 		return err

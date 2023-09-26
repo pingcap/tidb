@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "history",
+    srcs = ["history_stats.go"],
+    importpath = "github.com/pingcap/tidb/statistics/handle/history",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//kv",
+        "//parser/terror",
+        "//sessionctx",
+        "//statistics/handle/cache",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

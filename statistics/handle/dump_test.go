@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/internal"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -93,7 +94,7 @@ func TestConversion(t *testing.T) {
 	require.NoError(t, err)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	require.NoError(t, err)
 
 	tbl := h.GetTableStats(tableInfo.Meta())
@@ -110,7 +111,7 @@ func TestConversion(t *testing.T) {
 	requireTableEqual(t, loadTblInStorage, tbl)
 }
 
-func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handle.JSONTable {
+func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *storage.JSONTable {
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.Nil(t, h.Update(is))
@@ -315,7 +316,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	tbl := h.GetTableStats(tableInfo.Meta())
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	require.NoError(t, err)
 	requireTableEqual(t, loadTbl, tbl)
 
@@ -359,11 +360,11 @@ func TestDumpVer2Stats(t *testing.T) {
 	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
 	require.NoError(t, err)
 
-	loadJSONTable := &handle.JSONTable{}
+	loadJSONTable := &storage.JSONTable{}
 	err = json.Unmarshal(jsonBytes, loadJSONTable)
 	require.NoError(t, err)
 
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
 	require.NoError(t, err)
 
 	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
@@ -411,11 +412,11 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
 	require.NoError(t, err)
 
-	loadJSONTable := &handle.JSONTable{}
+	loadJSONTable := &storage.JSONTable{}
 	err = json.Unmarshal(jsonBytes, loadJSONTable)
 	require.NoError(t, err)
 
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
 	require.NoError(t, err)
 
 	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
@@ -460,9 +461,9 @@ func TestJSONTableToBlocks(t *testing.T) {
 	blockSize := 30
 	js, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
-	dumpJSONBlocks, err := handle.JSONTableToBlocks(js, blockSize)
+	dumpJSONBlocks, err := storage.JSONTableToBlocks(js, blockSize)
 	require.NoError(t, err)
-	jsConverted, err := handle.BlocksToJSONTable(dumpJSONBlocks)
+	jsConverted, err := storage.BlocksToJSONTable(dumpJSONBlocks)
 	require.NoError(t, err)
 	jsonStr, err := json.Marshal(jsConverted)
 	require.NoError(t, err)
@@ -521,7 +522,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
  "modify_count": 256,
  "partitions": null
 }`
-	jsonTbl := &handle.JSONTable{}
+	jsonTbl := &storage.JSONTable{}
 	require.NoError(t, json.Unmarshal([]byte(statsJSONFromOldVersion), jsonTbl))
 	require.NoError(t, h.LoadStatsFromJSON(is, jsonTbl))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

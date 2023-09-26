@@ -32,6 +32,7 @@ go_library(
         "//meta",
         "//parser/model",
         "//statistics/handle",
+        "//statistics/handle/storage",
         "//util",
         "//util/codec",
         "//util/ranger",

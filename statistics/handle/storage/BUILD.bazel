@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "storage",
     srcs = [
+        "json.go",
         "read.go",
         "save.go",
     ],
@@ -21,11 +22,14 @@ go_library(
         "//statistics/handle/cache",
         "//types",
         "//util/chunk",
+        "//util/compress",
         "//util/logutil",
         "//util/mathutil",
         "//util/sqlexec",
+        "@com_github_klauspost_compress//gzip",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
         "@org_uber_go_zap//:zap",
     ],
 )
