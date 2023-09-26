@@ -1,7 +1,7 @@
 [
   {
     "Name": "TestRuntimeFilterGenerator",
-    "Cases":[
+    "Cases": [
       "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t2.k2 = 1",
       "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t1.k1=t2.k2",
       "select /*+ shuffle_join(t1, t2) */ * from t1, t2 where t1.k1=t2.k1; -- Global doesn't support",

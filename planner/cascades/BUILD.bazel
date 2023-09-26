@@ -43,7 +43,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cascades"],
     flaky = True,
-    shard_count = 40,
+    shard_count = 26,
     deps = [
         "//domain",
         "//expression",
@@ -53,7 +53,6 @@ go_test(
         "//planner/core",
         "//planner/memo",
         "//planner/property",
-        "//sessionctx/variable",
         "//testkit",
         "//testkit/testdata",
         "//testkit/testsetup",

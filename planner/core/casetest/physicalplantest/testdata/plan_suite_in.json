@@ -374,23 +374,46 @@
     ]
   },
   {
-    "name":"TestAggregationHints",
+    "name": "TestAggregationHints",
     "cases": [
       // without Aggregation hints
-      {"SQL": "select count(*) from t t1, t t2 where t1.a = t2.b"},
-      {"SQL": "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"},
+      {
+        "SQL": "select count(*) from t t1, t t2 where t1.a = t2.b"
+      },
+      {
+        "SQL": "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"
+      },
       // with Aggregation hints
-      {"SQL": "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"},
-      {"SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"},
+      {
+        "SQL": "select /*+ HASH_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a"
+      },
       // test conflict warning
-      {"SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"},
-      {"SQL": "select /*+ STREAM_AGG() */ distinct a from t"},
+      {
+        "SQL": "select /*+ HASH_AGG() STREAM_AGG() */ count(*) from t t1, t t2 where t1.a = t2.b"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ distinct a from t"
+      },
       // additional test
-      {"SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)"},
-      {"SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)"},
-      {"SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)"},
-      {"SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b", "AggPushDown": true},
-      {"SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e"}
+      {
+        "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)"
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)"
+      },
+      {
+        "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)"
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ sum(t1.a) from t t1 join t t2 on t1.b = t2.b group by t1.b",
+        "AggPushDown": true
+      },
+      {
+        "SQL": "select /*+ STREAM_AGG() */ e, sum(b) from t group by e"
+      }
     ]
   },
   {
@@ -542,46 +565,6 @@
       "with cte as (select 1) select * from cte union select * from cte; -- force inline cte while multi-consumer",
       "set tidb_opt_force_inline_cte=0; -- disable force inline CTE",
       "with cte as (select 1) select /*+ MERGE() */ * from cte union select * from cte; -- firstly inline cte, secondly cannot be inlined"
-    ]
-  },
-  {
-    "name": "TestPushdownDistinctEnable",
-    "cases": [
-      // InjectProjBelowAgg
-      "select /*+ HASH_AGG() */ avg(distinct a) from t;",
-      // firstrow(a) cannot be removed.
-      "select /*+ HASH_AGG() */ a, count(distinct a) from t;",
-      "select /*+ HASH_AGG() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
-      // can push down
-      "select /*+ STREAM_AGG() */ count(distinct c) from t group by c;",
-      // can not push down because c is not in group by
-      "select /*+ STREAM_AGG() */ count(distinct c) from t;",
-      // can push down
-      "select /*+ HASH_AGG() */ count(distinct c) from t;",
-      "select count(distinct c) from t group by c;",
-      // should not use streamAgg because c is not in group by
-      "select count(distinct c) from t;",
-
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;",
-
-      "select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;"
-    ]
-  },
-  {
-    "name": "TestPushdownDistinctDisable",
-    "cases": [
-      // do not pushdown even AGG_TO_COP is specified.
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(distinct a) from t;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ a, count(distinct a) from t;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ avg(b), c, avg(b), count(distinct A, B),  count(distinct A), count(distinct c), sum(b) from t group by c;",
-      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t group by c;",
-      "select /*+ STREAM_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct c) from t;",
-      "select /*+ AGG_TO_COP() */ count(distinct c) from t group by c;",
-
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;",
-      "select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;"
     ]
   },
   {
@@ -1022,9 +1005,9 @@
   {
     "name": "TestHashAggPushdownToTiFlashCompute",
     "cases": [
-        "select  /*+ agg_to_cop() hash_agg() */  avg( distinct  tbl_15.col_96 ) as r0 , min(   tbl_15.col_92 ) as r1 , sum( distinct  tbl_15.col_91 ) as r2 , max(   tbl_15.col_92 ) as r3 from tbl_15 where tbl_15.col_94 != '2033-01-09' and tbl_15.col_93 > 7623.679908049186   order by r0,r1,r2,r3 limit 79 ;",
-        "select  /*+ agg_to_cop() hash_agg() */  count(1) from tbl_15 ;",
-        "select  /*+ agg_to_cop() stream_agg() */  avg(   tbl_16.col_100 ) as r0 from tbl_16 where tbl_16.col_100 in ( 10672141 ) or tbl_16.col_104 in ( 'yfEG1t!*b' ,'C1*bqx_qyO' ,'vQ^yUpKHr&j#~' ) group by tbl_16.col_100  order by r0 limit 20 ;"
+      "select  /*+ agg_to_cop() hash_agg() */  avg( distinct  tbl_15.col_96 ) as r0 , min(   tbl_15.col_92 ) as r1 , sum( distinct  tbl_15.col_91 ) as r2 , max(   tbl_15.col_92 ) as r3 from tbl_15 where tbl_15.col_94 != '2033-01-09' and tbl_15.col_93 > 7623.679908049186   order by r0,r1,r2,r3 limit 79 ;",
+      "select  /*+ agg_to_cop() hash_agg() */  count(1) from tbl_15 ;",
+      "select  /*+ agg_to_cop() stream_agg() */  avg(   tbl_16.col_100 ) as r0 from tbl_16 where tbl_16.col_100 in ( 10672141 ) or tbl_16.col_104 in ( 'yfEG1t!*b' ,'C1*bqx_qyO' ,'vQ^yUpKHr&j#~' ) group by tbl_16.col_100  order by r0 limit 20 ;"
     ]
   },
   {

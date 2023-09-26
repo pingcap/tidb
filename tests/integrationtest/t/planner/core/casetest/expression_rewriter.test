@@ -1,0 +1,27 @@
+# TestMultiColInExpression
+set tidb_cost_model_version=2;
+drop table if exists t1, t2;
+create table t1(a int, b int);
+insert into t1 values(1,1),(2,null),(null,3),(4,4);
+analyze table t1;
+create table t2(a int, b int);
+insert into t2 values(1,1),(2,null),(null,3),(5,4);
+analyze table t2;
+set @@tidb_enable_chunk_rpc = on;
+explain format = 'brief' select * from t1 where (t1.a, t1.b) in (select a, b from t2);
+select * from t1 where (t1.a, t1.b) in (select a, b from t2);
+explain format = 'brief' select * from t1 where (t1.a, t1.b) not in (select a, b from t2);
+select * from t1 where (t1.a, t1.b) not in (select a, b from t2);
+explain format = 'brief' select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2);
+select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2);
+explain format = 'brief' select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
+select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
+
+# TestBitFuncsReturnType
+drop table if exists t;
+set tidb_cost_model_version=2;
+create table t (a timestamp, b varbinary(32));
+insert into t values ('2006-08-27 21:57:57', 0x373037343631313230);
+analyze table t;
+explain format = 'brief' select bit_or(a * b) from t;
+
