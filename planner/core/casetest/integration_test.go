@@ -403,3 +403,31 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
 }
+
+func TestFixControl45132(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, key(a))`)
+	values := make([]string, 0, 101)
+	for i := 0; i < 100; i++ {
+		values = append(values, "(1, 1)")
+	}
+	values = append(values, "(2, 2)") // count(1) : count(2) == 100 : 1
+	tk.MustExec(`insert into t values ` + strings.Join(values, ","))
+	for i := 0; i < 7; i++ {
+		tk.MustExec(`insert into t select * from t`)
+	}
+	tk.MustExec(`analyze table t`)
+	// the cost model prefers to use TableScan instead of IndexLookup to avoid double requests.
+	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "45132:99"`)
+	tk.MustIndexLookup(`select * from t where a=2`) // index lookup
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "45132:500"`)
+	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "45132:0"`)
+	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
+}

@@ -456,32 +456,11 @@ explain format='brief' select * from v4 where a > 'test' -- diff column union ma
 select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 
 # TestIssue24095
-use test;
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (id int, value decimal(10,5));
 desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 explain format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
-
-# TestFixControl45132
-drop table if exists t;
-create table t (a int, b int, key(a));
-insert into t values (1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(2, 2);
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-analyze table t;
-explain select * from t where a=2;
-set @@tidb_opt_fix_control = "45132:99";
-explain select * from t where a=2;
-set @@tidb_opt_fix_control = "45132:500";
-explain select * from t where a=2;
-set @@tidb_opt_fix_control = "45132:0";
-explain select * from t where a=2;
 
 # TestFixControl44262
 set tidb_partition_prune_mode='dynamic';

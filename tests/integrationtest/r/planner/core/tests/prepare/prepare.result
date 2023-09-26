@@ -473,7 +473,6 @@ set @p0 = '0';
 execute stmt using @p0;
 count(1)
 0
-use test;
 drop table if exists t1;
 create table t1(c1 tinyint unsigned);
 insert into t1 values(111);
@@ -883,7 +882,7 @@ execute p2;
 Field	Type	Null	Key	Default	Extra
 a	int(11)	YES		NULL	
 create table t1 (a int, b int);
-prepare p3 from "show tables where tables_in_test = 't1'";
+prepare p3 from "show tables where tables_in_planner__core__tests__prepare__prepare = 't1'";
 execute p3;
-Tables_in_test
+Tables_in_planner__core__tests__prepare__prepare
 t1

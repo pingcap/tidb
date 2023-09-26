@@ -1385,98 +1385,63 @@ HashAgg	9066.67	root		group by:Column#3, funcs:firstrow(Column#3)->Column#3
         └─TableFullScan	10000.00	cop[tikv]	table:t8	keep order:false, stats:pseudo
 select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range;
 a
-use test;
 set tidb_cost_model_version=2;
 drop table if exists t;
 create table t (id int, value decimal(10,5));
 desc format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#10
-└─HashJoin	1.00	root		inner join, equal:[eq(test.t.id, test.t.id) eq(test.t.value, test.t.value)]
-  ├─Selection(Build)	0.80	root		not(isnull(test.t.id)), not(isnull(test.t.value))
-  │ └─TopN	1.00	root		test.t.value, offset:0, count:1
-  │   └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.id, test.t.id)]
+└─HashJoin	1.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
+  ├─Selection(Build)	0.80	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
+  │ └─TopN	1.00	root		planner__core__casetest__integration.t.value, offset:0, count:1
+  │   └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id)]
   │     ├─TableReader(Build)	9990.00	root		data:Selection
-  │     │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.id))
+  │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   │     └─TableReader(Probe)	9990.00	root		data:Selection
-  │       └─Selection	9990.00	cop[tikv]		not(isnull(test.t.id))
+  │       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─TableReader(Probe)	9980.01	root		data:Selection
-    └─Selection	9980.01	cop[tikv]		not(isnull(test.t.id)), not(isnull(test.t.value))
+    └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select count(*) from t join (select t.id, t.value v1 from t join t t1 on t.id = t1.id order by t.value limit 1) v on v.id = t.id and v.v1 = t.value;
 id	estRows	task	access object	operator info
 StreamAgg	1.00	root		funcs:count(1)->Column#10
-└─HashJoin	1.00	root		inner join, equal:[eq(test.t.id, test.t.id) eq(test.t.value, test.t.value)]
-  ├─Selection(Build)	0.80	root		not(isnull(test.t.id)), not(isnull(test.t.value))
-  │ └─TopN	1.00	root		test.t.value, offset:0, count:1
-  │   └─HashJoin	12487.50	root		inner join, equal:[eq(test.t.id, test.t.id)]
+└─HashJoin	1.00	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id) eq(planner__core__casetest__integration.t.value, planner__core__casetest__integration.t.value)]
+  ├─Selection(Build)	0.80	root		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
+  │ └─TopN	1.00	root		planner__core__casetest__integration.t.value, offset:0, count:1
+  │   └─HashJoin	12487.50	root		inner join, equal:[eq(planner__core__casetest__integration.t.id, planner__core__casetest__integration.t.id)]
   │     ├─TableReader(Build)	9990.00	root		data:Selection
-  │     │ └─Selection	9990.00	cop[tikv]		not(isnull(test.t.id))
+  │     │ └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
   │     │   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
   │     └─TableReader(Probe)	9990.00	root		data:Selection
-  │       └─Selection	9990.00	cop[tikv]		not(isnull(test.t.id))
+  │       └─Selection	9990.00	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id))
   │         └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─TableReader(Probe)	9980.01	root		data:Selection
-    └─Selection	9980.01	cop[tikv]		not(isnull(test.t.id)), not(isnull(test.t.value))
+    └─Selection	9980.01	cop[tikv]		not(isnull(planner__core__casetest__integration.t.id)), not(isnull(planner__core__casetest__integration.t.value))
       └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-drop table if exists t;
-create table t (a int, b int, key(a));
-insert into t values (1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(1, 1),(2, 2);
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-analyze table t;
-explain select * from t where a=2;
-id	estRows	task	access object	operator info
-TableReader_7	128.00	root		data:Selection_6
-└─Selection_6	128.00	cop[tikv]		eq(test.t.a, 2)
-  └─TableFullScan_5	12928.00	cop[tikv]	table:t	keep order:false
-set @@tidb_opt_fix_control = "45132:99";
-explain select * from t where a=2;
-id	estRows	task	access object	operator info
-IndexLookUp_7	128.00	root		
-├─IndexRangeScan_5(Build)	128.00	cop[tikv]	table:t, index:a(a)	range:[2,2], keep order:false
-└─TableRowIDScan_6(Probe)	128.00	cop[tikv]	table:t	keep order:false
-set @@tidb_opt_fix_control = "45132:500";
-explain select * from t where a=2;
-id	estRows	task	access object	operator info
-TableReader_7	128.00	root		data:Selection_6
-└─Selection_6	128.00	cop[tikv]		eq(test.t.a, 2)
-  └─TableFullScan_5	12928.00	cop[tikv]	table:t	keep order:false
-set @@tidb_opt_fix_control = "45132:0";
-explain select * from t where a=2;
-id	estRows	task	access object	operator info
-TableReader_7	128.00	root		data:Selection_6
-└─Selection_6	128.00	cop[tikv]		eq(test.t.a, 2)
-  └─TableFullScan_5	12928.00	cop[tikv]	table:t	keep order:false
 set tidb_partition_prune_mode='dynamic';
 drop table if exists t1, t2_part;
 create table t1 (a int, b int);
 create table t2_part (a int, b int, key(a)) partition by hash(a) partitions 4;
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-HashJoin_15	2658.67	root		anti semi join, equal:[eq(test.t1.a, test.t2_part.a)]
+HashJoin_15	2658.67	root		anti semi join, equal:[eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)]
 ├─PartitionUnion_19(Build)	13293.33	root		
 │ ├─TableReader_22	3323.33	root		data:Selection_21
-│ │ └─Selection_21	3323.33	cop[tikv]		lt(test.t2_part.b, 20)
+│ │ └─Selection_21	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
 │ │   └─TableFullScan_20	10000.00	cop[tikv]	table:t2_part, partition:p0	keep order:false, stats:pseudo
 │ ├─TableReader_25	3323.33	root		data:Selection_24
-│ │ └─Selection_24	3323.33	cop[tikv]		lt(test.t2_part.b, 20)
+│ │ └─Selection_24	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
 │ │   └─TableFullScan_23	10000.00	cop[tikv]	table:t2_part, partition:p1	keep order:false, stats:pseudo
 │ ├─TableReader_28	3323.33	root		data:Selection_27
-│ │ └─Selection_27	3323.33	cop[tikv]		lt(test.t2_part.b, 20)
+│ │ └─Selection_27	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
 │ │   └─TableFullScan_26	10000.00	cop[tikv]	table:t2_part, partition:p2	keep order:false, stats:pseudo
 │ └─TableReader_31	3323.33	root		data:Selection_30
-│   └─Selection_30	3323.33	cop[tikv]		lt(test.t2_part.b, 20)
+│   └─Selection_30	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
 │     └─TableFullScan_29	10000.00	cop[tikv]	table:t2_part, partition:p3	keep order:false, stats:pseudo
 └─TableReader_18(Probe)	3323.33	root		data:Selection_17
-  └─Selection_17	3323.33	cop[tikv]		lt(test.t1.b, 10)
+  └─Selection_17	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
     └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1105	disable dynamic pruning due to t2_part has no global stats
@@ -1484,11 +1449,11 @@ Warning	1815	Optimizer Hint /*+ INL_JOIN(t2_part) */ or /*+ TIDB_INLJ(t2_part) *
 set @@tidb_opt_fix_control = "44262:ON";
 explain select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20);
 id	estRows	task	access object	operator info
-IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, outer key:test.t1.a, inner key:test.t2_part.a, equal cond:eq(test.t1.a, test.t2_part.a)
+IndexJoin_13	2658.67	root		anti semi join, inner:IndexLookUp_12, outer key:planner__core__casetest__integration.t1.a, inner key:planner__core__casetest__integration.t2_part.a, equal cond:eq(planner__core__casetest__integration.t1.a, planner__core__casetest__integration.t2_part.a)
 ├─TableReader_18(Build)	3323.33	root		data:Selection_17
-│ └─Selection_17	3323.33	cop[tikv]		lt(test.t1.b, 10)
+│ └─Selection_17	3323.33	cop[tikv]		lt(planner__core__casetest__integration.t1.b, 10)
 │   └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexLookUp_12(Probe)	4154.17	root	partition:all	
-  ├─IndexRangeScan_9(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(test.t2_part.a, test.t1.a)], keep order:false, stats:pseudo
-  └─Selection_11(Probe)	4154.17	cop[tikv]		lt(test.t2_part.b, 20)
+  ├─IndexRangeScan_9(Build)	12500.00	cop[tikv]	table:t2_part, index:a(a)	range: decided by [eq(planner__core__casetest__integration.t2_part.a, planner__core__casetest__integration.t1.a)], keep order:false, stats:pseudo
+  └─Selection_11(Probe)	4154.17	cop[tikv]		lt(planner__core__casetest__integration.t2_part.b, 20)
     └─TableRowIDScan_10	12500.00	cop[tikv]	table:t2_part	keep order:false, stats:pseudo

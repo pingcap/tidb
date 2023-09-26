@@ -228,7 +228,6 @@ select 0 like '0';
 select 0.00 like '0.00';
 0.00 like '0.00'
 1
-use test;
 drop table if exists t1;
 create table t1(a int, b bigint unsigned);
 insert into t1 (a, b) values (1,4572794622775114594), (2,18196094287899841997),(3,11120436154190595086);
@@ -237,14 +236,12 @@ select (case t1.a when 0 then 0 else t1.b end), cast(t1.b as signed)  from t1;
 4572794622775114594	4572794622775114594
 18196094287899841997	-250649785809709619
 11120436154190595086	-7326307919518956530
-use test;
 drop table if exists t;
 create table t(x bigint unsigned);
 insert into t values( 9999999703771440633);
 select ifnull(max(x), 0) from t;
 ifnull(max(x), 0)
 9999999703771440633
-use test;
 drop table if exists t1, t2, t3, t4;
 CREATE TABLE t1(c1 int, c2 int);
 CREATE TABLE t2(c1 int, c2 int);
@@ -280,14 +277,12 @@ SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);
 c1	c2
 SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);
 c1	c2
-use test;
 drop table if exists t;
 create table t(a time);
 insert into t values("23:22:22");
 select * from t where a between "23:22:22" and "23:22:22";
 a
 23:22:22
-use test;
 drop table if exists t1,t2;
 create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);
 create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);
@@ -316,7 +311,6 @@ INSERT INTO t1 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);
 Error 1242 (21000): Subquery returns more than 1 row
 INSERT INTO t2 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);
 DROP TABLE if exists t1, t2, source;
-use test;
 DROP TABLE if exists t1;
 CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);
 INSERT INTO t1 VALUES(1, 1);
@@ -325,10 +319,9 @@ CAST(IFNULL(cnull, '1') AS DATE)	CAST(IFNULL(cnotnull, '1') AS DATE)
 NULL	NULL
 explain format="brief" select IFNULL(cnotnull, '1') from t1;
 id	estRows	task	access object	operator info
-Projection	10000.00	root		cast(test.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)->Column#4
+Projection	10000.00	root		cast(planner__core__expression_rewriter.t1.cnotnull, varchar(4) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci)->Column#4
 └─TableReader	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
-use test;
 DROP TABLE if exists t0;
 DROP VIEW if exists t0;
 CREATE TABLE t0(c0 TEXT(328) );
@@ -339,7 +332,6 @@ c0
 SELECT COUNT(v0.c0) AS c0 FROM v0 WHERE EXISTS(SELECT v0.c0 AS c0 FROM v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7))));
 c0
 0
-use test;
 DROP TABLE if exists t1;
 DROP TABLE if exists t2;
 DROP TABLE if exists t;

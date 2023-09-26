@@ -1,5 +1,4 @@
 # TestMultiColInExpression
-use test;
 set tidb_cost_model_version=2;
 drop table if exists t1, t2;
 create table t1(a int, b int);

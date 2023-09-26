@@ -134,21 +134,18 @@ select 0 like '0';
 select 0.00 like '0.00';
 
 # TestIssue9869
-use test;
 drop table if exists t1;
 create table t1(a int, b bigint unsigned);
 insert into t1 (a, b) values (1,4572794622775114594), (2,18196094287899841997),(3,11120436154190595086);
 select (case t1.a when 0 then 0 else t1.b end), cast(t1.b as signed)  from t1;
 
 # TestIssue17652
-use test;
 drop table if exists t;
 create table t(x bigint unsigned);
 insert into t values( 9999999703771440633);
 select ifnull(max(x), 0) from t;
 
 # TestCompareMultiFieldsInSubquery
-use test;
 drop table if exists t1, t2, t3, t4;
 CREATE TABLE t1(c1 int, c2 int);
 CREATE TABLE t2(c1 int, c2 int);
@@ -170,14 +167,12 @@ SELECT * FROM t3 WHERE (SELECT c1 FROM t3 LIMIT 1) != ALL(SELECT c1 FROM t4);
 SELECT * FROM t3 WHERE (SELECT c1, c2 FROM t3 LIMIT 1) != ALL(SELECT c1, c2 FROM t4);
 
 # TestIssue22818
-use test;
 drop table if exists t;
 create table t(a time);
 insert into t values("23:22:22");
 select * from t where a between "23:22:22" and "23:22:22";
 
 # TestIssue24705
-use test;
 drop table if exists t1,t2;
 create table t1 (c_int int, c_str varchar(40) character set utf8 collate utf8_general_ci);
 create table t2 (c_int int, c_str varchar(40) character set utf8 collate utf8_unicode_ci);
@@ -208,7 +203,6 @@ INSERT INTO t2 (a) VALUES (1) ON DUPLICATE KEY UPDATE a= (SELECT b FROM source);
 DROP TABLE if exists t1, t2, source;
 
 # TestConvertIfNullToCast
-use test;
 DROP TABLE if exists t1;
 CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);
 INSERT INTO t1 VALUES(1, 1);
@@ -216,7 +210,6 @@ select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) fro
 explain format="brief" select IFNULL(cnotnull, '1') from t1;
 
 # TestColResolutionPriBetweenOuterAndNatureJoin
-use test;
 DROP TABLE if exists t0;
 DROP VIEW if exists t0;
 CREATE TABLE t0(c0 TEXT(328) );
@@ -226,7 +219,6 @@ SELECT v0.c0 AS c0 FROM  v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7)
 SELECT COUNT(v0.c0) AS c0 FROM v0 WHERE EXISTS(SELECT v0.c0 AS c0 FROM v0 NATURAL RIGHT JOIN t0  WHERE (1 !=((v0.c0)REGEXP(-7))));
 
 # TestColResolutionSubqueryWithUnionAll
-use test;
 DROP TABLE if exists t1;
 DROP TABLE if exists t2;
 DROP TABLE if exists t;
