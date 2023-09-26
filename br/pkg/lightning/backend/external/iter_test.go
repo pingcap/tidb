@@ -290,7 +290,7 @@ func BenchmarkValueT(b *testing.B) {
 		opener := func() (*kvReaderProxy, error) {
 			return &kvReaderProxy{r: rd}, nil
 		}
-		it, err := newMergeIter[kvPair, kvReaderProxy](ctx, []readerOpenerFn[kvPair, kvReaderProxy]{opener})
+		it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, []readerOpenerFn[*kvPair, kvReaderProxy]{opener})
 		if err != nil {
 			panic(err)
 		}
@@ -358,12 +358,14 @@ func TestMergeIterSwitchMode(t *testing.T) {
 		require.NoError(t, err)
 		return key
 	})
+	t.Log("success one case")
 	testMergeIterSwitchMode(t, func(key []byte, i int) []byte {
 		_, err := rand.Read(key)
 		require.NoError(t, err)
 		binary.BigEndian.PutUint64(key, uint64(i))
 		return key
 	})
+	t.Log("success two cases")
 	testMergeIterSwitchMode(t, func(key []byte, i int) []byte {
 		_, err := rand.Read(key)
 		require.NoError(t, err)
@@ -478,9 +480,13 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 1024)
 	require.NoError(t, err)
+	i := 0
 	for cur > 0 {
 		cur--
 		require.True(t, iter.Next())
+		require.Equal(t, fmt.Sprintf("key%06d", i), string(iter.Key()))
+		require.Equal(t, fmt.Sprintf("value%06d", i), string(iter.Value()))
+		i++
 	}
 
 	afterMem := getMemoryInUse()

@@ -149,7 +149,12 @@ func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 	if _, err := r.storageReader.Seek(delta, io.SeekCurrent); err != nil {
 		return err
 	}
-	return r.reload()
+	err := r.reload()
+	if err != nil && err == io.EOF {
+		// ignore EOF error, let readNBytes handle it
+		return nil
+	}
+	return err
 }
 
 func (r *byteReader) switchToConcurrentReader() error {
@@ -295,8 +300,6 @@ func (r *byteReader) closeConcurrentReader() (offsetInOldBuffer int) {
 	r.curBuf = r.smallBuf
 	offsetInOldBuffer = r.curBufOffset
 	r.curBufOffset = 0
-	// TODO(lance6716): ???
-	r.cloneSlices()
 	return
 }
 
