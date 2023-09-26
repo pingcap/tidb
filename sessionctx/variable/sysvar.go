@@ -2093,6 +2093,10 @@ var defaultSysVars = []*SysVar{
 		s.AnalyzeVersion = tidbOptPositiveInt32(val, DefTiDBAnalyzeVersion)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableHashJoin, Value: BoolToOnOff(DefTiDBOptEnableHashJoin), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.DisableHashJoin = !TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableIndexMergeJoin, Value: BoolToOnOff(DefTiDBEnableIndexMergeJoin), Hidden: true, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexMergeJoin = TiDBOptOn(val)
 		return nil
