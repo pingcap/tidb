@@ -465,7 +465,6 @@ func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statisti
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (h *Handle) LoadNeededHistograms() (err error) {
-	items := statistics.HistogramNeededItems.AllItems()
 	reader, err := h.getGlobalStatsReader(0)
 	if err != nil {
 		return err
@@ -478,134 +477,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 		}
 	}()
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-
-	for _, item := range items {
-		if !item.IsIndex {
-			err = h.loadNeededColumnHistograms(reader, item, loadFMSketch)
-		} else {
-			err = h.loadNeededIndexHistograms(reader, item, loadFMSketch)
-		}
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func (h *Handle) loadNeededColumnHistograms(reader *storage.StatsReader, col model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(col.TableID)
-	if !ok {
-		return nil
-	}
-	c, ok := tbl.Columns[col.ID]
-	if !ok || !c.IsLoadNeeded() {
-		statistics.HistogramNeededItems.Delete(col)
-		return nil
-	}
-	hg, err := storage.HistogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cms, topN, err := storage.CMSketchAndTopNFromStorage(reader, col.TableID, 0, col.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = storage.FMSketchFromStorage(reader, col.TableID, 0, col.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", col.TableID), zap.Int64("hist_id", col.ID))
-		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", col.TableID, col.ID))
-	}
-	statsVer := rows[0].GetInt64(0)
-	colHist := &statistics.Column{
-		PhysicalID: col.TableID,
-		Histogram:  *hg,
-		Info:       c.Info,
-		CMSketch:   cms,
-		TopN:       topN,
-		FMSketch:   fms,
-		IsHandle:   c.IsHandle,
-		StatsVer:   statsVer,
-	}
-	if colHist.StatsAvailable() {
-		colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
-	}
-	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
-	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.Get(col.TableID)
-	if !ok {
-		return nil
-	}
-	tbl = tbl.Copy()
-	tbl.Columns[c.ID] = colHist
-	if h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil) {
-		statistics.HistogramNeededItems.Delete(col)
-	}
-	return nil
-}
-
-func (h *Handle) loadNeededIndexHistograms(reader *storage.StatsReader, idx model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(idx.TableID)
-	if !ok {
-		return nil
-	}
-	index, ok := tbl.Indices[idx.ID]
-	if !ok {
-		statistics.HistogramNeededItems.Delete(idx)
-		return nil
-	}
-	hg, err := storage.HistogramFromStorage(reader, idx.TableID, index.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, 1, index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cms, topN, err := storage.CMSketchAndTopNFromStorage(reader, idx.TableID, 1, idx.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = storage.FMSketchFromStorage(reader, idx.TableID, 1, idx.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where is_index = 1 and table_id = %? and hist_id = %?", idx.TableID, idx.ID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", idx.TableID), zap.Int64("hist_id", idx.ID))
-		return errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v", idx.TableID, idx.ID))
-	}
-	idxHist := &statistics.Index{Histogram: *hg, CMSketch: cms, TopN: topN, FMSketch: fms,
-		Info: index.Info, StatsVer: rows[0].GetInt64(0),
-		Flag: index.Flag, PhysicalID: idx.TableID,
-		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
-	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
-
-	oldCache = h.statsCache.Load()
-	tbl, ok = oldCache.Get(idx.TableID)
-	if !ok {
-		return nil
-	}
-	tbl = tbl.Copy()
-	tbl.Indices[idx.ID] = idxHist
-	if h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil) {
-		statistics.HistogramNeededItems.Delete(idx)
-	}
-	return nil
+	return storage.LoadNeededHistograms(reader, h.statsCache, loadFMSketch)
 }
 
 // LastUpdateVersion gets the last update version.
