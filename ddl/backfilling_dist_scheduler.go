@@ -106,6 +106,8 @@ type backfillDistScheduler struct {
 	taskTable  scheduler.TaskTable
 	backendCtx ingest.BackendCtx
 	jobID      int64
+
+	uniqueIndex bool
 }
 
 func newBackfillDistScheduler(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable, d *ddl) scheduler.Scheduler {
@@ -146,6 +148,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	s.uniqueIndex = idx.Unique
 	s.backendCtx = bc
 	s.jobID = job.ID
 	return nil
@@ -160,9 +163,10 @@ func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *pr
 	}
 }
 
-func (*backfillDistScheduler) IsIdempotent(*proto.Subtask) bool {
-	// TODO: implement this later.
-	return false
+func (s *backfillDistScheduler) IsIdempotent(*proto.Subtask) bool {
+	// unique index depends on MVCC to do deduplicate, so it's not idempotent.
+	// we might save engine TS later to make it idempotent.
+	return !s.uniqueIndex
 }
 
 func (s *backfillDistScheduler) Close() {
