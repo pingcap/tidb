@@ -47,9 +47,6 @@ func newConcurrentFileReader(
 	concurrency int,
 	readBufferSize int,
 ) (*concurrentFileReader, error) {
-	if st == nil {
-		return nil, nil
-	}
 	return &concurrentFileReader{
 		ctx:            ctx,
 		concurrency:    concurrency,
@@ -69,7 +66,8 @@ func (r *concurrentFileReader) read(buf []byte) (int64, error) {
 
 	bufSize := len(buf)
 	fileSizeRemain := r.fileSize - r.offset
-	bytesRead := min(bufSize, int(fileSizeRemain))
+	readBatchTotal := r.readBufferSize * r.concurrency
+	bytesRead := min(bufSize, int(fileSizeRemain), readBatchTotal)
 	eg := errgroup.Group{}
 	for i := 0; i < r.concurrency; i++ {
 		i := i

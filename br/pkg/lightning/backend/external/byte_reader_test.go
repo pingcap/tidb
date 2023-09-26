@@ -344,10 +344,10 @@ func TestSwitchMode(t *testing.T) {
 	for totalCnt < fileSize {
 		if rand.Intn(5) == 0 {
 			if modeUseCon {
-				br.needLargePrefetch(false)
+				br.switchConcurrentMode(false)
 				modeUseCon = false
 			} else {
-				br.needLargePrefetch(true)
+				br.switchConcurrentMode(true)
 				modeUseCon = true
 			}
 		}

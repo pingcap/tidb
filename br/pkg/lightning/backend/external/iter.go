@@ -41,7 +41,7 @@ type sortedReader[T heapElem] interface {
 	// When `need` is changed from true to false, the reader should
 	// immediately release the memory for large prefetching to avoid OOM.
 	// TODO(lance6716): learn more about external merge sort prefetch strategy.
-	needLargePrefetch(need bool)
+	switchConcurrentMode(useConcurrent bool) error
 	close() error
 }
 
@@ -218,7 +218,7 @@ func (i *mergeIter[T, R]) next() bool {
 		// check hot point every checkPeriod times
 		if i.checkHotspotCnt == checkHotspotPeriod {
 			for idx, cnt := range i.hotspotMap {
-				(*i.readers[idx]).needLargePrefetch(cnt > (checkHotspotPeriod / 2))
+				(*i.readers[idx]).switchConcurrentMode(cnt > (checkHotspotPeriod / 2))
 			}
 			i.checkHotspotCnt = 0
 			i.hotspotMap = make(map[int]int)
@@ -282,8 +282,8 @@ func (p kvReaderProxy) next() (kvPair, error) {
 	return kvPair{key: k, value: v}, nil
 }
 
-func (p kvReaderProxy) needLargePrefetch(useConcurrency bool) {
-	p.r.byteReader.needLargePrefetch(useConcurrency)
+func (p kvReaderProxy) switchConcurrentMode(useConcurrent bool) error {
+	return p.r.byteReader.switchConcurrentMode(useConcurrent)
 }
 
 func (p kvReaderProxy) close() error {
@@ -358,8 +358,12 @@ func (i *MergeKVIter) Value() []byte {
 
 // Close closes the iterator.
 func (i *MergeKVIter) Close() error {
+	if err := i.iter.close(); err != nil {
+		return err
+	}
+	// memPool should be destroyed after reader's buffer pool.
 	i.memPool.Destroy()
-	return i.iter.close()
+	return nil
 }
 
 func (p rangeProperty) sortKey() []byte {
@@ -379,7 +383,7 @@ func (p statReaderProxy) next() (*rangeProperty, error) {
 	return p.r.nextProp()
 }
 
-func (p statReaderProxy) needLargePrefetch(bool) {}
+func (p statReaderProxy) switchConcurrentMode(bool) error { return nil }
 
 func (p statReaderProxy) close() error {
 	return p.r.Close()

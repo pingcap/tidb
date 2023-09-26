@@ -319,8 +319,8 @@ func (p kvReaderPointerProxy) next() (*kvPair, error) {
 	return &kvPair{key: k, value: v}, nil
 }
 
-func (p kvReaderPointerProxy) needLargePrefetch(useConcurrency bool) {
-	p.r.byteReader.needLargePrefetch(useConcurrency)
+func (p kvReaderPointerProxy) switchConcurrentMode(useConcurrent bool) error {
+	return p.r.byteReader.switchConcurrentMode(useConcurrent)
 }
 
 func (p kvReaderPointerProxy) close() error {
@@ -349,6 +349,7 @@ func BenchmarkPointerT(b *testing.B) {
 
 func TestMergeIterSwitchMode(t *testing.T) {
 	seed := time.Now().Unix()
+	seed = 1695720801
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 

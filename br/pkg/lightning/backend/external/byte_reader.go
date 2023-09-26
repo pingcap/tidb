@@ -80,7 +80,7 @@ func openStoreReaderAndSeek(
 }
 
 // newByteReader wraps readNBytes functionality to storageReader. If store and
-// filename are also given, this reader can use needLargePrefetch to switch to
+// filename are also given, this reader can use switchConcurrentMode to switch to
 // concurrent reading mode.
 func newByteReader(
 	ctx context.Context,
@@ -117,9 +117,9 @@ func (r *byteReader) enableConcurrentRead(
 	r.concurrentReader.largeBufferPool = bufferPool
 }
 
-// needLargePrefetch is used to help implement sortedReader.needLargePrefetch.
+// switchConcurrentMode is used to help implement sortedReader.switchConcurrentMode.
 // See the comment of the interface.
-func (r *byteReader) needLargePrefetch(useConcurrent bool) error {
+func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 	readerFields := &r.concurrentReader
 	if readerFields.store == nil {
 		r.logger.Warn("concurrent reader is not enabled, skip switching")
@@ -132,18 +132,20 @@ func (r *byteReader) needLargePrefetch(useConcurrent bool) error {
 	if useConcurrent {
 		return nil
 	}
+
 	// no change
 	if !readerFields.now && !useConcurrent {
 		return nil
 	}
+
 	// rest cases is caller want to turn off concurrent reader. We should turn off
 	// immediately to release memory.
-	r.closeConcurrentReader()
+	offsetInOldBuf := r.closeConcurrentReader()
 	// here we can assume largeBuf is always fully loaded, because the only exception
 	// is it's the end of file. When it's the end of the file, caller will see EOF
-	// and no further needLargePrefetch should be called.
+	// and no further switchConcurrentMode should be called.
 	largeBufSize := readerFields.bufSizePerConc * readerFields.concurrency
-	delta := int64(r.curBufOffset + readerFields.reloadCnt*largeBufSize)
+	delta := int64(offsetInOldBuf + readerFields.reloadCnt*largeBufSize)
 	if _, err := r.storageReader.Seek(delta, io.SeekCurrent); err != nil {
 		return err
 	}
@@ -239,6 +241,9 @@ func (r *byteReader) cloneSlices() {
 
 func (r *byteReader) next(n int) []byte {
 	end := mathutil.Min(r.curBufOffset+n, len(r.curBuf))
+	if r.curBufOffset > end {
+		println(r.curBufOffset, end, n, len(r.curBuf))
+	}
 	ret := r.curBuf[r.curBufOffset:end]
 	r.curBufOffset += len(ret)
 	return ret
@@ -263,6 +268,7 @@ func (r *byteReader) reload() error {
 			return err
 		}
 		r.curBuf = r.curBuf[:n]
+		r.curBufOffset = 0
 		return nil
 	}
 	n, err := io.ReadFull(r.storageReader, r.curBuf[0:])
@@ -282,11 +288,16 @@ func (r *byteReader) reload() error {
 	return nil
 }
 
-func (r *byteReader) closeConcurrentReader() {
+func (r *byteReader) closeConcurrentReader() (offsetInOldBuffer int) {
 	r.concurrentReader.largeBufferPool.Destroy()
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false
 	r.curBuf = r.smallBuf
+	offsetInOldBuffer = r.curBufOffset
+	r.curBufOffset = 0
+	// TODO(lance6716): ???
+	r.cloneSlices()
+	return
 }
 
 func (r *byteReader) Close() error {
