@@ -95,7 +95,6 @@ type Opt struct {
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(sctx sessionctx.Context,
-	exec sqlexec.RestrictedSQLExecutor,
 	opt *Opt,
 	is infoschema.InfoSchema) (analyzed bool) {
 	defer func() {
@@ -103,6 +102,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	dbs := is.AllSchemaNames()
 	parameters := getAutoAnalyzeParameters(exec)
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])

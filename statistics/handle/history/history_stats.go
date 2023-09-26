@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,37 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package history
 
 import (
 	"context"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/cache"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
 )
 
-const (
-	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
-	StatsMetaHistorySourceAnalyze = "analyze"
-	// StatsMetaHistorySourceLoadStats indicates stats history meta source from load stats
-	StatsMetaHistorySourceLoadStats = "load stats"
-	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
-	StatsMetaHistorySourceFlushStats = "flush stats"
-	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
-	StatsMetaHistorySourceSchemaChange = "schema change"
-)
-
-func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64, source string) error {
+// RecordHistoricalStatsMeta records the historical stats meta.
+func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64, source string) error {
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
-	}
-	if err := UpdateSCtxVarsForStats(sctx); err != nil {
-		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
 	}
 	if !sctx.GetSessionVars().EnableHistoricalStats {
 		return nil
@@ -75,36 +61,13 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	return nil
 }
 
-func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source string) {
-	v := h.statsCache.Load()
-	if v == nil {
-		return
+// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
+func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
+	if err == nil {
+		_, err = exec.ExecuteInternal(ctx, "commit")
+	} else {
+		_, err1 := exec.ExecuteInternal(ctx, "rollback")
+		terror.Log(errors.Trace(err1))
 	}
-	sc := v
-	tbl, ok := sc.Get(tableID)
-	if !ok {
-		return
-	}
-	if !tbl.IsInitialized() {
-		return
-	}
-	se, err := h.pool.Get()
-	if err != nil {
-		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
-			zap.Uint64("version", version),
-			zap.String("source", source),
-			zap.Error(err))
-		return
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	if err := recordHistoricalStatsMeta(sctx, tableID, version, source); err != nil {
-		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
-			zap.Uint64("version", version),
-			zap.String("source", source),
-			zap.Error(err))
-		return
-	}
+	return errors.Trace(err)
 }
