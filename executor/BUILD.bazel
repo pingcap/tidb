@@ -412,6 +412,7 @@ go_test(
         "//statistics",
         "//statistics/handle",
         "//statistics/handle/globalstats",
+        "//statistics/handle/storage",
         "//store/copr",
         "//store/driver/error",
         "//store/helper",
