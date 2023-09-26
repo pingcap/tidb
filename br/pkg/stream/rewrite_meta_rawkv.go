@@ -692,8 +692,8 @@ func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
 			model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			return sr.deleteRange(job)
 		case model.ActionMultiSchemaChange:
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := sub.ToProxyJob(job)
+			for i, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job, i)
 				if err := sr.restoreFromHistory(&proxyJob); err != nil {
 					return err
 				}

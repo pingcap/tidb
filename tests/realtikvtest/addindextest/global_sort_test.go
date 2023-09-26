@@ -108,3 +108,63 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	require.Equal(t, 0, len(statFiles))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished"))
 }
+
+func TestGlobalSortMultiSchemaChange(t *testing.T) {
+	var err error
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+	sortStorageURI := fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+
+	tk.MustExec("create table t_rowid (a int, b bigint, c varchar(255));")
+	tk.MustExec("create table t_int_handle (a bigint primary key, b varchar(255));")
+	tk.MustExec("create table t_common_handle (a int, b bigint, c varchar(255), primary key (a, c) clustered);")
+	// tk.MustExec(`create table t_partition (a bigint primary key, b int, c char(10)) partition by hash(a) partitions 4;`)
+	for i := 0; i < 10; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_rowid values (%d, %d, '%d');", i, i, i))
+		tk.MustExec(fmt.Sprintf("insert into t_int_handle values (%d, '%d');", i, i))
+		tk.MustExec(fmt.Sprintf("insert into t_common_handle values (%d, %d, '%d');", i, i, i))
+		// tk.MustExec(fmt.Sprintf("insert into t_partition values (%d, %d, '%d');", i, i, i))
+	}
+	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle" /*"t_partition"*/}
+
+	testCases := []struct {
+		name            string
+		enableFastReorg string
+		enableDistTask  string
+		cloudStorageURI string
+	}{
+		{"txn_backfill", "0", "0", ""},
+		{"ingest_backfill", "1", "0", ""},
+		{"ingest_dist_backfill", "1", "1", ""},
+		{"ingest_dist_gs_backfill", "1", "1", sortStorageURI},
+	}
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = " + tc.enableFastReorg + ";")
+			tk.MustExec("set @@global.tidb_enable_dist_task = " + tc.enableDistTask + ";")
+			tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + tc.cloudStorageURI + "';")
+			for _, tn := range tableNames {
+				tk.MustExec("alter table " + tn + " add index idx_1(a), add index idx_2(b, a);")
+				tk.MustExec("admin check table " + tn + ";")
+				tk.MustExec("alter table " + tn + " drop index idx_1, drop index idx_2;")
+			}
+		})
+	}
+
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	variable.CloudStorageURI.Store("")
+}

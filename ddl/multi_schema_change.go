@@ -65,7 +65,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				if sub.IsFinished() {
 					continue
 				}
-				proxyJob := sub.ToProxyJob(job)
+				proxyJob := sub.ToProxyJob(job, i)
 				ver, err = w.runDDLJob(d, t, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
@@ -81,14 +81,14 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 		// The sub-jobs are normally running.
 		// Run the first executable sub-job.
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if !sub.Revertible || sub.IsFinished() {
 				// Skip the sub-jobs which related schema states
 				// are in the last revertible point.
 				// If a sub job is finished here, it should be a noop job.
 				continue
 			}
-			proxyJob := sub.ToProxyJob(job)
+			proxyJob := sub.ToProxyJob(job, i)
 			ver, err = w.runDDLJob(d, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
@@ -110,7 +110,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				continue
 			}
 			subJobs[i] = *sub
-			proxyJob := sub.ToProxyJob(job)
+			proxyJob := sub.ToProxyJob(job, i)
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
@@ -135,11 +135,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, err
 	}
 	// Run the rest non-revertible sub-jobs one by one.
-	for _, sub := range job.MultiSchemaInfo.SubJobs {
+	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		if sub.IsFinished() {
 			continue
 		}
-		proxyJob := sub.ToProxyJob(job)
+		proxyJob := sub.ToProxyJob(job, i)
 		ver, err = w.runDDLJob(d, t, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
