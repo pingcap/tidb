@@ -134,64 +134,121 @@ const (
 )
 
 var (
-	version      = flagBoolean(nmVersion, false, "print version information and exit")
-	configPath   = flag.String(nmConfig, "", "config file path")
-	configCheck  = flagBoolean(nmConfigCheck, false, "check config file validity and exit")
-	configStrict = flagBoolean(nmConfigStrict, false, "enforce config file validity")
+	version      *bool
+	configPath   *string
+	configCheck  *bool
+	configStrict *bool
 
 	// Base
-	store            = flag.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
-	storePath        = flag.String(nmStorePath, "/tmp/tidb", "tidb storage path")
-	host             = flag.String(nmHost, "0.0.0.0", "tidb server host")
-	advertiseAddress = flag.String(nmAdvertiseAddress, "", "tidb server advertise IP")
-	port             = flag.String(nmPort, "4000", "tidb server port")
-	cors             = flag.String(nmCors, "", "tidb server allow cors origin")
-	socket           = flag.String(nmSocket, "/tmp/tidb-{Port}.sock", "The socket file to use for connection.")
-	enableBinlog     = flagBoolean(nmEnableBinlog, false, "enable generate binlog")
-	runDDL           = flagBoolean(nmRunDDL, true, "run ddl worker on this tidb-server")
-	ddlLease         = flag.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
-	tokenLimit       = flag.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
-	pluginDir        = flag.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
-	pluginLoad       = flag.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
-	affinityCPU      = flag.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
-	repairMode       = flagBoolean(nmRepairMode, false, "enable admin repair mode")
-	repairList       = flag.String(nmRepairList, "", "admin repair table list")
-	tempDir          = flag.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
+	store            *string
+	storePath        *string
+	host             *string
+	advertiseAddress *string
+	port             *string
+	cors             *string
+	socket           *string
+	enableBinlog     *bool
+	runDDL           *bool
+	ddlLease         *string
+	tokenLimit       *int
+	pluginDir        *string
+	pluginLoad       *string
+	affinityCPU      *string
+	repairMode       *bool
+	repairList       *string
+	tempDir          *string
 
 	// Log
-	logLevel     = flag.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
-	logFile      = flag.String(nmLogFile, "", "log file path")
-	logSlowQuery = flag.String(nmLogSlowQuery, "", "slow query file path")
+	logLevel     *string
+	logFile      *string
+	logSlowQuery *string
 
 	// Status
-	reportStatus    = flagBoolean(nmReportStatus, true, "If enable status report HTTP service.")
-	statusHost      = flag.String(nmStatusHost, "0.0.0.0", "tidb server status host")
-	statusPort      = flag.String(nmStatusPort, "10080", "tidb server status port")
-	metricsAddr     = flag.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
-	metricsInterval = flag.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+	reportStatus    *bool
+	statusHost      *string
+	statusPort      *string
+	metricsAddr     *string
+	metricsInterval *uint
 
 	// PROXY Protocol
-	proxyProtocolNetworks      = flag.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
-	proxyProtocolHeaderTimeout = flag.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
-	proxyProtocolFallbackable  = flagBoolean(nmProxyProtocolFallbackable, false, "enable proxy protocol fallback mode. If it is enabled, connection will return the client IP address when the client does not send PROXY Protocol Header and it will not return any error. (Note: This feature it does NOT follow the PROXY Protocol SPEC)")
+	proxyProtocolNetworks      *string
+	proxyProtocolHeaderTimeout *uint
+	proxyProtocolFallbackable  *bool
 
 	// Bootstrap and security
-	initializeSecure            = flagBoolean(nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
-	initializeInsecure          = flagBoolean(nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
-	initializeSQLFile           = flag.String(nmInitializeSQLFile, "", "SQL file to execute on first bootstrap")
-	disconnectOnExpiredPassword = flagBoolean(nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
-	keyspaceName                = flag.String(nmKeyspaceName, "", "keyspace name.")
-	serviceScope                = flag.String(nmTiDBServiceScope, "", "tidb service scope")
+	initializeSecure            *bool
+	initializeInsecure          *bool
+	initializeSQLFile           *string
+	disconnectOnExpiredPassword *bool
+	keyspaceName                *string
+	serviceScope                *string
+	help                        *bool
 )
 
-func main() {
-	help := flag.Bool("help", false, "show the usage")
-	flag.Parse()
+func initflag() *flag.FlagSet {
+	fset := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+	version = flagBoolean(fset, nmVersion, false, "print version information and exit")
+	configPath = fset.String(nmConfig, "", "config file path")
+	configCheck = flagBoolean(fset, nmConfigCheck, false, "check config file validity and exit")
+	configStrict = flagBoolean(fset, nmConfigStrict, false, "enforce config file validity")
+
+	// Base
+	store = fset.String(nmStore, "unistore", "registered store name, [tikv, mocktikv, unistore]")
+	storePath = fset.String(nmStorePath, "/tmp/tidb", "tidb storage path")
+	host = fset.String(nmHost, "0.0.0.0", "tidb server host")
+	advertiseAddress = fset.String(nmAdvertiseAddress, "", "tidb server advertise IP")
+	port = fset.String(nmPort, "4000", "tidb server port")
+	cors = fset.String(nmCors, "", "tidb server allow cors origin")
+	socket = fset.String(nmSocket, "/tmp/tidb-{Port}.sock", "The socket file to use for connection.")
+	enableBinlog = flagBoolean(fset, nmEnableBinlog, false, "enable generate binlog")
+	runDDL = flagBoolean(fset, nmRunDDL, true, "run ddl worker on this tidb-server")
+	ddlLease = fset.String(nmDdlLease, "45s", "schema lease duration, very dangerous to change only if you know what you do")
+	tokenLimit = fset.Int(nmTokenLimit, 1000, "the limit of concurrent executed sessions")
+	pluginDir = fset.String(nmPluginDir, "/data/deploy/plugin", "the folder that hold plugin")
+	pluginLoad = fset.String(nmPluginLoad, "", "wait load plugin name(separated by comma)")
+	affinityCPU = fset.String(nmAffinityCPU, "", "affinity cpu (cpu-no. separated by comma, e.g. 1,2,3)")
+	repairMode = flagBoolean(fset, nmRepairMode, false, "enable admin repair mode")
+	repairList = fset.String(nmRepairList, "", "admin repair table list")
+	tempDir = fset.String(nmTempDir, config.DefTempDir, "tidb temporary directory")
+
+	// Log
+	logLevel = fset.String(nmLogLevel, "info", "log level: info, debug, warn, error, fatal")
+	logFile = fset.String(nmLogFile, "", "log file path")
+	logSlowQuery = fset.String(nmLogSlowQuery, "", "slow query file path")
+
+	// Status
+	reportStatus = flagBoolean(fset, nmReportStatus, true, "If enable status report HTTP service.")
+	statusHost = fset.String(nmStatusHost, "0.0.0.0", "tidb server status host")
+	statusPort = fset.String(nmStatusPort, "10080", "tidb server status port")
+	metricsAddr = fset.String(nmMetricsAddr, "", "prometheus pushgateway address, leaves it empty will disable prometheus push.")
+	metricsInterval = fset.Uint(nmMetricsInterval, 15, "prometheus client push interval in second, set \"0\" to disable prometheus push.")
+
+	// PROXY Protocol
+	proxyProtocolNetworks = fset.String(nmProxyProtocolNetworks, "", "proxy protocol networks allowed IP or *, empty mean disable proxy protocol support")
+	proxyProtocolHeaderTimeout = fset.Uint(nmProxyProtocolHeaderTimeout, 5, "proxy protocol header read timeout, unit is second. (Deprecated: as proxy protocol using lazy mode, header read timeout no longer used)")
+	proxyProtocolFallbackable = flagBoolean(fset, nmProxyProtocolFallbackable, false, "enable proxy protocol fallback mode. If it is enabled, connection will return the client IP address when the client does not send PROXY Protocol Header and it will not return any error. (Note: This feature it does NOT follow the PROXY Protocol SPEC)")
+
+	// Bootstrap and security
+	initializeSecure = flagBoolean(fset, nmInitializeSecure, false, "bootstrap tidb-server in secure mode")
+	initializeInsecure = flagBoolean(fset, nmInitializeInsecure, true, "bootstrap tidb-server in insecure mode")
+	initializeSQLFile = fset.String(nmInitializeSQLFile, "", "SQL file to execute on first bootstrap")
+	disconnectOnExpiredPassword = flagBoolean(fset, nmDisconnectOnExpiredPassword, true, "the server disconnects the client when the password is expired")
+	keyspaceName = fset.String(nmKeyspaceName, "", "keyspace name.")
+	serviceScope = fset.String(nmTiDBServiceScope, "", "tidb service scope")
+	help = fset.Bool("help", false, "show the usage")
+	// Ignore errors; CommandLine is set for ExitOnError.
+	// nolint:errcheck
+	fset.Parse(os.Args[1:])
 	if *help {
-		flag.Usage()
+		fset.Usage()
 		os.Exit(0)
 	}
-	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig)
+	return fset
+}
+
+func main() {
+	fset := initflag()
+	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
 		setVersions()
 		fmt.Println(printer.GetTiDBInfo())
@@ -431,19 +488,19 @@ func parseDuration(lease string) time.Duration {
 	return dur
 }
 
-func flagBoolean(name string, defaultVal bool, usage string) *bool {
+func flagBoolean(fset *flag.FlagSet, name string, defaultVal bool, usage string) *bool {
 	if !defaultVal {
 		// Fix #4125, golang do not print default false value in usage, so we append it.
 		usage = fmt.Sprintf("%s (default false)", usage)
-		return flag.Bool(name, defaultVal, usage)
+		return fset.Bool(name, defaultVal, usage)
 	}
-	return flag.Bool(name, defaultVal, usage)
+	return fset.Bool(name, defaultVal, usage)
 }
 
 // overrideConfig considers command arguments and overrides some config items in the Config.
-func overrideConfig(cfg *config.Config) {
+func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 	actualFlags := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) {
+	fset.Visit(func(f *flag.Flag) {
 		actualFlags[f.Name] = true
 	})
 
