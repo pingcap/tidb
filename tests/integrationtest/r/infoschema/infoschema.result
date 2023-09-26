@@ -21,6 +21,9 @@ DDL_JOBS	CREATE TABLE `DDL_JOBS` (
   `STATE` varchar(64) DEFAULT NULL,
   `QUERY` text DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select count(length(query)) from information_schema.ddl_jobs;
+count(length(query))
+x
 drop table if EXISTS t1;
 create table infoschema__infoschema.t1 (id int primary key, a text);
 insert infoschema__infoschema.t1 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
