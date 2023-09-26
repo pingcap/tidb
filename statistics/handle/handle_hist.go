@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -176,7 +177,7 @@ var errExit = errors.New("Stop loading since domain is closed")
 
 // StatsReaderContext exported for testing
 type StatsReaderContext struct {
-	reader      *statistics.StatsReader
+	reader      *storage.StatsReader
 	createdTime time.Time
 }
 
@@ -302,7 +303,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 		}
 	}
 	for {
-		newReader, err := statistics.GetStatsReader(0, ctx, nil)
+		newReader, err := storage.GetStatsReader(0, ctx, nil)
 		if err == nil {
 			readerCtx.reader = newReader
 			readerCtx.createdTime = time.Now()
@@ -314,7 +315,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
+func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *storage.StatsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -331,25 +332,25 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 		isIndexFlag = 1
 	}
 	if item.IsIndex {
-		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+		hg, err = storage.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err = storage.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	var cms *statistics.CMSketch
 	var topN *statistics.TopN
-	cms, topN, err = statistics.CMSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+	cms, topN, err = storage.CMSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var fms *statistics.FMSketch
 	if loadFMSketch {
-		fms, err = statistics.FMSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+		fms, err = storage.FMSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

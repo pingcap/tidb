@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "storage",
+    srcs = [
+        "read.go",
+        "save.go",
+    ],
+    importpath = "github.com/pingcap/tidb/statistics/handle/storage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//config",
+        "//kv",
+        "//parser/ast",
+        "//parser/model",
+        "//parser/mysql",
+        "//parser/terror",
+        "//sessionctx",
+        "//sessionctx/stmtctx",
+        "//statistics",
+        "//statistics/handle/cache",
+        "//types",
+        "//util/chunk",
+        "//util/logutil",
+        "//util/mathutil",
+        "//util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "storage_test",
+    timeout = "short",
+    srcs = ["read_test.go"],
+    flaky = True,
+    deps = [
+        "//parser/model",
+        "//planner/cardinality",
+        "//testkit",
+        "//types",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
