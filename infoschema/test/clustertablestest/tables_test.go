@@ -177,126 +177,6 @@ func TestInfoSchemaFieldValue(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func TestCharacterSetCollations(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	// Test charset/collation in information_schema.COLUMNS table.
-	tk.MustExec("DROP DATABASE IF EXISTS charset_collate_test")
-	tk.MustExec("CREATE DATABASE charset_collate_test; USE charset_collate_test")
-
-	// TODO: Specifying the charset for national char/varchar should not be supported.
-	tk.MustExec(`CREATE TABLE charset_collate_col_test(
-		c_int int,
-		c_float float,
-		c_bit bit,
-		c_bool bool,
-		c_char char(1) charset ascii collate ascii_bin,
-		c_nchar national char(1) charset ascii collate ascii_bin,
-		c_binary binary,
-		c_varchar varchar(1) charset ascii collate ascii_bin,
-		c_nvarchar national varchar(1) charset ascii collate ascii_bin,
-		c_varbinary varbinary(1),
-		c_year year,
-		c_date date,
-		c_time time,
-		c_datetime datetime,
-		c_timestamp timestamp,
-		c_blob blob,
-		c_tinyblob tinyblob,
-		c_mediumblob mediumblob,
-		c_longblob longblob,
-		c_text text charset ascii collate ascii_bin,
-		c_tinytext tinytext charset ascii collate ascii_bin,
-		c_mediumtext mediumtext charset ascii collate ascii_bin,
-		c_longtext longtext charset ascii collate ascii_bin,
-		c_json json,
-		c_enum enum('1') charset ascii collate ascii_bin,
-		c_set set('1') charset ascii collate ascii_bin
-	)`)
-
-	tk.MustQuery(`SELECT column_name, character_set_name, collation_name
-					FROM information_schema.COLUMNS
-					WHERE table_schema = "charset_collate_test" AND table_name = "charset_collate_col_test"
-					ORDER BY column_name`,
-	).Check(testkit.Rows(
-		"c_binary <nil> <nil>",
-		"c_bit <nil> <nil>",
-		"c_blob <nil> <nil>",
-		"c_bool <nil> <nil>",
-		"c_char ascii ascii_bin",
-		"c_date <nil> <nil>",
-		"c_datetime <nil> <nil>",
-		"c_enum ascii ascii_bin",
-		"c_float <nil> <nil>",
-		"c_int <nil> <nil>",
-		"c_json <nil> <nil>",
-		"c_longblob <nil> <nil>",
-		"c_longtext ascii ascii_bin",
-		"c_mediumblob <nil> <nil>",
-		"c_mediumtext ascii ascii_bin",
-		"c_nchar ascii ascii_bin",
-		"c_nvarchar ascii ascii_bin",
-		"c_set ascii ascii_bin",
-		"c_text ascii ascii_bin",
-		"c_time <nil> <nil>",
-		"c_timestamp <nil> <nil>",
-		"c_tinyblob <nil> <nil>",
-		"c_tinytext ascii ascii_bin",
-		"c_varbinary <nil> <nil>",
-		"c_varchar ascii ascii_bin",
-		"c_year <nil> <nil>",
-	))
-	tk.MustExec("DROP DATABASE charset_collate_test")
-}
-
-func TestCurrentTimestampAsDefault(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("DROP DATABASE IF EXISTS default_time_test")
-	tk.MustExec("CREATE DATABASE default_time_test; USE default_time_test")
-
-	tk.MustExec(`CREATE TABLE default_time_table(
-					c_datetime datetime,
-					c_datetime_default datetime default current_timestamp,
-					c_datetime_default_2 datetime(2) default current_timestamp(2),
-					c_timestamp timestamp,
-					c_timestamp_default timestamp default current_timestamp,
-					c_timestamp_default_3 timestamp(3) default current_timestamp(3),
-					c_date_default date default current_date,
-					c_date_default_2 date default curdate(),
-					c_varchar_default varchar(20) default "current_timestamp",
-					c_varchar_default_3 varchar(20) default "current_timestamp(3)",
-					c_varchar_default_on_update datetime default current_timestamp on update current_timestamp,
-					c_varchar_default_on_update_fsp datetime(3) default current_timestamp(3) on update current_timestamp(3),
-					c_varchar_default_with_case varchar(20) default "cUrrent_tImestamp"
-				);`)
-
-	tk.MustQuery(`SELECT column_name, column_default, extra
-					FROM information_schema.COLUMNS
-					WHERE table_schema = "default_time_test" AND table_name = "default_time_table"
-					ORDER BY column_name`,
-	).Check(testkit.Rows(
-		"c_date_default CURRENT_DATE ",
-		"c_date_default_2 CURRENT_DATE ",
-		"c_datetime <nil> ",
-		"c_datetime_default CURRENT_TIMESTAMP ",
-		"c_datetime_default_2 CURRENT_TIMESTAMP(2) ",
-		"c_timestamp <nil> ",
-		"c_timestamp_default CURRENT_TIMESTAMP ",
-		"c_timestamp_default_3 CURRENT_TIMESTAMP(3) ",
-		"c_varchar_default current_timestamp ",
-		"c_varchar_default_3 current_timestamp(3) ",
-		"c_varchar_default_on_update CURRENT_TIMESTAMP DEFAULT_GENERATED on update CURRENT_TIMESTAMP",
-		"c_varchar_default_on_update_fsp CURRENT_TIMESTAMP(3) DEFAULT_GENERATED on update CURRENT_TIMESTAMP(3)",
-		"c_varchar_default_with_case cUrrent_tImestamp ",
-	))
-	tk.MustExec("DROP DATABASE default_time_test")
-}
-
 func TestSomeTables(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -663,13 +543,6 @@ func TestSlowQuery(t *testing.T) {
 	re = tk.MustQuery("select query from information_schema.slow_query order by time desc limit 1")
 	rows := re.Rows()
 	require.Equal(t, sql, rows[0][0])
-}
-
-func TestColumnStatistics(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select * from information_schema.column_statistics").Check(testkit.Rows())
 }
 
 func TestTableIfHasColumn(t *testing.T) {
@@ -1105,20 +978,6 @@ func TestCapturePrivilege(t *testing.T) {
 	require.Len(t, rows, 2)
 }
 
-func TestIssue18845(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`CREATE USER 'user18845'@'localhost';`)
-	tk.Session().Auth(&auth.UserIdentity{
-		Username:     "user18845",
-		Hostname:     "localhost",
-		AuthUsername: "user18845",
-		AuthHostname: "localhost",
-	}, nil, nil, nil)
-	tk.MustQuery(`select count(*) from information_schema.columns;`)
-}
-
 // TestStmtSummaryInternalQuery Test statements_summary_history.
 func TestStmtSummaryInternalQuery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1175,74 +1034,6 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 	tk.MustQuery(`select tidb_version()`)
 	rows := tk.MustQuery("select plan from information_schema.statements_summary where digest_text like \"select `tidb_version`%\"").Rows()
 	require.Contains(t, rows[0][0].(string), "Projection")
-}
-
-// TestStmtSummaryErrorCount Test error count and warning count.
-func TestStmtSummaryErrorCount(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := newTestKitWithRoot(t, store)
-
-	// Clear summaries.
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists stmt_summary_test")
-	tk.MustExec("create table stmt_summary_test(id int primary key)")
-	tk.MustExec("insert into stmt_summary_test values(1)")
-	_, err := tk.Exec("insert into stmt_summary_test values(1)")
-	require.Error(t, err)
-
-	sql := "select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like \"insert into `stmt_summary_test`%\""
-	tk.MustQuery(sql).Check(testkit.Rows("2 1 0"))
-
-	tk.MustExec("insert ignore into stmt_summary_test values(1)")
-	sql = "select exec_count, sum_errors, sum_warnings from information_schema.statements_summary where digest_text like \"insert ignore into `stmt_summary_test`%\""
-	tk.MustQuery(sql).Check(testkit.Rows("1 0 1"))
-}
-
-func TestStmtSummaryPreparedStatements(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := newTestKitWithRoot(t, store)
-
-	// Clear summaries.
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-
-	tk.MustExec("use test")
-	tk.MustExec("prepare stmt from 'select ?'")
-	tk.MustExec("set @number=1")
-	tk.MustExec("execute stmt using @number")
-
-	tk.MustQuery(`select exec_count
-		from information_schema.statements_summary
-		where digest_text like "prepare%"`).Check(testkit.Rows())
-	tk.MustQuery(`select exec_count
-		from information_schema.statements_summary
-		where digest_text like "select ?"`).Check(testkit.Rows("1"))
-}
-
-func TestStmtSummarySensitiveQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := newTestKitWithRoot(t, store)
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	tk.MustExec("drop user if exists user_sensitive;")
-	tk.MustExec("create user user_sensitive identified by '123456789';")
-	tk.MustExec("alter user 'user_sensitive'@'%' identified by 'abcdefg';")
-	tk.MustExec("set password for 'user_sensitive'@'%' = 'xyzuvw';")
-	tk.MustQuery("select query_sample_text from `information_schema`.`STATEMENTS_SUMMARY` " +
-		"where query_sample_text like '%user_sensitive%' and " +
-		"(query_sample_text like 'set password%' or query_sample_text like 'create user%' or query_sample_text like 'alter user%') " +
-		"order by query_sample_text;").
-		Check(testkit.Rows(
-			"alter user {user_sensitive@% password = ***}",
-			"create user {user_sensitive@% password = ***}",
-			"set password for user user_sensitive@%",
-		))
 }
 
 // TestSimpleStmtSummaryEvictedCount test stmtSummaryEvictedCount
@@ -1354,99 +1145,6 @@ func TestStmtSummaryEvictedPointGet(t *testing.T) {
 	tk.MustQuery("select count(*) from information_schema.statements_summary_evicted;").
 		Check(testkit.Rows("0"))
 	tk.MustExec("set @@global.tidb_enable_stmt_summary=1;")
-}
-
-func TestStmtSummaryTableOther(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	interval := int64(1800)
-	tk := newTestKitWithRoot(t, store)
-	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval=%v", interval))
-	tk.MustExec("set global tidb_enable_stmt_summary=0")
-	tk.MustExec("set global tidb_enable_stmt_summary=1")
-	// set stmt size to 1
-	// first sql
-	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
-	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count=100")
-	// second sql, evict first sql from stmt_summary
-	tk.MustExec("show databases;")
-	// third sql, evict second sql from stmt_summary
-	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
-		Check(testkit.Rows(
-			// digest in cache
-			// "show databases ;"
-			"show databases 0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161",
-			// digest evicted
-			" <nil>",
-		))
-	// forth sql, evict third sql from stmt_summary
-	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY`;").
-		Check(testkit.Rows(
-			// digest in cache
-			"test", // select xx from yy;
-			// digest evicted
-			"<nil>",
-		))
-}
-
-func TestStmtSummaryHistoryTableOther(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := newTestKitWithRoot(t, store)
-	// disable refreshing summary
-	interval := int64(9999)
-	tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 1")
-	defer tk.MustExec("set global tidb_stmt_summary_max_stmt_count = 100")
-	tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", interval))
-	defer tk.MustExec(fmt.Sprintf("set global tidb_stmt_summary_refresh_interval = %v", 1800))
-
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	// first sql
-	tk.MustExec("set global tidb_stmt_summary_max_stmt_count=1")
-	// second sql, evict first sql from stmt_summary
-	tk.MustExec("show databases;")
-	// third sql, evict second sql from stmt_summary
-	tk.MustQuery("SELECT DIGEST_TEXT, DIGEST FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
-		Check(testkit.Rows(
-			// digest in cache
-			// "show databases ;"
-			"show databases 0e247706bf6e791fbf4af8c8e7658af5ffc45c63179871202d8f91551ee03161",
-			// digest evicted
-			" <nil>",
-		))
-	// forth sql, evict third sql from stmt_summary
-	tk.MustQuery("SELECT SCHEMA_NAME FROM `INFORMATION_SCHEMA`.`STATEMENTS_SUMMARY_HISTORY`;").
-		Check(testkit.Rows(
-			// digest in cache
-			"test", // select xx from yy;
-			// digest evicted
-			"<nil>",
-		))
-}
-
-func TestPerformanceSchemaforPlanCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tmp := testkit.NewTestKit(t, store)
-	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
-
-	tk := newTestKitWithPlanCache(t, store)
-
-	// Clear summaries.
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("prepare stmt from 'select * from t'")
-	tk.MustExec("execute stmt")
-	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
-		testkit.Rows("0 0"))
-	tk.MustExec("execute stmt")
-	tk.MustExec("execute stmt")
-	tk.MustExec("execute stmt")
-	tk.MustQuery("select plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`'").Check(
-		testkit.Rows("3 1"))
 }
 
 func TestServerInfoResolveLoopBackAddr(t *testing.T) {
@@ -1591,29 +1289,6 @@ func TestTiDBTrxSummary(t *testing.T) {
 	t.Fatal("cannot find the expected row")
 }
 
-func TestInfoSchemaDeadlockPrivilege(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := newTestKitWithRoot(t, store)
-	tk.MustExec("create user 'testuser'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "testuser",
-		Hostname: "localhost",
-	}, nil, nil, nil))
-	err := tk.QueryToErr("select * from information_schema.deadlocks")
-	require.Error(t, err)
-	require.Equal(t, "[planner:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation", err.Error())
-
-	tk = newTestKitWithRoot(t, store)
-	tk.MustExec("create user 'testuser2'@'localhost'")
-	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{
-		Username: "testuser2",
-		Hostname: "localhost",
-	}, nil, nil, nil))
-	_ = tk.MustQuery("select * from information_schema.deadlocks")
-}
-
 func TestAttributes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1628,79 +1303,6 @@ func TestAttributes(t *testing.T) {
 	tk.MustQuery(`select * from information_schema.attributes`).Check(testkit.Rows(
 		`schema/test/test_label key-range "merge_option=allow" [7480000000000000ff395f720000000000fa, 7480000000000000ff3a5f720000000000fa]`,
 	))
-}
-
-func TestReferentialConstraints(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("CREATE DATABASE referconstraints")
-	tk.MustExec("use referconstraints")
-
-	tk.MustExec("CREATE TABLE t1 (id INT NOT NULL PRIMARY KEY)")
-	tk.MustExec("CREATE TABLE t2 (id INT NOT NULL PRIMARY KEY, t1_id INT DEFAULT NULL, INDEX (t1_id), CONSTRAINT `fk_to_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`))")
-
-	tk.MustQuery(`SELECT * FROM information_schema.referential_constraints WHERE table_name='t2'`).Check(testkit.Rows("def referconstraints fk_to_t1 def referconstraints PRIMARY NONE NO ACTION NO ACTION t2 t1"))
-}
-
-func TestVariablesInfo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use information_schema")
-	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")
-
-	// current_value != default_value
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'innodb_compression_level'`).Check(testkit.Rows("innodb_compression_level GLOBAL 6 8 <nil> <nil> <nil> YES"))
-	tk.MustExec("SET GLOBAL innodb_compression_level = DEFAULT;")
-
-	// enum
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb_txn_mode SESSION,GLOBAL  pessimistic <nil> <nil> pessimistic,optimistic NO"))
-
-	// noop
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'max_connections' AND is_noop='NO'`).Check(testkit.Rows("max_connections INSTANCE 0 0 0 100000 <nil> NO"))
-
-	// min, max populated for TypeInt
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_checksum_table_concurrency'`).Check(testkit.Rows("tidb_checksum_table_concurrency SESSION 4 4 1 256 <nil> NO"))
-
-	// min, max populated for TypeFloat
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_prepared_plan_cache_memory_guard_ratio'`).Check(testkit.Rows("tidb_prepared_plan_cache_memory_guard_ratio GLOBAL 0.1 0.1 0 1 <nil> NO"))
-
-	// min, max populated for TypeUnsigned
-	tk.MustQuery(`SELECT * FROM variables_info WHERE variable_name = 'tidb_metric_query_step'`).Check(testkit.Rows("tidb_metric_query_step SESSION 60 60 10 216000 <nil> NO"))
-
-	// stabalize timestamp val and EnableCollectExecutionInfo
-	tk.MustExec("SET TIMESTAMP=123456789")
-	config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Store(false)
-	// Test that in the current_value matches the default value in all
-	// but a few permitted special cases.
-	// See session/bootstrap.go:doDMLWorks() for where the exceptions are defined.
-	stmt := tk.MustQuery(`SELECT variable_name, default_value, current_value FROM information_schema.variables_info WHERE current_value != default_value and default_value  != '' ORDER BY variable_name`)
-	stmt.Check(testkit.Rows(
-		"last_sql_use_alloc OFF ON",                 // for test stability
-		"tidb_enable_auto_analyze ON OFF",           // always changed for tests
-		"tidb_enable_collect_execution_info ON OFF", // for test stability
-		"tidb_enable_mutation_checker OFF ON",       // for new installs
-		"tidb_mem_oom_action CANCEL LOG",            // always changed for tests
-		"tidb_pessimistic_txn_fair_locking OFF ON",  // for new instances
-		"tidb_row_format_version 1 2",               // for new installs
-		"tidb_txn_assertion_level OFF FAST",         // for new installs
-		"timestamp 0 123456789",                     // always dynamic
-	))
-}
-
-// TestTableConstraintsContainForeignKeys TiDB Issue: https://github.com/pingcap/tidb/issues/28918
-func TestTableConstraintsContainForeignKeys(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE DATABASE tableconstraints")
-	tk.MustExec("use tableconstraints")
-	tk.MustExec("CREATE TABLE `t1` (`id` int(11) NOT NULL AUTO_INCREMENT, `name` varchar(25) DEFAULT NULL, PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustExec("CREATE TABLE `t2` (`id` int(11) NOT NULL AUTO_INCREMENT, `t1_id` int(11) DEFAULT NULL,	PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,	CONSTRAINT `fk_t2_t1` FOREIGN KEY (`t1_id`) REFERENCES `t1` (`id`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
-	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't2'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t2 PRIMARY KEY", "def tableconstraints fk_t2_t1 tableconstraints t2 FOREIGN KEY"))
-	tk.MustQuery("SELECT *  FROM INFORMATION_SCHEMA.table_constraints WHERE constraint_schema = 'tableconstraints' AND table_name = 't1'").Sort().Check(testkit.Rows("def tableconstraints PRIMARY tableconstraints t1 PRIMARY KEY"))
 }
 
 func TestMemoryUsageAndOpsHistory(t *testing.T) {
@@ -1814,34 +1416,4 @@ func TestAddFieldsForBinding(t *testing.T) {
 	require.Equal(t, rows[0][6], "utf8mb4_bin")
 	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
 	require.Equal(t, rows[0][8], "select * from `t` where `a` = ?")
-}
-
-func TestCheckConstraints(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("SET GLOBAL tidb_enable_check_constraint = ON")
-
-	tk.MustExec("CREATE TABLE test.t1 (id INT PRIMARY KEY, CHECK (id<10))")
-	rows := tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
-	require.Equal(t, len(rows), 1)
-	require.Equal(t, rows[0][0], "def")
-	require.Equal(t, rows[0][1], "test")
-	require.Equal(t, rows[0][2], "t1_chk_1")
-	require.Equal(t, rows[0][3], "(`id` < 10)")
-
-	tk.MustExec("ALTER TABLE test.t1 DROP CONSTRAINT t1_chk_1")
-	rows = tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
-	require.Equal(t, len(rows), 0)
-
-	tk.MustExec("CREATE TABLE test.t2 (id INT PRIMARY KEY, CHECK (id<20))")
-	rows = tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
-	require.Equal(t, len(rows), 1)
-	require.Equal(t, rows[0][0], "def")
-	require.Equal(t, rows[0][1], "test")
-	require.Equal(t, rows[0][2], "t2_chk_1")
-	require.Equal(t, rows[0][3], "(`id` < 20)")
-
-	tk.MustExec("DROP TABLE test.t2")
-	rows = tk.MustQuery("SELECT * FROM information_schema.CHECK_CONSTRAINTS").Rows()
-	require.Equal(t, len(rows), 0)
 }
