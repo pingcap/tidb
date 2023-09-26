@@ -43,7 +43,7 @@ var (
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
-func checkFilesCleanUped(t *testing.T, sortStorageURI string, jobID int64) {
+func checkFilesCleanedUp(t *testing.T, sortStorageURI string, jobID int64) {
 	<-dispatcher.WaitCleanUpFinished
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
