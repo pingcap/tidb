@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/util/callback"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -42,7 +43,8 @@ var (
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
-func CheckFilesCleanUped(t *testing.T, sortStorageURI string, jobID int64) {
+func checkFilesCleanUped(t *testing.T, sortStorageURI string, jobID int64) {
+	<-dispatcher.WaitCleanUpFinished
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	opts := &storage.ExternalStorageOptions{NoCredentials: true}
@@ -70,6 +72,7 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -103,14 +106,16 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	hook := &callback.TestDDLCallback{}
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
+	// run success.
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check table t;")
+	checkFilesCleanUped(t, sortStorageURI, jobID)
+	// run fail.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockScanRecordError", "return(true)"))
+	tk.ExecToErr("alter table t add index idx1(a);")
+	checkFilesCleanUped(t, sortStorageURI, jobID)
 
-	CheckFilesCleanUped(t, sortStorageURI, jobID)
-	tk.MustExec("alter table t add index idx(a);")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWriteLocalError", "return(true)"))
-	tk.ExecToErr("alter table t add index idx(a);")
-	CheckFilesCleanUped(t, sortStorageURI, jobID)
 	dom.DDL().SetHook(origin)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockScanRecordError"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished"))
 }

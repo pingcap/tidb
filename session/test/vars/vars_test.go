@@ -500,8 +500,9 @@ func TestSetVarHint(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 0)
 
 	tk.MustExec("SELECT /*+ SET_VAR(collation_server = 'utf8') */ 1;")
-	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3637]Variable 'collation_server' cannot be set using SET_VAR hint.")
+	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[0].Err, "[planner:3637]Variable 'collation_server' might not be affected by SET_VAR hint.")
+	require.EqualError(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings()[1].Err, "[ddl:1273]Unknown collation: 'utf8'")
 
 	tk.MustExec("SELECT /*+ SET_VAR(max_size = 1G) */ 1;")
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)

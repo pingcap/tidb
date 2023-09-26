@@ -2488,7 +2488,7 @@ Argument %s of GROUPING function is not in GROUP BY
 
 ["planner:3637"]
 error = '''
-Variable '%s' cannot be set using SET_VAR hint.
+Variable '%s' might not be affected by SET_VAR hint.
 '''
 
 ["planner:8006"]

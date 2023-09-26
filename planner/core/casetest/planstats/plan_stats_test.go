@@ -12,11 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package planstats_test
 
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -32,7 +33,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -322,5 +325,78 @@ func TestPlanStatsStatusRecord(t *testing.T) {
 		for _, status := range usedStatsForTbl.ColumnStatsLoadStatus {
 			require.Equal(t, status, "allEvicted")
 		}
+	}
+}
+
+func TestCollectDependingVirtualCols(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c json," +
+		"index ic_char((cast(c->'$' as char(32) array)))," +
+		"index ic_unsigned((cast(c->'$.unsigned' as unsigned array)))," +
+		"index ic_signed((cast(c->'$.signed' as unsigned array)))" +
+		")")
+	tk.MustExec("create table t1(a int, b int, c int," +
+		"vab int as (a + b) virtual," +
+		"vc int as (c - 5) virtual," +
+		"vvc int as (b - vc) virtual," +
+		"vvabvvc int as (vab * vvc) virtual," +
+		"index ib((b + 1))," +
+		"index icvab((c + vab))," +
+		"index ivvcvab((vvc / vab))" +
+		")")
+
+	is := dom.InfoSchema()
+	tableNames := []string{"t", "t1"}
+	tblName2TblID := make(map[string]int64)
+	tblID2Tbl := make(map[int64]table.Table)
+	for _, tblName := range tableNames {
+		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(tblName))
+		require.NoError(t, err)
+		tblName2TblID[tblName] = tbl.Meta().ID
+		tblID2Tbl[tbl.Meta().ID] = tbl
+	}
+
+	var input []struct {
+		TableName     string
+		InputColNames []string
+	}
+	var output []struct {
+		TableName      string
+		InputColNames  []string
+		OutputColNames []string
+	}
+	testData := GetPlanStatsData()
+	testData.LoadTestCases(t, &input, &output)
+
+	for i, testCase := range input {
+		// prepare the input
+		tbl := tblID2Tbl[tblName2TblID[testCase.TableName]]
+		require.NotNil(t, tbl)
+		neededItems := make([]model.TableItemID, 0, len(testCase.InputColNames))
+		for _, colName := range testCase.InputColNames {
+			col := tbl.Meta().FindPublicColumnByName(colName)
+			require.NotNil(t, col)
+			neededItems = append(neededItems, model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID})
+		}
+
+		// call the function
+		res := plannercore.CollectDependingVirtualCols(tblID2Tbl, neededItems)
+
+		// record and check the output
+		cols := make([]string, 0, len(res))
+		for _, tblColID := range res {
+			colName := tbl.Meta().FindColumnNameByID(tblColID.ID)
+			require.NotEmpty(t, colName)
+			cols = append(cols, colName)
+		}
+		slices.Sort(cols)
+		testdata.OnRecord(func() {
+			output[i].TableName = testCase.TableName
+			output[i].InputColNames = testCase.InputColNames
+			output[i].OutputColNames = cols
+		})
+		require.Equal(t, output[i].OutputColNames, cols)
 	}
 }

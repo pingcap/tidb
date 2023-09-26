@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/intest"
@@ -39,8 +40,6 @@ const (
 	MaxSubtaskConcurrency = 256
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
-	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
-	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 )
 
 var (
@@ -340,6 +339,7 @@ func (d *BaseDispatcher) onRunning() error {
 }
 
 func (d *BaseDispatcher) onFinished() error {
+	metrics.UpdateMetricsForFinishTask(d.Task)
 	logutil.Logger(d.logCtx).Debug("schedule task, task is finished", zap.String("state", d.Task.State))
 	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
 }
