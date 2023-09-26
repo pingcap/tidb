@@ -1,0 +1,181 @@
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t (id int, KEY id (id));
+insert into t values (1), (2), (3);
+prepare stmt from 'select * from t use index(id) where id = ?';
+execute stmt using @id;
+id
+execute stmt using @id;
+id
+set @id="1";
+execute stmt using @id;
+id
+1
+execute stmt using @id2;
+id
+execute stmt using @id;
+id
+1
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t (id int, KEY id (id));
+insert into t values (1), (2), (3);
+prepare stmt from 'select * from t use index(id) where id = ?';
+execute stmt using @id;
+id
+1
+execute stmt using @id;
+id
+1
+set @id="1";
+execute stmt using @id;
+id
+1
+execute stmt using @id2;
+id
+execute stmt using @id;
+id
+1
+set @@tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t (a int, b int, index a_idx(a));
+insert into t values (1,1), (2,2), (null,3);
+select a, b from t order by b asc;
+a	b
+1	1
+2	2
+NULL	3
+prepare stmt from 'select a, b from t where ? order by b asc';
+execute stmt using @param;
+a	b
+set @param = true;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = false;
+execute stmt using @param;
+a	b
+set @param = 1;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = 0;
+execute stmt using @param;
+a	b
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t (a int, b int, index a_idx(a));
+insert into t values (1,1), (2,2), (null,3);
+select a, b from t order by b asc;
+a	b
+1	1
+2	2
+NULL	3
+prepare stmt from 'select a, b from t where ? order by b asc';
+execute stmt using @param;
+a	b
+set @param = true;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = false;
+execute stmt using @param;
+a	b
+set @param = 1;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = 0;
+execute stmt using @param;
+a	b
+set @@tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t(data mediumblob);
+prepare stmt from 'insert t (data) values (?)';
+set @a = 'a';
+execute stmt using @a;
+
+set @b = 'aaaaaaaaaaaaaaaaaa';
+execute stmt using @b;
+
+select * from t;
+data
+a
+aaaaaaaaaaaaaaaaaa
+drop table if exists t;
+create table t(data decimal);
+prepare stmt from 'insert t (data) values (?)';
+set @a = '1';
+execute stmt using @a;
+
+set @b = '11111.11111';
+execute stmt using @b;
+
+select * from t;
+data
+1
+11111
+drop table if exists t;
+create table t(data decimal(10,3));
+prepare stmt from 'insert t (data) values (?)';
+set @a = 1.1;
+execute stmt using @a;
+
+set @b = 11.11;
+execute stmt using @b;
+
+select * from t;
+data
+1.100
+11.110
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t(data mediumblob);
+prepare stmt from 'insert t (data) values (?)';
+set @a = 'a';
+execute stmt using @a;
+
+set @b = 'aaaaaaaaaaaaaaaaaa';
+execute stmt using @b;
+
+select * from t;
+data
+a
+aaaaaaaaaaaaaaaaaa
+drop table if exists t;
+create table t(data decimal);
+prepare stmt from 'insert t (data) values (?)';
+set @a = '1';
+execute stmt using @a;
+
+set @b = '11111.11111';
+execute stmt using @b;
+
+select * from t;
+data
+1
+11111
+drop table if exists t;
+create table t(data decimal(10,3));
+prepare stmt from 'insert t (data) values (?)';
+set @a = 1.1;
+execute stmt using @a;
+
+set @b = 11.11;
+execute stmt using @b;
+
+select * from t;
+data
+1.100
+11.110
+set @@tidb_enable_prepared_plan_cache=default;
