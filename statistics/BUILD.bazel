@@ -14,7 +14,6 @@ go_library(
         "fmsketch.go",
         "histogram.go",
         "index.go",
-        "interact_with_storage.go",
         "row_sampler.go",
         "sample.go",
         "scalar.go",
@@ -23,7 +22,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/statistics",
     visibility = ["//visibility:public"],
     deps = [
-        "//config",
         "//expression",
         "//kv",
         "//parser/ast",
