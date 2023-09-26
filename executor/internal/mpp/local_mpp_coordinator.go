@@ -456,8 +456,8 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 	}
 	// only root task should establish a stream conn with tiFlash to receive result.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, GatherId: c.gatherID, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
-		Address:    req.Meta.GetAddress(),
-		MppVersion: req.MppVersion.ToInt64(),
+		Address:           req.Meta.GetAddress(),
+		MppVersion:        req.MppVersion.ToInt64(),
 		ResourceGroupName: req.ResourceGroupName,
 	}
 	c.receiveResults(req, taskMeta, bo)

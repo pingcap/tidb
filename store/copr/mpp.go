@@ -234,13 +234,13 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
-			StartTs:      req.StartTs,
-			GatherId:     req.GatherID,
-			QueryTs:      req.MppQueryID.QueryTs,
-			LocalQueryId: req.MppQueryID.LocalQueryID,
-			ServerId:     req.MppQueryID.ServerID,
-			MppVersion:   req.MppVersion.ToInt64(),
-			TaskId:       -1,
+			StartTs:           req.StartTs,
+			GatherId:          req.GatherID,
+			QueryTs:           req.MppQueryID.QueryTs,
+			LocalQueryId:      req.MppQueryID.LocalQueryID,
+			ServerId:          req.MppQueryID.ServerID,
+			MppVersion:        req.MppVersion.ToInt64(),
+			TaskId:            -1,
 			ResourceGroupName: req.ResourceGroupName,
 		},
 	}
