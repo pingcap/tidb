@@ -3371,23 +3371,16 @@ func TestAnalyzePartitionVerify(t *testing.T) {
 	for _, row := range result.Rows() {
 		if row[2] == "global" {
 			if row[3] == "b" {
-				if row[6] != "1" { // global column b has 1 distinct value
-					t.Fatal(row[6])
-				}
+				// global column b has 1 distinct value
+				require.Equal(t, 1, row[6])
 			} else {
-				if row[6] != "1000" {
-					t.Fatal(row[6])
-				}
+				require.Equal(t, 1000, row[6])
 			}
 		} else {
 			if row[3] == "b" {
-				if row[6] != "1" {
-					t.Fatal(row[6])
-				}
+				require.Equal(t, 1, row[6])
 			} else {
-				if row[6] != "100" {
-					t.Fatal(row[6])
-				}
+				require.Equal(t, 100, row[6])
 			}
 		}
 	}
