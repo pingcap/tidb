@@ -876,6 +876,19 @@ const (
 
 	// TiDBAnalyzeSkipColumnTypes indicates the column types whose statistics would not be collected when executing the ANALYZE command.
 	TiDBAnalyzeSkipColumnTypes = "tidb_analyze_skip_column_types"
+<<<<<<< HEAD
+=======
+
+	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
+	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBOptEnableHashJoin indicates whether to enable hash join.
+	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
+
+	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// Please see comments of SessionVars.OptObjective for details.
+	TiDBOptObjective = "tidb_opt_objective"
+>>>>>>> 95fa30ce7dc (planner:  variable `tidb_opt_enable_hash_join` to skip hash join (#46575))
 )
 
 // TiDB vars that have only global scope
@@ -1342,6 +1355,14 @@ const (
 	DefRuntimeFilterType                              = "IN"
 	DefRuntimeFilterMode                              = "OFF"
 	DefTiDBLockUnchangedKeys                          = true
+<<<<<<< HEAD
+=======
+	DefTiDBEnableCheckConstraint                      = false
+	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBOptObjective                               = OptObjectiveModerate
+	DefTiDBSchemaVersionCacheLimit                    = 16
+>>>>>>> 95fa30ce7dc (planner:  variable `tidb_opt_enable_hash_join` to skip hash join (#46575))
 )
 
 // Process global variables.

@@ -1217,6 +1217,15 @@ type SessionVars struct {
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
 
+<<<<<<< HEAD
+=======
+	// DisableHashJoin indicates whether to disable hash join.
+	DisableHashJoin bool
+
+	// EnableHistoricalStats indicates whether to enable historical statistics.
+	EnableHistoricalStats bool
+
+>>>>>>> 95fa30ce7dc (planner:  variable `tidb_opt_enable_hash_join` to skip hash join (#46575))
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
 
