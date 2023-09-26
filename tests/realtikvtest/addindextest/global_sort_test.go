@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/util/callback"
@@ -40,6 +41,20 @@ var (
 	gcsEndpointFormat = "http://%s:%d/storage/v1/"
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
+
+func CheckFilesCleanUped(t *testing.T, sortStorageURI string, jobID int64) {
+	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	require.NoError(t, err)
+	opts := &storage.ExternalStorageOptions{NoCredentials: true}
+	extStore, err := storage.New(context.Background(), storeBackend, opts)
+	require.NoError(t, err)
+	prefix := strconv.Itoa(int(jobID))
+	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	require.NoError(t, err)
+	require.Greater(t, jobID, int64(0))
+	require.Equal(t, 0, len(dataFiles))
+	require.Equal(t, 0, len(statFiles))
+}
 
 func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	var err error
@@ -89,18 +104,13 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t add index idx(a);")
-	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
 
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
-	require.NoError(t, err)
-	opts := &storage.ExternalStorageOptions{NoCredentials: true}
-	extStore, err := storage.New(context.Background(), storeBackend, opts)
-	require.NoError(t, err)
-	prefix := strconv.Itoa(int(jobID))
-	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
-	require.NoError(t, err)
-	require.Greater(t, jobID, int64(0))
-	require.Equal(t, 0, len(dataFiles))
-	require.Equal(t, 0, len(statFiles))
+	CheckFilesCleanUped(t, sortStorageURI, jobID)
+	tk.MustExec("alter table t add index idx(a);")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockWriteLocalError", "return(true)"))
+	tk.ExecToErr("alter table t add index idx(a);")
+	CheckFilesCleanUped(t, sortStorageURI, jobID)
+	dom.DDL().SetHook(origin)
 }
