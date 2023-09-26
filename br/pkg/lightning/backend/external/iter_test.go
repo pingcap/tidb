@@ -421,7 +421,93 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 }
 
 func TestHotspot(t *testing.T) {
-	// check hotspot is 0 -> nil -> 1 -> 0 -> 1
+	backup := checkHotspotPeriod
+	checkHotspotPeriod = 2
+	t.Cleanup(func() {
+		checkHotspotPeriod = backup
+	})
+
+	ctx := context.Background()
+	dir := t.TempDir()
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+
+	// 2 files, check hotspot is 0 -> nil -> 1 -> 0 -> 1
+	keys := [][]string{
+		{"key00", "key01", "key02", "key06", "key07"},
+		{"key03", "key04", "key05", "key08", "key09"},
+	}
+	value := make([]byte, 5)
+	filenames := []string{"/test0", "/test1"}
+	for i, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		rc := &rangePropertiesCollector{
+			propSizeDist: 100,
+			propKeysDist: 2,
+		}
+		rc.reset()
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
+		require.NoError(t, err)
+		for _, k := range keys[i] {
+			err = kvStore.AddKeyValue([]byte(k), value)
+			require.NoError(t, err)
+		}
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	// readerBufSize = 10, every KV will cause reload
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 10)
+	require.NoError(t, err)
+	// after read key00 and key01 from reader_0, it becomes hotspot
+	require.True(t, iter.Next())
+	require.Equal(t, "key00", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key01", string(iter.Key()))
+	require.True(t, iter.Next())
+	r0 := &iter.iter.readers[0].r.byteReader.concurrentReader
+	require.True(t, r0.expected)
+	require.True(t, r0.now)
+	r1 := &iter.iter.readers[1].r.byteReader.concurrentReader
+	require.False(t, r1.expected)
+	require.False(t, r1.now)
+	// after read key02 and key03 from reader_0 and reader_1, no hotspot
+	require.Equal(t, "key02", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key03", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.False(t, r0.expected)
+	require.False(t, r0.now)
+	require.False(t, r1.expected)
+	require.False(t, r1.now)
+	// after read key04 and key05 from reader_1, it becomes hotspot
+	require.Equal(t, "key04", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key05", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.False(t, r0.expected)
+	require.False(t, r0.now)
+	require.True(t, r1.expected)
+	require.True(t, r1.now)
+	// after read key06 and key07 from reader_0, it becomes hotspot
+	require.Equal(t, "key06", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key07", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.True(t, r0.expected)
+	require.True(t, r0.now)
+	require.False(t, r1.expected)
+	require.False(t, r1.now)
+	// after read key08 and key09 from reader_1, it becomes hotspot
+	require.Equal(t, "key08", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.Equal(t, "key09", string(iter.Key()))
+	require.True(t, iter.Next())
+	require.False(t, r0.expected)
+	require.False(t, r0.now)
+	require.True(t, r1.expected)
+	require.True(t, r1.now)
 }
 
 func TestMemoryUsageWhenHotspotChange(t *testing.T) {
