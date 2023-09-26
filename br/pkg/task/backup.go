@@ -678,6 +678,22 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 		}()
 	}
+
+	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
+		log.Info("failpoint s3-outage-during-writing-file injected, " +
+			"process will sleep for 3s and notify the shell to kill s3 service.")
+		if sigFile, ok := v.(string); ok {
+			file, err := os.Create(sigFile)
+			if err != nil {
+				log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
+			}
+			if file != nil {
+				file.Close()
+			}
+		}
+		time.Sleep(5 * time.Second)
+	})
+
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
 	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
@@ -705,21 +721,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
 	schemasConcurrency := uint(mathutil.Min(backup.DefaultSchemaConcurrency, schemas.Len()))
-
-	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
-		log.Info("failpoint s3-outage-during-writing-file injected, " +
-			"process will sleep for 3s and notify the shell to kill s3 service.")
-		if sigFile, ok := v.(string); ok {
-			file, err := os.Create(sigFile)
-			if err != nil {
-				log.Warn("failed to create file for notifying, skipping notify", zap.Error(err))
-			}
-			if file != nil {
-				file.Close()
-			}
-		}
-		time.Sleep(5 * time.Second)
-	})
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
