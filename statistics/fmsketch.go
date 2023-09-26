@@ -213,6 +213,8 @@ func (s *FMSketch) MemoryUsage() (sum int64) {
 }
 
 func (s *FMSketch) reset() {
+	// not use hashset.Clear, it will release all memory and Not conducive to memory reuse.
+	// the size of set is not more than 10000.
 	set := make([]uint64, 0, s.hashset.Count())
 	s.hashset.Iter(func(k uint64, v bool) (stop bool) {
 		set = append(set, k)
