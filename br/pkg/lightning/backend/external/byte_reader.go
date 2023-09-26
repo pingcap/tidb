@@ -246,9 +246,6 @@ func (r *byteReader) cloneSlices() {
 
 func (r *byteReader) next(n int) []byte {
 	end := mathutil.Min(r.curBufOffset+n, len(r.curBuf))
-	if r.curBufOffset > end {
-		println(r.curBufOffset, end, n, len(r.curBuf))
-	}
 	ret := r.curBuf[r.curBufOffset:end]
 	r.curBufOffset += len(ret)
 	return ret

@@ -230,6 +230,8 @@ func (i *mergeIter[T, R]) next() bool {
 					continue
 				}
 				isHotspot := lastHotspotIdx == idx
+				// TODO(lance6716): caller should clone the element from hotspot, because below
+				// function will release the array
 				err := (*rp).switchConcurrentMode(isHotspot)
 				if err != nil {
 					i.err = err
