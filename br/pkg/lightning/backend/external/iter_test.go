@@ -420,6 +420,10 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 	require.NoError(t, err)
 }
 
+func TestHotspot(t *testing.T) {
+	// check hotspot is 0 -> nil -> 1 -> 0 -> 1
+}
+
 func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	backup := checkHotspotPeriod
 	checkHotspotPeriod = 10

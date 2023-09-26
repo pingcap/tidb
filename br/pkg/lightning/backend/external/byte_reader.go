@@ -140,12 +140,12 @@ func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 
 	// rest cases is caller want to turn off concurrent reader. We should turn off
 	// immediately to release memory.
-	offsetInOldBuf := r.closeConcurrentReader()
+	reloadCnt, offsetInOldBuf := r.closeConcurrentReader()
 	// here we can assume largeBuf is always fully loaded, because the only exception
 	// is it's the end of file. When it's the end of the file, caller will see EOF
 	// and no further switchConcurrentMode should be called.
 	largeBufSize := readerFields.bufSizePerConc * readerFields.concurrency
-	delta := int64(offsetInOldBuf + readerFields.reloadCnt*largeBufSize)
+	delta := int64(offsetInOldBuf + reloadCnt*largeBufSize)
 	if _, err := r.storageReader.Seek(delta, io.SeekCurrent); err != nil {
 		return err
 	}
@@ -293,10 +293,12 @@ func (r *byteReader) reload() error {
 	return nil
 }
 
-func (r *byteReader) closeConcurrentReader() (offsetInOldBuffer int) {
+func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) {
 	r.concurrentReader.largeBufferPool.Destroy()
 	r.concurrentReader.largeBuf = nil
 	r.concurrentReader.now = false
+	reloadCnt = r.concurrentReader.reloadCnt
+	r.concurrentReader.reloadCnt = 0
 	r.curBuf = r.smallBuf
 	offsetInOldBuffer = r.curBufOffset
 	r.curBufOffset = 0
