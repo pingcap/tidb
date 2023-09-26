@@ -50,6 +50,21 @@
     ]
   },
   {
+    "name": "TestOptEnableHashJoin",
+    "cases": [
+      "select * from t1, t2",
+      "select * from t1, t2 where t1.a=t2.a",
+      "select * from t1, t2 where t1.b=t2.b",
+      "select * from t1, t2 where t1.a=t2.a and t1.b=t2.b",
+      "select * from t1 left join t2 on t1.b=t2.b",
+      "select * from t1 left join t2 on t1.a=t2.a",
+      "select * from t1 right join t2 on t1.b=t2.b",
+      "select * from t1 right join t2 on t1.a=t2.a",
+      "select /*+ hash_join(t1) */ * from t1, t2",
+      "select /*+ hash_join(t2) */ * from t1, t2"
+    ]
+  },
+  {
     "name": "TestNoIndexJoinHint",
     "cases": [
       "select /*+ no_merge_join(t1), no_hash_join(t1), no_index_hash_join(t1), no_index_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
