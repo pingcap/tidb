@@ -123,21 +123,31 @@ func (r *byteReader) needLargePrefetch(useConcurrent bool) error {
 	readerFields := &r.concurrentReader
 	if readerFields.store == nil {
 		r.logger.Warn("concurrent reader is not enabled, skip switching")
-		return
+		// caller don't need to care about it.
+		return nil
 	}
-	if !useConcurrent {
-		readerFields.now = false
-		readerFields.largeBuf = nil
-		readerFields.largeBufferPool.Destroy()
-		// largeBuf is always fully loaded except for it's the end of file.
-		// When it's the end, TODO: explain it won't affect
-		largeBufSize := readerFields.bufSizePerConc * readerFields.concurrency
-		delta := int64(r.curBufOffset + readerFields.reloadCnt*largeBufSize)
-		_, err := r.storageReader.Seek(delta, io.SeekCurrent)
+	// need to set it before reload()
+	readerFields.expected = useConcurrent
+	// concurrent reader will be lazily initialized when reload()
+	if useConcurrent {
+		return nil
+	}
+	// no change
+	if !readerFields.now && !useConcurrent {
+		return nil
+	}
+	// rest cases is caller want to turn off concurrent reader. We should turn off
+	// immediately to release memory.
+	r.closeConcurrentReader()
+	// here we can assume largeBuf is always fully loaded, because the only exception
+	// is it's the end of file. When it's the end of the file, caller will see EOF
+	// and no further needLargePrefetch should be called.
+	largeBufSize := readerFields.bufSizePerConc * readerFields.concurrency
+	delta := int64(r.curBufOffset + readerFields.reloadCnt*largeBufSize)
+	if _, err := r.storageReader.Seek(delta, io.SeekCurrent); err != nil {
 		return err
 	}
-	readerFields.expected = useConcurrent
-	return nil
+	return r.reload()
 }
 
 func (r *byteReader) switchToConcurrentReader() error {
@@ -272,9 +282,16 @@ func (r *byteReader) reload() error {
 	return nil
 }
 
+func (r *byteReader) closeConcurrentReader() {
+	r.concurrentReader.largeBufferPool.Destroy()
+	r.concurrentReader.largeBuf = nil
+	r.concurrentReader.now = false
+	r.curBuf = r.smallBuf
+}
+
 func (r *byteReader) Close() error {
 	if r.concurrentReader.now {
-		here
+		r.closeConcurrentReader()
 	}
 	return r.storageReader.Close()
 }

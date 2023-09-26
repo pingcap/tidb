@@ -26,10 +26,9 @@ import (
 
 // singeFileReader is a concurrent reader for a single file.
 type singeFileReader struct {
-	ctx              context.Context
-	concurrency      int
-	readBufferSize   int
-	bufferReadOffset int64
+	ctx            context.Context
+	concurrency    int
+	readBufferSize int
 
 	storage storage.ExternalStorage
 	name    string
