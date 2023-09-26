@@ -102,11 +102,7 @@ go_test(
     ],
     embed = [":common"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 18,
-=======
-    shard_count = 21,
->>>>>>> 740f7f51b76 (lightning: fix incorrect _tidb_rowid allocator value after import for table with AUTO_ID_CACHE=1 (#46171))
+    shard_count = 19,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/lightning/log",
