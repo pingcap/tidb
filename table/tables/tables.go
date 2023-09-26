@@ -557,17 +557,17 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 		return err
 	}
 
-	failpoint.Inject("updateRecordForceAssertNotExist", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("updateRecordForceAssertNotExist")); _err_ == nil {
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if sctx.GetSessionVars().ConnectionID != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
-				failpoint.Return(err)
+				return err
 			}
 		}
-	})
+	}
 
 	if t.shouldAssert(sctx) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
@@ -1032,17 +1032,17 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		return nil, err
 	}
 
-	failpoint.Inject("addRecordForceAssertExist", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("addRecordForceAssertExist")); _err_ == nil {
 		// Assert the key exists while it actually doesn't. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if sctx.GetSessionVars().ConnectionID != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
-				failpoint.Return(nil, err)
+				return nil, err
 			}
 		}
-	})
+	}
 	if setPresume && !txn.IsPessimistic() {
 		err = txn.SetAssertion(key, kv.SetAssertUnknown)
 	} else {
@@ -1462,17 +1462,17 @@ func (t *TableCommon) removeRowData(ctx sessionctx.Context, h kv.Handle) error {
 	}
 
 	key := t.RecordKey(h)
-	failpoint.Inject("removeRecordForceAssertNotExist", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("removeRecordForceAssertNotExist")); _err_ == nil {
 		// Assert the key doesn't exist while it actually exists. This is helpful to test if assertion takes effect.
 		// Since only the first assertion takes effect, set the injected assertion before setting the correct one to
 		// override it.
 		if ctx.GetSessionVars().ConnectionID != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
 			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
-				failpoint.Return(err)
+				return err
 			}
 		}
-	})
+	}
 	if t.shouldAssert(ctx) {
 		err = txn.SetAssertion(key, kv.SetAssertExist)
 	} else {
@@ -1753,11 +1753,11 @@ func (t *TableCommon) Type() table.Type {
 }
 
 func shouldWriteBinlog(ctx sessionctx.Context, tblInfo *model.TableInfo) bool {
-	failpoint.Inject("forceWriteBinlog", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("forceWriteBinlog")); _err_ == nil {
 		// Just to cover binlog related code in this package, since the `BinlogClient` is
 		// still nil, mutations won't be written to pump on commit.
-		failpoint.Return(true)
-	})
+		return true
+	}
 	if ctx.GetSessionVars().BinlogClient == nil {
 		return false
 	}

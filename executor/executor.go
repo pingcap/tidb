@@ -1519,11 +1519,11 @@ func (e *SelectionExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	failpoint.Inject("mockSelectionExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockSelectionExecBaseExecutorOpenReturnedError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("mock SelectionExec.baseExecutor.Open returned error"))
+			return errors.New("mock SelectionExec.baseExecutor.Open returned error")
 		}
-	})
+	}
 	return e.open(ctx)
 }
 
@@ -1841,9 +1841,9 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 			e.stopFetchData.Store(true)
 			e.resultPool <- result
 		}
-		failpoint.Inject("issue21441", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("issue21441")); _err_ == nil {
 			atomic.AddInt32(&e.childInFlightForTest, 1)
-		})
+		}
 		for {
 			if e.stopFetchData.Load().(bool) {
 				return
@@ -1858,20 +1858,20 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 				e.resourcePools[workerID] <- result.chk
 				break
 			}
-			failpoint.Inject("issue21441", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("issue21441")); _err_ == nil {
 				if int(atomic.LoadInt32(&e.childInFlightForTest)) > e.concurrency {
 					panic("the count of child in flight is larger than e.concurrency unexpectedly")
 				}
-			})
+			}
 			e.resultPool <- result
 			if result.err != nil {
 				e.stopFetchData.Store(true)
 				return
 			}
 		}
-		failpoint.Inject("issue21441", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("issue21441")); _err_ == nil {
 			atomic.AddInt32(&e.childInFlightForTest, -1)
-		})
+		}
 	}
 }
 

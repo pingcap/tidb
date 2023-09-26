@@ -1299,13 +1299,13 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 	if !prop.IsSortItemEmpty() && candidate.path.IndexMergeIsIntersection {
 		return invalidTask, nil
 	}
-	failpoint.Inject("forceIndexMergeKeepOrder", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("forceIndexMergeKeepOrder")); _err_ == nil {
 		if len(candidate.path.PartialIndexPaths) > 0 && !candidate.path.IndexMergeIsIntersection {
 			if prop.IsSortItemEmpty() {
-				failpoint.Return(invalidTask, nil)
+				return invalidTask, nil
 			}
 		}
-	})
+	}
 	path := candidate.path
 	scans := make([]PhysicalPlan, 0, len(path.PartialIndexPaths))
 	cop := &copTask{

@@ -148,11 +148,11 @@ func (c *RowContainer) SpillToDisk() {
 			logutil.BgLogger().Error("spill to disk failed", zap.Stack("stack"), zap.Error(err))
 		}
 	}()
-	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("spillToDiskOutOfDiskQuota")); _err_ == nil {
 		if val.(bool) {
 			panic("out of disk quota when spilling")
 		}
-	})
+	}
 	for i := 0; i < n; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
@@ -228,11 +228,11 @@ func (c *RowContainer) NumChunks() int {
 func (c *RowContainer) Add(chk *Chunk) (err error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	failpoint.Inject("testRowContainerDeadLock", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("testRowContainerDeadLock")); _err_ == nil {
 		if val.(bool) {
 			time.Sleep(time.Second)
 		}
-	})
+	}
 	if c.alreadySpilled() {
 		if err := c.m.records.spillError; err != nil {
 			return err
@@ -528,11 +528,11 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 		c.memTracker.Consume(1)
 		c.timesOfRowCompare = 0
 	}
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
 		if val.(bool) {
 			c.timesOfRowCompare += 1024
 		}
-	})
+	}
 	c.timesOfRowCompare++
 	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
 	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])

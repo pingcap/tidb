@@ -740,9 +740,9 @@ func (w *GCWorker) setGCWorkerServiceSafePoint(ctx context.Context, safePoint ui
 }
 
 func (w *GCWorker) runGCJob(ctx context.Context, safePoint uint64, concurrency int) error {
-	failpoint.Inject("mockRunGCJobFail", func() {
-		failpoint.Return(errors.New("mock failure of runGCJoB"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockRunGCJobFail")); _err_ == nil {
+		return errors.New("mock failure of runGCJoB")
+	}
 	metrics.GCWorkerCounter.WithLabelValues("run_job").Inc()
 	usePhysical, err := w.checkUsePhysicalScanLock()
 	if err != nil {
@@ -841,9 +841,9 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		} else {
 			err = w.doUnsafeDestroyRangeRequest(ctx, startKey, endKey, concurrency)
 		}
-		failpoint.Inject("ignoreDeleteRangeFailed", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("ignoreDeleteRangeFailed")); _err_ == nil {
 			err = nil
-		})
+		}
 
 		if err != nil {
 			logutil.Logger(ctx).Error("delete range failed on range", zap.String("category", "gc worker"),
@@ -1183,9 +1183,9 @@ func (w *GCWorker) legacyResolveLocks(
 
 	handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 		scanLimit := uint32(tikv.GCScanLockLimit)
-		failpoint.Inject("lowScanLockLimit", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("lowScanLockLimit")); _err_ == nil {
 			scanLimit = 3
-		})
+		}
 		return tikv.ResolveLocksForRange(ctx, w.regionLockResolver, safePoint, r.StartKey, r.EndKey, tikv.NewGcResolveLockMaxBackoffer, scanLimit)
 	}
 
@@ -1239,7 +1239,7 @@ func (w *GCWorker) resolveLocksPhysical(ctx context.Context, safePoint uint64) e
 			return errors.Trace(err)
 		}
 
-		failpoint.Inject("beforeCheckLockObservers", func() {})
+		failpoint.Eval(_curpkg_("beforeCheckLockObservers"))
 
 		stores, err := w.getStoresMapForGC(ctx)
 		if err != nil {
@@ -1494,11 +1494,11 @@ func (w *GCWorker) physicalScanAndResolveLocks(ctx context.Context, safePoint ui
 }
 
 func (w *GCWorker) resolveLocksAcrossRegions(ctx context.Context, locks []*txnlock.Lock) error {
-	failpoint.Inject("resolveLocksAcrossRegionsErr", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("resolveLocksAcrossRegionsErr")); _err_ == nil {
 		ms := v.(int)
 		time.Sleep(time.Duration(ms) * time.Millisecond)
-		failpoint.Return(errors.New("injectedError"))
-	})
+		return errors.New("injectedError")
+	}
 
 	bo := tikv.NewGcResolveLockMaxBackoffer(ctx)
 
@@ -1877,7 +1877,7 @@ func (w *GCWorker) saveValueToSysTable(key, value string) error {
 func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr util.DelRangeTask, gcPlacementRuleCache map[int64]interface{}) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
-	failpoint.Inject("mockHistoryJobForGC", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("mockHistoryJobForGC")); _err_ == nil {
 		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{int64(v.(int))}})
 		if err1 != nil {
 			return
@@ -1888,7 +1888,7 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 			TableID: int64(v.(int)),
 			RawArgs: args,
 		}
-	})
+	}
 	if historyJob == nil {
 		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
 		if err != nil {
@@ -1931,7 +1931,7 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 
 	for _, id := range physicalTableIDs {
 		// Delete pd rule
-		failpoint.Inject("gcDeletePlacementRuleCounter", func() {})
+		failpoint.Eval(_curpkg_("gcDeletePlacementRuleCounter"))
 		logutil.BgLogger().Info("try delete TiFlash pd rule",
 			zap.Int64("tableID", id), zap.String("endKey", string(dr.EndKey)), zap.Uint64("safePoint", safePoint))
 		ruleID := infosync.MakeRuleID(id)
@@ -1959,7 +1959,7 @@ func (w *GCWorker) doGCPlacementRules(se session.Session, safePoint uint64, dr u
 func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 	// Get the job from the job history
 	var historyJob *model.Job
-	failpoint.Inject("mockHistoryJob", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("mockHistoryJob")); _err_ == nil {
 		args, err1 := json.Marshal([]interface{}{kv.Key{}, []int64{}, []string{v.(string)}})
 		if err1 != nil {
 			return
@@ -1969,7 +1969,7 @@ func (w *GCWorker) doGCLabelRules(dr util.DelRangeTask) (err error) {
 			Type:    model.ActionDropTable,
 			RawArgs: args,
 		}
-	})
+	}
 	if historyJob == nil {
 		se := createSession(w.store)
 		historyJob, err = ddl.GetHistoryJobByID(se, dr.JobID)
@@ -2241,9 +2241,9 @@ func newMergeLockScanner(safePoint uint64, client tikv.Client, stores map[uint64
 		stores:        stores,
 		scanLockLimit: tikv.GCScanLockLimit,
 	}
-	failpoint.Inject("lowPhysicalScanLockLimit", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("lowPhysicalScanLockLimit")); _err_ == nil {
 		scanner.scanLockLimit = 3
-	})
+	}
 	return scanner
 }
 

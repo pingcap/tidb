@@ -302,7 +302,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 			return
 		case <-time.After(checkTime):
 		}
-		failpoint.Inject("mockStopManager", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockStopManager")); _err_ == nil {
 			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
 			go func() {
 				v, ok := testContexts.Load(m.id)
@@ -312,7 +312,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 					m.Stop()
 				}
 			}()
-		})
+		}
 		task, err := m.taskTable.GetGlobalTaskByID(task.ID)
 		if err != nil {
 			m.onError(err)

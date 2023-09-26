@@ -220,12 +220,11 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			return nil
 		}
 
-		failpoint.Inject(
-			"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
-			func() {
-				fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
-			},
-		)
+		if _, _err_ := failpoint.Eval(_curpkg_("FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")); _err_ == nil {
+
+			fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+
+		}
 
 		// init auto id column for each table
 		for _, tbl := range tables {
@@ -582,9 +581,9 @@ func (*tidbBackend) RetryImportDelay() time.Duration {
 }
 
 func (*tidbBackend) MaxChunkSize() int {
-	failpoint.Inject("FailIfImportedSomeRows", func() {
-		failpoint.Return(1)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedSomeRows")); _err_ == nil {
+		return 1
+	}
 	return 1048576
 }
 
@@ -808,9 +807,9 @@ stmtLoop:
 		}
 		// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 	}
-	failpoint.Inject("FailIfImportedSomeRows", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedSomeRows")); _err_ == nil {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
-	})
+	}
 	return nil
 }
 
