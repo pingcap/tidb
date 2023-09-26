@@ -216,8 +216,9 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
 	if e.spillAction == nil {
 		e.spillAction = &AggSpillDiskAction{
-			e:           e,
-			spillHelper: e.spillHelper,
+			e:            e,
+			spillHelper:  e.spillHelper,
+			isLogPrinted: false,
 		}
 	}
 	return e.spillAction

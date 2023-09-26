@@ -463,11 +463,9 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 }
 
 func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.WaitGroup) {
-	// logutil.BgLogger().Info("xzxdebug: waitAllWorkersAndCloseFinalOutputCh>", zap.String("xzx", "xzx"))
 	for _, waitGroup := range waitGroups {
 		waitGroup.Wait()
 	}
-	// logutil.BgLogger().Info("xzxdebug: waitAllWorkersAndCloseFinalOutputCh<", zap.String("xzx", "xzx"))
 	close(e.finalOutputCh)
 }
 
@@ -494,9 +492,7 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		go e.partialWorkers[i].run(e.Ctx(), partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 	go func() {
-		// logutil.BgLogger().Info("xzxdebug: waitPartialWorkerAndCloseOutputChs>", zap.String("xzx", "xzx"))
 		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
-		// logutil.BgLogger().Info("xzxdebug: waitPartialWorkerAndCloseOutputChs<", zap.String("xzx", "xzx"))
 		if partialWallTimePtr != nil {
 			atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
 		}
@@ -525,7 +521,6 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 // 2. partial worker receives the input data, updates the partial results, and shuffle the partial results to the final workers.
 // 3. final worker receives partial results from all the partial workers, evaluates the final results and sends the final results to the main thread.
 func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error {
-	// defer logutil.BgLogger().Info("xzxdebug: exit parallelExec...", zap.String("xzx", "xzx"))
 	if !e.prepared {
 		e.prepare4ParallelExec(ctx)
 		e.prepared = true
@@ -541,11 +536,8 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		return nil
 	}
 
-	// logutil.BgLogger().Info("xzxdebug: executos starts to run", zap.String("xzx", "xzx"))
 	for {
-		// logutil.BgLogger().Info("xzxdebug: <-e.finalOutputCh>", zap.String("xzx", "xzx"))
 		result, ok := <-e.finalOutputCh
-		// logutil.BgLogger().Info("xzxdebug: <-e.finalOutputCh<", zap.String("xzx", "xzx"))
 		if !ok {
 			e.executed = true
 			if e.IsChildReturnEmpty && e.DefaultVal != nil {
@@ -558,9 +550,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		}
 		chk.SwapColumns(result.chk)
 		result.chk.Reset()
-		// logutil.BgLogger().Info("xzxdebug: result.giveBackCh <- result.chk>", zap.String("xzx", "xzx"))
 		result.giveBackCh <- result.chk
-		// logutil.BgLogger().Info("xzxdebug: result.giveBackCh <- result.chk<", zap.String("xzx", "xzx"))
 		if chk.NumRows() > 0 {
 			e.IsChildReturnEmpty = false
 			return nil

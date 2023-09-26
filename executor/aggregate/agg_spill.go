@@ -160,7 +160,8 @@ type AggSpillDiskAction struct {
 	e          *HashAggExec
 	spillTimes uint32
 
-	spillHelper *parallelHashAggSpillHelper
+	spillHelper  *parallelHashAggSpillHelper
+	isLogPrinted bool
 }
 
 func (a *AggSpillDiskAction) triggerFallBackAction(t *memory.Tracker) {
@@ -177,9 +178,13 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			a.spillTimes++
 			atomic.StoreUint32(&a.e.inSpillMode, 1)
 			memory.QueryForceDisk.Add(1)
+			logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
+				zap.Uint32("spillTimes", a.spillTimes),
+				zap.Int64("consumed", t.BytesConsumed()),
+				zap.Int64("quota", t.GetBytesLimit()))
 		} else if a.spillHelper.isInPartialStage() {
 			if len(a.e.partialWorkers) > 0 {
-				a.doActionForParallelHashAgg()
+				a.doActionForParallelHashAgg(t)
 			} else {
 				logutil.BgLogger().Error("0 length of partialWorkers0 in parallel hash aggregation is illegal")
 			}
@@ -187,10 +192,6 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			a.triggerFallBackAction(t)
 			return
 		}
-		logutil.BgLogger().Info("memory exceeds quota, set aggregate mode to spill-mode",
-			zap.Uint32("spillTimes", a.spillTimes),
-			zap.Int64("consumed", t.BytesConsumed()),
-			zap.Int64("quota", t.GetBytesLimit()))
 		return
 	}
 	a.triggerFallBackAction(t)
@@ -201,7 +202,7 @@ func (*AggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
-func (a *AggSpillDiskAction) doActionForParallelHashAgg() {
+func (a *AggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
 	a.spillHelper.lock.Lock()
 	defer a.spillHelper.lock.Unlock()
 	if a.spillHelper.isInSpilling() {
@@ -211,6 +212,14 @@ func (a *AggSpillDiskAction) doActionForParallelHashAgg() {
 	if a.spillHelper.checkErrorAndCloseSpillSyncer() {
 		return
 	}
+
+	if !a.isLogPrinted {
+		logutil.BgLogger().Info("memory exceeds quota, hash aggregate is set to spill mode",
+			zap.Int64("consumed", t.BytesConsumed()),
+			zap.Int64("quota", t.GetBytesLimit()))
+		a.isLogPrinted = true
+	}
+
 	runningPartialWorkerNum := a.spillHelper.runningPartialWorkerNum
 	a.spillHelper.setIsSpilling()
 	a.e.partialWorkers[0].spillHelper.triggerSpill()

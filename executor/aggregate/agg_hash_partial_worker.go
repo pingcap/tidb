@@ -25,9 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/twmb/murmur3"
-	"go.uber.org/zap"
 )
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
@@ -138,17 +136,11 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 		w.waitForSpillDoneBeforeWorkerExit()
 
-		// logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers>", zap.String("xzx", "xzx"))
 		w.workerSync.waitForRunningWorkers()
-		// logutil.BgLogger().Info("xzxdebug: partial run waitForRunningWorkers<", zap.String("xzx", "xzx"))
 
-		// logutil.BgLogger().Info("xzxdebug: ready_shuffles_data1_1", zap.String("xzx", "xzx"))
 		if !hasError {
 			isSpilled := w.spillHelper.isSpillTriggered()
-			// msg := fmt.Sprintf("xzxdebug: ready_shuffles_data_2, isSpilled: %t, need_shuffle: %t", isSpilled, needShuffle)
-			logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
 			if isSpilled {
-				// logutil.BgLogger().Info("xzxdebug: partial_spill_data", zap.String("xzx", "xzx"))
 				// Do not put `w.spillHelper.needSpill()` and `len(w.groupKey) > 0` judgement in one line
 				if len(w.groupKey) > 0 {
 					if err := w.spillDataToDisk(); err != nil {
@@ -158,16 +150,13 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 				}
 				w.spillHelper.addListInDisks(w.spilledChunksIO)
 			} else if needShuffle {
-				// logutil.BgLogger().Info("xzxdebug: partial shuffles data", zap.String("xzx", "xzx"))
 				w.shuffleIntermData(sc, finalConcurrency)
 			}
 		}
 
 		// TODO Do we need to handle something when error happens?
 
-		// logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers>", zap.String("xzx", "xzx"))
 		w.workerSync.waitForExitOfAliveWorkers()
-		// logutil.BgLogger().Info("xzxdebug: partial run waitForExitOfAliveWorkers<", zap.String("xzx", "xzx"))
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -176,7 +165,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		waitGroup.Done()
 	}()
 
-	// logutil.BgLogger().Info("xzxdebug: partial worker begins to run", zap.String("xzx", "xzx"))
 	for {
 		waitStart := time.Now()
 		ok := w.getChildInput()
@@ -276,14 +264,10 @@ func (w *HashAggPartialWorker) prepareForSpillWhenNeeded() {
 }
 
 func (w *HashAggPartialWorker) spillDataToDisk() error {
-	// enterMsg := fmt.Sprintf("xzxdebug: enter spillDataToDisk, w addr: %p", w)
-	// exitMsg := fmt.Sprintf("xzxdebug: exit spillDataToDisk, w addr: %p", w)
-	// logutil.BgLogger().Info(enterMsg, zap.String("xzx", "xzx"))
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
-		// logutil.BgLogger().Info(exitMsg, zap.String("xzx", "xzx"))
 	}()
 	if len(w.partialResultsMap) == 0 {
 		return nil
