@@ -218,6 +218,7 @@ func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedS
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(partitionID)
+	cache.TableRowStatsCache.Invalidate(tid)
 
 	_, _, err = exec.ExecRestrictedSQL(
 		ctx,
