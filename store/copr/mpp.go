@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -102,10 +101,6 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		}
 	}
 
-	rgName := req.ResourceGroupName
-	if !variable.EnableResourceControl.Load() {
-		rgName = ""
-	}
 	// meta for current task.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
 		GatherId:               req.GatherID,
@@ -113,7 +108,7 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		CoordinatorAddress:     req.CoordinatorAddress,
 		ReportExecutionSummary: req.ReportExecutionSummary,
 		MppVersion:             req.MppVersion.ToInt64(),
-		ResourceGroupName:      rgName,
+		ResourceGroupName:      req.ResourceGroupName,
 	}
 
 	mppReq := &mpp.DispatchTaskRequest{
@@ -203,7 +198,7 @@ func (c *MPPClient) CancelMPPTasks(param kv.CancelMPPTasksParam) {
 
 	firstReq := reqs[0]
 	killReq := &mpp.CancelTaskRequest{
-		Meta: &mpp.TaskMeta{StartTs: firstReq.StartTs, GatherId: firstReq.GatherID, QueryTs: firstReq.MppQueryID.QueryTs, LocalQueryId: firstReq.MppQueryID.LocalQueryID, ServerId: firstReq.MppQueryID.ServerID, MppVersion: firstReq.MppVersion.ToInt64()},
+		Meta: &mpp.TaskMeta{StartTs: firstReq.StartTs, GatherId: firstReq.GatherID, QueryTs: firstReq.MppQueryID.QueryTs, LocalQueryId: firstReq.MppQueryID.LocalQueryID, ServerId: firstReq.MppQueryID.ServerID, MppVersion: firstReq.MppVersion.ToInt64(), ResourceGroupName: firstReq.ResourceGroupName},
 	}
 
 	wrappedReq := tikvrpc.NewRequest(tikvrpc.CmdMPPCancel, killReq, kvrpcpb.Context{})
@@ -239,13 +234,14 @@ func (c *MPPClient) EstablishMPPConns(param kv.EstablishMPPConnsParam) (*tikvrpc
 	connReq := &mpp.EstablishMPPConnectionRequest{
 		SenderMeta: taskMeta,
 		ReceiverMeta: &mpp.TaskMeta{
-			StartTs:      req.StartTs,
-			GatherId:     req.GatherID,
-			QueryTs:      req.MppQueryID.QueryTs,
-			LocalQueryId: req.MppQueryID.LocalQueryID,
-			ServerId:     req.MppQueryID.ServerID,
-			MppVersion:   req.MppVersion.ToInt64(),
-			TaskId:       -1,
+			StartTs:           req.StartTs,
+			GatherId:          req.GatherID,
+			QueryTs:           req.MppQueryID.QueryTs,
+			LocalQueryId:      req.MppQueryID.LocalQueryID,
+			ServerId:          req.MppQueryID.ServerID,
+			MppVersion:        req.MppVersion.ToInt64(),
+			TaskId:            -1,
+			ResourceGroupName: req.ResourceGroupName,
 		},
 	}
 
