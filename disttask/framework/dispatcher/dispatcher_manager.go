@@ -88,12 +88,13 @@ func (dm *Manager) clearRunningTasks() {
 // Dispatcher schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
 type Manager struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	taskMgr  *storage.TaskManager
-	wg       tidbutil.WaitGroupWrapper
-	gPool    *spool.Pool
-	inited   bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	taskMgr *storage.TaskManager
+	wg      tidbutil.WaitGroupWrapper
+	gPool   *spool.Pool
+	inited  bool
+	// serverID, it's value is ip:port now.
 	serverID string
 
 	finishCh chan struct{}
