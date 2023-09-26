@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
+	"github.com/phayes/freeport"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -34,17 +35,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	gcsHost = "127.0.0.1"
-	gcsPort = uint16(4443)
+func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
+	gcsHost := "127.0.0.1"
 	// for fake gcs server, we must use this endpoint format
 	// NOTE: must end with '/'
-	gcsEndpointFormat = "http://%s:%d/storage/v1/"
-	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
-)
+	gcsEndpointFormat := "http://%s:%d/storage/v1/"
+	freePort, err := freeport.GetFreePort()
+	require.NoError(t, err)
+	gcsEndpoint := fmt.Sprintf(gcsEndpointFormat, gcsHost, freePort)
+	return gcsHost, uint16(freePort),
+		fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
+}
 
 func TestGlobalSortCleanupCloudFiles(t *testing.T) {
-	var err error
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
 		Host:       gcsHost,
@@ -63,8 +67,7 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	sortStorageURI := fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
-	variable.CloudStorageURI.Store(sortStorageURI)
+	variable.CloudStorageURI.Store(cloudStorageURI)
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
@@ -95,7 +98,7 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
 	<-dispatcher.WaitCleanUpFinished
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	storeBackend, err := storage.ParseBackend(cloudStorageURI, nil)
 	require.NoError(t, err)
 	opts := &storage.ExternalStorageOptions{NoCredentials: true}
 	extStore, err := storage.New(context.Background(), storeBackend, opts)
@@ -110,7 +113,7 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
-	var err error
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
 		Host:       gcsHost,
@@ -119,8 +122,8 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opt)
 	require.NoError(t, err)
+	defer server.Stop()
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-	sortStorageURI := fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -149,7 +152,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 		{"txn_backfill", "0", "0", ""},
 		{"ingest_backfill", "1", "0", ""},
 		{"ingest_dist_backfill", "1", "1", ""},
-		{"ingest_dist_gs_backfill", "1", "1", sortStorageURI},
+		{"ingest_dist_gs_backfill", "1", "1", cloudStorageURI},
 	}
 	for _, tc := range testCases {
 		tc := tc
