@@ -160,6 +160,11 @@ func (s *backfillDistScheduler) GetSubtaskExecutor(ctx context.Context, task *pr
 	}
 }
 
+func (*backfillDistScheduler) IsIdempotent(*proto.Subtask) bool {
+	// TODO: implement this later.
+	return false
+}
+
 func (s *backfillDistScheduler) Close() {
 	if s.backendCtx != nil {
 		ingest.LitBackCtxMgr.Unregister(s.jobID)
