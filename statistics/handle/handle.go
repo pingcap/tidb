@@ -1448,7 +1448,7 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 	}
 	job.ID = new(uint64)
 	*job.ID = rows[0].GetUint64(0)
-	if val, _err_ := failpoint.Eval(_curpkg_("DebugAnalyzeJobOperations")); _err_ == nil {
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("InsertAnalyzeJob",
 				zap.String("table_schema", job.DBName),
@@ -1458,7 +1458,7 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 				zap.Uint64("job_id", *job.ID),
 			)
 		}
-	}
+	})
 	return nil
 }
 

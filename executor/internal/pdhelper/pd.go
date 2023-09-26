@@ -89,13 +89,13 @@ func getApproximateTableCountFromStorage(sctx sessionctx.Context, tid int64, dbN
 	regionStats := &helper.PDRegionStats{}
 	pdHelper := helper.NewHelper(tikvStore)
 	err := pdHelper.GetPDRegionStats(tid, regionStats, true)
-	if _, _err_ := failpoint.Eval(_curpkg_("calcSampleRateByStorageCount")); _err_ == nil {
+	failpoint.Inject("calcSampleRateByStorageCount", func() {
 		// Force the TiDB thinking that there's PD and the count of region is small.
 		err = nil
 		regionStats.Count = 1
 		// Set a very large approximate count.
 		regionStats.StorageKeys = 1000000
-	}
+	})
 	if err != nil {
 		return 0, false
 	}

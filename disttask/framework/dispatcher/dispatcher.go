@@ -158,16 +158,16 @@ func (d *BaseDispatcher) scheduleTask() {
 			if err != nil {
 				continue
 			}
-			if val, _err_ := failpoint.Eval(_curpkg_("cancelTaskAfterRefreshTask")); _err_ == nil {
+			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
 					err := d.taskMgr.CancelGlobalTask(d.Task.ID)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 					}
 				}
-			}
+			})
 
-			if val, _err_ := failpoint.Eval(_curpkg_("pausePendingTask")); _err_ == nil {
+			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStatePending {
 					_, err := d.taskMgr.PauseTask(d.Task.Key)
 					if err != nil {
@@ -175,9 +175,9 @@ func (d *BaseDispatcher) scheduleTask() {
 					}
 					d.Task.State = proto.TaskStatePausing
 				}
-			}
+			})
 
-			if val, _err_ := failpoint.Eval(_curpkg_("pauseTaskAfterRefreshTask")); _err_ == nil {
+			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
 					_, err := d.taskMgr.PauseTask(d.Task.Key)
 					if err != nil {
@@ -185,7 +185,7 @@ func (d *BaseDispatcher) scheduleTask() {
 					}
 					d.Task.State = proto.TaskStatePausing
 				}
-			}
+			})
 
 			switch d.Task.State {
 			case proto.TaskStateCancelling:
@@ -216,13 +216,13 @@ func (d *BaseDispatcher) scheduleTask() {
 				logutil.Logger(d.logCtx).Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			if val, _err_ := failpoint.Eval(_curpkg_("mockOwnerChange")); _err_ == nil {
+			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
 				if val.(bool) {
 					logutil.Logger(d.logCtx).Info("mockOwnerChange called")
 					MockOwnerChange()
 					time.Sleep(time.Second)
 				}
-			}
+			})
 		}
 	}
 }
@@ -271,9 +271,9 @@ func (d *BaseDispatcher) onResuming() error {
 		// Finish the resuming process.
 		logutil.Logger(d.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
 		err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
-		if _, _err_ := failpoint.Eval(_curpkg_("syncAfterResume")); _err_ == nil {
+		failpoint.Inject("syncAfterResume", func() {
 			TestSyncChan <- struct{}{}
-		}
+		})
 		return err
 	}
 
@@ -410,12 +410,12 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("cancelBeforeUpdate")); _err_ == nil {
+	failpoint.Inject("cancelBeforeUpdate", func() {
 		err := d.taskMgr.CancelGlobalTask(d.Task.ID)
 		if err != nil {
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
-	}
+	})
 
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
@@ -472,9 +472,9 @@ func (*BaseDispatcher) nextStepSubtaskDispatched(*proto.Task) bool {
 
 func (d *BaseDispatcher) onNextStage() (err error) {
 	/// dynamic dispatch subtasks.
-	if _, _err_ := failpoint.Eval(_curpkg_("mockDynamicDispatchErr")); _err_ == nil {
-		return errors.New("mockDynamicDispatchErr")
-	}
+	failpoint.Inject("mockDynamicDispatchErr", func() {
+		failpoint.Return(errors.New("mockDynamicDispatchErr"))
+	})
 
 	nextStep := d.GetNextStep(d, d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
@@ -528,9 +528,9 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			return d.handlePlanErr(err)
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockDynamicDispatchErr1")); _err_ == nil {
-			return errors.New("mockDynamicDispatchErr1")
-		}
+		failpoint.Inject("mockDynamicDispatchErr1", func() {
+			failpoint.Return(errors.New("mockDynamicDispatchErr1"))
+		})
 
 		// 4. dispatch batch of subtasks to EligibleInstances.
 		err = d.dispatchSubTask(nextStep, metas)
@@ -542,9 +542,9 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			break
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockDynamicDispatchErr2")); _err_ == nil {
-			return errors.New("mockDynamicDispatchErr2")
-		}
+		failpoint.Inject("mockDynamicDispatchErr2", func() {
+			failpoint.Return(errors.New("mockDynamicDispatchErr2"))
+		})
 	}
 	return nil
 }

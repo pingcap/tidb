@@ -76,14 +76,14 @@ func SyncUpgradeState(s sessionctx.Context, timeout time.Duration) error {
 
 // SyncNormalRunning syncs normal state to etcd.
 func SyncNormalRunning(s sessionctx.Context) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockResumeAllJobsFailed")); _err_ == nil {
+	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
 		if val.(bool) {
 			dom := domain.GetDomain(s)
 			//nolint: errcheck
 			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
-			return nil
+			failpoint.Return(nil)
 		}
-	}
+	})
 
 	logger := logutil.BgLogger().With(zap.String("category", "upgrading"))
 	jobErrs, err := ddl.ResumeAllJobsBySystem(s)

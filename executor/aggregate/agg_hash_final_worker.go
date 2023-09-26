@@ -92,7 +92,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			for i := 0; i < groupKeysLen; i++ {
 				w.groupKeys = append(w.groupKeys, []byte(groupKeys[i]))
 			}
-			failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+			failpoint.Inject("ConsumeRandomPanic", nil)
 			w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 			finalPartialResults := w.getPartialResult(sc, w.groupKeys, w.partialResultMap)
 			allMemDelta := int64(0)
@@ -133,7 +133,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	for groupKey := range w.groupSet.StringSet {
 		w.groupKeys = append(w.groupKeys, []byte(groupKey))
 	}
-	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+	failpoint.Inject("ConsumeRandomPanic", nil)
 	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeys) - memSize)
 	partialResults := w.getPartialResult(sctx.GetSessionVars().StmtCtx, w.groupKeys, w.partialResultMap)
 	for i := 0; i < len(w.groupSet.StringSet); i++ {

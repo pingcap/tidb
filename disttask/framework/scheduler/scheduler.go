@@ -145,9 +145,9 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		return s.getError()
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockExecSubtaskInitEnvErr")); _err_ == nil {
-		return errors.New("mockExecSubtaskInitEnvErr")
-	}
+	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
+		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+	})
 	if err := executor.Init(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
@@ -206,14 +206,14 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			continue
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockCleanScheduler")); _err_ == nil {
+		failpoint.Inject("mockCleanScheduler", func() {
 			v, ok := testContexts.Load(s.id)
 			if ok {
 				if v.(*TestContext).mockDown.Load() {
-					break
+					failpoint.Break()
 				}
 			}
-		}
+		})
 
 		s.runSubtask(runCtx, executor, subtask)
 	}
@@ -222,11 +222,11 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 
 func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.SubtaskExecutor, subtask *proto.Subtask) {
 	err := scheduler.RunSubtask(ctx, subtask)
-	if val, _err_ := failpoint.Eval(_curpkg_("MockRunSubtaskCancel")); _err_ == nil {
+	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			err = context.Canceled
 		}
-	}
+	})
 	if err != nil {
 		s.onError(err)
 		if errors.Cause(err) == context.Canceled {
@@ -241,7 +241,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 		s.onError(ctx.Err())
 		return
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("mockTiDBDown")); _err_ == nil {
+	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
 			v, ok := testContexts.Load(s.id)
@@ -250,11 +250,11 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 				v.(*TestContext).mockDown.Store(true)
 				logutil.Logger(s.logCtx).Info("mockTiDBDown")
 				time.Sleep(2 * time.Second)
-				return
+				failpoint.Return()
 			}
 		}
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockTiDBDown2")); _err_ == nil {
+	})
+	failpoint.Inject("mockTiDBDown2", func() {
 		if s.id == ":4003" && subtask.Step == proto.StepTwo {
 			v, ok := testContexts.Load(s.id)
 			if ok {
@@ -264,21 +264,21 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 				return
 			}
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockTiDBPartitionThenResume")); _err_ == nil {
+	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
 		if val.(bool) && (s.id == ":4000" || s.id == ":4001" || s.id == ":4002") {
 			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(s.id)
 			time.Sleep(20 * time.Second)
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunErr")); _err_ == nil {
+	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(errors.New("MockExecutorRunErr"))
 		}
-	}
-	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunCancel")); _err_ == nil {
+	})
+	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
 		if taskID, ok := val.(int); ok {
 			mgr, err := storage.GetTaskManager()
 			if err != nil {
@@ -290,7 +290,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, scheduler execute.Subtas
 				}
 			}
 		}
-	}
+	})
 	s.onSubtaskFinished(ctx, scheduler, subtask)
 }
 
@@ -300,11 +300,11 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 			s.onError(err)
 		}
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("MockSubtaskFinishedCancel")); _err_ == nil {
+	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(context.Canceled)
 		}
-	}
+	})
 	if err := s.getError(); err != nil {
 		if errors.Cause(err) == context.Canceled {
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
@@ -315,10 +315,10 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, scheduler execute
 		return
 	}
 	s.finishSubtaskAndUpdateState(subtask)
-	if _, _err_ := failpoint.Eval(_curpkg_("syncAfterSubtaskFinish")); _err_ == nil {
+	failpoint.Inject("syncAfterSubtaskFinish", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	}
+	})
 }
 
 // Rollback rollbacks the scheduler task.

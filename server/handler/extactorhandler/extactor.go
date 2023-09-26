@@ -56,16 +56,16 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		handler.WriteError(w, err)
 		return
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("extractTaskServeHandler")); _err_ == nil {
+	failpoint.Inject("extractTaskServeHandler", func(val failpoint.Value) {
 		if val.(bool) {
 			w.WriteHeader(http.StatusOK)
 			_, err = w.Write([]byte("mock"))
 			if err != nil {
 				handler.WriteError(w, err)
 			}
-			return
+			failpoint.Return()
 		}
-	}
+	})
 
 	name, err := eh.ExtractHandler.ExtractTask(context.Background(), task)
 	if err != nil {

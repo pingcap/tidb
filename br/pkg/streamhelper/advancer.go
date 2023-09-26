@@ -119,9 +119,9 @@ func (c *checkpoint) equal(o *checkpoint) bool {
 // we should try to resolve lock for the range
 // to keep the RPO in 5 min.
 func (c *checkpoint) needResolveLocks() bool {
-	if val, _err_ := failpoint.Eval(_curpkg_("NeedResolveLocks")); _err_ == nil {
-		return val.(bool)
-	}
+	failpoint.Inject("NeedResolveLocks", func(val failpoint.Value) {
+		failpoint.Return(val.(bool))
+	})
 	return time.Since(c.resolveLockTime) > 3*time.Minute
 }
 
@@ -571,7 +571,7 @@ func (c *CheckpointAdvancer) asyncResolveLocksForRanges(ctx context.Context, tar
 	// run in another goroutine
 	// do not block main tick here
 	go func() {
-		failpoint.Eval(_curpkg_("AsyncResolveLocks"))
+		failpoint.Inject("AsyncResolveLocks", func() {})
 		handler := func(ctx context.Context, r tikvstore.KeyRange) (rangetask.TaskStat, error) {
 			// we will scan all locks and try to resolve them by check txn status.
 			return tikv.ResolveLocksForRange(
