@@ -1628,6 +1628,7 @@ select a from (select 1 a) `x`, (select 2 a) `x`;
 select x.a from (select 1 a) `x`, (select 2 a) `x`;
 -- error 1052
 select a from (select 1 a), (select 2 a);
+set sql_mode = default;
 
 # TestSelectHashPartitionTable
 drop table if exists th;

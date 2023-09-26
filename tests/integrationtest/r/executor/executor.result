@@ -2682,6 +2682,7 @@ select x.a from (select 1 a) `x`, (select 2 a) `x`;
 Error 1052 (23000): Column 'a' in field list is ambiguous
 select a from (select 1 a), (select 2 a);
 Error 1052 (23000): Column 'a' in field list is ambiguous
+set sql_mode = default;
 drop table if exists th;
 set @@session.tidb_enable_table_partition = '1';
 create table th (a int, b int) partition by hash(a) partitions 3;
