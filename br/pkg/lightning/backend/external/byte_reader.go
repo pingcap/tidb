@@ -17,12 +17,17 @@ package external
 import (
 	"context"
 	"io"
+	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
+
+// ConcurrentReaderBufferSize is the buffer size for concurrent reader.
+var ConcurrentReaderBufferSize = 4 * 1024 * 1024
 
 // byteReader provides structured reading on a byte stream of external storage.
 type byteReader struct {
@@ -33,6 +38,12 @@ type byteReader struct {
 	bufOffset int
 
 	retPointers []*[]byte
+
+	useConcurrentReaderCurrent bool
+	useConcurrentReader        atomic.Bool
+
+	currFileOffset int64
+	conReader      *singeFileReader
 }
 
 func openStoreReaderAndSeek(
@@ -40,8 +51,8 @@ func openStoreReaderAndSeek(
 	store storage.ExternalStorage,
 	name string,
 	initFileOffset uint64,
-) (storage.ReadSeekCloser, error) {
-	storageReader, err := store.Open(ctx, name)
+) (storage.ExternalFileReader, error) {
+	storageReader, err := store.Open(ctx, name, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -52,16 +63,67 @@ func openStoreReaderAndSeek(
 	return storageReader, nil
 }
 
-// newByteReader wraps readNBytes functionality to storageReader. It will not
-// close storageReader when meet error.
-func newByteReader(ctx context.Context, storageReader storage.ReadSeekCloser, bufSize int) (*byteReader, error) {
-	r := &byteReader{
+// newByteReader wraps readNBytes functionality to storageReader.
+func newByteReader(
+	ctx context.Context,
+	storageReader storage.ExternalFileReader,
+	bufSize int,
+	st storage.ExternalStorage,
+	name string,
+	defaultUseConcurrency bool,
+) (r *byteReader, err error) {
+	defer func() {
+		if err != nil && r != nil {
+			_ = r.Close()
+		}
+	}()
+	fileSize, err := storageReader.GetFileSize()
+	if err != nil {
+		return nil, err
+	}
+	conReader, err := newSingeFileReader(ctx, st, name, fileSize, 8, ConcurrentReaderBufferSize)
+	if err != nil {
+		return nil, err
+	}
+	r = &byteReader{
 		ctx:           ctx,
 		storageReader: storageReader,
 		buf:           make([]byte, bufSize),
 		bufOffset:     0,
+		conReader:     conReader,
 	}
+	r.switchReaderMode(defaultUseConcurrency)
 	return r, r.reload()
+}
+
+// switchReaderMode switches to concurrent reader.
+func (r *byteReader) switchReaderMode(useConcurrent bool) {
+	r.useConcurrentReader.Store(useConcurrent)
+}
+
+func (r *byteReader) switchToConcurrentReaderImpl() error {
+	if r.conReader == nil {
+		return errors.New("can't use the concurrent mode because reader is not initialized correctly")
+	}
+	currOffset, err := r.storageReader.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return err
+	}
+	r.currFileOffset = currOffset
+	r.conReader.currentFileOffset = currOffset
+	r.conReader.bufferReadOffset = 0
+
+	r.conReader.buffer = make([]byte, r.conReader.concurrency*r.conReader.readBufferSize)
+	r.useConcurrentReaderCurrent = true
+	return nil
+}
+
+func (r *byteReader) switchToNormalReaderImpl() error {
+	r.useConcurrentReaderCurrent = false
+	r.currFileOffset = r.conReader.currentFileOffset
+	r.conReader.buffer = nil
+	_, err := r.storageReader.Seek(r.currFileOffset, io.SeekStart)
+	return err
 }
 
 // readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
@@ -118,6 +180,9 @@ func (r *byteReader) cloneSlices() {
 }
 
 func (r *byteReader) next(n int) []byte {
+	if r.useConcurrentReaderCurrent {
+		return r.conReader.next(n)
+	}
 	end := mathutil.Min(r.bufOffset+n, len(r.buf))
 	ret := r.buf[r.bufOffset:end]
 	r.bufOffset += len(ret)
@@ -125,6 +190,25 @@ func (r *byteReader) next(n int) []byte {
 }
 
 func (r *byteReader) reload() error {
+	to := r.useConcurrentReader.Load()
+	now := r.useConcurrentReaderCurrent
+	if to != now {
+		logutil.Logger(r.ctx).Info("switch reader mode", zap.Bool("use concurrent mode", to))
+		if to {
+			err := r.switchToConcurrentReaderImpl()
+			if err != nil {
+				return err
+			}
+		} else {
+			err := r.switchToNormalReaderImpl()
+			if err != nil {
+				return err
+			}
+		}
+	}
+	if to {
+		return r.conReader.reload()
+	}
 	nBytes, err := io.ReadFull(r.storageReader, r.buf[0:])
 	if err != nil {
 		switch err {

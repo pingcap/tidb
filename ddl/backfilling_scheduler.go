@@ -21,8 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -127,15 +129,25 @@ func (b *txnBackfillScheduler) receiveResult() (*backfillResult, bool) {
 	return ret, ok
 }
 
-func newSessCtx(reorgInfo *reorgInfo) (sessionctx.Context, error) {
-	sessCtx := newContext(reorgInfo.d.store)
-	if err := initSessCtx(sessCtx, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location); err != nil {
+func newSessCtx(
+	store kv.Storage,
+	sqlMode mysql.SQLMode,
+	tzLocation *model.TimeZoneLocation,
+	resourceGroupName string,
+) (sessionctx.Context, error) {
+	sessCtx := newContext(store)
+	if err := initSessCtx(sessCtx, sqlMode, tzLocation); err != nil {
 		return nil, errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().ResourceGroupName = resourceGroupName
 	return sessCtx, nil
 }
 
-func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *model.TimeZoneLocation) error {
+func initSessCtx(
+	sessCtx sessionctx.Context,
+	sqlMode mysql.SQLMode,
+	tzLocation *model.TimeZoneLocation,
+) error {
 	// Unify the TimeZone settings in newContext.
 	if sessCtx.GetSessionVars().StmtCtx.TimeZone == nil {
 		tz := *time.UTC
@@ -182,7 +194,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 	workerCnt := b.expectedWorkerSize()
 	// Increase the worker.
 	for i := len(b.workers); i < workerCnt; i++ {
-		sessCtx, err := newSessCtx(b.reorgInfo)
+		sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
 		if err != nil {
 			return err
 		}
@@ -194,7 +206,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		case typeAddIndexWorker:
 			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "add_idx_rate", false)
 			idxWorker, err := newAddIndexTxnWorker(b.decodeColMap, b.tbl, backfillCtx,
-				job.ID, reorgInfo.currElement.ID, reorgInfo.currElement.TypeKey)
+				job.ID, reorgInfo.elements, reorgInfo.currElement.TypeKey)
 			if err != nil {
 				return err
 			}
@@ -202,7 +214,7 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 			worker = idxWorker
 		case typeAddIndexMergeTmpWorker:
 			backfillCtx := newBackfillCtx(reorgInfo.d, i, sessCtx, job.SchemaName, b.tbl, jc, "merge_tmp_idx_rate", false)
-			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.currElement.ID)
+			tmpIdxWorker := newMergeTempIndexWorker(backfillCtx, b.tbl, reorgInfo.elements)
 			runner = newBackfillWorker(jc.ddlJobCtx, tmpIdxWorker)
 			worker = tmpIdxWorker
 		case typeUpdateColumnWorker:
@@ -343,8 +355,7 @@ func (b *ingestBackfillScheduler) close(force bool) {
 	}
 	if !force {
 		jobID := b.reorgInfo.ID
-		indexID := b.reorgInfo.currElement.ID
-		b.backendCtx.ResetWorkers(jobID, indexID)
+		b.backendCtx.ResetWorkers(jobID)
 	}
 	b.closed = true
 }
@@ -382,25 +393,33 @@ func (b *ingestBackfillScheduler) adjustWorkerSize() error {
 func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordChunk, workerpool.None] {
 	reorgInfo := b.reorgInfo
 	job := reorgInfo.Job
-	sessCtx, err := newSessCtx(reorgInfo)
+	sessCtx, err := newSessCtx(reorgInfo.d.store, reorgInfo.ReorgMeta.SQLMode, reorgInfo.ReorgMeta.Location, reorgInfo.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		b.poolErr <- err
 		return nil
 	}
 	bcCtx := b.backendCtx
-	ei, err := bcCtx.Register(job.ID, b.reorgInfo.currElement.ID, job.SchemaName, job.TableName)
-	if err != nil {
-		// Return an error only if it is the first worker.
-		if b.writerMaxID == 0 {
-			b.poolErr <- err
+	indexIDs := make([]int64, 0, len(reorgInfo.elements))
+	engines := make([]ingest.Engine, 0, len(reorgInfo.elements))
+	for _, elem := range reorgInfo.elements {
+		ei, err := bcCtx.Register(job.ID, elem.ID, job.SchemaName, job.TableName)
+		if err != nil {
+			// Return an error only if it is the first worker.
+			if b.writerMaxID == 0 {
+				b.poolErr <- err
+				return nil
+			}
+			logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
+				zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", elem.ID))
 			return nil
 		}
-		logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
-			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
-		return nil
+		indexIDs = append(indexIDs, elem.ID)
+		engines = append(engines, ei)
 	}
-	worker, err := newAddIndexIngestWorker(b.ctx, b.tbl, reorgInfo.d, ei, b.resultCh, job.ID,
-		reorgInfo.SchemaName, b.reorgInfo.currElement.ID, b.writerMaxID,
+
+	worker, err := newAddIndexIngestWorker(
+		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
+		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
 		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
 	if err != nil {
 		// Return an error only if it is the first worker.
@@ -409,7 +428,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 			return nil
 		}
 		logutil.Logger(b.ctx).Warn("cannot create new writer", zap.Error(err),
-			zap.Int64("job ID", reorgInfo.ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
+			zap.Int64("job ID", reorgInfo.ID), zap.Int64s("index IDs", indexIDs))
 		return nil
 	}
 	b.writerMaxID++
@@ -417,18 +436,24 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 }
 
 func (b *ingestBackfillScheduler) createCopReqSenderPool() (*copReqSenderPool, error) {
-	indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, b.reorgInfo.currElement.ID)
-	if indexInfo == nil {
-		logutil.Logger(b.ctx).Warn("cannot init cop request sender",
-			zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", b.reorgInfo.currElement.ID))
-		return nil, errors.New("cannot find index info")
+	ri := b.reorgInfo
+	allIndexInfos := make([]*model.IndexInfo, 0, len(ri.elements))
+	for _, elem := range ri.elements {
+		indexInfo := model.FindIndexInfoByID(b.tbl.Meta().Indices, elem.ID)
+		if indexInfo == nil {
+			logutil.Logger(b.ctx).Warn("cannot init cop request sender",
+				zap.Int64("table ID", b.tbl.Meta().ID), zap.Int64("index ID", elem.ID))
+			return nil, errors.New("cannot find index info")
+		}
+		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
-	sessCtx, err := newSessCtx(b.reorgInfo)
+	sessCtx, err := newSessCtx(ri.d.store, ri.ReorgMeta.SQLMode, ri.ReorgMeta.Location, ri.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err
 	}
-	copCtx, err := NewCopContext(b.tbl.Meta(), indexInfo, sessCtx)
+	reqSrc := getDDLRequestSource(model.ActionAddIndex)
+	copCtx, err := copr.NewCopContext(b.tbl.Meta(), allIndexInfos, sessCtx, reqSrc)
 	if err != nil {
 		logutil.Logger(b.ctx).Warn("cannot init cop request sender", zap.Error(err))
 		return nil, err

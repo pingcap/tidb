@@ -74,6 +74,7 @@ const (
 	flagSkewDistinctAgg
 	flagEliminateProjection
 	flagMaxMinEliminate
+	flagConstantPropagation
 	flagPredicatePushDown
 	flagEliminateOuterJoin
 	flagPartitionProcessor
@@ -100,6 +101,7 @@ var optRuleList = []logicalOptRule{
 	&skewDistinctAggRewriter{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
+	&constantPropagationSolver{},
 	&ppdSolver{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
@@ -368,12 +370,7 @@ func refineCETrace(sctx sessionctx.Context) {
 	traceRecords := stmtCtx.OptimizerCETrace
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	for _, rec := range traceRecords {
-		tbl, ok := is.TableByID(rec.TableID)
-		if ok {
-			rec.TableName = tbl.Meta().Name.O
-			continue
-		}
-		tbl, _, _ = is.FindTableByPartitionID(rec.TableID)
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, rec.TableID)
 		if tbl != nil {
 			rec.TableName = tbl.Meta().Name.O
 			continue

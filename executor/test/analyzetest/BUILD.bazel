@@ -4,6 +4,7 @@ go_test(
     name = "analyzetest_test",
     timeout = "short",
     srcs = [
+        "analyze_bench_test.go",
         "analyze_test.go",
         "main_test.go",
     ],
@@ -26,6 +27,7 @@ go_test(
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle",
+        "//statistics/handle/autoanalyze",
         "//store/mockstore",
         "//tablecodec",
         "//testkit",

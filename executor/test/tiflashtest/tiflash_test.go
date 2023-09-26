@@ -990,7 +990,7 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
 			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
 				q := fmt.Sprintf("select /*+ HASH_AGG() */ count(*) from %v t1 where %v", tbl, cond)
-				require.True(t, tk.HasPlan(q, "HashAgg"))
+				tk.MustHavePlan(q, "HashAgg")
 				if res == nil {
 					res = tk.MustQuery(q).Sort().Rows()
 				} else {

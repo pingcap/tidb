@@ -58,9 +58,10 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
 	s.NoError(err)
-	globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 	s.NoError(err2)
-	subtasks, err2 := globalTaskManager.GetSubtasksByStep(globalTask.ID, importinto.StepImport)
+
+	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepImport)
 	s.NoError(err2)
 	s.Len(subtasks, 3)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))

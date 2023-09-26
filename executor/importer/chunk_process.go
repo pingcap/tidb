@@ -17,18 +17,23 @@ package importer
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
+	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -40,13 +45,13 @@ import (
 var (
 	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
 	MinDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
-	// see default for tikv-importer.max-kv-pairs
+	// MinDeliverRowCnt see default for tikv-importer.max-kv-pairs
 	MinDeliverRowCnt = 4096
 )
 
 type deliveredRow struct {
 	kvs *kv.Pairs // if kvs is nil, this indicated we've got the last message.
-	// end offset in data file after encode this row.
+	// offset is the end offset in data file after encode this row.
 	offset int64
 }
 
@@ -110,7 +115,8 @@ type chunkProcessor struct {
 	encoder  kvEncoder
 	kvCodec  tikv.Codec
 	progress *asyncloaddata.Progress
-	// startOffset is the offset of the first interested row in this chunk.
+	// startOffset is the offset of current source file reader. it might be
+	// larger than the pos that has been parsed due to reader buffering.
 	// some rows before startOffset might be skipped if skip_rows > 0.
 	startOffset int64
 
@@ -118,6 +124,7 @@ type chunkProcessor struct {
 	readTotalDur    time.Duration
 	encodeTotalDur  time.Duration
 	deliverTotalDur time.Duration
+	metrics         *metric.Common
 }
 
 func (p *chunkProcessor) process(ctx context.Context) (err error) {
@@ -129,9 +136,16 @@ func (p *chunkProcessor) process(ctx context.Context) (err error) {
 			zap.Duration("deliverDur", p.deliverTotalDur),
 			zap.Object("checksum", &p.chunkInfo.Checksum),
 		)
+		if err == nil && p.metrics != nil {
+			p.metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
+		}
 	}()
 	if err2 := p.initProgress(); err2 != nil {
 		return err2
+	}
+
+	if metrics, ok := metric.GetCommonMetric(ctx); ok {
+		p.metrics = metrics
 	}
 
 	group, gCtx := errgroup.WithContext(ctx)
@@ -227,6 +241,11 @@ func (p *chunkProcessor) encodeLoop(ctx context.Context) error {
 		p.encodeTotalDur += encodeDur
 		p.readTotalDur += readDur
 
+		if p.metrics != nil {
+			p.metrics.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+			p.metrics.RowReadSecondsHistogram.Observe(readDur.Seconds())
+		}
+
 		if len(rowBatch) > 0 {
 			if err = send(rowBatch); err != nil {
 				return err
@@ -282,14 +301,35 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 
 			deliverDur := time.Since(start)
 			p.deliverTotalDur += deliverDur
+			if p.metrics != nil {
+				p.metrics.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
+				p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).
+					Observe(float64(kvBatch.dataChecksum.SumSize()))
+				p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).
+					Observe(float64(kvBatch.indexChecksum.SumSize()))
+				p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).
+					Observe(float64(kvBatch.dataChecksum.SumKVS()))
+				p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).
+					Observe(float64(kvBatch.indexChecksum.SumKVS()))
+			}
 			return nil
 		}()
 		if err != nil {
 			return err
 		}
 
-		p.progress.EncodeFileSize.Add(currOffset - prevOffset)
+		delta := currOffset - prevOffset
+		p.progress.EncodeFileSize.Add(delta)
 		prevOffset = currOffset
+		if p.metrics != nil {
+			// if we're using split_file, this metric might larger than total
+			// source file size, as the offset we're using is the reader offset,
+			// and we'll buffer data.
+			p.metrics.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
+			p.metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten).Add(float64(kvBatch.size()))
+			// table name doesn't matter here, all those metrics will have task-id label.
+			p.metrics.RowsCounter.WithLabelValues(metric.StateRestored, "").Add(float64(kvBatch.dataChecksum.SumKVS()))
+		}
 
 		p.chunkInfo.Checksum.Add(kvBatch.dataChecksum)
 		p.chunkInfo.Checksum.Add(kvBatch.indexChecksum)
@@ -298,4 +338,107 @@ func (p *chunkProcessor) deliverLoop(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// IndexRouteWriter is a writer for index when using global sort.
+// we route kvs of different index to different writer in order to make
+// merge sort easier, else kv data of all subtasks will all be overlapped.
+//
+// drawback of doing this is that the number of writers need to open will be
+// index-count * encode-concurrency, when the table has many indexes, and each
+// writer will take 256MiB buffer on default.
+// this will take a lot of memory, or even OOM.
+type IndexRouteWriter struct {
+	// this writer and all wrappedWriters are shared by all deliver routines,
+	// so we need to synchronize them.
+	sync.RWMutex
+	writers       map[int64]*wrappedWriter
+	logger        *zap.Logger
+	writerFactory func(int64) *external.Writer
+}
+
+type wrappedWriter struct {
+	sync.Mutex
+	*external.Writer
+}
+
+func (w *wrappedWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
+	w.Lock()
+	defer w.Unlock()
+	return w.Writer.WriteRow(ctx, idxKey, idxVal, handle)
+}
+
+func (w *wrappedWriter) Close(ctx context.Context) error {
+	w.Lock()
+	defer w.Unlock()
+	return w.Writer.Close(ctx)
+}
+
+// NewIndexRouteWriter creates a new IndexRouteWriter.
+func NewIndexRouteWriter(logger *zap.Logger, writerFactory func(int64) *external.Writer) *IndexRouteWriter {
+	return &IndexRouteWriter{
+		writers:       make(map[int64]*wrappedWriter),
+		logger:        logger,
+		writerFactory: writerFactory,
+	}
+}
+
+func (w *IndexRouteWriter) getWriter(indexID int64) *wrappedWriter {
+	w.RLock()
+	writer, ok := w.writers[indexID]
+	w.RUnlock()
+	if ok {
+		return writer
+	}
+
+	w.Lock()
+	defer w.Unlock()
+	writer, ok = w.writers[indexID]
+	if !ok {
+		writer = &wrappedWriter{
+			Writer: w.writerFactory(indexID),
+		}
+		w.writers[indexID] = writer
+	}
+	return writer
+}
+
+// AppendRows implements backend.EngineWriter interface.
+func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
+	kvs := kv.Rows2KvPairs(rows)
+	if len(kvs) == 0 {
+		return nil
+	}
+	for _, item := range kvs {
+		indexID, err := tablecodec.DecodeIndexID(item.Key)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		writer := w.getWriter(indexID)
+		if err = writer.WriteRow(ctx, item.Key, item.Val, nil); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
+// IsSynced implements backend.EngineWriter interface.
+func (*IndexRouteWriter) IsSynced() bool {
+	return true
+}
+
+// Close implements backend.EngineWriter interface.
+func (w *IndexRouteWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+	var firstErr error
+	w.Lock()
+	defer w.Unlock()
+	for _, writer := range w.writers {
+		if err := writer.Close(ctx); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			w.logger.Error("close index writer failed", zap.Error(err))
+		}
+	}
+	return nil, firstErr
 }

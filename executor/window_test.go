@@ -32,30 +32,20 @@ func TestWindowFunctions(t *testing.T) {
 		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
 	}()
 	doTestWindowFunctions(tk)
-}
 
-func TestWindowParallelFunctions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	// TestWindowParallelFunctions
 	tk.MustExec("set @@tidb_window_concurrency = 4")
 	tk.MustExec("set @@tidb_enable_pipelined_window_function = 0")
-	defer func() {
-		tk.MustExec("set @@tidb_enable_pipelined_window_function=1;")
-	}()
 	doTestWindowFunctions(tk)
-}
 
-func TestPipelinedWindowFunctions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	// TestPipelinedWindowFunctions
 	tk.MustExec("set @@tidb_window_concurrency = 1")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function = 1")
 	doTestWindowFunctions(tk)
-}
 
-func TestPipelinedWindowParallelFunctions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	// TestPipelinedWindowParallelFunctions
 	tk.MustExec("set @@tidb_window_concurrency = 4")
+	tk.MustExec("set @@tidb_enable_pipelined_window_function = 1")
 	doTestWindowFunctions(tk)
 }
 
@@ -194,6 +184,7 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 
 	tk.MustQuery("select lead(a) over(partition by null) from t").Sort().Check(testkit.Rows("1", "2", "2", "<nil>"))
 
+	tk.MustExec("drop table if exists issue10494")
 	tk.MustExec("create table issue10494(a INT, b CHAR(1), c DATETIME, d BLOB)")
 	tk.MustExec("insert into issue10494 VALUES (1,'x','2010-01-01','blob'), (2, 'y', '2011-01-01', ''), (3, 'y', '2012-01-01', ''), (4, 't', '2012-01-01', 'blob'), (5, null, '2013-01-01', null)")
 	tk.MustQuery("SELECT a, b, c, SUM(a) OVER (RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM issue10494 order by a;").Check(
@@ -206,6 +197,7 @@ func doTestWindowFunctions(tk *testkit.TestKit) {
 		),
 	)
 
+	tk.MustExec("drop table if exists td_dec")
 	tk.MustExec("CREATE TABLE td_dec (id DECIMAL(10,2), sex CHAR(1));")
 	tk.MustExec("insert into td_dec value (2.0, 'F'), (NULL, 'F'), (1.0, 'F')")
 	tk.MustQuery("SELECT id, FIRST_VALUE(id) OVER w FROM td_dec WINDOW w AS (ORDER BY id);").Check(

@@ -33,8 +33,6 @@ const (
 	StatsMetaHistorySourceLoadStats = "load stats"
 	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
 	StatsMetaHistorySourceFlushStats = "flush stats"
-	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
-	StatsMetaHistorySourceExtendedStats = "extended stats"
 	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
 	StatsMetaHistorySourceSchemaChange = "schema change"
 )
@@ -43,11 +41,10 @@ func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
-	historicalStatsEnabled, err := checkHistoricalStatsEnable(sctx)
-	if err != nil {
+	if err := UpdateSCtxVarsForStats(sctx); err != nil {
 		return errors.Errorf("check tidb_enable_historical_stats failed: %v", err)
 	}
-	if !historicalStatsEnabled {
+	if !sctx.GetSessionVars().EnableHistoricalStats {
 		return nil
 	}
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
@@ -84,21 +81,30 @@ func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source
 		return
 	}
 	sc := v
-	tbl, ok := sc.GetFromInternal(tableID)
+	tbl, ok := sc.Get(tableID)
 	if !ok {
 		return
 	}
 	if !tbl.IsInitialized() {
 		return
 	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	err := recordHistoricalStatsMeta(h.mu.ctx, tableID, version, source)
+	se, err := h.pool.Get()
 	if err != nil {
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Int64("table-id", tableID),
 			zap.Uint64("version", version),
 			zap.String("source", source),
 			zap.Error(err))
+		return
+	}
+	defer h.pool.Put(se)
+	sctx := se.(sessionctx.Context)
+	if err := recordHistoricalStatsMeta(sctx, tableID, version, source); err != nil {
+		logutil.BgLogger().Error("record historical stats meta failed",
+			zap.Int64("table-id", tableID),
+			zap.Uint64("version", version),
+			zap.String("source", source),
+			zap.Error(err))
+		return
 	}
 }

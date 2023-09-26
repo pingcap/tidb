@@ -29,7 +29,6 @@ go_test(
         "//testkit/testdata",
         "//testkit/testmain",
         "//testkit/testsetup",
-        "//util",
         "//util/hint",
         "//util/plancodec",
         "@com_github_pingcap_failpoint//:failpoint",

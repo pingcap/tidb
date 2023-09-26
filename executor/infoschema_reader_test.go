@@ -260,7 +260,7 @@ func TestDDLJobs(t *testing.T) {
 	tk.MustExec("create table tt (a int);")
 	tk.MustExec("alter table tt add index t(a), add column b int")
 	tk.MustQuery("select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3").Check(
-		testkit.Rows("test_ddl_jobs tt alter table multi-schema change", "test_ddl_jobs tt add index /* subjob */ /* txn-merge */", "test_ddl_jobs tt add column /* subjob */"))
+		testkit.Rows("test_ddl_jobs tt alter table multi-schema change", "test_ddl_jobs tt add column /* subjob */", "test_ddl_jobs tt add index /* subjob */ /* txn-merge */"))
 }
 
 func TestKeyColumnUsage(t *testing.T) {
@@ -433,7 +433,6 @@ func TestPartitionsTable(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("USE test;")
 	testkit.WithPruneMode(tk, variable.Static, func() {
-		require.NoError(t, h.RefreshVars())
 		tk.MustExec("DROP TABLE IF EXISTS `test_partitions`;")
 		tk.MustExec(`CREATE TABLE test_partitions (a int, b int, c varchar(5), primary key(a), index idx(c)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN (6), PARTITION p1 VALUES LESS THAN (11), PARTITION p2 VALUES LESS THAN (16));`)
 		require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))

@@ -3463,7 +3463,7 @@ func RedactURL(str string) string {
 			// see below on why we normalize key
 			// https://github.com/pingcap/tidb/blob/a7c0d95f16ea2582bb569278c3f829403e6c3a7e/br/pkg/storage/parse.go#L163
 			normalizedKey := strings.ToLower(strings.ReplaceAll(k, "_", "-"))
-			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" {
+			if normalizedKey == "access-key" || normalizedKey == "secret-access-key" || normalizedKey == "session-token" {
 				values[k] = []string{"xxxxxx"}
 			}
 		}
@@ -3682,8 +3682,6 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 	switch n.HintName.L {
 	case "max_execution_time":
 		ctx.WritePlainf("%d", n.HintData.(uint64))
-	case "tidb_kv_read_timeout":
-		ctx.WritePlainf("%d", n.HintData.(uint64))
 	case "resource_group":
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
@@ -3806,13 +3804,14 @@ func (n *SetResourceGroupStmt) Accept(v Visitor) (Node, bool) {
 // CalibrateResourceType is the type for CalibrateResource statement.
 type CalibrateResourceType int
 
-// calibrate resource [ workload < TPCC | OLTP_READ_WRITE | OLTP_READ_ONLY | OLTP_WRITE_ONLY> ]
+// calibrate resource [ workload < TPCC | OLTP_READ_WRITE | OLTP_READ_ONLY | OLTP_WRITE_ONLY | TPCH_10> ]
 const (
 	WorkloadNone CalibrateResourceType = iota
 	TPCC
 	OLTPREADWRITE
 	OLTPREADONLY
 	OLTPWRITEONLY
+	TPCH10
 )
 
 func (n CalibrateResourceType) Restore(ctx *format.RestoreCtx) error {
@@ -3825,6 +3824,8 @@ func (n CalibrateResourceType) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" WORKLOAD OLTP_READ_ONLY")
 	case OLTPWRITEONLY:
 		ctx.WriteKeyWord(" WORKLOAD OLTP_WRITE_ONLY")
+	case TPCH10:
+		ctx.WriteKeyWord(" WORKLOAD TPCH_10")
 	}
 	return nil
 }

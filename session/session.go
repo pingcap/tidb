@@ -77,6 +77,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/usage"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -239,7 +240,7 @@ type session struct {
 	mppClient kv.MPPClient
 
 	// indexUsageCollector collects index usage information.
-	idxUsageCollector *handle.SessionIndexUsageCollector
+	idxUsageCollector *usage.SessionIndexUsageCollector
 
 	functionUsageMu struct {
 		syncutil.RWMutex
@@ -465,7 +466,7 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 	if s.idxUsageCollector == nil {
 		return
 	}
-	s.idxUsageCollector.Update(tblID, idxID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
+	s.idxUsageCollector.Update(tblID, idxID, &usage.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
@@ -1559,6 +1560,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
+		SessionAlias:          s.sessionVars.SessionAlias,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1678,6 +1680,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
 	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
@@ -3003,16 +3006,6 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	return false
 }
 
-// RefreshVars implements the sessionctx.Context interface.
-func (s *session) RefreshVars(_ context.Context) error {
-	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
-	if err != nil {
-		return err
-	}
-	s.sessionVars.PartitionPruneMode.Store(pruneMode)
-	return nil
-}
-
 // SetSessionStatesHandler implements the Session.SetSessionStatesHandler interface.
 func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler) {
 	s.sessionStatesHandlers[stateType] = handler
@@ -3443,7 +3436,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3515,9 +3508,9 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if failToLoadOrParseSQLFile {
+	if intest.InTest && failToLoadOrParseSQLFile {
 		dom.Close()
-		return nil, err
+		return nil, errors.New("Fail to load or parse sql file")
 	}
 	err = dom.InitDistTaskLoop(ctx)
 	if err != nil {

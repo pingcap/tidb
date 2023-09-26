@@ -38,6 +38,8 @@ type Engine struct {
 	storage    storage.ExternalStorage
 	dataFiles  []string
 	statsFiles []string
+	minKey     []byte
+	maxKey     []byte
 	splitKeys  [][]byte
 	bufPool    *membuf.Pool
 
@@ -49,8 +51,8 @@ type Engine struct {
 	dupDetectOpt       common.DupDetectOpt
 	ts                 uint64
 
-	totalKVSize   int64
-	totalKVLength int64
+	totalKVSize  int64
+	totalKVCount int64
 
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
@@ -61,18 +63,24 @@ func NewExternalEngine(
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
+	minKey []byte,
+	maxKey []byte,
+	splitKeys [][]byte,
 	keyAdapter common.KeyAdapter,
 	duplicateDetection bool,
 	duplicateDB *pebble.DB,
 	dupDetectOpt common.DupDetectOpt,
 	ts uint64,
 	totalKVSize int64,
-	totakKVLength int64,
+	totalKVCount int64,
 ) common.Engine {
 	return &Engine{
 		storage:            storage,
 		dataFiles:          dataFiles,
 		statsFiles:         statsFiles,
+		minKey:             minKey,
+		maxKey:             maxKey,
+		splitKeys:          splitKeys,
 		bufPool:            membuf.NewPool(),
 		keyAdapter:         keyAdapter,
 		duplicateDetection: duplicateDetection,
@@ -80,7 +88,7 @@ func NewExternalEngine(
 		dupDetectOpt:       dupDetectOpt,
 		ts:                 ts,
 		totalKVSize:        totalKVSize,
-		totalKVLength:      totakKVLength,
+		totalKVCount:       totalKVCount,
 		importedKVSize:     atomic.NewInt64(0),
 		importedKVCount:    atomic.NewInt64(0),
 	}
@@ -145,6 +153,7 @@ func (e *Engine) LoadIngestData(ctx context.Context, start, end []byte) (common.
 		values:             values,
 		ts:                 e.ts,
 		memBuf:             memBuf,
+		refCnt:             atomic.NewInt64(0),
 		importedKVSize:     e.importedKVSize,
 		importedKVCount:    e.importedKVCount,
 	}, nil
@@ -167,8 +176,8 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		logger.Info("seek props offsets",
 			zap.Uint64s("offsets", offsets),
 			zap.String("startKey", hex.EncodeToString(start)),
-			zap.Strings("dataFiles", prettyFileNames(e.dataFiles)),
-			zap.Strings("statsFiles", prettyFileNames(e.statsFiles)))
+			zap.Strings("dataFiles", e.dataFiles),
+			zap.Strings("statsFiles", e.statsFiles))
 	}
 	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024)
 	if err != nil {
@@ -177,19 +186,24 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 	return iter, nil
 }
 
-// KVStatistics returns the total kv size and total kv length.
-func (e *Engine) KVStatistics() (totalKVSize int64, totalKVLength int64) {
-	return e.totalKVSize, e.totalKVLength
+// KVStatistics returns the total kv size and total kv count.
+func (e *Engine) KVStatistics() (totalKVSize int64, totalKVCount int64) {
+	return e.totalKVSize, e.totalKVCount
 }
 
-// ImportedStatistics returns the imported kv size and imported kv length.
-func (e *Engine) ImportedStatistics() (importedKVSize int64, importedKVLength int64) {
+// ImportedStatistics returns the imported kv size and imported kv count.
+func (e *Engine) ImportedStatistics() (importedSize int64, importedKVCount int64) {
 	return e.importedKVSize.Load(), e.importedKVCount.Load()
 }
 
 // ID is the identifier of an engine.
 func (e *Engine) ID() string {
 	return "external"
+}
+
+// GetKeyRange implements common.Engine.
+func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
+	return e.minKey, e.maxKey, nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.
@@ -233,6 +247,7 @@ type MemoryIngestData struct {
 	ts     uint64
 
 	memBuf          *membuf.Buffer
+	refCnt          *atomic.Int64
 	importedKVSize  *atomic.Int64
 	importedKVCount *atomic.Int64
 }
@@ -416,9 +431,16 @@ func (m *MemoryIngestData) GetTS() uint64 {
 	return m.ts
 }
 
+// IncRef implements IngestData.IncRef.
+func (m *MemoryIngestData) IncRef() {
+	m.refCnt.Inc()
+}
+
 // Finish implements IngestData.Finish.
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
-	m.memBuf.Destroy()
+	if m.refCnt.Dec() == 0 {
+		m.memBuf.Destroy()
+	}
 }

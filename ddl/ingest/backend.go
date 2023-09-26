@@ -44,13 +44,15 @@ type BackendCtx interface {
 
 	CollectRemoteDuplicateRows(indexID int64, tbl table.Table) error
 	FinishImport(indexID int64, unique bool, tbl table.Table) error
-	ResetWorkers(jobID, indexID int64)
+	ResetWorkers(jobID int64)
 	Flush(indexID int64, mode FlushMode) (flushed, imported bool, err error)
 	Done() bool
 	SetDone()
 
 	AttachCheckpointManager(*CheckpointManager)
 	GetCheckpointManager() *CheckpointManager
+
+	GetLocalBackend() *local.Backend
 }
 
 // FlushMode is used to control how to flush.
@@ -263,4 +265,9 @@ func (bc *litBackendCtx) AttachCheckpointManager(mgr *CheckpointManager) {
 // GetCheckpointManager returns the checkpoint manager attached to the backend context.
 func (bc *litBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return bc.checkpointMgr
+}
+
+// GetLocalBackend returns the local backend.
+func (bc *litBackendCtx) GetLocalBackend() *local.Backend {
+	return bc.backend
 }

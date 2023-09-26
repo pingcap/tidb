@@ -22,7 +22,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
@@ -147,6 +145,28 @@ func GetCachedKVStoreFrom(pdAddr string, tls *common.TLS) (tidbkv.Storage, error
 	return kvStore, nil
 }
 
+// GetRegionSplitSizeKeys gets the region split size and keys from PD.
+func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionSplitKeys int64, err error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	tls, err := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		"",
+		nil, nil, nil,
+	)
+	if err != nil {
+		return 0, 0, err
+	}
+	tlsOpt := tls.ToPDSecurityOption()
+	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	if err != nil {
+		return 0, 0, errors.Trace(err)
+	}
+	defer pdCli.Close()
+	return local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+}
+
 // NewTableImporter creates a new table importer.
 func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
@@ -180,30 +200,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		return nil, errors.Trace(err)
 	}
 
-	backendConfig := local.BackendConfig{
-		PDAddr:                 tidbCfg.Path,
-		LocalStoreDir:          dir,
-		MaxConnPerStore:        config.DefaultRangeConcurrency,
-		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:       config.KVWriteBatchSize,
-		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
-		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
-		// enable after we support checkpoint
-		CheckpointEnabled:       false,
-		MemTableSize:            config.DefaultEngineMemCacheSize,
-		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
-		ShouldCheckTiKV:         true,
-		DupeDetectEnabled:       false,
-		DuplicateDetectOpt:      common.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		MaxOpenFiles:            int(util.GenRLimit("table_import")),
-		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
-		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
-	}
-	if e.IsRaftKV2 {
-		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
-	}
+	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
@@ -223,7 +220,6 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		},
 		encTable: tbl,
 		dbID:     e.DBID,
-		store:    e.dataStore,
 		kvStore:  kvStore,
 		logger:   e.logger,
 		// this is the value we use for 50TiB data parallel import.
@@ -246,7 +242,6 @@ type TableImporter struct {
 	encTable table.Table
 	dbID     int64
 
-	store storage.ExternalStorage
 	// the kv store we get is a cached store, so we can't close it.
 	kvStore         tidbkv.Storage
 	logger          *zap.Logger
@@ -259,7 +254,9 @@ type TableImporter struct {
 func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{})
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, ti.dataStore, storage.DecompressConfig{
+				ZStdDecodeConcurrency: 1,
+			})
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -445,6 +442,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 		TableInfo: ti.tableInfo,
 	}
 	// todo: support checking IsRowOrdered later.
+	// also see test result here: https://github.com/pingcap/tidb/pull/47147
 	//if ti.tableMeta.IsRowOrdered {
 	//	dataEngineCfg.Local.Compact = true
 	//	dataEngineCfg.Local.CompactConcurrency = 4
@@ -471,6 +469,11 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 // FullTableName return FQDN of the table.
 func (ti *TableImporter) fullTableName() string {
 	return common.UniqueTable(ti.DBName, ti.Table.Meta().Name.O)
+}
+
+// Backend returns the backend of the importer.
+func (ti *TableImporter) Backend() *local.Backend {
+	return ti.backend
 }
 
 // Close implements the io.Closer interface.

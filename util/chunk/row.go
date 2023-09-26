@@ -122,7 +122,7 @@ func (r Row) GetDatumRow(fields []*types.FieldType) []types.Datum {
 // GetDatumRowWithBuffer gets datum using the buffer datumRow.
 func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.Datum) []types.Datum {
 	for colIdx := 0; colIdx < len(datumRow); colIdx++ {
-		r.GetDatumWithBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
+		r.DatumWithBuffer(colIdx, fields[colIdx], &datumRow[colIdx])
 	}
 	return datumRow
 }
@@ -130,12 +130,12 @@ func (r Row) GetDatumRowWithBuffer(fields []*types.FieldType, datumRow []types.D
 // GetDatum implements the chunk.Row interface.
 func (r Row) GetDatum(colIdx int, tp *types.FieldType) types.Datum {
 	var d types.Datum
-	r.GetDatumWithBuffer(colIdx, tp, &d)
+	r.DatumWithBuffer(colIdx, tp, &d)
 	return d
 }
 
-// GetDatumWithBuffer gets datum using the buffer d.
-func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) types.Datum {
+// DatumWithBuffer gets datum using the buffer d.
+func (r Row) DatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum) {
 	switch tp.GetType() {
 	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 		if !r.IsNull(colIdx) {
@@ -173,14 +173,15 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 		}
 	case mysql.TypeNewDecimal:
 		if !r.IsNull(colIdx) {
-			d.SetMysqlDecimal(r.GetMyDecimal(colIdx))
+			dec := r.GetMyDecimal(colIdx)
+			d.SetMysqlDecimal(dec)
 			d.SetLength(tp.GetFlen())
 			// If tp.decimal is unspecified(-1), we should set it to the real
 			// fraction length of the decimal value, if not, the d.Frac will
 			// be set to MAX_UINT16 which will cause unexpected BadNumber error
 			// when encoding.
 			if tp.GetDecimal() == types.UnspecifiedLength {
-				d.SetFrac(d.Frac())
+				d.SetFrac(int(dec.GetDigitsFrac()))
 			} else {
 				d.SetFrac(tp.GetDecimal())
 			}
@@ -205,7 +206,6 @@ func (r Row) GetDatumWithBuffer(colIdx int, tp *types.FieldType, d *types.Datum)
 	if r.IsNull(colIdx) {
 		d.SetNull()
 	}
-	return *d
 }
 
 // GetRaw returns the underlying raw bytes with the colIdx.

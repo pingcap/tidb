@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -145,7 +145,7 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 	statsCache := h.statsCache.Load()
 	remainedItems := make([]model.TableItemID, 0, len(neededItems))
 	for _, item := range neededItems {
-		tbl, ok := statsCache.GetFromInternal(item.TableID)
+		tbl, ok := statsCache.Get(item.TableID)
 		if !ok {
 			continue
 		}
@@ -177,7 +177,7 @@ var errExit = errors.New("Stop loading since domain is closed")
 
 // StatsReaderContext exported for testing
 type StatsReaderContext struct {
-	reader      *statistics.StatsReader
+	reader      *storage.StatsReader
 	createdTime time.Time
 }
 
@@ -238,7 +238,7 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.GetFromInternal(item.TableID)
+	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
@@ -303,7 +303,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 		}
 	}
 	for {
-		newReader, err := statistics.GetStatsReader(0, ctx)
+		newReader, err := storage.GetStatsReader(0, ctx, nil)
 		if err == nil {
 			readerCtx.reader = newReader
 			readerCtx.createdTime = time.Now()
@@ -315,7 +315,7 @@ func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *statistics.StatsReader) (*statsWrapper, error) {
+func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *storage.StatsReader) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -332,25 +332,25 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 		isIndexFlag = 1
 	}
 	if item.IsIndex {
-		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+		hg, err = storage.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		hg, err = statistics.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err = storage.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	var cms *statistics.CMSketch
 	var topN *statistics.TopN
-	cms, topN, err = statistics.CMSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+	cms, topN, err = storage.CMSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var fms *statistics.FMSketch
 	if loadFMSketch {
-		fms, err = statistics.FMSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+		fms, err = storage.FMSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -480,7 +480,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
 	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.GetFromInternal(item.TableID)
+	tbl, ok := oldCache.Get(item.TableID)
 	if !ok {
 		return true
 	}
@@ -499,7 +499,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
 	}
-	return h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil, cache.WithTableStatsByQuery())
+	return h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
 }
 
 func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {
