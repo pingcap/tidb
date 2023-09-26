@@ -38,7 +38,7 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 }
 
 func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWith(f func(ctx context.Context)) {
-	cx.cleanUpWithErr(func(ctx context.Context) error { f(ctx); return nil })
+	_ = cx.cleanUpWithErr(func(ctx context.Context) error { f(ctx); return nil })
 }
 
 func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Context) error) error {
@@ -58,9 +58,9 @@ type AdaptEnvForSnapshotBackupContext struct {
 	runGrp *errgroup.Group
 }
 
-func (ctx *AdaptEnvForSnapshotBackupContext) ReadyL(name string, notes ...zap.Field) {
-	logutil.CL(ctx).Info("Stage ready.", append(notes, zap.String("component", name))...)
-	ctx.rdGrp.Done()
+func (cx *AdaptEnvForSnapshotBackupContext) ReadyL(name string, notes ...zap.Field) {
+	logutil.CL(cx).Info("Stage ready.", append(notes, zap.String("component", name))...)
+	cx.rdGrp.Done()
 }
 
 func hintAllReady() {
@@ -85,8 +85,8 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		}
 	}
 	kvMgr := utils.NewStoreManager(mgr.GetPDClient(), keepalive.ClientParameters{
-		Time:    time.Duration(cfg.Config.GRPCKeepaliveTime) * time.Second,
-		Timeout: time.Duration(cfg.Config.GRPCKeepaliveTimeout) * time.Second,
+		Time:    cfg.Config.GRPCKeepaliveTime,
+		Timeout: cfg.Config.GRPCKeepaliveTimeout,
 	}, tconf)
 	eg, ectx := errgroup.WithContext(ctx)
 	cx := &AdaptEnvForSnapshotBackupContext{

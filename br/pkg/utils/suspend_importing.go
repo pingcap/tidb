@@ -5,11 +5,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/logutil"
 	"google.golang.org/grpc"
 )
 
@@ -124,9 +123,8 @@ func (d *SuspendImporting) Keeper(ctx context.Context, ttl time.Duration) error 
 				if time.Since(lastSuccess) < ttl {
 					logutil.CL(ctx).Warn("Failed to send deny one of the stores.", logutil.ShortError(err))
 					continue
-				} else {
-					return err
 				}
+				return err
 			}
 			if err := d.ConsistentWithPrev(res); err != nil {
 				return err
