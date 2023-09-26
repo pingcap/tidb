@@ -402,7 +402,7 @@ func (p *PhysicalExpand) explainInfoV2() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainNormalizedInfo() string {
-	return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
+	return string(expression.SortedExplainNormalizedExpressionList4InList(p.Exprs))
 }
 
 // ExplainInfo implements Plan interface.

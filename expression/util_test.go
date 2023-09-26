@@ -579,7 +579,9 @@ func (m *MockExpr) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool
 func (m *MockExpr) resolveIndicesByVirtualExpr(schema *Schema) bool               { return true }
 func (m *MockExpr) RemapColumn(_ map[int64]*Column) (Expression, error)           { return m, nil }
 func (m *MockExpr) ExplainInfo() string                                           { return "" }
+func (m *MockExpr) ExplainInfo4InList() string                                    { return "" }
 func (m *MockExpr) ExplainNormalizedInfo() string                                 { return "" }
+func (m *MockExpr) ExplainNormalizedInfo4InList() string                          { return "" }
 func (m *MockExpr) HashCode(sc *stmtctx.StatementContext) []byte                  { return nil }
 func (m *MockExpr) Vectorized() bool                                              { return false }
 func (m *MockExpr) SupportReverseEval() bool                                      { return false }
