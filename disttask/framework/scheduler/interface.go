@@ -59,6 +59,11 @@ type Scheduler interface {
 // Extension extends the scheduler.
 // each task type should implement this interface.
 type Extension interface {
+	// IsIdempotent returns whether the subtask is idempotent.
+	// when tidb restart, the subtask might be left in the running state.
+	// if it's idempotent, the scheduler can rerun the subtask, else
+	// the scheduler will mark the subtask as failed.
+	IsIdempotent(subtask *proto.Subtask) bool
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)

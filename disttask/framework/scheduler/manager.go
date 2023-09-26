@@ -192,7 +192,10 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending)
+		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRevertPending,
+			// for the case that the tidb is restarted when the subtask is running.
+			proto.TaskStateRunning, proto.TaskStateReverting)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
@@ -323,7 +326,10 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 				zap.Int64("task-id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
 			return
 		}
-		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
+		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRevertPending,
+			// for the case that the tidb is restarted when the subtask is running.
+			proto.TaskStateRunning, proto.TaskStateReverting); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {
