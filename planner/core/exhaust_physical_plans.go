@@ -244,7 +244,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 	// If TiDB_SMJ hint is existed, it should consider enforce merge join,
 	// because we can't trust lhsChildProperty completely.
 	if (p.preferJoinType&preferMergeJoin) > 0 ||
-		(p.preferJoinType&preferNoHashJoin) > 0 { // if hash join is not allowed, generate as many other types of join as possible to avoid 'cant-find-plan' error.
+		p.shouldSkipHashJoin() { // if hash join is not allowed, generate as many other types of join as possible to avoid 'cant-find-plan' error.
 		joins = append(joins, p.getEnforcedMergeJoin(prop, schema, statsInfo)...)
 	}
 
@@ -391,6 +391,10 @@ var ForceUseOuterBuild4Test = atomic.NewBool(false)
 // TODO: use hint and remove this variable
 var ForcedHashLeftJoin4Test = atomic.NewBool(false)
 
+func (p *LogicalJoin) shouldSkipHashJoin() bool {
+	return (p.preferJoinType&preferNoHashJoin) > 0 || (p.SCtx().GetSessionVars().DisableHashJoin)
+}
+
 func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []PhysicalPlan, forced bool) {
 	if !prop.IsSortItemEmpty() { // hash join doesn't promise any orders
 		return
@@ -451,12 +455,12 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	}
 
 	forced = (p.preferJoinType&preferHashJoin > 0) || forceLeftToBuild || forceRightToBuild
-	noHashJoin := (p.preferJoinType & preferNoHashJoin) > 0
-	if !forced && noHashJoin {
+	if !forced && p.shouldSkipHashJoin() {
 		return nil, false
-	} else if forced && noHashJoin {
+	} else if forced && p.shouldSkipHashJoin() {
 		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
-			"Some HASH_JOIN and NO_HASH_JOIN hints conflict, NO_HASH_JOIN is ignored"))
+			"A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, " +
+				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."))
 	}
 	return
 }
@@ -2822,6 +2826,21 @@ func (lw *LogicalWindow) GetPartitionKeys() []*property.MPPPartitionColumn {
 	return partitionByCols
 }
 
+// Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.
+func (lw *LogicalWindow) checkComparisonForTiFlash(frameBound *FrameBound) bool {
+	if len(frameBound.CompareCols) > 0 {
+		orderByEvalType := lw.OrderBy[0].Col.GetType().EvalType()
+		calFuncEvalType := frameBound.CalcFuncs[0].GetType().EvalType()
+
+		if orderByEvalType == types.ETDuration && (calFuncEvalType == types.ETDatetime || calFuncEvalType == types.ETTimestamp) {
+			return false
+		} else if calFuncEvalType == types.ETDuration && (orderByEvalType == types.ETDatetime || orderByEvalType == types.ETTimestamp) {
+			return false
+		}
+	}
+	return true
+}
+
 func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []PhysicalPlan {
 	if !prop.IsSortItemAllForPartition() {
 		return nil
@@ -2848,6 +2867,7 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 		if !allSupported {
 			return nil
 		}
+
 		if lw.Frame != nil && lw.Frame.Type == ast.Ranges {
 			if _, err := expression.ExpressionsToPBList(lw.SCtx().GetSessionVars().StmtCtx, lw.Frame.Start.CalcFuncs, lw.SCtx().GetClient()); err != nil {
 				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
@@ -2859,9 +2879,12 @@ func (lw *LogicalWindow) tryToGetMppWindows(prop *property.PhysicalProperty) []P
 					"MPP mode may be blocked because window function frame can't be pushed down, because " + err.Error())
 				return nil
 			}
-			lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
-				"MPP mode may be blocked because window function frame can't be pushed down, because TiFlash does not support range frame type yet.")
-			return nil
+
+			if !lw.checkComparisonForTiFlash(lw.Frame.Start) || !lw.checkComparisonForTiFlash(lw.Frame.End) {
+				lw.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced(
+					"MPP mode may be blocked because window function frame can't be pushed down, because Duration vs Datetime is invalid comparison as TiFlash can't handle it so far.")
+				return nil
+			}
 		}
 	}
 

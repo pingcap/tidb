@@ -16,7 +16,6 @@ package dispatcher
 
 import (
 	"context"
-	"fmt"
 	"math/rand"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/intest"
@@ -39,8 +39,6 @@ const (
 	MaxSubtaskConcurrency = 256
 	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
 	DefaultLiveNodesCheckInterval = 2
-	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
-	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 )
 
 var (
@@ -80,10 +78,11 @@ type Dispatcher interface {
 // BaseDispatcher is the base struct for Dispatcher.
 // each task type embed this struct and implement the Extension interface.
 type BaseDispatcher struct {
-	ctx      context.Context
-	taskMgr  *storage.TaskManager
-	Task     *proto.Task
-	logCtx   context.Context
+	ctx     context.Context
+	taskMgr *storage.TaskManager
+	Task    *proto.Task
+	logCtx  context.Context
+	// serverID, it's value is ip:port now.
 	serverID string
 	// when RegisterDispatcherFactory, the factory MUST initialize this field.
 	Extension
@@ -105,12 +104,13 @@ var MockOwnerChange func()
 
 // NewBaseDispatcher creates a new BaseDispatcher.
 func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
-	logPrefix := fmt.Sprintf("task_id: %d, task_type: %s, server_id: %s", task.ID, task.Type, serverID)
+	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
+		zap.String("task-type", task.Type))
 	return &BaseDispatcher{
 		ctx:                   ctx,
 		taskMgr:               taskMgr,
 		Task:                  task,
-		logCtx:                logutil.WithKeyValue(context.Background(), "dispatcher", logPrefix),
+		logCtx:                logCtx,
 		serverID:              serverID,
 		liveNodes:             nil,
 		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
@@ -167,9 +167,40 @@ func (d *BaseDispatcher) scheduleTask() {
 					}
 				}
 			})
+
+			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
+				if val.(bool) && d.Task.State == proto.TaskStatePending {
+					_, err := d.taskMgr.PauseTask(d.Task.Key)
+					if err != nil {
+						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
+					}
+					d.Task.State = proto.TaskStatePausing
+				}
+			})
+
+			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
+				if val.(bool) && d.Task.State == proto.TaskStateRunning {
+					_, err := d.taskMgr.PauseTask(d.Task.Key)
+					if err != nil {
+						logutil.Logger(d.logCtx).Error("pause task failed", zap.Error(err))
+					}
+					d.Task.State = proto.TaskStatePausing
+				}
+			})
+
 			switch d.Task.State {
 			case proto.TaskStateCancelling:
 				err = d.onCancelling()
+			case proto.TaskStatePausing:
+				err = d.onPausing()
+			case proto.TaskStatePaused:
+				err = d.onPaused()
+				// close the dispatcher.
+				if err == nil {
+					return
+				}
+			case proto.TaskStateResuming:
+				err = d.onResuming()
 			case proto.TaskStateReverting:
 				err = d.onReverting()
 			case proto.TaskStatePending:
@@ -202,6 +233,52 @@ func (d *BaseDispatcher) onCancelling() error {
 	logutil.Logger(d.logCtx).Info("on cancelling state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
 	errs := []error{errors.New("cancel")}
 	return d.onErrHandlingStage(errs)
+}
+
+// handle task in pausing state, cancel all running subtasks.
+func (d *BaseDispatcher) onPausing() error {
+	logutil.Logger(d.logCtx).Info("on pausing state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending) // ywq todo remove
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	if cnt == 0 {
+		logutil.Logger(d.logCtx).Info("all running subtasks paused, update the task to paused state")
+		return d.updateTask(proto.TaskStatePaused, nil, RetrySQLTimes)
+	}
+	logutil.Logger(d.logCtx).Debug("on pausing state, this task keeps current state", zap.String("state", d.Task.State))
+	return nil
+}
+
+// handle task in paused state
+func (d *BaseDispatcher) onPaused() error {
+	logutil.Logger(d.logCtx).Info("on paused state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	return nil
+}
+
+// TestSyncChan is used to sync the test.
+var TestSyncChan = make(chan struct{})
+
+// handle task in resuming state
+func (d *BaseDispatcher) onResuming() error {
+	logutil.Logger(d.logCtx).Info("on resuming state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStatePaused)
+	if err != nil {
+		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	if cnt == 0 {
+		// Finish the resuming process.
+		logutil.Logger(d.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
+		err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
+		failpoint.Inject("syncAfterResume", func() {
+			TestSyncChan <- struct{}{}
+		})
+		return err
+	}
+
+	return d.taskMgr.ResumeSubtasks(d.Task.ID)
 }
 
 // handle task in reverting state, check all revert subtasks finished.
@@ -263,6 +340,7 @@ func (d *BaseDispatcher) onRunning() error {
 }
 
 func (d *BaseDispatcher) onFinished() error {
+	metrics.UpdateMetricsForFinishTask(d.Task)
 	logutil.Logger(d.logCtx).Debug("schedule task, task is finished", zap.String("state", d.Task.State))
 	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
 }
@@ -339,6 +417,7 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
 	})
+
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
 		retryable, err = d.taskMgr.UpdateGlobalTaskAndAddSubTasks(d.Task, newSubTasks, prevState)

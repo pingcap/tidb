@@ -23,42 +23,41 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 type localImportExecutor struct {
-	jobID int64
-	index *model.IndexInfo
-	ptbl  table.PhysicalTable
-	bc    ingest.BackendCtx
+	jobID   int64
+	indexes []*model.IndexInfo
+	ptbl    table.PhysicalTable
+	bc      ingest.BackendCtx
 }
 
 func newImportFromLocalStepExecutor(
 	jobID int64,
-	index *model.IndexInfo,
+	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	bc ingest.BackendCtx,
 ) *localImportExecutor {
 	return &localImportExecutor{
-		jobID: jobID,
-		index: index,
-		ptbl:  ptbl,
-		bc:    bc,
+		jobID:   jobID,
+		indexes: indexes,
+		ptbl:    ptbl,
+		bc:      bc,
 	}
 }
 
 func (i *localImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("local import executor init subtask exec env")
-	_, _, err := i.bc.Flush(i.index.ID, ingest.FlushModeForceGlobal)
-	if err != nil {
-		if common.ErrFoundDuplicateKeys.Equal(err) {
-			err = convertToKeyExistsErr(err, i.index, i.ptbl.Meta())
-			return err
+	for _, index := range i.indexes {
+		_, _, err := i.bc.Flush(index.ID, ingest.FlushModeForceGlobal)
+		if err != nil {
+			if common.ErrFoundDuplicateKeys.Equal(err) {
+				err = convertToKeyExistsErr(err, index, i.ptbl.Meta())
+				return err
+			}
 		}
-		logutil.Logger(ctx).Error("flush error", zap.Error(err))
-		return err
 	}
-	return err
+	return nil
 }
 
 func (*localImportExecutor) RunSubtask(ctx context.Context, _ *proto.Subtask) error {

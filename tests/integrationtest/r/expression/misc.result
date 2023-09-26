@@ -14,11 +14,11 @@ select timestamp '2017@01@0001 00~00~00.333';
 timestamp '2017@01@0001 00~00~00.333'
 2017-01-01 00:00:00.333
 select timestamp '00:00:00';
-Error 1292: Incorrect datetime value: '00:00:00'
+Error 1292 (22007): Incorrect datetime value: '00:00:00'
 select timestamp '1992-01-03';
-Error 1292: Incorrect datetime value: '1992-01-03'
+Error 1292 (22007): Incorrect datetime value: '1992-01-03'
 select timestamp '20171231235959.999999';
-Error 1292: Incorrect datetime value: '20171231235959.999999'
+Error 1292 (22007): Incorrect datetime value: '20171231235959.999999'
 select time '117:01:12';
 time '117:01:12'
 117:01:12
@@ -47,11 +47,11 @@ select time '20 20:20';
 time '20 20:20'
 500:20:00
 select time '2017-01-01 00:00:00';
-Error 1292: Incorrect time value: '2017-01-01 00:00:00'
+Error 1292 (22007): Incorrect time value: '2017-01-01 00:00:00'
 select time '071231235959.999999';
-Error 1292: Incorrect time value: '071231235959.999999'
+Error 1292 (22007): Incorrect time value: '071231235959.999999'
 select time '20171231235959.999999';
-Error 1292: Incorrect time value: '20171231235959.999999'
+Error 1292 (22007): Incorrect time value: '20171231235959.999999'
 select ADDDATE('2008-01-34', -1);
 ADDDATE('2008-01-34', -1)
 NULL
@@ -447,13 +447,13 @@ a
 1
 1
 with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte set a=1;
-Error 1288: The target table cte of the UPDATE is not updatable
+Error 1288 (HY000): The target table cte of the UPDATE is not updatable
 with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) delete from cte;
-Error 1288: The target table cte of the DELETE is not updatable
+Error 1288 (HY000): The target table cte of the DELETE is not updatable
 with cte(a) as (select a from t1) delete from cte;
-Error 1288: The target table cte of the DELETE is not updatable
+Error 1288 (HY000): The target table cte of the DELETE is not updatable
 with cte(a) as (select a from t1) update cte set a=1;
-Error 1288: The target table cte of the UPDATE is not updatable
+Error 1288 (HY000): The target table cte of the UPDATE is not updatable
 drop table if exists t1;
 create table t1(a int, b int, primary key(a));
 insert into t1 values (1, 1),(2,1),(3,1);
@@ -677,47 +677,47 @@ c12+0
 drop table if exists t;
 create table t(a int);
 with cte1 as (select * from cte2), cte2 as (select 1) select * from cte1;
-Error 1146: Table 'expression__misc.cte2' doesn't exist
+Error 1146 (42S02): Table 'expression__misc.cte2' doesn't exist
 with cte1 as (select * from cte2)  select * from (with cte2 as (select 2) select * from cte1 ) q;
-Error 1146: Table 'expression__misc.cte2' doesn't exist
+Error 1146 (42S02): Table 'expression__misc.cte2' doesn't exist
 with recursive cte(n) as (select 1 union select sum(n) from cte group by n) select * from cte;
-Error 3575: Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
+Error 3575 (HY000): Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
 with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;
-Error 3575: Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
+Error 3575 (HY000): Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
 with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union select distinct  * from cte) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union (select * from cte limit 2)) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union select * from cte, cte c1) select * from cte;
-Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;
-Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select * from cte where 1 in (select * from cte)) select * from cte;
-Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select * from cte where exists (select * from cte)) select * from cte;
-Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select * from cte where 1 >  (select * from cte)) select * from cte;
-Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select (select * from cte) c1) select * from cte;
-Error 3577: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
+Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select * from t left join cte on t.a=cte.n) select * from cte;
-Error 3576: In recursive query block of Recursive Common Table Expression 'cte', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints
+Error 3576 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must neither be in the right argument of a LEFT JOIN, nor be forced to be non-first with join order hints
 with recursive cte(n) as (select  1 intersect select 2 union select * from cte union select 1) select * from cte;
-Error 3574: Recursive Common Table Expression 'cte' should have one or more non-recursive query blocks followed by one or more recursive ones
+Error 3574 (HY000): Recursive Common Table Expression 'cte' should have one or more non-recursive query blocks followed by one or more recursive ones
 with recursive cte(n) as (select  * from cte union select * from cte) select * from cte;
-Error 3574: Recursive Common Table Expression 'cte' should have one or more non-recursive query blocks followed by one or more recursive ones
+Error 3574 (HY000): Recursive Common Table Expression 'cte' should have one or more non-recursive query blocks followed by one or more recursive ones
 with recursive cte(n) as (select 1 intersect select * from cte) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'INTERSECT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+Error 1235 (42000): This version of TiDB doesn't yet support 'INTERSECT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
 with recursive cte(n) as (select 1 union select 1 intersect select * from cte) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'INTERSECT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+Error 1235 (42000): This version of TiDB doesn't yet support 'INTERSECT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
 with recursive cte(n) as (select 1 except select * from cte) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'EXCEPT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+Error 1235 (42000): This version of TiDB doesn't yet support 'EXCEPT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
 with recursive cte(n) as (select 1 union select 1 except select * from cte) select * from cte;
-Error 1235: This version of TiDB doesn't yet support 'EXCEPT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
+Error 1235 (42000): This version of TiDB doesn't yet support 'EXCEPT between seed part and recursive part, hint: The operator between seed part and recursive part must bu UNION[DISTINCT] or UNION ALL'
 drop table if exists t1, t2;
 create table t1(a int not null);
 create table t2(a int not null);
@@ -730,12 +730,12 @@ select a, count(*) from t1 natural join t2 group by a;
 a	count(*)
 1	1
 select a, count(*) from t1 join t2 on t1.a=t2.a group by a;
-Error 1052: Column 'a' in field list is ambiguous
+Error 1052 (23000): Column 'a' in field list is ambiguous
 select t1.a, t2.a from t1 join t2 using (a) group by t1.a;
 a	a
 1	1
 select t1.a, t2.a from t1 join t2 using(a) group by a;
-Error 1052: Column 'a' in group statement is ambiguous
+Error 1052 (23000): Column 'a' in group statement is ambiguous
 select t2.a from t1 join t2 using (a) group by t1.a;
 a
 1
