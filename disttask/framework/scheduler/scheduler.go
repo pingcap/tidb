@@ -38,8 +38,17 @@ const (
 	DefaultCheckSubtaskCanceledInterval = 2 * time.Second
 )
 
-// TestSyncChan is used to sync the test.
-var TestSyncChan = make(chan struct{})
+var (
+	// CancelSubtaskErr is the cancel cause when cancelling subtasks.
+	CancelSubtaskErr = errors.New("cancel subtasks")
+	// FinishSubtaskErr is the cancel cause when scheduler successfully processed subtasks.
+	FinishSubtaskErr = errors.New("finish subtasks")
+	// FinishRollbackErr is the cancel cause when scheduler rollback successfully.
+	FinishRollbackErr = errors.New("finish rollback")
+
+	// TestSyncChan is used to sync the test.
+	TestSyncChan = make(chan struct{})
+)
 
 // BaseScheduler is the base implementation of Scheduler.
 type BaseScheduler struct {
@@ -56,7 +65,7 @@ type BaseScheduler struct {
 		// handled indicates whether the error has been updated to one of the subtask.
 		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
-		runtimeCancel context.CancelFunc
+		runtimeCancel context.CancelCauseFunc
 	}
 }
 
@@ -71,7 +80,7 @@ func NewBaseScheduler(_ context.Context, id string, taskID int64, taskTable Task
 	return schedulerImpl
 }
 
-func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelFunc) {
+func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelCauseFunc) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -90,7 +99,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				if canceled {
 					logutil.Logger(s.logCtx).Info("scheduler canceled")
 					if cancelFn != nil {
-						cancelFn()
+						cancelFn(CancelSubtaskErr)
 					}
 				}
 			}
@@ -127,8 +136,8 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		s.onError(ctx.Err())
 		return s.getError()
 	}
-	runCtx, runCancel := context.WithCancel(ctx)
-	defer runCancel()
+	runCtx, runCancel := context.WithCancelCause(ctx)
+	defer runCancel(FinishSubtaskErr)
 	s.registerCancelFunc(runCancel)
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
@@ -240,14 +249,14 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 	err := executor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			err = context.Canceled
+			err = CancelSubtaskErr
 		}
 	})
 	if err != nil {
 		s.onError(err)
 	}
 
-	finished := s.markTaskCancelOrFailed(subtask)
+	finished := s.markTaskCancelOrFailed(ctx, subtask)
 	if finished {
 		return
 	}
@@ -317,18 +326,18 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 	}
 	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			s.onError(context.Canceled)
+			s.onError(CancelSubtaskErr)
 		}
 	})
 
-	finished := s.markTaskCancelOrFailed(subtask)
+	finished := s.markTaskCancelOrFailed(ctx, subtask)
 	if finished {
 		return
 	}
 
 	s.finishSubtaskAndUpdateState(ctx, subtask)
 
-	finished = s.markTaskCancelOrFailed(subtask)
+	finished = s.markTaskCancelOrFailed(ctx, subtask)
 	if finished {
 		return
 	}
@@ -341,8 +350,8 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 
 // Rollback rollbacks the scheduler task.
 func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
-	rollbackCtx, rollbackCancel := context.WithCancel(ctx)
-	defer rollbackCancel()
+	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
+	defer rollbackCancel(FinishRollbackErr)
 	s.registerCancelFunc(rollbackCancel)
 
 	s.resetError()
@@ -438,7 +447,7 @@ func runSummaryCollectLoop(
 	return nil, func() {}, nil
 }
 
-func (s *BaseScheduler) registerCancelFunc(cancel context.CancelFunc) {
+func (s *BaseScheduler) registerCancelFunc(cancel context.CancelCauseFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.runtimeCancel = cancel
@@ -459,7 +468,7 @@ func (s *BaseScheduler) onError(err error) {
 	}
 
 	if s.mu.runtimeCancel != nil {
-		s.mu.runtimeCancel()
+		s.mu.runtimeCancel(err)
 	}
 }
 
@@ -552,11 +561,11 @@ func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask
 	metrics.IncDistTaskSubTaskCnt(subtask)
 }
 
-func (s *BaseScheduler) markTaskCancelOrFailed(subtask *proto.Subtask) bool {
+func (s *BaseScheduler) markTaskCancelOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
-		if errors.Cause(err) == context.Canceled {
+		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
-		} else {
+		} else if errors.Cause(err) != context.Canceled {
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
 		}
 		s.markErrorHandled()

@@ -32,8 +32,7 @@ import (
 )
 
 var (
-	schedulerPoolSize       int32 = 4
-	subtaskExecutorPoolSize int32 = 10
+	schedulerPoolSize int32 = 4
 	// same as dispatcher
 	checkTime        = 300 * time.Millisecond
 	retrySQLTimes    = 3
