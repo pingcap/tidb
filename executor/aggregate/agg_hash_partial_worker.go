@@ -15,6 +15,7 @@
 package aggregate
 
 import (
+	"math/rand"
 	"sync"
 	"time"
 
@@ -25,7 +26,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
@@ -134,9 +138,12 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
-		w.waitForSpillDoneBeforeWorkerExit()
 
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run1", zap.String("xzx", "xzx"))
+		w.waitForSpillDoneBeforeWorkerExit()
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run2", zap.String("xzx", "xzx"))
 		w.workerSync.waitForRunningWorkers()
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run3", zap.String("xzx", "xzx"))
 
 		if !hasError {
 			isSpilled := w.spillHelper.isSpillTriggered()
@@ -156,7 +163,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		// TODO Do we need to handle something when error happens?
 
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run4", zap.String("xzx", "xzx"))
 		w.workerSync.waitForExitOfAliveWorkers()
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run5", zap.String("xzx", "xzx"))
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -164,6 +173,15 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 		waitGroup.Done()
 	}()
+
+	if intest.InTest {
+		num := rand.Intn(100)
+		if num < 2 {
+			panic("Intest panic: partial worker is panicked before start")
+		} else if num >= 2 && num < 4 {
+			time.Sleep(2 * time.Second)
+		}
+	}
 
 	for {
 		waitStart := time.Now()
@@ -192,8 +210,19 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		// so we set needShuffle to be true.
 		needShuffle = true
 
+		if intest.InTest {
+			num := rand.Intn(10000)
+			if num == 0 {
+				panic("Intest panic: partial worker is panicked when running")
+			} else if num == 1 {
+				time.Sleep(10 * time.Millisecond)
+			}
+		}
+
 		if w.spillHelper.isInSpilling() {
+			logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill1", zap.String("xzx", "xzx"))
 			w.waitForTheFinishOfSpill()
+			logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill2", zap.String("xzx", "xzx"))
 		}
 	}
 }

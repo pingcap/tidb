@@ -15,6 +15,7 @@
 package aggregate
 
 import (
+	"math/rand"
 	"sync"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/set"
 	"go.uber.org/zap"
@@ -277,16 +279,21 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 		// TODO What it will do when out of memory quota? As the spill has been triggered.
 		w.memTracker.Consume(memDelta)
 	}
+	logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition>", zap.String("xzx", "xzx"))
 	w.spilledDataChan <- &restoredData
+	logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition<", zap.String("xzx", "xzx"))
 	return true, nil
 }
 
 func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) error {
+	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData1", zap.String("xzx", "xzx"))
 	if err := w.consumeIntermData(ctx); err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
 		return err
 	}
+	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData2", zap.String("xzx", "xzx"))
 	w.loadFinalResult(ctx)
+	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData3", zap.String("xzx", "xzx"))
 	return nil
 }
 
@@ -294,6 +301,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	w.spilledDataChan = make(chan *HashAggIntermData, 1)
 	start := time.Now()
 	defer func() {
+		logutil.BgLogger().Info("xzxdebug: final worker defer", zap.String("xzx", "xzx"))
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.outputCh, r)
 		}
@@ -304,8 +312,19 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		waitGroup.Done()
 	}()
 
+	if intest.InTest {
+		num := rand.Intn(100)
+		if num == 0 {
+			panic("Intest panic: final worker is panicked before start")
+		} else if num == 1 {
+			time.Sleep(2 * time.Second)
+		}
+	}
+
+	logutil.BgLogger().Info("xzxdebug: final worker partialAndFinalNotifier>", zap.String("xzx", "xzx"))
 	// Wait for the finish of all partial workers
 	<-w.partialAndFinalNotifier
+	logutil.BgLogger().Info("xzxdebug: final worker partialAndFinalNotifier<", zap.String("xzx", "xzx"))
 
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {
@@ -319,6 +338,19 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 			if !hasData {
 				return
 			}
+
+			if intest.InTest {
+				num := rand.Intn(100000)
+				if num == 0 {
+					panic("Intest panic: final worker is panicked when running")
+				} else if num == 1 {
+					time.Sleep(100 * time.Millisecond)
+				} else if num == 2 {
+					// Consume 1TB, and the query should be killed
+					w.memTracker.Consume(1099511627776)
+				}
+			}
+
 			err = w.mergeResultsAndSend(ctx)
 			if err != nil {
 				return

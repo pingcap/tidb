@@ -34,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/set"
+	"go.uber.org/zap"
 )
 
 // HashAggInput indicates the input of hash agg exec.
@@ -452,6 +454,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 }
 
 func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGroup) {
+	logutil.BgLogger().Info("xzxdebug: waitPartialWorkerAndCloseOutputChs>", zap.String("xzx", "xzx"))
 	waitGroup.Wait()
 	close(e.inputCh)
 	for input := range e.inputCh {
@@ -460,6 +463,7 @@ func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGro
 	for _, ch := range e.partialOutputChs {
 		close(ch)
 	}
+	logutil.BgLogger().Info("xzxdebug: waitPartialWorkerAndCloseOutputChs<", zap.String("xzx", "xzx"))
 }
 
 func (e *HashAggExec) waitAllWorkersAndCloseFinalOutputCh(waitGroups ...*sync.WaitGroup) {
