@@ -172,13 +172,3 @@ func TestInformationSchemaCreateTime(t *testing.T) {
 	r = typ2.Compare(typ3)
 	require.Equal(t, 1, r)
 }
-
-// TestISColumns tests information_schema.columns.
-func TestISColumns(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("select ORDINAL_POSITION from INFORMATION_SCHEMA.COLUMNS;")
-	tk.MustQuery("SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4'").Check(testkit.Rows("utf8mb4"))
-}

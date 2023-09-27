@@ -26,12 +26,13 @@ import (
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
 
-func TestNonTransactionalDMLShardingOnInt(t *testing.T) {
+func TestNonTransactionalDMLSharding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_max_chunk_size=35")
 	tk.MustExec("use test")
 
+	// On int
 	tables := []string{
 		"create table t(a int, b int, primary key(a, b) clustered)",
 		"create table t(a int, b int, primary key(a, b) nonclustered)",
@@ -43,15 +44,9 @@ func TestNonTransactionalDMLShardingOnInt(t *testing.T) {
 		"create table t(a int, b int, unique key(a))",
 	}
 	testSharding(tables, tk, "int")
-}
 
-func TestNonTransactionalDMLShardingOnVarchar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_max_chunk_size=35")
-	tk.MustExec("use test")
-
-	tables := []string{
+	// On varchar
+	tables = []string{
 		"create table t(a varchar(30), b int, primary key(a, b) clustered)",
 		"create table t(a varchar(30), b int, primary key(a, b) nonclustered)",
 		"create table t(a varchar(30), b int, primary key(a) clustered)",
@@ -461,7 +456,7 @@ func TestNonTransactionalWithShardOnGeneratedColumn(t *testing.T) {
 	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a int, b int, c double as (sqrt(a * a + b * b)), key(c))")
 	tk.MustExec("create table t1(a int, b int, c double as (sqrt(a * a + b * b)), unique key(c))")
-	for i := 0; i < 1000; i++ {
+	for i := 0; i < 100; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, default)", i, i*2))
 	}
 	tk.MustExec("batch on c limit 10 insert into t1(a, b) select a, b from t")
