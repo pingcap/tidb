@@ -378,18 +378,12 @@ func updateStatsMeta(
 	isLocked bool,
 ) (err error) {
 	if isLocked {
-		if delta.Delta < 0 {
-			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
-			// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
-			_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
-				startTS, id, delta.Count, delta.Delta)
-		} else {
-			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
-			_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
-				id, delta.Count, delta.Delta)
-		}
+		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
+		// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
+		_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
+			startTS, id, delta.Count, delta.Delta)
+
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
