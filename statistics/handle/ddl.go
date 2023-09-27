@@ -132,27 +132,26 @@ func (h *Handle) updateStatsVersion() error {
 		return err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
+	sctx := se.(sessionctx.Context)
 
-	ctx := statsutil.StatsCtx(context.Background())
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = statsutil.Exec(sctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = statsutil.FinishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(sctx, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %?", startTS); err != nil {
+	if _, err = statsutil.Exec(sctx, "update mysql.stats_meta set version = %?", startTS); err != nil {
 		return err
 	}
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?", startTS); err != nil {
+	if _, err = statsutil.Exec(sctx, "update mysql.stats_extended set version = %?", startTS); err != nil {
 		return err
 	}
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set version = %?", startTS); err != nil {
+	if _, err = statsutil.Exec(sctx, "update mysql.stats_histograms set version = %?", startTS); err != nil {
 		return err
 	}
 
@@ -270,17 +269,16 @@ func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
 		return err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	ctx := statsutil.StatsCtx(context.Background())
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	sctx := se.(sessionctx.Context)
+	_, err = statsutil.Exec(sctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = statsutil.FinishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(sctx, err)
 	}()
 	for _, table := range []string{"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets", "stats_histograms", "column_stats_usage"} {
-		_, err = exec.ExecuteInternal(ctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
+		_, err = statsutil.Exec(sctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
 		if err != nil {
 			return err
 		}
@@ -327,31 +325,30 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 		return err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	ctx := statsutil.StatsCtx(context.Background())
+	sctx := se.(sessionctx.Context)
 
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = statsutil.Exec(sctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = statsutil.FinishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(sctx, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
+	if _, err := statsutil.Exec(sctx, "insert into mysql.stats_meta (version, table_id) values(%?, %?)", startTS, physicalID); err != nil {
 		return err
 	}
 	statsVer = startTS
 	for _, col := range info.Columns {
-		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
+		if _, err := statsutil.Exec(sctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 0, %?, 0, %?)", physicalID, col.ID, startTS); err != nil {
 			return err
 		}
 	}
 	for _, idx := range info.Indices {
-		if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 1, %?, 0, %?)", physicalID, idx.ID, startTS); err != nil {
+		if _, err := statsutil.Exec(sctx, "insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version) values(%?, 1, %?, 0, %?)", physicalID, idx.ID, startTS); err != nil {
 			return err
 		}
 	}
@@ -372,21 +369,20 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 		return err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	ctx := statsutil.StatsCtx(context.Background())
+	sctx := se.(sessionctx.Context)
 
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = statsutil.Exec(sctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = statsutil.FinishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(sctx, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if _, err := exec.ExecuteInternal(ctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
+	if _, err := statsutil.Exec(sctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
 		return err
 	}
 	return nil
@@ -407,25 +403,24 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 		return err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
+	sctx := se.(sessionctx.Context)
 	ctx := statsutil.StatsCtx(context.Background())
 
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = statsutil.Exec(sctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = statsutil.FinishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(sctx, err)
 	}()
 
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	sctx := se.(sessionctx.Context)
 
 	// First of all, we update the version.
-	_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", startTS, physicalID)
+	_, err = statsutil.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", startTS, physicalID)
 	if err != nil {
 		return
 	}
@@ -434,7 +429,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	if sctx.GetSessionVars().StmtCtx.AffectedRows() > 0 {
 		// By this step we can get the count of this table, then we can sure the count and repeats of bucket.
 		var rs sqlexec.RecordSet
-		rs, err = exec.ExecuteInternal(ctx, "select count from mysql.stats_meta where table_id = %?", physicalID)
+		rs, err = statsutil.Exec(sctx, "select count from mysql.stats_meta where table_id = %?", physicalID)
 		if err != nil {
 			return
 		}
@@ -453,12 +448,12 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			}
 			if value.IsNull() {
 				// If the adding column has default value null, all the existing rows have null value on the newly added column.
-				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%?, %?, 0, %?, 0, %?)", startTS, physicalID, colInfo.ID, count); err != nil {
+				if _, err := statsutil.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, null_count) values (%?, %?, 0, %?, 0, %?)", startTS, physicalID, colInfo.ID, count); err != nil {
 					return err
 				}
 			} else {
 				// If this stats exists, we insert histogram meta first, the distinct_count will always be one.
-				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
+				if _, err := statsutil.Exec(sctx, "insert into mysql.stats_histograms (version, table_id, is_index, hist_id, distinct_count, tot_col_size) values (%?, %?, 0, %?, 1, %?)", startTS, physicalID, colInfo.ID, int64(len(value.GetBytes()))*count); err != nil {
 					return err
 				}
 				value, err = value.ConvertTo(sctx.GetSessionVars().StmtCtx, types.NewFieldType(mysql.TypeBlob))
@@ -466,7 +461,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 					return
 				}
 				// There must be only one bucket for this new column and the value is the default value.
-				if _, err := exec.ExecuteInternal(ctx, "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%?, 0, %?, 0, %?, %?, %?, %?)", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()); err != nil {
+				if _, err := statsutil.Exec(sctx, "insert into mysql.stats_buckets (table_id, is_index, hist_id, bucket_id, repeats, count, lower_bound, upper_bound) values (%?, 0, %?, 0, %?, %?, %?, %?)", physicalID, colInfo.ID, count, count, value.GetBytes(), value.GetBytes()); err != nil {
 					return err
 				}
 			}
