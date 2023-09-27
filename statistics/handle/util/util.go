@@ -76,6 +76,5 @@ func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql s
 	if !ok {
 		return nil, nil, errors.Errorf("invalid sql executor")
 	}
-	opts = append(opts, sqlexec.ExecOptionUseCurSession)
 	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), opts, sql, args...)
 }
