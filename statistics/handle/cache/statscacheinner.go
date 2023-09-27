@@ -263,11 +263,11 @@ func getRowCountTables(sctx sessionctx.Context, tableIDs ...int64) (map[int64]ui
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {
-		rows, _, err = util.ExecRows(sctx, "select table_id, count from mysql.stats_meta")
+		rows, _, err = util.ExecWithOpts(sctx, nil, "select table_id, count from mysql.stats_meta")
 	} else {
 		inTblIDs := buildInTableIDsString(tableIDs)
 		sql := "select table_id, count from mysql.stats_meta where " + inTblIDs
-		rows, _, err = util.ExecRows(sctx, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	}
 	if err != nil {
 		return nil, err

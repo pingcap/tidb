@@ -601,7 +601,8 @@ func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snaps
 		rows, _, err = util.ExecRows(sctx,
 			"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
 	} else {
-		rows, _, err = util.ExecWithOpts(sctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)},
+		rows, _, err = util.ExecWithOpts(sctx,
+			[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot), sqlexec.ExecOptionUseCurSession},
 			"SELECT version, modify_count, count from mysql.stats_meta where table_id = %? order by version", tableID)
 	}
 	if err != nil || len(rows) == 0 {
