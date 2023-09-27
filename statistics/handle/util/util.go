@@ -16,13 +16,13 @@ package util
 
 import (
 	"context"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/util/chunk"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
