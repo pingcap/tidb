@@ -5,8 +5,5 @@ go_library(
     srcs = ["analyzer.go"],
     importpath = "github.com/pingcap/tidb/build/linter/bootstrap",
     visibility = ["//visibility:public"],
-    deps = [
-        "@org_golang_x_tools//go/analysis",
-        "@org_golang_x_tools//go/analysis/passes/inspect",
-    ],
+    deps = ["@org_golang_x_tools//go/analysis"],
 )
