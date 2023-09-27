@@ -17,7 +17,6 @@ package handle
 import (
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/sessionctx"
 	"strconv"
 	"time"
 
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
