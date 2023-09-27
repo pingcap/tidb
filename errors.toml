@@ -146,6 +146,11 @@ error = '''
 storage is not tikv
 '''
 
+["BR:KV:ErrPossibleInconsistency"]
+error = '''
+the cluster state might be inconsistent
+'''
+
 ["BR:PD:ErrPDBatchScanRegion"]
 error = '''
 batch scan region
