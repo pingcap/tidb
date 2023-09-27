@@ -44,7 +44,6 @@ const gcLastTSVarName = "tidb_stats_gc_last_ts"
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
-	ctx := context.Background()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := mathutil.Max(h.Lease(), ddlLease)
@@ -64,7 +63,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 		if err != nil {
 			return
 		}
-		err = h.writeGCTimestampToKV(ctx, gcVer)
+		err = h.writeGCTimestampToKV(gcVer)
 	}()
 
 	rows, _, err := h.execRows("select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
@@ -109,7 +108,7 @@ func (h *Handle) GetLastGCTimestamp() (uint64, error) {
 	return lastGcTS, nil
 }
 
-func (h *Handle) writeGCTimestampToKV(ctx context.Context, newTS uint64) error {
+func (h *Handle) writeGCTimestampToKV(newTS uint64) error {
 	_, _, err := h.execRows(
 		"insert into mysql.tidb (variable_name, variable_value) values (%?, %?) on duplicate key update variable_value = %?",
 		gcLastTSVarName,
