@@ -48,7 +48,7 @@ func RemoveLockedTables(
 	}
 	defer func() {
 		// Commit or rollback the transaction.
-		err = util.FinishTransaction(ctx, exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check locked before delete.
@@ -123,7 +123,7 @@ func RemoveLockedPartitions(
 	}
 	defer func() {
 		// Commit or rollback the transaction.
-		err = util.FinishTransaction(ctx, exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check locked before delete.

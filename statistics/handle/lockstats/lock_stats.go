@@ -59,7 +59,7 @@ func AddLockedTables(
 	}
 	defer func() {
 		// Commit transaction.
-		err = util.FinishTransaction(ctx, exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check duplicate before insert.
@@ -135,7 +135,7 @@ func AddLockedPartitions(
 	}
 	defer func() {
 		// Commit transaction.
-		err = util.FinishTransaction(ctx, exec, err)
+		err = finishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check duplicate before insert.
