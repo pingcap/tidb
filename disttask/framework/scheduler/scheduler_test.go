@@ -181,7 +181,7 @@ func TestSchedulerRollback(t *testing.T) {
 		[]interface{}{proto.TaskStatePending, proto.TaskStateRunning}).Return(nil, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
 		[]interface{}{proto.TaskStateRevertPending}).Return(&proto.Subtask{ID: 1}, nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateReverting, nil).Return(updateSubtaskErr)
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateReverting, nil).Return(updateSubtaskErr).Times(2)
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, updateSubtaskErr.Error())
 
@@ -263,7 +263,7 @@ func TestScheduler(t *testing.T) {
 	runSubtaskErr := errors.New("run subtask error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
-		[]interface{}{proto.TaskStatePending}).Return([]*proto.Subtask{{ID: 1, Type: tp, Step: proto.StepOne}}, nil)
+		[]interface{}{proto.TaskStatePending}).Return([]*proto.Subtask{{ID: 1, Type: tp, Step: proto.StepOne}}, nil).AnyTimes()
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", proto.StepOne, taskID,
 		[]interface{}{proto.TaskStatePending}).Return(&proto.Subtask{ID: 1, Type: tp, Step: proto.StepOne}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
