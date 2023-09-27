@@ -202,7 +202,6 @@ go_test(
         "main_test.go",
         "memtable_predicate_extractor_test.go",
         "optimizer_test.go",
-        "partition_pruner_test.go",
         "partition_pruning_test.go",
         "physical_plan_test.go",
         "physical_plan_trace_test.go",

@@ -528,6 +528,8 @@ insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');
 admin reload expr_pushdown_blacklist;
 SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');
 select * from testjson where j;
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
 
 # TestIssue15743
 drop table if exists t0;

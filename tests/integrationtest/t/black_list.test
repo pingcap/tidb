@@ -39,3 +39,7 @@ delete from mysql.expr_pushdown_blacklist where name='lt' and store_type = 'tikv
 admin reload expr_pushdown_blacklist;
 
 explain format = 'brief' select * from t where a < 1;
+
+delete from mysql.expr_pushdown_blacklist;
+
+admin reload expr_pushdown_blacklist;
