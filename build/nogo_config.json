@@ -1302,7 +1302,7 @@
   },
   "bootstrap": {
     "only_files": {
-      "session/bootstrap.go": "bootstrap code"
+      "session/": "bootstrap code"
     }
   }
 }

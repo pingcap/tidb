@@ -21,30 +21,24 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/analysis"
-	"golang.org/x/tools/go/analysis/passes/inspect"
 )
 
 // Analyzer is the analyzer struct of unconvert.
 var Analyzer = &analysis.Analyzer{
 	Name:     "bootstrap",
 	Doc:      "Check developers don't forget something in TiDB bootstrap logic",
-	Requires: []*analysis.Analyzer{inspect.Analyzer},
+	Requires: []*analysis.Analyzer{},
 	Run:      run,
 }
 
 const (
-	bootstrapCodePkg  = "github.com/pingcap/tidb/session"
-	bootstrapCodeFile = "bootstrap.go"
+	bootstrapCodeFile = "/bootstrap.go"
 )
 
 func run(pass *analysis.Pass) (interface{}, error) {
-	if pass.Pkg.Path() != bootstrapCodePkg {
-		return nil, nil
-	}
-
 	for _, file := range pass.Files {
 		fileName := pass.Fset.File(file.Pos()).Name()
-		if fileName != bootstrapCodeFile {
+		if !strings.HasSuffix(fileName, bootstrapCodeFile) {
 			continue
 		}
 
@@ -130,7 +124,8 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		if minv == maxv && minv != 0 {
 			return nil, nil
 		}
-		pass.Reportf(maxVerFuncUsedPos, "parsed value: %d", maxVerFuncUsed)
+		pass.Reportf(maxVerFuncUsedPos, "found inconsistent bootstrap versions:")
+		pass.Reportf(maxVerFuncUsedPos, "max version function used: %d", maxVerFuncUsed)
 		pass.Reportf(maxVerFuncPos, "max version function: %d", maxVerFunc)
 		pass.Reportf(maxVerVariablePos, "max version variable: %d", maxVerVariable)
 		pass.Reportf(curVerVariablePos, "current version variable: %d", curVerVariable)
