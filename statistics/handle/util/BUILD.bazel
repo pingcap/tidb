@@ -7,8 +7,10 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//kv",
+        "//parser/ast",
         "//parser/terror",
         "//sessionctx",
+        "//util/chunk",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
     ],
