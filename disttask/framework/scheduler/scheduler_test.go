@@ -186,11 +186,11 @@ func TestSchedulerRun(t *testing.T) {
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
-	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(CancelSubtaskErr)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(ErrCancelSubtask)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateCanceled, gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = scheduler.Run(runCtx, task)
-	require.EqualError(t, err, CancelSubtaskErr.Error())
+	require.EqualError(t, err, ErrCancelSubtask.Error())
 
 	// 7. RunSubtask return context.Canceled
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,

@@ -39,12 +39,12 @@ const (
 )
 
 var (
-	// CancelSubtaskErr is the cancel cause when cancelling subtasks.
-	CancelSubtaskErr = errors.New("cancel subtasks")
-	// FinishSubtaskErr is the cancel cause when scheduler successfully processed subtasks.
-	FinishSubtaskErr = errors.New("finish subtasks")
-	// FinishRollbackErr is the cancel cause when scheduler rollback successfully.
-	FinishRollbackErr = errors.New("finish rollback")
+	// ErrCancelSubtask is the cancel cause when cancelling subtasks.
+	ErrCancelSubtask = errors.New("cancel subtasks")
+	// ErrFinishSubtask is the cancel cause when scheduler successfully processed subtasks.
+	ErrFinishSubtask = errors.New("finish subtasks")
+	// ErrFinishRollback is the cancel cause when scheduler rollback successfully.
+	ErrFinishRollback = errors.New("finish rollback")
 
 	// TestSyncChan is used to sync the test.
 	TestSyncChan = make(chan struct{})
@@ -99,7 +99,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				if canceled {
 					logutil.Logger(s.logCtx).Info("scheduler canceled")
 					if cancelFn != nil {
-						cancelFn(CancelSubtaskErr)
+						cancelFn(ErrCancelSubtask)
 					}
 				}
 			}
@@ -137,7 +137,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		return s.getError()
 	}
 	runCtx, runCancel := context.WithCancelCause(ctx)
-	defer runCancel(FinishSubtaskErr)
+	defer runCancel(ErrFinishSubtask)
 	s.registerCancelFunc(runCancel)
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
@@ -249,7 +249,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 	err := executor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			err = CancelSubtaskErr
+			err = ErrCancelSubtask
 		}
 	})
 	if err != nil {
@@ -326,7 +326,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 	}
 	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			s.onError(CancelSubtaskErr)
+			s.onError(ErrCancelSubtask)
 		}
 	})
 
@@ -351,7 +351,7 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 // Rollback rollbacks the scheduler task.
 func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
 	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
-	defer rollbackCancel(FinishRollbackErr)
+	defer rollbackCancel(ErrFinishRollback)
 	s.registerCancelFunc(rollbackCancel)
 
 	s.resetError()
