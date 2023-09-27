@@ -56,7 +56,7 @@ func (s *ImportTargetStores) GetAllStores(ctx context.Context) ([]*metapb.Store,
 	return stores, nil
 }
 
-func (s *ImportTargetStores) GetDenyLightningClient(ctx context.Context, storeID uint64) (utils.SuspendLightningClient, error) {
+func (s *ImportTargetStores) GetDenyLightningClient(ctx context.Context, storeID uint64) (utils.SuspendImportingClient, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 

@@ -9,6 +9,9 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/util/engine"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
 
@@ -17,10 +20,10 @@ const (
 )
 
 func (mgr *StoreManager) GetAllStores(ctx context.Context) ([]*metapb.Store, error) {
-	return mgr.PDClient().GetAllStores(ctx)
+	return mgr.PDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 }
 
-func (mgr *StoreManager) GetDenyLightningClient(ctx context.Context, storeID uint64) (SuspendLightningClient, error) {
+func (mgr *StoreManager) GetDenyLightningClient(ctx context.Context, storeID uint64) (SuspendImportingClient, error) {
 	var cli import_sstpb.ImportSSTClient
 	err := mgr.WithConn(ctx, storeID, func(cc *grpc.ClientConn) {
 		cli = import_sstpb.NewImportSSTClient(cc)
@@ -33,10 +36,10 @@ func (mgr *StoreManager) GetDenyLightningClient(ctx context.Context, storeID uin
 
 type SuspendImportingEnv interface {
 	GetAllStores(ctx context.Context) ([]*metapb.Store, error)
-	GetDenyLightningClient(ctx context.Context, storeID uint64) (SuspendLightningClient, error)
+	GetDenyLightningClient(ctx context.Context, storeID uint64) (SuspendImportingClient, error)
 }
 
-type SuspendLightningClient interface {
+type SuspendImportingClient interface {
 	// Temporarily disable ingest / download / write for data listeners don't support catching import data.
 	SuspendImportRPC(ctx context.Context, in *import_sstpb.SuspendImportRPCRequest, opts ...grpc.CallOption) (*import_sstpb.SuspendImportRPCResponse, error)
 }
@@ -84,6 +87,11 @@ func (d *SuspendImporting) forEachStores(ctx context.Context, makeReq func() *im
 
 	result := map[uint64]bool{}
 	for _, store := range stores {
+		logutil.CL(ctx).Info("Handling store.", zap.Stringer("store", store))
+		if engine.IsTiFlash(store) {
+			logutil.CL(ctx).Info("Store is tiflash, skipping.", zap.Stringer("store", store))
+			continue
+		}
 		cli, err := d.env.GetDenyLightningClient(ctx, store.Id)
 		if err != nil {
 			return nil, errors.Annotatef(err, "failed to get client for store %d", store.Id)

@@ -90,7 +90,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	}, tconf)
 	eg, ectx := errgroup.WithContext(ctx)
 	cx := &AdaptEnvForSnapshotBackupContext{
-		Context: ectx,
+		Context: logutil.ContextWithField(ectx, zap.String("tag", "br_operator")),
 		pdMgr:   mgr,
 		kvMgr:   kvMgr,
 		cfg:     *cfg,
@@ -101,7 +101,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 
 	eg.Go(func() error { return pauseGCKeeper(cx) })
 	eg.Go(func() error { return pauseSchedulerKeeper(cx) })
-	eg.Go(func() error { return goPauseImporting(cx) })
+	eg.Go(func() error { return pauseImporting(cx) })
 	go func() {
 		cx.rdGrp.Wait()
 		hintAllReady()
@@ -110,7 +110,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
-func goPauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
+func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	denyLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
 	if _, err := denyLightning.DenyAllStores(cx, cx.cfg.TTL); err != nil {
 		return errors.Trace(err)
@@ -119,7 +119,7 @@ func goPauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	cx.runGrp.Go(func() error {
 		err := denyLightning.Keeper(cx, cx.cfg.TTL)
 		if errors.Cause(err) != context.Canceled {
-			log.Warn("keeper encounters error.", logutil.ShortError(err))
+			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
 		}
 		return cx.cleanUpWithErr(func(ctx context.Context) error {
 			for {
@@ -128,7 +128,7 @@ func goPauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 				}
 				res, err := denyLightning.AllowAllStores(ctx)
 				if err != nil {
-					log.Warn("Failed to restore lightning, will retry.", logutil.ShortError(err))
+					logutil.CL(ctx).Warn("Failed to restore lightning, will retry.", logutil.ShortError(err))
 					// Retry for 10 times.
 					time.Sleep(cx.cfg.TTL / 10)
 					continue
@@ -152,7 +152,7 @@ func pauseGCKeeper(ctx *AdaptEnvForSnapshotBackupContext) error {
 		if err != nil {
 			return err
 		}
-		log.Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
+		logutil.CL(ctx).Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
 		sp.BackupTS = rts
 	}
 	err := utils.StartServiceSafePointKeeper(ctx, ctx.pdMgr.GetPDClient(), sp)
