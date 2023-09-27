@@ -32,9 +32,12 @@ import (
 
 // BackfillGlobalMeta is the global task meta for backfilling index.
 type BackfillGlobalMeta struct {
-	Job        model.Job `json:"job"`
-	EleID      int64     `json:"ele_id"`
-	EleTypeKey []byte    `json:"ele_type_key"`
+	Job model.Job `json:"job"`
+	// EleIDs stands for the index/column IDs to backfill with distributed framework.
+	EleIDs []int64 `json:"ele_ids"`
+	// EleTypeKey is the type of the element to backfill with distributed framework.
+	// For now, only index type is supported.
+	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
 }
@@ -63,11 +66,15 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	if err != nil {
 		return nil, err
 	}
-	indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
-	if indexInfo == nil {
-		logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
-			zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", bgm.EleID))
-		return nil, errors.New("index info not found")
+	indexInfos := make([]*model.IndexInfo, 0, len(bgm.EleIDs))
+	for _, eid := range bgm.EleIDs {
+		indexInfo := model.FindIndexInfoByID(tbl.Meta().Indices, eid)
+		if indexInfo == nil {
+			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
+				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
+			return nil, errors.New("index info not found")
+		}
+		indexInfos = append(indexInfos, indexInfo)
 	}
 
 	switch stage {
@@ -76,14 +83,14 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(
-			d, &bgm.Job, indexInfo, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
+			d, &bgm.Job, indexInfos, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
 	case proto.StepTwo:
-		return newMergeSortExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+		return newMergeSortExecutor(jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 	case proto.StepThree:
 		if len(bgm.CloudStorageURI) > 0 {
-			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
+			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
-		return newImportFromLocalStepExecutor(jobMeta.ID, indexInfo, tbl.(table.PhysicalTable), bc), nil
+		return newImportFromLocalStepExecutor(jobMeta.ID, indexInfos, tbl.(table.PhysicalTable), bc), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
@@ -129,7 +136,9 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleID)
+	// We only support adding multiple unique indexes or multiple non-unique indexes,
+	// we use the first index uniqueness here.
+	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleIDs[0])
 	if idx == nil {
 		return errors.Trace(errors.New("index info not found"))
 	}

@@ -20,16 +20,58 @@ import (
 )
 
 // task state machine
-//  1. succeed:			pending -> running -> succeed
-//  2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
-//  3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
-//  3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
-// subtask state machine
-//  1. succeed/failed:	pending -> running -> succeed/failed
-//  2. canceled:		pending -> running -> canceled
-//  3. rollback:		revert_pending -> reverting -> reverted/revert_failed
-//  4. pause/resume:	pending -> running -> paused -> running
+//		                ┌──────────────────────────────┐
+//		                │           ┌───────┐       ┌──┴───┐
+//		                │ ┌────────►│pausing├──────►│paused│
+//		                │ │         └───────┘       └──────┘
+//		                ▼ │
+//		┌───────┐     ┌───┴───┐     ┌────────┐
+//		│pending├────►│running├────►│succeed │
+//		└──┬────┘     └───┬───┘     └────────┘
+//		   ▼              │         ┌──────────┐
+//		┌──────┐          ├────────►│cancelling│
+//		│failed│          │         └────┬─────┘
+//		└──────┘          │              ▼
+//		                  │         ┌─────────┐     ┌────────┐
+//		                  └────────►│reverting├────►│reverted│
+//		                            └────┬────┘     └────────┘
+//		                                 │          ┌─────────────┐
+//		                                 └─────────►│revert_failed│
+//		                                            └─────────────┘
+//	 1. succeed:		pending -> running -> succeed
+//	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
+//	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
+//	 3. pause/resume:	pending -> running -> pausing -> paused -> running
+//
+// subtask state machine for normal subtask:
+//
+//	               ┌──────────────┐
+//	               │          ┌───┴──┐
+//	               │ ┌───────►│paused│
+//	               ▼ │        └──────┘
+//	┌───────┐    ┌───┴───┐    ┌───────┐
+//	│pending├───►│running├───►│succeed│
+//	└───────┘    └───┬───┘    └───────┘
+//	                 │        ┌──────┐
+//	                 ├───────►│failed│
+//	                 │        └──────┘
+//	                 │        ┌────────┐
+//	                 └───────►│canceled│
+//	                          └────────┘
+//
+// for reverting subtask:
+//
+//	┌──────────────┐    ┌─────────┐   ┌─────────┐
+//	│revert_pending├───►│reverting├──►│ reverted│
+//	└──────────────┘    └────┬────┘   └─────────┘
+//	                         │         ┌─────────────┐
+//	                         └────────►│revert_failed│
+//	                                   └─────────────┘
+//	 1. succeed/failed:	pending -> running -> succeed/failed
+//	 2. canceled:		pending -> running -> canceled
+//	 3. rollback:		revert_pending -> reverting -> reverted/revert_failed
+//	 4. pause/resume:	pending -> running -> paused -> running
 const (
 	TaskStatePending       = "pending"
 	TaskStateRunning       = "running"
@@ -104,6 +146,12 @@ type Subtask struct {
 	Summary    string
 }
 
+// IsFinished checks if the subtask is finished.
+func (t *Subtask) IsFinished() bool {
+	return t.State == TaskStateSucceed || t.State == TaskStateReverted || t.State == TaskStateCanceled ||
+		t.State == TaskStateFailed || t.State == TaskStateRevertFailed
+}
+
 // NewSubtask create a new subtask.
 func NewSubtask(step int64, taskID int64, tp, schedulerID string, meta []byte) *Subtask {
 	return &Subtask{
@@ -132,6 +180,8 @@ const (
 	TaskTypeExample3 = "Example2"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto = "ImportInto"
+	// Backfill is TaskType of add index Backfilling process.
+	Backfill = "backfill"
 )
 
 // Type2Int converts task type to int.
