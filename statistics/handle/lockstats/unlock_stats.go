@@ -26,7 +26,7 @@ import (
 
 const (
 	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
-	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?"
+	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = CASE WHEN %? < 0 THEN IF(count > ABS(%?), count - ABS(%?), 0) ELSE count + %? END, modify_count = modify_count + %? WHERE table_id = %?"
 	// DeleteLockSQL is used to delete the locked table record.
 	DeleteLockSQL = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
 )
@@ -158,18 +158,27 @@ func RemoveLockedPartitions(
 	return msg, err
 }
 
+func updateDelta(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, count, modifyCount int64, version uint64, tid int64) error {
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		// I know it's ugly :(
+		version, count, count, count, count, modifyCount, tid,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, tid int64) error {
 	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, tid, exec)
 	if err != nil {
 		return err
 	}
 
-	if _, _, err := exec.ExecRestrictedSQL(
-		ctx,
-		useCurrentSession,
-		updateDeltaSQL,
-		version, count, modifyCount, tid,
-	); err != nil {
+	if err := updateDelta(ctx, exec, count, modifyCount, version, tid); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(tid)
@@ -189,23 +198,13 @@ func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedS
 		return err
 	}
 
-	if _, _, err := exec.ExecRestrictedSQL(
-		ctx,
-		useCurrentSession,
-		updateDeltaSQL,
-		version, count, modifyCount, partitionID,
-	); err != nil {
-		return err
-	}
-	if _, _, err := exec.ExecRestrictedSQL(
-		ctx,
-		useCurrentSession,
-		updateDeltaSQL,
-		version, count, modifyCount, tid,
-	); err != nil {
+	if err := updateDelta(ctx, exec, count, modifyCount, version, partitionID); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(partitionID)
+	if err := updateDelta(ctx, exec, count, modifyCount, version, tid); err != nil {
+		return err
+	}
 	cache.TableRowStatsCache.Invalidate(tid)
 
 	_, _, err = exec.ExecRestrictedSQL(

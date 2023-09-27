@@ -282,14 +282,14 @@ func TestUnlockPartitionedTableWouldUpdateGlobalCountCorrectly(t *testing.T) {
 	// Dump stats delta to KV.
 	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
 	// Check the mysql.stats_table_locked is updated correctly.
-	rows := tk.MustQuery("select * from mysql.stats_table_locked order by table_id").Rows()
+	rows := tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
 	require.Len(t, rows, 3)
+	require.Equal(t, "0", rows[0][0])
 	require.Equal(t, "0", rows[0][1])
-	require.Equal(t, "0", rows[0][2])
+	require.Equal(t, "2", rows[1][0])
 	require.Equal(t, "2", rows[1][1])
-	require.Equal(t, "2", rows[1][2])
+	require.Equal(t, "0", rows[2][0])
 	require.Equal(t, "0", rows[2][1])
-	require.Equal(t, "0", rows[2][2])
 	// Unlock partition p0 and p1 failed.
 	tk.MustExec("unlock stats t partition p0, p1")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
@@ -299,10 +299,49 @@ func TestUnlockPartitionedTableWouldUpdateGlobalCountCorrectly(t *testing.T) {
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
 	// Check the global count is updated correctly.
-	rows = tk.MustQuery(fmt.Sprint("select * from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
+	rows = tk.MustQuery(fmt.Sprint("select count, modify_count from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, "2", rows[0][2])
-	require.Equal(t, "2", rows[0][3])
+	require.Equal(t, "2", rows[0][0])
+	require.Equal(t, "2", rows[0][1])
+}
+
+func TestDeltaInLockInfoCanBeNegative(t *testing.T) {
+	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
+
+	h := dom.StatsHandle()
+	tk.MustExec("insert into t(a, b) values(1,'a')")
+	tk.MustExec("insert into t(a, b) values(2,'b')")
+	// Dump stats delta to KV.
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	rows := tk.MustQuery(fmt.Sprint("select count, modify_count from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "2", rows[0][0])
+	require.Equal(t, "2", rows[0][1])
+
+	tk.MustExec("lock stats t")
+	// Delete some rows.
+	tk.MustExec("delete from t where a = 1")
+	tk.MustExec("delete from t where a = 2")
+
+	// Dump stats delta to KV.
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	// Check the mysql.stats_table_locked is updated correctly.
+	rows = tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
+	require.Len(t, rows, 3)
+	require.Equal(t, "0", rows[0][0])
+	require.Equal(t, "0", rows[0][1])
+	require.Equal(t, "-2", rows[1][0])
+	require.Equal(t, "2", rows[1][1])
+	require.Equal(t, "0", rows[2][0])
+	require.Equal(t, "0", rows[2][1])
+
+	// Unlock the table.
+	tk.MustExec("unlock stats t")
+	// Check the global count is updated correctly.
+	rows = tk.MustQuery(fmt.Sprint("select count, modify_count from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "0", rows[0][0])
+	require.Equal(t, "4", rows[0][1])
 }
 
 func setupTestEnvironmentWithTableT(t *testing.T) (kv.Storage, *domain.Domain, *testkit.TestKit, *model.TableInfo) {
