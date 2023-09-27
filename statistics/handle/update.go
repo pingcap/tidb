@@ -16,7 +16,6 @@ package handle
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -284,15 +283,13 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		return false, err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
 	sctx := se.(sessionctx.Context)
-	ctx := utilstats.StatsCtx(context.Background())
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = utilstats.Exec(sctx, "begin")
 	if err != nil {
 		return false, errors.Trace(err)
 	}
 	defer func() {
-		err = utilstats.FinishTransaction(ctx, exec, err)
+		err = utilstats.FinishTransaction(sctx, err)
 	}()
 
 	statsVersion, err = getSessionTxnStartTS(se)
@@ -327,7 +324,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			isPartitionLocked = true
 		}
 		tableOrPartitionLocked := isTableLocked || isPartitionLocked
-		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
+		if err = updateStatsMeta(sctx, statsVersion, delta,
 			physicalTableID, tableOrPartitionLocked); err != nil {
 			return
 		}
@@ -336,7 +333,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		// We will update its global-stats when the partition is unlocked.
 		if isTableLocked || !isPartitionLocked {
 			// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-			if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
+			if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
 				return
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -348,7 +345,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		if _, ok := lockedTables[physicalTableID]; ok {
 			isTableLocked = true
 		}
-		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
+		if err = updateStatsMeta(sctx, statsVersion, delta,
 			physicalTableID, isTableLocked); err != nil {
 			return
 		}
@@ -360,8 +357,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 }
 
 func updateStatsMeta(
-	ctx context.Context,
-	exec sqlexec.SQLExecutor,
+	sctx sessionctx.Context,
 	startTS uint64,
 	delta variable.TableDelta,
 	id int64,
@@ -369,21 +365,21 @@ func updateStatsMeta(
 ) (err error) {
 	if isLocked {
 		if delta.Delta < 0 {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?",
+			_, err = utilstats.Exec(sctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?",
 				startTS, -delta.Delta, delta.Count, id, -delta.Delta)
 		} else {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?",
+			_, err = utilstats.Exec(sctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?",
 				startTS, delta.Delta, delta.Count, id)
 		}
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+			_, err = utilstats.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
 				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
 				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
 		} else {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+			_, err = utilstats.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
 				id, delta.Count, delta.Delta)
 		}
@@ -406,10 +402,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	if len(values) == 0 {
 		return nil
 	}
-	ctx := utilstats.StatsCtx(context.Background())
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.execRestrictedSQL(ctx, sql)
+	_, _, err := h.execRows(sql)
 	return errors.Trace(err)
 }
 
@@ -454,7 +449,7 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 			}
 		}
 		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
-		if _, _, err := h.execRestrictedSQL(context.Background(), sql.String()); err != nil {
+		if _, _, err := h.execRows(sql.String()); err != nil {
 			return errors.Trace(err)
 		}
 		for j := i; j < end; j++ {
