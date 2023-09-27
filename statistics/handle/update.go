@@ -342,7 +342,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
 		//    we will update its global-stats when the partition is unlocked.
 		// 4. If table is not locked and partition is not locked, we update the global-stats.
-		// To sum up, we only need to update the global-stats when the partition is unlocked.
+		// To sum up, we only need to update the global-stats when the table and the partition are not locked.
 		if !isTableLocked && !isPartitionLocked {
 			// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
 			if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
