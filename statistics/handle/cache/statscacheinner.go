@@ -15,7 +15,6 @@
 package cache
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -222,10 +221,9 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 }
 
 // Update tries to update the cache.
-func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context) error {
+func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ctx = util.StatsCtx(ctx)
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
 		if len(c.dirtyIDs) > 0 {
 			tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
