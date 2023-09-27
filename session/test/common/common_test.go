@@ -43,6 +43,7 @@ func TestMiscs(t *testing.T) {
 
 	// TestLastExecuteDDLFlag
 	tk = testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("create table t1(id int)")
 	require.NotNil(t, tk.Session().Value(sessionctx.LastExecuteDDL))

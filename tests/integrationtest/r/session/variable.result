@@ -127,9 +127,6 @@ set global tidb_enable_list_partition=on;
 show global variables like 'tidb_enable_list_partition';
 Variable_name	Value
 tidb_enable_list_partition	ON
-show global variables like 'collation_server';
-Variable_name	Value
-collation_server	utf8mb4_bin
 show variables like 'tidb_enable_table_partition';
 Variable_name	Value
 tidb_enable_table_partition	ON

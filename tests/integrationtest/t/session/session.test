@@ -12,6 +12,7 @@ drop table if exists issue19127;
 create table issue19127 (c_int int, c_str varchar(40), primary key (c_int, c_str) ) partition by hash (c_int) partitions 4;
 insert into issue19127 values (9, 'angry williams'), (10, 'thirsty hugle');
 update issue19127 set c_int = c_int + 10, c_str = 'adoring stonebraker' where c_int in (10, 9);
+--sorted_result
 select * from issue19127;
 
 # TestLoadClientInteractive
