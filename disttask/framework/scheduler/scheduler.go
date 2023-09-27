@@ -129,7 +129,6 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 	}
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
-
 	s.registerCancelFunc(runCancel)
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
@@ -469,8 +468,6 @@ func (s *BaseScheduler) markErrorHandled() {
 	defer s.mu.Unlock()
 	s.mu.handled = true
 }
-
-// func (s *BaseScheduler)
 
 func (s *BaseScheduler) getError() error {
 	s.mu.RLock()
