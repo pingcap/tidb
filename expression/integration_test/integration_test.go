@@ -2059,15 +2059,3 @@ func TestIssue41986(t *testing.T) {
 	// shouldn't report they can't find column error and return the right result.
 	tk.MustQuery("SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;").Check(testkit.Rows("2023-08-25 00:00:00"))
 }
-
-func TestCastErrMsg(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("CREATE TABLE t1 (c1 TEXT);")
-	tk.MustExec("INSERT INTO t1 VALUES ('a');")
-	err := tk.ExecToErr("UPDATE t1 SET c1 = CAST('61QW' AS DECIMAL);")
-	require.Contains(t, err.Error(), "Truncated incorrect DECIMAL value: '61QW'")
-}
