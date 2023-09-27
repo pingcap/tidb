@@ -15,7 +15,6 @@
 package handle
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -106,31 +105,12 @@ type Handle struct {
 	lease atomic2.Duration
 }
 
-func (h *Handle) withRestrictedSQLExecutor(ctx context.Context, fn func(context.Context, sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error)) ([]chunk.Row, []*ast.ResultField, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return fn(ctx, exec)
-}
-
-func (h *Handle) execRestrictedSQL(ctx context.Context, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(util.StatsCtx(ctx), func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		return exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, params...)
+func (h *Handle) execRows(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, rerr error) {
+	_ = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		rows, fields, rerr = util.ExecRows(sctx, sql, args...)
+		return nil
 	})
-}
-
-func (h *Handle) execRestrictedSQLWithSnapshot(ctx context.Context, sql string, snapshot uint64, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	return h.withRestrictedSQLExecutor(util.StatsCtx(ctx), func(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) ([]chunk.Row, []*ast.ResultField, error) {
-		optFuncs := []sqlexec.OptionFuncAlias{
-			sqlexec.ExecOptionWithSnapshot(snapshot),
-			sqlexec.ExecOptionUseCurSession,
-		}
-		return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
-	})
+	return
 }
 
 // Clear the statsCache, only for test.
@@ -243,8 +223,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	} else {
 		lastVersion = 0
 	}
-	ctx := util.StatsCtx(context.Background())
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
+	rows, _, err := h.execRows("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -680,8 +659,7 @@ type colStatsTimeInfo struct {
 
 // getDisableColumnTrackingTime reads the value of tidb_disable_column_tracking_time from mysql.tidb if it exists.
 func (h *Handle) getDisableColumnTrackingTime() (*time.Time, error) {
-	ctx := util.StatsCtx(context.Background())
-	rows, fields, err := h.execRestrictedSQL(ctx, "SELECT variable_value FROM %n.%n WHERE variable_name = %?", mysql.SystemDB, mysql.TiDBTable, variable.TiDBDisableColumnTrackingTime)
+	rows, fields, err := h.execRows("SELECT variable_value FROM %n.%n WHERE variable_name = %?", mysql.SystemDB, mysql.TiDBTable, variable.TiDBDisableColumnTrackingTime)
 	if err != nil {
 		return nil, err
 	}
@@ -707,9 +685,8 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableItemID
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ctx := util.StatsCtx(context.Background())
 	// Since we use another session from session pool to read mysql.column_stats_usage, which may have different @@time_zone, so we do time zone conversion here.
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
+	rows, _, err := h.execRows("SELECT table_id, column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00'), CONVERT_TZ(last_analyzed_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage")
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -747,9 +724,8 @@ func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (map[model.TableItemID
 
 // CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 func (h *Handle) CollectColumnsInExtendedStats(tableID int64) ([]int64, error) {
-	ctx := util.StatsCtx(context.Background())
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
-	rows, _, err := h.execRestrictedSQL(ctx, sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
+	rows, _, err := h.execRows(sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -776,8 +752,7 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	ctx := util.StatsCtx(context.Background())
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
+	rows, _, err := h.execRows("SELECT column_id, CONVERT_TZ(last_used_at, @@TIME_ZONE, '+00:00') FROM mysql.column_stats_usage WHERE table_id = %? AND last_used_at IS NOT NULL", tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -805,7 +780,6 @@ const maxColumnSize = 6 << 20
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error) {
-	ctx := util.StatsCtx(context.Background())
 	var js *storage.JSONTable
 	var err error
 	if isPartition {
@@ -837,20 +811,20 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 		return 0, err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
+	sctx := se.(sessionctx.Context)
 
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
 		return version, errors.Trace(err)
 	}
 	defer func() {
-		err = util.FinishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(sctx, err)
 	}()
 	ts := time.Now().Format("2006-01-02 15:04:05.999999")
 
 	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
 	for i := 0; i < len(blocks); i++ {
-		if _, err := exec.ExecuteInternal(ctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
+		if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
 			return version, errors.Trace(err)
 		}
 	}
@@ -878,20 +852,19 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 		return err
 	}
 	defer h.pool.Put(se)
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	ctx := util.StatsCtx(context.Background())
+	sctx := se.(sessionctx.Context)
 	jobInfo := job.JobInfo
 	const textMaxLength = 65535
 	if len(jobInfo) > textMaxLength {
 		jobInfo = jobInfo[:textMaxLength]
 	}
 	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err = exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
+	_, _, err = util.ExecRows(sctx, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
 	if err != nil {
 		return err
 	}
 	const getJobID = "SELECT LAST_INSERT_ID()"
-	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, getJobID)
+	rows, _, err := util.ExecRows(sctx, getJobID)
 	if err != nil {
 		return err
 	}
@@ -913,8 +886,7 @@ func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, p
 
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
-	ctx := util.StatsCtx(context.Background())
-	_, _, err := h.execRestrictedSQL(ctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
+	_, _, err := h.execRows("DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 	return err
 }
 

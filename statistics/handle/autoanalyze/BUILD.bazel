@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//infoschema",
-        "//kv",
         "//metrics",
         "//parser/ast",
         "//parser/model",

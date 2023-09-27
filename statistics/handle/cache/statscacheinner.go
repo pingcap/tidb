@@ -15,7 +15,6 @@
 package cache
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
@@ -223,20 +221,19 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 }
 
 // Update tries to update the cache.
-func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context) error {
+func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ctx = util.StatsCtx(ctx)
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
 		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
+			tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
 			if err != nil {
 				return err
 			}
 			for id, tr := range tableRows {
 				c.tableRows[id] = tr
 			}
-			colLength, err := getColLengthTables(ctx, sctx, c.dirtyIDs...)
+			colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
 			if err != nil {
 				return err
 			}
@@ -247,11 +244,11 @@ func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context
 		}
 		return nil
 	}
-	tableRows, err := getRowCountTables(ctx, sctx)
+	tableRows, err := getRowCountTables(sctx)
 	if err != nil {
 		return err
 	}
-	colLength, err := getColLengthTables(ctx, sctx)
+	colLength, err := getColLengthTables(sctx)
 	if err != nil {
 		return err
 	}
@@ -262,16 +259,15 @@ func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context
 	return nil
 }
 
-func getRowCountTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+func getRowCountTables(sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+		rows, _, err = util.ExecWithOpts(sctx, nil, "select table_id, count from mysql.stats_meta")
 	} else {
 		inTblIDs := buildInTableIDsString(tableIDs)
 		sql := "select table_id, count from mysql.stats_meta where " + inTblIDs
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	}
 	if err != nil {
 		return nil, err
@@ -304,17 +300,16 @@ type tableHistID struct {
 	histID  int64
 }
 
-func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {
 		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	} else {
 		inTblIDs := buildInTableIDsString(tableIDs)
 		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and " + inTblIDs
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	}
 	if err != nil {
 		return nil, err

@@ -32,15 +32,11 @@ func StatsCtx(ctx context.Context) context.Context {
 }
 
 // FinishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func FinishTransaction(ctx context.Context, exec interface{}, err error) error {
-	sqlExec, ok := exec.(sqlexec.SQLExecutor)
-	if !ok {
-		return errors.Errorf("invalid sql executor")
-	}
+func FinishTransaction(sctx sessionctx.Context, err error) error {
 	if err == nil {
-		_, err = sqlExec.ExecuteInternal(ctx, "commit")
+		_, err = Exec(sctx, "commit")
 	} else {
-		_, err1 := sqlExec.ExecuteInternal(ctx, "rollback")
+		_, err1 := Exec(sctx, "rollback")
 		terror.Log(errors.Trace(err1))
 	}
 	return errors.Trace(err)
@@ -55,11 +51,30 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 	return txn.StartTS(), nil
 }
 
-// Read is a helper function to execute sql and return rows and fields.
-func Read(exec interface{}, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	sqlExec, ok := exec.(sqlexec.RestrictedSQLExecutor)
+// Exec is a helper function to execute sql and return RecordSet.
+func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
+	sqlExec, ok := sctx.(sqlexec.SQLExecutor)
+	if !ok {
+		return nil, errors.Errorf("invalid sql executor")
+	}
+	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
+	return sqlExec.ExecuteInternal(StatsCtx(context.Background()), sql, args...)
+}
+
+// ExecRows is a helper function to execute sql and return rows and fields.
+func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		return nil, nil, errors.Errorf("invalid sql executor")
 	}
 	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
+}
+
+// ExecWithOpts is a helper function to execute sql and return rows and fields.
+func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, nil, errors.Errorf("invalid sql executor")
+	}
+	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), opts, sql, args...)
 }

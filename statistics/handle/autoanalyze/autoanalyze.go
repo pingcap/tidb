@@ -15,7 +15,6 @@
 package autoanalyze
 
 import (
-	"context"
 	"fmt"
 	"math"
 	"math/rand"
@@ -25,7 +24,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -64,10 +62,9 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 	return s, e, err
 }
 
-func getAutoAnalyzeParameters(exec sqlexec.RestrictedSQLExecutor) map[string]string {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+func getAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
+	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	if err != nil {
 		return map[string]string{}
 	}
@@ -103,9 +100,8 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	dbs := is.AllSchemaNames()
-	parameters := getAutoAnalyzeParameters(exec)
+	parameters := getAutoAnalyzeParameters(sctx)
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
 	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
 	if err != nil {
@@ -168,7 +164,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			if pi == nil {
 				statsTbl := opt.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
-				analyzed := autoAnalyzeTable(sctx, exec, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -184,7 +180,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 				}
 			}
 			if pruneMode == variable.Dynamic {
-				analyzed := autoAnalyzePartitionTableInDynamicMode(sctx, exec, opt, tblInfo, partitionDefs, db, autoAnalyzeRatio)
+				analyzed := autoAnalyzePartitionTableInDynamicMode(sctx, opt, tblInfo, partitionDefs, db, autoAnalyzeRatio)
 				if analyzed {
 					return true
 				}
@@ -193,7 +189,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
 				statsTbl := opt.GetPartitionStats(tblInfo, def.ID)
-				analyzed := autoAnalyzeTable(sctx, exec, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -207,7 +203,6 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 var AutoAnalyzeMinCnt int64 = 1000
 
 func autoAnalyzeTable(sctx sessionctx.Context,
-	exec sqlexec.RestrictedSQLExecutor,
 	opt *Opt,
 	tblInfo *model.TableInfo, statsTbl *statistics.Table,
 	ratio float64, sql string, params ...interface{}) bool {
@@ -222,7 +217,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		execAutoAnalyze(sctx, exec, opt, tableStatsVer, sql, params...)
+		execAutoAnalyze(sctx, opt, tableStatsVer, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
@@ -236,7 +231,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			execAutoAnalyze(sctx, exec, opt, tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			execAutoAnalyze(sctx, opt, tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -288,7 +283,6 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 }
 
 func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
-	exec sqlexec.RestrictedSQLExecutor,
 	opt *Opt,
 	tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition,
 	db string, ratio float64) bool {
@@ -335,7 +329,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
-			execAutoAnalyze(sctx, exec, opt, tableStatsVer, sql, params...)
+			execAutoAnalyze(sctx, opt, tableStatsVer, sql, params...)
 		}
 		return true
 	}
@@ -366,7 +360,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", partitionNames[start:end]))
-				execAutoAnalyze(sctx, exec, opt, tableStatsVer, sql, params...)
+				execAutoAnalyze(sctx, opt, tableStatsVer, sql, params...)
 			}
 			return true
 		}
@@ -381,12 +375,11 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 }
 
 func execAutoAnalyze(sctx sessionctx.Context,
-	exec sqlexec.RestrictedSQLExecutor,
 	opt *Opt,
 	statsVer int,
 	sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := execRestrictedSQLWithStatsVer(sctx, exec, opt, statsVer, sql, params...)
+	_, _, err := execAnalyzeStmt(sctx, opt, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -401,12 +394,10 @@ func execAutoAnalyze(sctx sessionctx.Context,
 	}
 }
 
-func execRestrictedSQLWithStatsVer(sctx sessionctx.Context,
-	exec sqlexec.RestrictedSQLExecutor,
+func execAnalyzeStmt(sctx sessionctx.Context,
 	opt *Opt,
 	statsVer int,
 	sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := statsutil.StatsCtx(context.Background())
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	optFuncs := []sqlexec.OptionFuncAlias{
@@ -416,5 +407,5 @@ func execRestrictedSQLWithStatsVer(sctx sessionctx.Context,
 		sqlexec.ExecOptionUseCurSession,
 		sqlexec.ExecOptionWithSysProcTrack(opt.AutoAnalyzeProcIDGetter(), opt.SysProcTracker.Track, opt.SysProcTracker.UnTrack),
 	}
-	return exec.ExecRestrictedSQL(ctx, optFuncs, sql, params...)
+	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }

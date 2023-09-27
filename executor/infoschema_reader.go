@@ -117,13 +117,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableStatistics:
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
-			err = e.setDataFromTables(ctx, sctx, dbs)
+			err = e.setDataFromTables(sctx, dbs)
 		case infoschema.TableReferConst:
 			err = e.setDataFromReferConst(sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
-			err = e.setDataFromPartitions(ctx, sctx, dbs)
+			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
@@ -487,8 +487,8 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := cache.TableRowStatsCache.Update(ctx, sctx)
+func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	err := cache.TableRowStatsCache.Update(sctx)
 	if err != nil {
 		return err
 	}
@@ -899,9 +899,9 @@ func calcCharOctLength(lenInChar int, cs string) int {
 	return lenInBytes
 }
 
-func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	cache := cache.TableRowStatsCache
-	err := cache.Update(ctx, sctx)
+	err := cache.Update(sctx)
 	if err != nil {
 		return err
 	}

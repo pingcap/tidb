@@ -15,13 +15,10 @@
 package history
 
 import (
-	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // RecordHistoricalStatsMeta records the historical stats meta.
@@ -32,10 +29,7 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if !sctx.GetSessionVars().EnableHistoricalStats {
 		return nil
 	}
-	ctx := util.StatsCtx(context.Background())
-	exec := sctx.(sqlexec.SQLExecutor)
-	rexec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := rexec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
+	rows, _, err := util.ExecRows(sctx, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -44,16 +38,16 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = util.FinishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(sctx, err)
 	}()
 
 	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
-	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version, source); err != nil {
+	if _, err := util.Exec(sctx, sql, tableID, modifyCount, count, version, source); err != nil {
 		return errors.Trace(err)
 	}
 	cache.TableRowStatsCache.Invalidate(tableID)
