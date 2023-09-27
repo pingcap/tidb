@@ -64,7 +64,7 @@ func parseAnalyzePeriod(start, end string) (time.Time, time.Time, error) {
 
 func getAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	sql := "select variable_name, variable_value from mysql.global_variables where variable_name in (%?, %?, %?)"
-	rows, _, err := statsutil.ExecRows(sctx, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
+	rows, _, err := statsutil.ExecWithOpts(sctx, nil, sql, variable.TiDBAutoAnalyzeRatio, variable.TiDBAutoAnalyzeStartTime, variable.TiDBAutoAnalyzeEndTime)
 	if err != nil {
 		return map[string]string{}
 	}

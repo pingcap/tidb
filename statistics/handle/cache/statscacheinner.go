@@ -305,11 +305,11 @@ func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHi
 	var err error
 	if len(tableIDs) == 0 {
 		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
-		rows, _, err = util.ExecRows(sctx, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	} else {
 		inTblIDs := buildInTableIDsString(tableIDs)
 		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and " + inTblIDs
-		rows, _, err = util.ExecRows(sctx, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	}
 	if err != nil {
 		return nil, err
