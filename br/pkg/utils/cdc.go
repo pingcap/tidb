@@ -63,7 +63,7 @@ func (s *CDCNameSet) MessageToUser() string {
 // for CDC <= v6.1, the etcd key format is /tidb/cdc/changefeed/info/<changefeedID>
 func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
 	nameSet := make(map[string][]string, 1)
-	// check etcd KV of CDC >= v5.2
+	// check etcd KV of CDC >= v6.2
 	resp, err := cli.Get(ctx, CDCPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
