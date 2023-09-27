@@ -1440,7 +1440,11 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(row chunk.Row) (res *types.M
 	res = new(types.MyDecimal)
 	sc := b.ctx.GetSessionVars().StmtCtx
 	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && isNegative) {
-		err = sc.HandleTruncate(res.FromString([]byte(val)))
+		err = res.FromString([]byte(val))
+		if err == types.ErrTruncated {
+			err = types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", []byte(val))
+		}
+		err = sc.HandleTruncate(err)
 		if err != nil {
 			return res, false, err
 		}

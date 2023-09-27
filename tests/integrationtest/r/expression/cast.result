@@ -78,3 +78,13 @@ select cast(col4 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
 select cast(col5 as time(31)) from t where col1 is null;
 Error 1426 (42000): Too big precision 31 specified for column 'CAST'. Maximum is 6.
+drop table if exists t1;
+create table t1 (c1 text);
+insert into t1 values ('a');
+update t1 set c1 = cast('61qw' as decimal);
+Error 1292 (22007): Truncated incorrect DECIMAL value: '61qw'
+select cast('61qw' as decimal);
+cast('61qw' as decimal)
+61
+Level	Code	Message
+Warning	1292	Truncated incorrect DECIMAL value: '61qw'
