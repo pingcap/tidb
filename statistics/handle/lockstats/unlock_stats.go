@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -41,8 +41,7 @@ func RemoveLockedTables(
 	tidAndNames map[int64]string,
 	pidAndNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
@@ -117,8 +116,7 @@ func RemoveLockedPartitions(
 	tableName string,
 	pidNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err

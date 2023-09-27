@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	statsutil "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -405,7 +406,7 @@ func execRestrictedSQLWithStatsVer(sctx sessionctx.Context,
 	opt *Opt,
 	statsVer int,
 	sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := statsutil.StatsCtx(context.Background())
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	optFuncs := []sqlexec.OptionFuncAlias{

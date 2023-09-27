@@ -21,14 +21,13 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -139,14 +138,14 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			}
 		}
 	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	exec := sctx.(sqlexec.SQLExecutor)
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return err
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 	txn, err := sctx.Txn(true)
 	if err != nil {
@@ -360,16 +359,15 @@ func SaveStatsToStorage(sctx sessionctx.Context,
 	}()
 
 	exec := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
-	version, err := getStartTS(sctx)
+	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -442,16 +440,15 @@ func SaveMetaToStorage(
 	}()
 
 	exec := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
-	version, err := getStartTS(sctx)
+	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -459,23 +456,4 @@ func SaveMetaToStorage(
 	statsVer = version
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return err
-}
-
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
-	if err == nil {
-		_, err = exec.ExecuteInternal(ctx, "commit")
-	} else {
-		_, err1 := exec.ExecuteInternal(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-	}
-	return errors.Trace(err)
-}
-
-func getStartTS(sctx sessionctx.Context) (uint64, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-	return txn.StartTS(), nil
 }

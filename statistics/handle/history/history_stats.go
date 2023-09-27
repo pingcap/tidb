@@ -18,10 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -33,7 +32,7 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if !sctx.GetSessionVars().EnableHistoricalStats {
 		return nil
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	exec := sctx.(sqlexec.SQLExecutor)
 	rexec := sctx.(sqlexec.RestrictedSQLExecutor)
 	rows, _, err := rexec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
@@ -50,7 +49,7 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 
 	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
@@ -59,15 +58,4 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	}
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return nil
-}
-
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
-	if err == nil {
-		_, err = exec.ExecuteInternal(ctx, "commit")
-	} else {
-		_, err1 := exec.ExecuteInternal(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-	}
-	return errors.Trace(err)
 }

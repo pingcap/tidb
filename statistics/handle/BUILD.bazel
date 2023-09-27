@@ -38,6 +38,7 @@ go_library(
         "//statistics/handle/metrics",
         "//statistics/handle/storage",
         "//statistics/handle/usage",
+        "//statistics/handle/util",
         "//table",
         "//types",
         "//util",
