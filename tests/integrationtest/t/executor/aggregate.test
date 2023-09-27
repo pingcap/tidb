@@ -569,6 +569,7 @@ select sum(a), sum(b) from idx_agg where b > 0 and b < 10;
 select 10 from idx_agg group by b;
 select 11 from idx_agg group by a;
 set @@tidb_init_chunk_size=1;
+--sorted_result
 select group_concat(b) from idx_agg group by b;
 set @@tidb_init_chunk_size=2;
 drop table if exists t;
@@ -626,6 +627,7 @@ create table t(a tinyint, b smallint, c mediumint, d int, e bigint, f float, g d
 insert into t values(1, 2, 3, 4, 5, 6.1, 7.2, 8.3), (1, 3, 4, 5, 6, 7.1, 8.2, 9.3);
 select var_pop(b), var_pop(c), var_pop(d), var_pop(e), var_pop(f), var_pop(g), var_pop(h) from t group by a;
 insert into t values(2, 3, 4, 5, 6, 7.2, 8.3, 9);
+--sorted_result
 select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a);
 delete from t where t.a = 2;
 insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9);
@@ -637,6 +639,7 @@ select variance(b), variance(c), variance(d), variance(e) from t group by a;
 insert into t values(1, 255, 6.8, 6.08, 1);
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 insert into t values(2, 322, 0.8, 2.22, 6);
+--sorted_result
 select a, variance(b) over w from t window w as (partition by a);
 -- error 1305
 select std_samp(a) from t;

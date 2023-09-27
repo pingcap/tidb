@@ -1178,9 +1178,9 @@ var_pop(b)	var_pop(c)	var_pop(d)	var_pop(e)	var_pop(f)	var_pop(g)	var_pop(h)
 insert into t values(2, 3, 4, 5, 6, 7.2, 8.3, 9);
 select a, var_pop(b) over w, var_pop(c) over w from t window w as (partition by a);
 a	var_pop(b) over w	var_pop(c) over w
+1	0.25	0.25
+1	0.25	0.25
 2	0	0
-1	0.25	0.25
-1	0.25	0.25
 delete from t where t.a = 2;
 insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9);
 select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a;
