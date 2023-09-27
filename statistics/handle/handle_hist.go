@@ -16,7 +16,6 @@ package handle
 
 import (
 	"fmt"
-	utilstats "github.com/pingcap/tidb/statistics/handle/util"
 	"sync"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
+	utilstats "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
