@@ -39,6 +39,7 @@ go_library(
         "//parser/types",
         "//sessionctx",
         "//util",
+        "//util/engine",
         "//util/sqlexec",
         "@com_github_cheggaaa_pb_v3//:pb",
         "@com_github_cznic_mathutil//:mathutil",
