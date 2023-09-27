@@ -70,13 +70,28 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	followerCount := options.Followers
 	learnerCount := options.Learners
 
+	rules := []*Rule{}
+	appendRule := func(enqueueRules []*Rule) {
+		for _, rule := range enqueueRules {
+			if rule.Count == 0 {
+				continue
+			}
+			rules = append(rules, rule)
+		}
+	}
 	commonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
 	if err != nil {
-		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)
+		// If it's not in array format, attempt to parse it as a dictionary for more detailed definitions.
+		// The dictionary format specifies details for each replica. Constraints are used to define normal
+		// replicas that should act as voters.
+		// For example: CONSTRAINTS='{ "+region=us-east-1":2, "+region=us-east-2": 2, "+region=us-west-1": 1}'
+		normalReplicasRules, err := NewRulesWithDictConstraints(Voter, constraints)
+		if err != nil {
+			return nil, err
+		}
+		appendRule(normalReplicasRules)
 	}
-
-	rules := []*Rule{}
-
+	needCreateDefault := len(rules) == 0
 	leaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConst))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'LeaderConstraints' should be [constraint1, ...] or any yaml compatible array representation", err)
@@ -86,28 +101,45 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	rules = append(rules, NewRule(Leader, 1, leaderConstraints))
+	leaderReplicas, followerReplicas := uint64(1), uint64(2)
+	if followerCount > 0 {
+		followerReplicas = followerCount
+	}
+	if !needCreateDefault {
+		if len(leaderConstraints) == 0 {
+			leaderReplicas = 0
+		}
+		if len(followerConstraints) == 0 {
+			if followerCount > 0 {
+				return nil, fmt.Errorf("%w: specify follower count without specify follower constraints", ErrInvalidPlacementOptions)
+			}
+			followerReplicas = 0
+		}
+	}
+	leaderRule := NewRule(Leader, leaderReplicas, leaderConstraints)
+	appendRule([]*Rule{leaderRule})
 
-	followerRules, err := NewRules(Voter, followerCount, followerConstraints)
+	followerRules, isDictConst, err := NewRules(Voter, followerReplicas, followerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
 	}
-	for _, rule := range followerRules {
-		// give a default of 2 followers
-		if rule.Count == 0 {
-			rule.Count = 2
-		}
+	if isDictConst && followerCount > 0 {
+		return nil, fmt.Errorf("%w: should not specify followers=%d when using dict syntax", ErrInvalidConstraintsRelicas, followerCount)
+	}
+	for _, followerRule := range followerRules {
 		for _, cnst := range commonConstraints {
-			if err := rule.Constraints.Add(cnst); err != nil {
+			if err := followerRule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
 			}
 		}
 	}
-	rules = append(rules, followerRules...)
-
-	learnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
+	appendRule(followerRules)
+	learnerRules, isDictConst, err := NewRules(Learner, learnerCount, learnerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
+	}
+	if isDictConst && learnerCount > 0 {
+		return nil, fmt.Errorf("%w: should not specify learners=%d when using dict syntax", ErrInvalidConstraintsRelicas, learnerCount)
 	}
 	for _, rule := range learnerRules {
 		if rule.Count == 0 {
@@ -120,10 +152,8 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
-		if rule.Count > 0 {
-			rules = append(rules, rule)
-		}
 	}
+	appendRule(learnerRules)
 	labels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
 	if err != nil {
 		return nil, err
