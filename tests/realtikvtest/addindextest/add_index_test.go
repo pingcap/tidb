@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -196,6 +197,58 @@ func TestAddIndexDistCancel(t *testing.T) {
 	}()
 
 	require.Error(t, tk.ExecToErr("alter table t add index idx(a);"))
+	tk.MustExec("admin check table t;")
+	tk.MustExec("alter table t add index idx2(a);")
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec(`set global tidb_enable_dist_task=0;`)
+}
+
+func TestAddIndexDistPauseAndResume(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+
+	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 8;")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("insert into t values (), (), (), (), (), ()")
+	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
+
+	ddl.MockDMLExecutionAddIndexSubTaskFinish = func() {
+		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+		require.Equal(t, 1, len(row))
+		jobID := row[0][0].(string)
+		logutil.BgLogger().Info("ywq test pause")
+		tk1.MustExec("admin pause ddl jobs " + jobID)
+	}
+
+	// ywq todo
+	// dispatcher.MockDMLExecutionOnPausedState = func(task *proto.Task) {
+	// 	row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
+	// 	require.Equal(t, 1, len(row))
+	// 	jobID := row[0][0].(string)
+	// 	logutil.BgLogger().Info("ywq test resume")
+	// 	time.Sleep(2 * time.Second)
+	// 	tk1.MustExec("admin resume ddl jobs " + jobID)
+	// }
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockDMLExecutionOnPausedState", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/MockDMLExecutionOnPausedState"))
+	}()
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustExec("admin check table t;")

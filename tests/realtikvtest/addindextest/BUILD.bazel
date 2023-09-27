@@ -57,6 +57,7 @@ go_test(
         "//testkit",
         "//tests/realtikvtest",
         "//util/chunk",
+        "//util/logutil",
         "@com_github_fsouza_fake_gcs_server//fakestorage",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
