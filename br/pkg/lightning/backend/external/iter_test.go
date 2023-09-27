@@ -245,43 +245,6 @@ func TestCorruptContent(t *testing.T) {
 	require.EqualValues(t, 0, trackStore.opened.Load())
 }
 
-func generateMockFileReader() *kvReader {
-	ctx := context.Background()
-	memStore := storage.NewMemStorage()
-	filename := "/test1"
-	size := 100_000
-	writer, err := memStore.Create(ctx, filename, nil)
-	if err != nil {
-		panic(err)
-	}
-	rc := &rangePropertiesCollector{
-		propSizeDist: 100,
-		propKeysDist: 2,
-	}
-	rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, writer, rc)
-	if err != nil {
-		panic(err)
-	}
-	for i := 0; i < size; i++ {
-		key := fmt.Sprintf("key%09d", i)
-		val := fmt.Sprintf("value%09d", i)
-		err = kvStore.AddKeyValue([]byte(key), []byte(val))
-		if err != nil {
-			panic(err)
-		}
-	}
-	err = writer.Close(ctx)
-	if err != nil {
-		panic(err)
-	}
-	rd, err := newKVReader(ctx, filename, memStore, 0, 1_000)
-	if err != nil {
-		panic(err)
-	}
-	return rd
-}
-
 func TestMergeIterSwitchMode(t *testing.T) {
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))

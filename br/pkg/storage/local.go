@@ -181,6 +181,9 @@ func (f *localFile) Read(p []byte) (n int, err error) {
 	if pEnd <= 0 {
 		return 0, io.EOF
 	}
+	if pEnd > int64(len(p)) {
+		pEnd = int64(len(p))
+	}
 	p = p[:pEnd]
 	n, err = f.File.Read(p)
 	f.pos += int64(n)

@@ -211,4 +211,15 @@ func TestLocalFileReadRange(t *testing.T) {
 	})
 	require.NoError(t, err)
 	checkContent(r, "01234")
+
+	// test read into smaller buffer
+	smallBuf := make([]byte, 2)
+	start, end = int64(2), int64(6)
+	r, err = store.Open(ctx, name, &ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
+	require.NoError(t, err)
+	n, _ := r.Read(smallBuf)
+	require.Equal(t, "23", string(smallBuf[:n]))
 }
