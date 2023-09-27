@@ -14,6 +14,8 @@ type PauseGcConfig struct {
 
 	SafePoint uint64        `json:"safepoint" yaml:"safepoint"`
 	TTL       time.Duration `json:"ttl" yaml:"ttl"`
+
+	OnAllReady func() `json:"-" yaml:"-"`
 }
 
 func DefineFlagsForPrepareSnapBackup(f *pflag.FlagSet) {

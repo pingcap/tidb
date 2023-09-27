@@ -7,9 +7,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
+
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -86,6 +90,7 @@ func (d *SuspendImporting) forEachStores(ctx context.Context, makeReq func() *im
 	}
 
 	result := map[uint64]bool{}
+	log.Info("SuspendImporting/forEachStores: hint of current store.", zap.Stringers("stores", stores))
 	for _, store := range stores {
 		logutil.CL(ctx).Info("Handling store.", zap.Stringer("store", store))
 		if engine.IsTiFlash(store) {

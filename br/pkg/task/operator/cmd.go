@@ -117,6 +117,9 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	eg.Go(func() error { return pauseImporting(cx) })
 	go func() {
 		cx.rdGrp.Wait()
+		if cfg.OnAllReady != nil {
+			cfg.OnAllReady()
+		}
 		hintAllReady()
 	}()
 
