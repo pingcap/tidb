@@ -145,7 +145,7 @@ func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 	// is it's the end of file. When it's the end of the file, caller will see EOF
 	// and no further switchConcurrentMode should be called.
 	largeBufSize := readerFields.bufSizePerConc * readerFields.concurrency
-	delta := int64(offsetInOldBuf + reloadCnt*largeBufSize)
+	delta := int64(offsetInOldBuf + (reloadCnt-1)*largeBufSize)
 	if _, err := r.storageReader.Seek(delta, io.SeekCurrent); err != nil {
 		return err
 	}

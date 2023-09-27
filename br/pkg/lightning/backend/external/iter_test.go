@@ -282,74 +282,8 @@ func generateMockFileReader() *kvReader {
 	return rd
 }
 
-func BenchmarkValueT(b *testing.B) {
-	ctx := context.Background()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		rd := generateMockFileReader()
-		opener := func() (*kvReaderProxy, error) {
-			return &kvReaderProxy{r: rd}, nil
-		}
-		it, err := newMergeIter[kvPair, kvReaderProxy](ctx, []readerOpenerFn[kvPair, kvReaderProxy]{opener})
-		if err != nil {
-			panic(err)
-		}
-		b.StartTimer()
-		for it.next() {
-			e := it.currElem()
-			_ = e
-		}
-	}
-}
-
-type kvReaderPointerProxy struct {
-	p string
-	r *kvReader
-}
-
-func (p kvReaderPointerProxy) path() string {
-	return p.p
-}
-
-func (p kvReaderPointerProxy) next() (*kvPair, error) {
-	k, v, err := p.r.nextKV()
-	if err != nil {
-		return nil, err
-	}
-	return &kvPair{key: k, value: v}, nil
-}
-
-func (p kvReaderPointerProxy) switchConcurrentMode(useConcurrent bool) error {
-	return p.r.byteReader.switchConcurrentMode(useConcurrent)
-}
-
-func (p kvReaderPointerProxy) close() error {
-	return p.r.Close()
-}
-
-func BenchmarkPointerT(b *testing.B) {
-	ctx := context.Background()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		rd := generateMockFileReader()
-		opener := func() (*kvReaderPointerProxy, error) {
-			return &kvReaderPointerProxy{r: rd}, nil
-		}
-		it, err := newMergeIter[*kvPair, kvReaderPointerProxy](ctx, []readerOpenerFn[*kvPair, kvReaderPointerProxy]{opener})
-		if err != nil {
-			panic(err)
-		}
-		b.StartTimer()
-		for it.next() {
-			e := it.currElem()
-			_ = e
-		}
-	}
-}
-
 func TestMergeIterSwitchMode(t *testing.T) {
 	seed := time.Now().Unix()
-	seed = 1695720801
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 
@@ -428,9 +362,7 @@ func TestHotspot(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	dir := t.TempDir()
-	store, err := storage.NewLocalStorage(dir)
-	require.NoError(t, err)
+	store := storage.NewMemStorage()
 
 	// 2 files, check hotspot is 0 -> nil -> 1 -> 0 -> 1
 	keys := [][]string{
@@ -457,8 +389,8 @@ func TestHotspot(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	// readerBufSize = 10, every KV will cause reload
-	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 10)
+	// readerBufSize = 8+5+8+5, every KV will cause reload
+	iter, err := NewMergeKVIter(ctx, filenames, make([]uint64, len(filenames)), store, 26)
 	require.NoError(t, err)
 	// after read key00 and key01 from reader_0, it becomes hotspot
 	require.True(t, iter.Next())
@@ -495,19 +427,17 @@ func TestHotspot(t *testing.T) {
 	require.True(t, iter.Next())
 	require.Equal(t, "key07", string(iter.Key()))
 	require.True(t, iter.Next())
-	require.True(t, r0.expected)
-	require.True(t, r0.now)
+	require.Nil(t, iter.iter.readers[0])
 	require.False(t, r1.expected)
 	require.False(t, r1.now)
 	// after read key08 and key09 from reader_1, it becomes hotspot
 	require.Equal(t, "key08", string(iter.Key()))
 	require.True(t, iter.Next())
 	require.Equal(t, "key09", string(iter.Key()))
-	require.True(t, iter.Next())
-	require.False(t, r0.expected)
-	require.False(t, r0.now)
-	require.True(t, r1.expected)
-	require.True(t, r1.now)
+	require.False(t, iter.Next())
+	require.Nil(t, iter.iter.readers[1])
+
+	require.NoError(t, iter.Error())
 }
 
 func TestMemoryUsageWhenHotspotChange(t *testing.T) {
