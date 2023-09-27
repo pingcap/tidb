@@ -27,7 +27,8 @@ import (
 
 var (
 	// ConcurrentReaderBufferSize is the buffer size for concurrent reader.
-	ConcurrentReaderBufferSize  = 4 * 1024 * 1024
+	ConcurrentReaderBufferSize = 4 * 1024 * 1024
+	// ConcurrentReaderConcurrency is the concurrency for concurrent reader.
 	ConcurrentReaderConcurrency = 8
 )
 
