@@ -72,8 +72,13 @@ require (
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
 	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
+<<<<<<< HEAD
 	github.com/pingcap/fn v0.0.0-20200306044125-d5540d389059
 	github.com/pingcap/kvproto v0.0.0-20230523065550-8b641fa69bf3
+=======
+	github.com/pingcap/fn v1.0.0
+	github.com/pingcap/kvproto v0.0.0-20230925123611-87bebcc0d071
+>>>>>>> 32540a4a779 (snapshot_backup: deny executing tidb-lightning import while running snapshot_backup (#47001))
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
