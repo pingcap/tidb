@@ -338,6 +338,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		//    we will update its global-stats when the partition is unlocked.
 		// 2. If table is locked and partition is not locked(new partition after lock), we only stash the delta in the table's lock info.
 		//    we will update its global-stats when the table is unlocked. We don't need to specially handle this case.
+		//    Because updateStatsMeta will insert a new record if the record doesn't exist.
 		// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
 		//    we will update its global-stats when the partition is unlocked.
 		// 4. If table is not locked and partition is not locked, we update the global-stats.
