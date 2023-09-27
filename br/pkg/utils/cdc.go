@@ -69,6 +69,16 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 		return nil, errors.Trace(err)
 	}
 
+	// Generate a random cluster ID in pd
+	// r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	// ts := uint64(time.Now().Unix())
+	// clusterID := (ts << 32) + uint64(r.Uint32())
+	reg, err := regexp.Compile("^[0-9]+$")
+	if err != nil {
+		log.L().Warn("failed to parse cluster id, skip it", zap.Error(err))
+		reg = nil
+	}
+
 	for _, kv := range resp.Kvs {
 		// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
 		k := kv.Key[len(CDCPrefix):]
@@ -85,22 +95,14 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 			continue
 		}
 
-		// Generate a random cluster ID in pd
-		// r := rand.New(rand.NewSource(time.Now().UnixNano()))
-		// ts := uint64(time.Now().Unix())
-		// clusterID := (ts << 32) + uint64(r.Uint32())
-		reg, err := regexp.Compile("^[0-9]+$")
-		if err != nil {
-			log.L().Warn("failed to parse cluster id, skip it", zap.String("cluster ID", string(clusterID)), zap.Error(err))
-			continue
-		}
-		matched := reg.Match(clusterID)
-		if !matched {
-			continue
-		}
-
-		if !isActiveCDCChangefeed(kv.Value) {
-			continue
+		if reg != nil {
+			matched := reg.Match(clusterID)
+			if !matched {
+				continue
+			}
+			if !isActiveCDCChangefeed(kv.Value) {
+				continue
+			}
 		}
 
 		nameSet[string(clusterAndNamespace)] = append(nameSet[string(clusterAndNamespace)], string(changefeedID))
