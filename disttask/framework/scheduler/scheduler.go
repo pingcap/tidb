@@ -520,7 +520,7 @@ func (s *BaseScheduler) startSubtask(ctx context.Context, subtaskID int64) {
 	}
 }
 
-func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtask) {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
@@ -528,7 +528,9 @@ func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtas
 			return true, s.taskTable.FinishSubtask(subtask.ID, subtask.Meta)
 		},
 	)
-	return err
+	if err != nil {
+		s.onError(err)
+	}
 }
 
 func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {

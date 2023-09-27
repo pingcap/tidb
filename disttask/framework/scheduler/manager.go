@@ -378,6 +378,6 @@ func (m *Manager) onError(err error) {
 	if err == nil {
 		return
 	}
-
+	err = errors.Trace(err)
 	logutil.Logger(m.logCtx).Error("task manager error", zap.Error(err))
 }
