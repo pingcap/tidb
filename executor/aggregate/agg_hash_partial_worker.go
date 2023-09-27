@@ -212,10 +212,10 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		if intest.InTest {
 			num := rand.Intn(10000)
-			if num == 0 {
+			if num < 2 {
 				panic("Intest panic: partial worker is panicked when running")
-			} else if num == 1 {
-				time.Sleep(10 * time.Millisecond)
+			} else if num < 4 {
+				time.Sleep(1 * time.Second)
 			}
 		}
 

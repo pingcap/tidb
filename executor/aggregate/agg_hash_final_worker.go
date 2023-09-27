@@ -65,30 +65,32 @@ type HashAggFinalWorker struct {
 	restoredMemDelta int64
 }
 
-func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
-	if w.isSpilledTriggered {
-		select {
-		case <-w.finishCh:
-			return nil, false
-		case input, ok = <-w.spilledDataChan:
-			if !ok {
-				return nil, false
-			}
+func (w *HashAggFinalWorker) getInputFromDisk() (input *HashAggIntermData, ok bool, spillContinue bool) {
+	select {
+	case <-w.finishCh:
+		logutil.BgLogger().Info("xzxdebug: final worker getPartialInput_finish", zap.String("xzx", "xzx"))
+		return nil, false, false
+	case input, ok = <-w.spilledDataChan:
+		if !ok {
+			return nil, false, false
 		}
-	} else {
-		select {
-		case <-w.finishCh:
+		return input, ok, true
+	}
+}
+
+func (w *HashAggFinalWorker) getPartialInput() (input *HashAggIntermData, ok bool) {
+	select {
+	case <-w.finishCh:
+		return nil, false
+	case input, ok = <-w.inputCh:
+		if !ok {
 			return nil, false
-		case input, ok = <-w.inputCh:
-			if !ok {
-				return nil, false
-			}
 		}
 	}
 	return
 }
 
-func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error) {
+func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err error, spillContinue bool) {
 	var (
 		input            *HashAggIntermData
 		ok               bool
@@ -103,16 +105,26 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 
 	loopJudge := true
 	for loopJudge {
-		// As we restore only one partition each time when spill is triggered,
-		// so we should execute in this loop only once.
-		loopJudge = !w.isSpilledTriggered
 		waitStart := time.Now()
-		input, ok = w.getPartialInput()
+
+		if w.isSpilledTriggered {
+			// As we restore only one partition each time when spill is triggered,
+			// so we should execute in this loop only once.
+			loopJudge = false
+			var spillContinue bool
+			input, ok, spillContinue = w.getInputFromDisk()
+			if !spillContinue {
+				return nil, false
+			}
+		} else {
+			input, ok = w.getPartialInput()
+		}
+
 		if w.stats != nil {
 			w.stats.WaitTime += int64(time.Since(waitStart))
 		}
 		if !ok {
-			return nil
+			return nil, false
 		}
 		execStart := time.Now()
 		if intermDataBuffer == nil {
@@ -140,7 +152,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 				for j, af := range w.aggFuncs {
 					memDelta, err := af.MergePartialResult(sctx, partialResult[j], finalPartialResults[i][j])
 					if err != nil {
-						return err
+						return err, false
 					}
 					allMemDelta += memDelta
 				}
@@ -152,7 +164,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			w.stats.TaskNum++
 		}
 	}
-	return nil
+	return nil, true
 }
 
 func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
@@ -285,16 +297,18 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 	return true, nil
 }
 
-func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) error {
+func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (error, bool) {
 	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData1", zap.String("xzx", "xzx"))
-	if err := w.consumeIntermData(ctx); err != nil {
+	err, spillContinue := w.consumeIntermData(ctx)
+	if err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
-		return err
+		return err, false
 	}
+
 	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData2", zap.String("xzx", "xzx"))
 	w.loadFinalResult(ctx)
 	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData3", zap.String("xzx", "xzx"))
-	return nil
+	return nil, spillContinue
 }
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
@@ -341,18 +355,19 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 			if intest.InTest {
 				num := rand.Intn(100000)
-				if num == 0 {
+				if num < 2 {
 					panic("Intest panic: final worker is panicked when running")
-				} else if num == 1 {
-					time.Sleep(100 * time.Millisecond)
-				} else if num == 2 {
+				} else if num < 4 {
+					time.Sleep(1 * time.Second)
+				} else if num < 6 {
 					// Consume 1TB, and the query should be killed
 					w.memTracker.Consume(1099511627776)
 				}
 			}
 
-			err = w.mergeResultsAndSend(ctx)
-			if err != nil {
+			var spillContinue bool
+			err, spillContinue = w.mergeResultsAndSend(ctx)
+			if err != nil || !spillContinue {
 				return
 			}
 		}
