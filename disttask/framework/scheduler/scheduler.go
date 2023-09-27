@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/backoff"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -217,7 +216,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			}
 		} else {
 			// subtask.State == proto.TaskStatePending
-			s.startSubtaskAndUpdateState(subtask)
+			s.startSubtaskAndUpdateState(ctx, subtask)
 			if err := s.getError(); err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
 				continue
@@ -486,13 +485,10 @@ func (s *BaseScheduler) resetError() {
 	s.mu.handled = false
 }
 
-func (s *BaseScheduler) startSubtaskAndUpdateState(subtask *proto.Subtask) {
+func (s *BaseScheduler) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	err := s.taskTable.StartSubtask(subtask.ID)
-	if err != nil {
-		s.onError(err)
-	}
+	s.startSubtask(ctx, subtask.ID)
 	subtask.State = proto.TaskStateRunning
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	metrics.StartDistTaskSubTask(subtask)
@@ -502,14 +498,24 @@ func (s *BaseScheduler) updateSubtaskStateAndErrorImpl(subtaskID int64, state st
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	retryTimes := dispatcher.RetrySQLTimes
-	if intest.InTest {
-		retryTimes = 2
-	}
 	ctx := context.Background()
-	err := handle.RunWithRetry(ctx, retryTimes, backoffer, logger,
+	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, s.taskTable.UpdateSubtaskStateAndError(subtaskID, state, subTaskErr)
+		},
+	)
+	if err != nil {
+		s.onError(err)
+	}
+}
+
+func (s *BaseScheduler) startSubtask(ctx context.Context, subtaskID int64) {
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
+	logger := logutil.Logger(s.logCtx)
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, s.taskTable.StartSubtask(subtaskID)
 		},
 	)
 	if err != nil {
