@@ -18,8 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
@@ -28,7 +27,7 @@ const selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
 // QueryLockedTables loads locked tables from mysql.stats_table_locked.
 // Return it as a map for fast query.
 func QueryLockedTables(exec sqlexec.RestrictedSQLExecutor) (map[int64]struct{}, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	rows, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, selectSQL)
 	if err != nil {
 		return nil, err
@@ -59,16 +58,5 @@ func GetLockedTables(tableLocked map[int64]struct{}, tableIDs ...int64) map[int6
 
 func startTransaction(ctx context.Context, exec sqlexec.RestrictedSQLExecutor) error {
 	_, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, "BEGIN PESSIMISTIC")
-	return errors.Trace(err)
-}
-
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, err error) error {
-	if err == nil {
-		_, _, err = exec.ExecRestrictedSQL(ctx, useCurrentSession, "COMMIT")
-	} else {
-		_, _, err1 := exec.ExecRestrictedSQL(ctx, useCurrentSession, "ROLLBACK")
-		terror.Log(errors.Trace(err1))
-	}
 	return errors.Trace(err)
 }

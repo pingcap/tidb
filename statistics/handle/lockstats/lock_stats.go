@@ -20,7 +20,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
@@ -52,15 +52,14 @@ func AddLockedTables(
 	tidAndNames map[int64]string,
 	pidAndNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
 	defer func() {
 		// Commit transaction.
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check duplicate before insert.
@@ -129,15 +128,14 @@ func AddLockedPartitions(
 	tableName string,
 	pidNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
 	defer func() {
 		// Commit transaction.
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check duplicate before insert.

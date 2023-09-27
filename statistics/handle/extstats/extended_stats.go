@@ -21,13 +21,12 @@ import (
 	"slices"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -59,15 +58,14 @@ func InsertExtendedStats(sctx sessionctx.Context,
 	}
 	strColIDs := string(bytes)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	sqlExecutor := exec.(sqlexec.SQLExecutor)
 	_, err = sqlExecutor.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, sqlExecutor, err)
+		err = util.FinishTransaction(ctx, sqlExecutor, err)
 	}()
 	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
@@ -88,7 +86,7 @@ func InsertExtendedStats(sctx sessionctx.Context,
 			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
 		}
 	}
-	version, err := getStartTS(sctx)
+	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -127,7 +125,7 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 		}
 	}()
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {
 		return errors.Trace(err)
@@ -149,13 +147,13 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	defer func() {
-		err1 := finishTransaction(ctx, sqlExec, err)
+		err1 := util.FinishTransaction(ctx, sqlExec, err)
 		if err == nil && err1 == nil {
 			removeExtendedStatsItem(currentCache, updateStatsCache, tableID, statsName)
 		}
 		err = err1
 	}()
-	version, err := getStartTS(sctx)
+	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -172,7 +170,7 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
 func BuildExtendedStats(sctx sessionctx.Context,
 	tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
@@ -296,16 +294,16 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	}
 
 	sqlExec := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 
 	_, err = sqlExec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, sqlExec, err)
+		err = util.FinishTransaction(ctx, sqlExec, err)
 	}()
-	version, err := getStartTS(sctx)
+	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -358,23 +356,4 @@ func removeExtendedStatsItem(currentCache *cache.StatsCache,
 			logutil.BgLogger().Info("remove extended stats cache failed, retrying", zap.String("stats_name", statsName), zap.Int64("table_id", tableID))
 		}
 	}
-}
-
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
-	if err == nil {
-		_, err = exec.ExecuteInternal(ctx, "commit")
-	} else {
-		_, err1 := exec.ExecuteInternal(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-	}
-	return errors.Trace(err)
-}
-
-func getStartTS(sctx sessionctx.Context) (uint64, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-	return txn.StartTS(), nil
 }

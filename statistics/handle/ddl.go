@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	statsutil "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -134,13 +134,13 @@ func (h *Handle) updateStatsVersion() error {
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
 
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := statsutil.StatsCtx(context.Background())
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(ctx, exec, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
@@ -271,13 +271,13 @@ func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := statsutil.StatsCtx(context.Background())
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(ctx, exec, err)
 	}()
 	for _, table := range []string{"stats_meta", "stats_top_n", "stats_fm_sketch", "stats_buckets", "stats_histograms", "column_stats_usage"} {
 		_, err = exec.ExecuteInternal(ctx, "update mysql."+table+" set table_id = %? where table_id = %?", to, from)
@@ -328,14 +328,14 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := statsutil.StatsCtx(context.Background())
 
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(ctx, exec, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
@@ -373,14 +373,14 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := statsutil.StatsCtx(context.Background())
 
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(ctx, exec, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
@@ -408,14 +408,14 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := statsutil.StatsCtx(context.Background())
 
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = statsutil.FinishTransaction(ctx, exec, err)
 	}()
 
 	startTS, err := getSessionTxnStartTS(se)
@@ -473,15 +473,4 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 		}
 	}
 	return
-}
-
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
-	if err == nil {
-		_, err = exec.ExecuteInternal(ctx, "commit")
-	} else {
-		_, err1 := exec.ExecuteInternal(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-	}
-	return errors.Trace(err)
 }

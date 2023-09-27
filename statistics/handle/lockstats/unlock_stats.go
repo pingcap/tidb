@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -41,15 +41,14 @@ func RemoveLockedTables(
 	tidAndNames map[int64]string,
 	pidAndNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
 	defer func() {
 		// Commit or rollback the transaction.
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check locked before delete.
@@ -117,15 +116,14 @@ func RemoveLockedPartitions(
 	tableName string,
 	pidNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
 	}
 	defer func() {
 		// Commit or rollback the transaction.
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 
 	// Load tables to check locked before delete.

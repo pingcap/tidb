@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -67,7 +67,7 @@ func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor, release
 			err = fmt.Errorf("getStatsReader panic %v", r)
 		}
 	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	failpoint.Inject("mockGetStatsReaderPanic", nil)
 	_, err = exec.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
 	if err != nil {
@@ -78,7 +78,7 @@ func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor, release
 
 // Read is a thin wrapper reading statistics from storage by sql command.
 func (sr *StatsReader) Read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	if sr.snapshot > 0 {
 		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
 	}
@@ -103,7 +103,7 @@ func (sr *StatsReader) Close() error {
 	if sr.IsHistory() || sr.ctx == nil {
 		return nil
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	_, err := sr.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
 	return err
 }
@@ -596,7 +596,7 @@ func loadNeededIndexHistograms(reader *StatsReader, statsCache *cache.StatsCache
 
 // StatsMetaByTableIDFromStorage gets the stats meta of a table from storage.
 func StatsMetaByTableIDFromStorage(sctx sessionctx.Context, tableID int64, snapshot uint64) (version uint64, modifyCount, count int64, err error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	var rows []chunk.Row
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	if snapshot == 0 {
