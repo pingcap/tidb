@@ -16,6 +16,8 @@ package util
 
 import (
 	"context"
+	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/util/chunk"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
@@ -31,15 +33,15 @@ func StatsCtx(ctx context.Context) context.Context {
 
 // FinishTransaction will execute `commit` when error is nil, otherwise `rollback`.
 func FinishTransaction(ctx context.Context, exec interface{}, err error) error {
-	if sqlExec, ok := exec.(sqlexec.SQLExecutor); ok {
-		if err == nil {
-			_, err = sqlExec.ExecuteInternal(ctx, "commit")
-		} else {
-			_, err1 := sqlExec.ExecuteInternal(ctx, "rollback")
-			terror.Log(errors.Trace(err1))
-		}
-	} else {
+	sqlExec, ok := exec.(sqlexec.SQLExecutor)
+	if !ok {
 		return errors.Errorf("invalid sql executor")
+	}
+	if err == nil {
+		_, err = sqlExec.ExecuteInternal(ctx, "commit")
+	} else {
+		_, err1 := sqlExec.ExecuteInternal(ctx, "rollback")
+		terror.Log(errors.Trace(err1))
 	}
 	return errors.Trace(err)
 }
@@ -51,4 +53,13 @@ func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 		return 0, err
 	}
 	return txn.StartTS(), nil
+}
+
+// Read is a helper function to execute sql and return rows and fields.
+func Read(exec interface{}, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+	sqlExec, ok := exec.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, nil, errors.Errorf("invalid sql executor")
+	}
+	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
 }
