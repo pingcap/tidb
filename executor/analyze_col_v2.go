@@ -719,7 +719,7 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
-				logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when building samples for column", collector.MemSize))
+				logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when building samples for column", collectorMemSize))
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
@@ -772,7 +772,7 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
-				logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when building samples for index", collector.MemSize))
+				logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when building samples for index", collectorMemSize))
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
