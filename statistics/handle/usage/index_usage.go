@@ -145,11 +145,6 @@ func sweepIdxUsageList(listHead *SessionIndexUsageCollector) indexUsageMap {
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 
-var (
-	// useCurrentSession to make sure the sql is executed in current session.
-	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
-)
-
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func DumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageCollector) error {
 	mapper := sweepIdxUsageList(listHead)
