@@ -15,13 +15,13 @@
 package handle_test
 
 import (
-	"github.com/pingcap/tidb/sessionctx"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/mathutil"
