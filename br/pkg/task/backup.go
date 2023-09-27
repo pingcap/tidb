@@ -681,7 +681,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
 		log.Info("failpoint s3-outage-during-writing-file injected, " +
-			"process will sleep for 3s and notify the shell to kill s3 service.")
+			"process will sleep for 5s and notify the shell to kill s3 service.")
 		if sigFile, ok := v.(string); ok {
 			file, err := os.Create(sigFile)
 			if err != nil {
