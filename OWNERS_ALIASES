@@ -11,6 +11,11 @@ aliases:
   sig-approvers-autoid-service: # approvers for auto-id service
     - bb7133
     - tiancaiamao
+  sig-approvers-br: # approvers for br pkg
+    - BornChanger
+    - 3pointer
+    - YuJuncen
+    - Leavrth
   sig-approvers-distsql: # approvers for distsql pkg
     - windtalker
     - XuHuaiyu
