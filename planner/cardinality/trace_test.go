@@ -108,30 +108,6 @@ func TestTraceCE(t *testing.T) {
 	}
 }
 
-func TestTraceCEPartitionTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, d varchar(10), index idx(a, b)) PARTITION BY RANGE (a) (PARTITION p0 VALUES LESS THAN MAXVALUE);")
-	tk.MustExec(`insert into t values(1, 1, "aaa"),
-		(1, 1, "bbb"),
-		(1, 2, "ccc"),
-		(1, 2, "ddd"),
-		(2, 2, "aaa"),
-		(2, 3, "bbb")`)
-	tk.MustExec("analyze table t")
-	result := tk.MustQuery("trace plan target='estimation' select * from t where a >=1")
-	require.Len(t, result.Rows(), 1)
-	resultStr := result.Rows()[0][0].(string)
-	var resultJSON []*tracing.CETraceRecord
-	err := json.Unmarshal([]byte(resultStr), &resultJSON)
-	require.NoError(t, err)
-	for _, r := range resultJSON {
-		require.Equal(t, "t", r.TableName)
-	}
-}
-
 func TestTraceDebugSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

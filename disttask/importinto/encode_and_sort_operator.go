@@ -167,6 +167,8 @@ func (op *encodeAndSortOperator) Close() error {
 
 	closeCtx := op.ctx
 	if closeCtx.Err() != nil {
+		op.logger.Info("context canceled when closing, create a new one with timeout",
+			zap.Duration("timeout", maxWaitDuration))
 		// in case of context canceled, we need to create a new context to close writers.
 		newCtx, cancel := context.WithTimeout(context.Background(), maxWaitDuration)
 		closeCtx = newCtx
