@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -62,7 +63,7 @@ func (s *CDCNameSet) MessageToUser() string {
 // for CDC <= v6.1, the etcd key format is /tidb/cdc/changefeed/info/<changefeedID>
 func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNameSet, error) {
 	nameSet := make(map[string][]string, 1)
-	// check etcd KV of CDC >= v6.2
+	// check etcd KV of CDC >= v5.2
 	resp, err := cli.Get(ctx, CDCPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -75,6 +76,28 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 		if !found {
 			continue
 		}
+		// example: clusterAndNamespace normally is <clusterID>/<namespace>
+		// but in migration scenario it become __backup__. we need handle it
+		// see https://github.com/pingcap/tiflow/issues/9807
+		clusterID, _, found := bytes.Cut(clusterAndNamespace, []byte(`/`))
+		if !found {
+			// ignore __backup__ or other formats
+			continue
+		}
+
+		// Generate a random cluster ID in pd
+		// r := rand.New(rand.NewSource(time.Now().UnixNano()))
+		// ts := uint64(time.Now().Unix())
+		// clusterID := (ts << 32) + uint64(r.Uint32())
+		matched, err := regexp.Match("^[0-9]+$", clusterID)
+		if err != nil {
+			log.L().Warn("failed to parse cluster id, skip it", zap.String("cluster ID", string(clusterID)), zap.Error(err))
+			continue
+		}
+		if !matched {
+			continue
+		}
+
 		if !isActiveCDCChangefeed(kv.Value) {
 			continue
 		}
