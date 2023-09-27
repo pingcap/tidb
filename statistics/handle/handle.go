@@ -470,6 +470,11 @@ func (h *Handle) FlushStats() {
 // TableStatsFromStorage loads table stats info from storage.
 func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		var ok bool
+		statsTbl, ok = h.statsCache.Load().Get(physicalID)
+		if !ok {
+			statsTbl = nil
+		}
 		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, h.Lease(), statsTbl)
 		return err
 	}, flagWrapTxn)
