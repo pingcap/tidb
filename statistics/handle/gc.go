@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
@@ -244,14 +245,14 @@ func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 	sql := "delete from mysql.stats_history where table_id = %?"
 	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
@@ -271,14 +272,14 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
@@ -322,13 +323,13 @@ func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	_, err = exec.ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 	startTS, err := getSessionTxnStartTS(se)
 	if err != nil {
@@ -374,13 +375,13 @@ func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 	}
 	defer h.pool.Put(se)
 	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(ctx, exec, err)
 	}()
 	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
 	_, err = exec.ExecuteInternal(ctx, sql, statistics.ExtendedStatsDeleted, version)

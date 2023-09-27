@@ -21,8 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -153,7 +153,7 @@ var (
 
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func DumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageCollector) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	mapper := sweepIdxUsageList(listHead)
 	type FullIndexUsageInformation struct {
@@ -193,7 +193,7 @@ func GCIndexUsageOnKV(sctx sessionctx.Context) error {
 	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
 	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
 	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := util.StatsCtx(context.Background())
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	_, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, sql)
 	return err
