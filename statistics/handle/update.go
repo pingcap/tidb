@@ -383,7 +383,6 @@ func updateStatsMeta(
 		_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
 			startTS, id, delta.Count, delta.Delta)
-
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
