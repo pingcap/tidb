@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -226,7 +226,7 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+	ctx = util.StatsCtx(ctx)
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
 		if len(c.dirtyIDs) > 0 {
 			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
