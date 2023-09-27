@@ -320,7 +320,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 		SetMemorySizeLimit(512*1024).
 		Build(st, "testprefix", "0")
 
-	ConcurrentReaderBufferSize = 4 * 1024
+	ConcurrentReaderBufferSizePerConc = 4 * 1024
 
 	kvCount := 500000
 	keySize := 100
@@ -446,10 +446,10 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	t.Cleanup(func() {
 		checkHotspotPeriod = backup
 	})
-	backup2 := ConcurrentReaderBufferSize
-	ConcurrentReaderBufferSize = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
+	backup2 := ConcurrentReaderBufferSizePerConc
+	ConcurrentReaderBufferSizePerConc = 100 * 1024 * 1024 // 100MB, make memory leak more obvious
 	t.Cleanup(func() {
-		ConcurrentReaderBufferSize = backup2
+		ConcurrentReaderBufferSizePerConc = backup2
 	})
 
 	getMemoryInUse := func() uint64 {

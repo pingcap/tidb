@@ -333,7 +333,7 @@ func TestSwitchMode(t *testing.T) {
 		return rsc
 	}
 
-	ConcurrentReaderBufferSize = 100
+	ConcurrentReaderBufferSizePerConc = 100
 	br, err := newByteReader(context.Background(), newRsc(), 100)
 
 	seed := time.Now().Unix()

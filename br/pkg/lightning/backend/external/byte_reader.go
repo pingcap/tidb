@@ -26,8 +26,9 @@ import (
 )
 
 var (
-	// ConcurrentReaderBufferSize is the buffer size for concurrent reader.
-	ConcurrentReaderBufferSize = 4 * 1024 * 1024
+	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
+	// concurrency.
+	ConcurrentReaderBufferSizePerConc = 4 * 1024 * 1024
 	// ConcurrentReaderConcurrency is the concurrency for concurrent reader.
 	ConcurrentReaderConcurrency = 8
 )
@@ -135,7 +136,7 @@ func (r *byteReader) switchConcurrentMode(useConcurrent bool) error {
 	}
 
 	// no change
-	if !readerFields.now && !useConcurrent {
+	if !readerFields.now {
 		return nil
 	}
 
