@@ -246,7 +246,7 @@ func TestAlterUserStmt(t *testing.T) {
 
 	// UpdatePriv on mysql.user
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "nobodyuser5", Hostname: "localhost"}, nil, nil, nil))
-	err = tk.ExecToErr("ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
+	err := tk.ExecToErr("ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword'")
 	require.EqualError(t, err, "[planner:1227]Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation")
 
 	// actual CreateUserPriv
