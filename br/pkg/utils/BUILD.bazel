@@ -100,7 +100,7 @@ go_test(
         "//parser/model",
         "//parser/mysql",
         "//parser/types",
-        "//statistics/handle",
+        "//statistics/handle/storage",
         "//tablecodec",
         "//testkit/testsetup",
         "//types",

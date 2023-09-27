@@ -10,7 +10,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
-        "//kv",
         "//parser/model",
         "//sessionctx",
         "//sessionctx/variable",
@@ -19,6 +18,7 @@ go_library(
         "//statistics/handle/cache/internal/lfu",
         "//statistics/handle/cache/internal/mapcache",
         "//statistics/handle/cache/internal/metrics",
+        "//statistics/handle/util",
         "//types",
         "//util/chunk",
         "//util/logutil",

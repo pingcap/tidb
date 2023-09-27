@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"regexp"
 	"runtime/pprof"
 	"slices"
 	"strings"
@@ -318,138 +317,6 @@ func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	require.Equal(t, 1.0, count)
 }
 
-func TestPrimaryKeySelectivity(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
-	testKit.MustExec("create table t(a char(10) primary key, b int)")
-	var input, output [][]string
-	statsSuiteData := cardinality.GetCardinalitySuiteData()
-	statsSuiteData.LoadTestCases(t, &input, &output)
-	for i, ts := range input {
-		for j, tt := range ts {
-			if j != len(ts)-1 {
-				testKit.MustExec(tt)
-			}
-			testdata.OnRecord(func() {
-				if j == len(ts)-1 {
-					output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-				}
-			})
-			if j == len(ts)-1 {
-				testKit.MustQuery(tt).Check(testkit.Rows(output[i]...))
-			}
-		}
-	}
-}
-
-func TestStatsVer2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_cost_model_version=2")
-	testKit.MustExec("set tidb_analyze_version=2")
-
-	testKit.MustExec("drop table if exists tint")
-	testKit.MustExec("create table tint(a int, b int, c int, index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tint values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tint with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tdouble")
-	testKit.MustExec("create table tdouble(a double, b double, c double, index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tdouble values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tdouble with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tdecimal")
-	testKit.MustExec("create table tdecimal(a decimal(40, 20), b decimal(40, 20), c decimal(40, 20), index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tdecimal values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table tdecimal with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tstring")
-	testKit.MustExec("create table tstring(a varchar(64), b varchar(64), c varchar(64), index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tstring values ('1', '1', '1'), ('2', '2', '2'), ('3', '3', '3'), ('4', '4', '4'), ('5', '5', '5'), ('6', '6', '6'), ('7', '7', '7'), ('8', '8', '8')")
-	testKit.MustExec("analyze table tstring with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tdatetime")
-	testKit.MustExec("create table tdatetime(a datetime, b datetime, c datetime, index singular(a), index multi(b, c))")
-	testKit.MustExec("insert into tdatetime values ('2001-01-01', '2001-01-01', '2001-01-01'), ('2001-01-02', '2001-01-02', '2001-01-02'), ('2001-01-03', '2001-01-03', '2001-01-03'), ('2001-01-04', '2001-01-04', '2001-01-04')")
-	testKit.MustExec("analyze table tdatetime with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists tprefix")
-	testKit.MustExec("create table tprefix(a varchar(64), b varchar(64), index prefixa(a(2)))")
-	testKit.MustExec("insert into tprefix values ('111', '111'), ('222', '222'), ('333', '333'), ('444', '444'), ('555', '555'), ('666', '666')")
-	testKit.MustExec("analyze table tprefix with 2 topn, 3 buckets")
-
-	// test with clustered index
-	testKit.MustExec("drop table if exists ct1")
-	testKit.MustExec("create table ct1 (a int, pk varchar(10), primary key(pk) clustered)")
-	testKit.MustExec("insert into ct1 values (1, '1'), (2, '2'), (3, '3'), (4, '4'), (5, '5'), (6, '6'), (7, '7'), (8, '8')")
-	testKit.MustExec("analyze table ct1 with 2 topn, 3 buckets")
-
-	testKit.MustExec("drop table if exists ct2")
-	testKit.MustExec("create table ct2 (a int, b int, c int, primary key(a, b) clustered)")
-	testKit.MustExec("insert into ct2 values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5), (6, 6, 6), (7, 7, 7), (8, 8, 8)")
-	testKit.MustExec("analyze table ct2 with 2 topn, 3 buckets")
-
-	rows := testKit.MustQuery("select stats_ver from mysql.stats_histograms").Rows()
-	for _, r := range rows {
-		// ensure statsVer = 2
-		require.Equal(t, "2", fmt.Sprintf("%v", r[0]))
-	}
-
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := cardinality.GetCardinalitySuiteData()
-	statsSuiteData.LoadTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
-		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-}
-
-func TestTopNOutOfHist(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("set tidb_analyze_version=2")
-
-	testKit.MustExec("drop table if exists topn_before_hist")
-	testKit.MustExec("create table topn_before_hist(a int, index idx(a))")
-	testKit.MustExec("insert into topn_before_hist values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
-	testKit.MustExec("analyze table topn_before_hist with 2 topn, 3 buckets")
-
-	testKit.MustExec("create table topn_after_hist(a int, index idx(a))")
-	testKit.MustExec("insert into topn_after_hist values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
-	testKit.MustExec("analyze table topn_after_hist with 2 topn, 3 buckets")
-
-	testKit.MustExec("create table topn_before_hist_no_index(a int)")
-	testKit.MustExec("insert into topn_before_hist_no_index values(1), (1), (1), (1), (3), (3), (4), (5), (6)")
-	testKit.MustExec("analyze table topn_before_hist_no_index with 2 topn, 3 buckets")
-
-	testKit.MustExec("create table topn_after_hist_no_index(a int)")
-	testKit.MustExec("insert into topn_after_hist_no_index values(2), (2), (3), (4), (5), (7), (7), (7), (7)")
-	testKit.MustExec("analyze table topn_after_hist_no_index with 2 topn, 3 buckets")
-
-	var (
-		input  []string
-		output [][]string
-	)
-	statsSuiteData := cardinality.GetCardinalitySuiteData()
-	statsSuiteData.LoadTestCases(t, &input, &output)
-	for i := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
-		})
-		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i]...))
-	}
-}
-
 func TestColumnIndexNullEstimation(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -597,61 +464,6 @@ func TestSelectivity(t *testing.T) {
 		ratio, _, err = cardinality.Selectivity(sctx, histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
 		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
-	}
-}
-
-// TestDiscreteDistribution tests the estimation for discrete data distribution. This is more common when the index
-// consists several columns, and the first column has small NDV.
-func TestDiscreteDistribution(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a char(10), b int, key idx(a, b))")
-	for i := 0; i < 499; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values ('cn', %d)", i))
-	}
-	for i := 0; i < 10; i++ {
-		testKit.MustExec("insert into t values ('tw', 0)")
-	}
-	testKit.MustExec("analyze table t")
-	var (
-		input  []string
-		output [][]string
-	)
-
-	statsSuiteData := cardinality.GetCardinalitySuiteData()
-	statsSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-		})
-		testKit.MustQuery(tt).Check(testkit.Rows(output[i]...))
-	}
-}
-
-func TestSelectCombinedLowBound(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(id int auto_increment, kid int, pid int, primary key(id), key(kid, pid))")
-	testKit.MustExec("insert into t (kid, pid) values (1,2), (1,3), (1,4),(1, 11), (1, 12), (1, 13), (1, 14), (2, 2), (2, 3), (2, 4)")
-	testKit.MustExec("analyze table t")
-	var (
-		input  []string
-		output [][]string
-	)
-
-	statsSuiteData := cardinality.GetCardinalitySuiteData()
-	statsSuiteData.LoadTestCases(t, &input, &output)
-
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i] = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-		})
-		testKit.MustQuery(tt).Check(testkit.Rows(output[i]...))
 	}
 }
 
@@ -944,42 +756,6 @@ func TestSelectivityGreedyAlgo(t *testing.T) {
 	usedSets = cardinality.GetUsableSetsByGreedy(nodes)
 	require.Equal(t, 1, len(usedSets))
 	require.Equal(t, int64(1), usedSets[0].ID)
-}
-
-func TestDefaultSelectivityForStrMatch(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b varchar(100))")
-
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Result []string
-		}
-	)
-
-	statsSuiteData := cardinality.GetCardinalitySuiteData()
-	statsSuiteData.LoadTestCases(t, &input, &output)
-
-	matchExplain, err := regexp.Compile("^explain")
-	require.NoError(t, err)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-		})
-		ok := matchExplain.MatchString(tt)
-		if !ok {
-			testKit.MustExec(tt)
-			continue
-		}
-		testdata.OnRecord(func() {
-			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
-		})
-		testKit.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
-	}
 }
 
 func TestTopNAssistedEstimationWithoutNewCollation(t *testing.T) {

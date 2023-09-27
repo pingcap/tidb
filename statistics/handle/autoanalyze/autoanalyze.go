@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	statsutil "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -95,7 +96,6 @@ type Opt struct {
 
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(sctx sessionctx.Context,
-	exec sqlexec.RestrictedSQLExecutor,
 	opt *Opt,
 	is infoschema.InfoSchema) (analyzed bool) {
 	defer func() {
@@ -103,6 +103,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	dbs := is.AllSchemaNames()
 	parameters := getAutoAnalyzeParameters(exec)
 	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
@@ -405,7 +406,7 @@ func execRestrictedSQLWithStatsVer(sctx sessionctx.Context,
 	opt *Opt,
 	statsVer int,
 	sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	ctx := statsutil.StatsCtx(context.Background())
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
 	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
 	optFuncs := []sqlexec.OptionFuncAlias{

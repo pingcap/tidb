@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
@@ -32,8 +33,13 @@ import (
 
 var (
 	// DefaultDispatchConcurrency is the default concurrency for dispatching task.
-	DefaultDispatchConcurrency = 3
-	checkTaskRunningInterval   = 3 * time.Second
+	DefaultDispatchConcurrency = 4
+	// checkTaskRunningInterval is the interval for loading tasks.
+	checkTaskRunningInterval = 3 * time.Second
+	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
+	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
+	// defaultCleanUpInterval is the interval of cleanUp routine.
+	defaultCleanUpInterval = 10 * time.Minute
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -50,6 +56,7 @@ func (dm *Manager) setRunningTask(task *proto.Task, dispatcher Dispatcher) {
 	defer dm.runningTasks.Unlock()
 	dm.runningTasks.taskIDs[task.ID] = struct{}{}
 	dm.runningTasks.dispatchers[task.ID] = dispatcher
+	metrics.UpdateMetricsForRunTask(task)
 }
 
 func (dm *Manager) isRunningTask(taskID int64) bool {
@@ -81,28 +88,29 @@ func (dm *Manager) clearRunningTasks() {
 // Dispatcher schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
 type Manager struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	taskMgr  *storage.TaskManager
-	wg       tidbutil.WaitGroupWrapper
-	gPool    *spool.Pool
-	inited   bool
+	ctx     context.Context
+	cancel  context.CancelFunc
+	taskMgr *storage.TaskManager
+	wg      tidbutil.WaitGroupWrapper
+	gPool   *spool.Pool
+	inited  bool
+	// serverID, it's value is ip:port now.
 	serverID string
+
+	finishCh chan struct{}
 
 	runningTasks struct {
 		syncutil.RWMutex
 		taskIDs     map[int64]struct{}
 		dispatchers map[int64]Dispatcher
 	}
-	finishedTaskCh chan *proto.Task
 }
 
 // NewManager creates a dispatcher struct.
 func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID string) (*Manager, error) {
 	dispatcherManager := &Manager{
-		taskMgr:        taskTable,
-		finishedTaskCh: make(chan *proto.Task, DefaultDispatchConcurrency),
-		serverID:       serverID,
+		taskMgr:  taskTable,
+		serverID: serverID,
 	}
 	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -112,6 +120,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 	dispatcherManager.ctx, dispatcherManager.cancel = context.WithCancel(ctx)
 	dispatcherManager.runningTasks.taskIDs = make(map[int64]struct{})
 	dispatcherManager.runningTasks.dispatchers = make(map[int64]Dispatcher)
+	dispatcherManager.finishCh = make(chan struct{}, DefaultDispatchConcurrency)
 
 	return dispatcherManager, nil
 }
@@ -119,7 +128,8 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 // Start the dispatcherManager, start the dispatchTaskLoop to start multiple dispatchers.
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
-	dm.wg.Run(dm.gcSubtaskHistoryTable)
+	dm.wg.Run(dm.gcSubtaskHistoryTableLoop)
+	dm.wg.Run(dm.cleanUpLoop)
 	dm.inited = true
 }
 
@@ -130,6 +140,7 @@ func (dm *Manager) Stop() {
 	dm.wg.Wait()
 	dm.clearRunningTasks()
 	dm.inited = false
+	close(dm.finishCh)
 }
 
 // Inited check the manager inited.
@@ -175,11 +186,12 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
+				metrics.DistTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
 				// directly.
-				if GetDispatcherFactory(task.Type) == nil {
+				if getDispatcherFactory(task.Type) == nil {
 					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
 						zap.String("task-type", task.Type))
 					dm.failTask(task, errors.New("unknown task type"))
@@ -188,6 +200,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				// the task is not in runningTasks set when:
 				// owner changed or task is cancelled when status is pending.
 				if task.State == proto.TaskStateRunning || task.State == proto.TaskStateReverting || task.State == proto.TaskStateCancelling {
+					metrics.UpdateMetricsForDispatchTask(task)
 					dm.startDispatcher(task)
 					cnt++
 					continue
@@ -195,6 +208,7 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.checkConcurrencyOverflow(cnt) {
 					break
 				}
+				metrics.UpdateMetricsForDispatchTask(task)
 				dm.startDispatcher(task)
 				cnt++
 			}
@@ -212,7 +226,7 @@ func (dm *Manager) failTask(task *proto.Task, err error) {
 	}
 }
 
-func (dm *Manager) gcSubtaskHistoryTable() {
+func (dm *Manager) gcSubtaskHistoryTableLoop() {
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
 	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
 		if seconds, ok := val.(int); ok {
@@ -222,7 +236,7 @@ func (dm *Manager) gcSubtaskHistoryTable() {
 		<-WaitTaskFinished
 	})
 
-	logutil.Logger(dm.ctx).Info("task table gc loop start")
+	logutil.Logger(dm.ctx).Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
@@ -231,11 +245,11 @@ func (dm *Manager) gcSubtaskHistoryTable() {
 			logutil.BgLogger().Info("subtask history table gc loop exits", zap.Error(dm.ctx.Err()))
 			return
 		case <-ticker.C:
-			err := dm.taskMgr.GC()
+			err := dm.taskMgr.GCSubtasks()
 			if err != nil {
 				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
 			} else {
-				logutil.Logger(dm.ctx).Info("subtask history table gc")
+				logutil.Logger(dm.ctx).Info("subtask history table gc success")
 			}
 		}
 	}
@@ -253,7 +267,7 @@ func (*Manager) checkConcurrencyOverflow(cnt int) bool {
 func (dm *Manager) startDispatcher(task *proto.Task) {
 	// Using the pool with block, so it wouldn't return an error.
 	_ = dm.gPool.Run(func() {
-		dispatcherFactory := GetDispatcherFactory(task.Type)
+		dispatcherFactory := getDispatcherFactory(task.Type)
 		dispatcher := dispatcherFactory(dm.ctx, dm.taskMgr, dm.serverID, task)
 		if err := dispatcher.Init(); err != nil {
 			logutil.BgLogger().Error("init dispatcher failed", zap.Error(err))
@@ -264,7 +278,79 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
 		dm.delRunningTask(task.ID)
+		dm.finishCh <- struct{}{}
 	})
+}
+
+func (dm *Manager) cleanUpLoop() {
+	logutil.Logger(dm.ctx).Info("cleanUp loop start")
+	ticker := time.NewTicker(defaultCleanUpInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-dm.ctx.Done():
+			logutil.BgLogger().Info("cleanUp loop exits", zap.Error(dm.ctx.Err()))
+			return
+		case <-dm.finishCh:
+			dm.doCleanUpRoutine()
+		case <-ticker.C:
+			dm.doCleanUpRoutine()
+		}
+	}
+}
+
+// WaitCleanUpFinished is used to sync the test.
+var WaitCleanUpFinished = make(chan struct{})
+
+// doCleanUpRoutine processes clean up routine defined by each type of tasks.
+// For example:
+//
+//	tasks with global sort should clean up tmp files stored on S3.
+func (dm *Manager) doCleanUpRoutine() {
+	logutil.Logger(dm.ctx).Info("cleanUp routine start")
+	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed,
+	)
+	if err != nil {
+		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		return
+	}
+	err = dm.cleanUpFinishedTasks(tasks)
+	if err != nil {
+		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		return
+	}
+	failpoint.Inject("WaitCleanUpFinished", func() {
+		WaitCleanUpFinished <- struct{}{}
+	})
+	logutil.Logger(dm.ctx).Info("cleanUp routine success")
+}
+
+func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
+	cleanedTasks := make([]*proto.Task, 0)
+	var firstErr error
+	for _, task := range tasks {
+		cleanUpFactory := getDispatcherCleanUpFactory(task.Type)
+		if cleanUpFactory != nil {
+			cleanUp := cleanUpFactory()
+			err := cleanUp.CleanUp(dm.ctx, task)
+			if err != nil {
+				firstErr = err
+				break
+			}
+			cleanedTasks = append(cleanedTasks, task)
+		} else {
+			// if task doesn't register cleanUp function, mark it as cleaned.
+			cleanedTasks = append(cleanedTasks, task)
+		}
+	}
+	if firstErr != nil {
+		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(errors.Trace(firstErr)))
+	}
+
+	return dm.taskMgr.TransferTasks2History(cleanedTasks)
 }
 
 // MockDispatcher mock one dispatcher for one task, only used for tests.

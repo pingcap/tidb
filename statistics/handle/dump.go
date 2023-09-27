@@ -15,121 +15,24 @@
 package handle
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
-	"io"
-	"time"
 
-	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
-	"github.com/pingcap/tidb/types"
-	compressutil "github.com/pingcap/tidb/util/compress"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
-// JSONTable is used for dumping statistics.
-type JSONTable struct {
-	Columns           map[string]*jsonColumn `json:"columns"`
-	Indices           map[string]*jsonColumn `json:"indices"`
-	Partitions        map[string]*JSONTable  `json:"partitions"`
-	DatabaseName      string                 `json:"database_name"`
-	TableName         string                 `json:"table_name"`
-	ExtStats          []*jsonExtendedStats   `json:"ext_stats"`
-	Count             int64                  `json:"count"`
-	ModifyCount       int64                  `json:"modify_count"`
-	Version           uint64                 `json:"version"`
-	IsHistoricalStats bool                   `json:"is_historical_stats"`
-}
-
-type jsonExtendedStats struct {
-	StatsName  string  `json:"stats_name"`
-	StringVals string  `json:"string_vals"`
-	ColIDs     []int64 `json:"cols"`
-	ScalarVals float64 `json:"scalar_vals"`
-	Tp         uint8   `json:"type"`
-}
-
-func dumpJSONExtendedStats(statsColl *statistics.ExtendedStatsColl) []*jsonExtendedStats {
-	if statsColl == nil || len(statsColl.Stats) == 0 {
-		return nil
-	}
-	stats := make([]*jsonExtendedStats, 0, len(statsColl.Stats))
-	for name, item := range statsColl.Stats {
-		js := &jsonExtendedStats{
-			StatsName:  name,
-			ColIDs:     item.ColIDs,
-			Tp:         item.Tp,
-			ScalarVals: item.ScalarVals,
-			StringVals: item.StringVals,
-		}
-		stats = append(stats, js)
-	}
-	return stats
-}
-
-func extendedStatsFromJSON(statsColl []*jsonExtendedStats) *statistics.ExtendedStatsColl {
-	if len(statsColl) == 0 {
-		return nil
-	}
-	stats := statistics.NewExtendedStatsColl()
-	for _, js := range statsColl {
-		item := &statistics.ExtendedStatsItem{
-			ColIDs:     js.ColIDs,
-			Tp:         js.Tp,
-			ScalarVals: js.ScalarVals,
-			StringVals: js.StringVals,
-		}
-		stats.Stats[js.StatsName] = item
-	}
-	return stats
-}
-
-type jsonColumn struct {
-	Histogram *tipb.Histogram `json:"histogram"`
-	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
-	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
-	// StatsVer is a pointer here since the old version json file would not contain version information.
-	StatsVer          *int64  `json:"stats_ver"`
-	NullCount         int64   `json:"null_count"`
-	TotColSize        int64   `json:"tot_col_size"`
-	LastUpdateVersion uint64  `json:"last_update_version"`
-	Correlation       float64 `json:"correlation"`
-}
-
-func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
-	jsonCol := &jsonColumn{
-		Histogram:         statistics.HistogramToProto(hist),
-		NullCount:         hist.NullCount,
-		TotColSize:        hist.TotColSize,
-		LastUpdateVersion: hist.LastUpdateVersion,
-		Correlation:       hist.Correlation,
-		StatsVer:          statsVer,
-	}
-	if cmsketch != nil || topn != nil {
-		jsonCol.CMSketch = statistics.CMSketchToProto(cmsketch, topn)
-	}
-	if fmsketch != nil {
-		jsonCol.FMSketch = statistics.FMSketchToProto(fmsketch)
-	}
-	return jsonCol
-}
-
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
-	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*JSONTable, error) {
+	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*storage.JSONTable, error) {
 	var snapshot uint64
 	if historyStatsExec != nil {
 		sctx := historyStatsExec.(sessionctx.Context)
@@ -146,7 +49,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 	tableInfo *model.TableInfo,
 	snapshot uint64,
 ) (
-	jt *JSONTable,
+	jt *storage.JSONTable,
 	fallbackTbls []string,
 	err error,
 ) {
@@ -173,10 +76,10 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 		}
 		return jt, fallbackTbls, err
 	}
-	jsonTbl := &JSONTable{
+	jsonTbl := &storage.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
+		Partitions:   make(map[string]*storage.JSONTable, len(pi.Definitions)),
 	}
 	for _, def := range pi.Definitions {
 		tbl, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
@@ -203,7 +106,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
-func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error) {
+func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*storage.JSONTable, error) {
 	pruneMode, err := h.GetCurrentPruneMode()
 	if err != nil {
 		return nil, err
@@ -213,10 +116,10 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
 	}
-	jsonTbl := &JSONTable{
+	jsonTbl := &storage.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Partitions:   make(map[string]*JSONTable, len(pi.Definitions)),
+		Partitions:   make(map[string]*storage.JSONTable, len(pi.Definitions)),
 	}
 	// dump partition stats only if in static mode or enable dumpPartitionStats flag in dynamic mode
 	if !isDynamicMode || dumpPartitionStats {
@@ -242,33 +145,6 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 	return jsonTbl, nil
 }
 
-// GenJSONTableFromStats generate jsonTable from tableInfo and stats
-func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *statistics.Table) (*JSONTable, error) {
-	jsonTbl := &JSONTable{
-		DatabaseName: dbName,
-		TableName:    tableInfo.Name.L,
-		Columns:      make(map[string]*jsonColumn, len(tbl.Columns)),
-		Indices:      make(map[string]*jsonColumn, len(tbl.Indices)),
-		Count:        tbl.RealtimeCount,
-		ModifyCount:  tbl.ModifyCount,
-		Version:      tbl.Version,
-	}
-	for _, col := range tbl.Columns {
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		jsonTbl.Columns[col.Info.Name.L] = dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
-	}
-
-	for _, idx := range tbl.Indices {
-		jsonTbl.Indices[idx.Info.Name.L] = dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
-	}
-	jsonTbl.ExtStats = dumpJSONExtendedStats(tbl.ExtendedStats)
-	return jsonTbl, nil
-}
-
 // getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exist, directly fallback to the
 // latest stats, and the second return value would be true.
 func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
@@ -277,7 +153,7 @@ func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
 	physicalID int64,
 	snapshot uint64,
 ) (
-	*JSONTable,
+	*storage.JSONTable,
 	bool,
 	error,
 ) {
@@ -296,7 +172,7 @@ func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
 	return jt, false, nil
 }
 
-func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (*JSONTable, bool, error) {
+func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (*storage.JSONTable, bool, error) {
 	reader, err := h.getGlobalStatsReader(0)
 	if err != nil {
 		return nil, false, err
@@ -349,7 +225,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	for _, row := range rows {
 		blocks = append(blocks, row.GetBytes(0))
 	}
-	jsonTbl, err := BlocksToJSONTable(blocks)
+	jsonTbl, err := storage.BlocksToJSONTable(blocks)
 	if err != nil {
 		return nil, false, errors.AddStack(err)
 	}
@@ -359,16 +235,19 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	return jsonTbl, true, nil
 }
 
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error) {
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error) {
 	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
 	if err != nil || tbl == nil {
 		return nil, err
 	}
-	tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = h.statsMetaByTableIDFromStorage(physicalID, snapshot)
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = storage.StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	jsonTbl, err := GenJSONTableFromStats(dbName, tableInfo, tbl)
+	jsonTbl, err := storage.GenJSONTableFromStats(dbName, tableInfo, tbl)
 	if err != nil {
 		return nil, err
 	}
@@ -376,7 +255,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 }
 
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
-func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable) error {
+func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *storage.JSONTable) error {
 	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
@@ -409,8 +288,8 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *JSONTable)
 	return errors.Trace(h.Update(is))
 }
 
-func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) error {
-	tbl, err := TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
+func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+	tbl, err := storage.TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -438,158 +317,4 @@ func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64,
 		return errors.Trace(err)
 	}
 	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, StatsMetaHistorySourceLoadStats)
-}
-
-// TableStatsFromJSON loads statistic from JSONTable and return the Table of statistic.
-func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *JSONTable) (*statistics.Table, error) {
-	newHistColl := statistics.HistColl{
-		PhysicalID:     physicalID,
-		HavePhysicalID: true,
-		RealtimeCount:  jsonTbl.Count,
-		ModifyCount:    jsonTbl.ModifyCount,
-		Columns:        make(map[int64]*statistics.Column, len(jsonTbl.Columns)),
-		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
-	}
-	tbl := &statistics.Table{
-		HistColl: newHistColl,
-	}
-	for id, jsonIdx := range jsonTbl.Indices {
-		for _, idxInfo := range tableInfo.Indices {
-			if idxInfo.Name.L != id {
-				continue
-			}
-			hist := statistics.HistogramFromProto(jsonIdx.Histogram)
-			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.Correlation = idxInfo.ID, jsonIdx.NullCount, jsonIdx.LastUpdateVersion, jsonIdx.Correlation
-			cm, topN := statistics.CMSketchAndTopNFromProto(jsonIdx.CMSketch)
-			statsVer := int64(statistics.Version0)
-			if jsonIdx.StatsVer != nil {
-				statsVer = *jsonIdx.StatsVer
-			} else if jsonIdx.Histogram.Ndv > 0 || jsonIdx.NullCount > 0 {
-				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
-				// we set it to 1.
-				statsVer = int64(statistics.Version1)
-			}
-			idx := &statistics.Index{
-				Histogram:         *hist,
-				CMSketch:          cm,
-				TopN:              topN,
-				Info:              idxInfo,
-				StatsVer:          statsVer,
-				PhysicalID:        physicalID,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			}
-			tbl.Indices[idx.ID] = idx
-		}
-	}
-
-	for id, jsonCol := range jsonTbl.Columns {
-		for _, colInfo := range tableInfo.Columns {
-			if colInfo.Name.L != id {
-				continue
-			}
-			hist := statistics.HistogramFromProto(jsonCol.Histogram)
-			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-			tmpFT := colInfo.FieldType
-			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
-			// original value.
-			// But there's additional conversion logic for new collation data, and the collate key might be longer than
-			// the FieldType.flen.
-			// If we use the original FieldType here, there might be errors like "Invalid utf8mb4 character string"
-			// or "Data too long".
-			// So we change it to TypeBlob to bypass those logics here.
-			if colInfo.FieldType.EvalType() == types.ETString && colInfo.FieldType.GetType() != mysql.TypeEnum && colInfo.FieldType.GetType() != mysql.TypeSet {
-				tmpFT = *types.NewFieldType(mysql.TypeBlob)
-			}
-			hist, err := hist.ConvertTo(sc, &tmpFT)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			cm, topN := statistics.CMSketchAndTopNFromProto(jsonCol.CMSketch)
-			fms := statistics.FMSketchFromProto(jsonCol.FMSketch)
-			hist.ID, hist.NullCount, hist.LastUpdateVersion, hist.TotColSize, hist.Correlation = colInfo.ID, jsonCol.NullCount, jsonCol.LastUpdateVersion, jsonCol.TotColSize, jsonCol.Correlation
-			statsVer := int64(statistics.Version0)
-			if jsonCol.StatsVer != nil {
-				statsVer = *jsonCol.StatsVer
-			} else if jsonCol.Histogram.Ndv > 0 || jsonCol.NullCount > 0 {
-				// If the statistics are collected without setting stats version(which happens in v4.0 and earlier versions),
-				// we set it to 1.
-				statsVer = int64(statistics.Version1)
-			}
-			col := &statistics.Column{
-				PhysicalID:        physicalID,
-				Histogram:         *hist,
-				CMSketch:          cm,
-				TopN:              topN,
-				FMSketch:          fms,
-				Info:              colInfo,
-				IsHandle:          tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
-				StatsVer:          statsVer,
-				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
-			}
-			tbl.Columns[col.ID] = col
-		}
-	}
-	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)
-	return tbl, nil
-}
-
-// JSONTableToBlocks convert JSONTable to json, then compresses it to blocks by gzip.
-func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
-	data, err := json.Marshal(jsTable)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	var gzippedData bytes.Buffer
-	gzipWriter := compressutil.GzipWriterPool.Get().(*gzip.Writer)
-	defer compressutil.GzipWriterPool.Put(gzipWriter)
-	gzipWriter.Reset(&gzippedData)
-	if _, err := gzipWriter.Write(data); err != nil {
-		return nil, errors.Trace(err)
-	}
-	if err := gzipWriter.Close(); err != nil {
-		return nil, errors.Trace(err)
-	}
-	blocksNum := gzippedData.Len() / blockSize
-	if gzippedData.Len()%blockSize != 0 {
-		blocksNum = blocksNum + 1
-	}
-	blocks := make([][]byte, blocksNum)
-	for i := 0; i < blocksNum-1; i++ {
-		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
-	}
-	blocks[blocksNum-1] = gzippedData.Bytes()[blockSize*(blocksNum-1):]
-	return blocks, nil
-}
-
-// BlocksToJSONTable convert gzip-compressed blocks to JSONTable
-func BlocksToJSONTable(blocks [][]byte) (*JSONTable, error) {
-	if len(blocks) == 0 {
-		return nil, errors.New("Block empty error")
-	}
-	data := blocks[0]
-	for i := 1; i < len(blocks); i++ {
-		data = append(data, blocks[i]...)
-	}
-	gzippedData := bytes.NewReader(data)
-	gzipReader := compressutil.GzipReaderPool.Get().(*gzip.Reader)
-	if err := gzipReader.Reset(gzippedData); err != nil {
-		compressutil.GzipReaderPool.Put(gzipReader)
-		return nil, err
-	}
-	defer func() {
-		compressutil.GzipReaderPool.Put(gzipReader)
-	}()
-	if err := gzipReader.Close(); err != nil {
-		return nil, err
-	}
-	jsonStr, err := io.ReadAll(gzipReader)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	jsonTbl := JSONTable{}
-	err = json.Unmarshal(jsonStr, &jsonTbl)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &jsonTbl, nil
 }

@@ -17,12 +17,13 @@ package handle
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInsertAndDelete(t *testing.T) {
 	h := Handle{
-		listHead: &SessionStatsCollector{mapper: newTableDelta()},
+		listHead: &SessionStatsCollector{mapper: usage.NewTableDelta()},
 	}
 	var items []*SessionStatsCollector
 	for i := 0; i < 5; i++ {

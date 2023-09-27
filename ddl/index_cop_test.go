@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/ddl"
+	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
@@ -39,7 +40,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 		idxInfo := tblInfo.FindIndexByName(idx)
-		copCtx, err := ddl.NewCopContext4Test(tblInfo, idxInfo, tk.Session())
+		copCtx, err := copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
 		require.NoError(t, err)
 		startKey := tbl.RecordPrefix()
 		endKey := startKey.PrefixNext()
@@ -53,7 +54,7 @@ func TestAddIndexFetchRowsFromCoprocessor(t *testing.T) {
 		handles := make([]kv.Handle, 0, copChunk.NumRows())
 		values := make([][]types.Datum, 0, copChunk.NumRows())
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(row, copCtx)
+			handle, idxDatum, err := ddl.ConvertRowToHandleAndIndexDatum(row, copCtx, idxInfo.ID)
 			require.NoError(t, err)
 			handles = append(handles, handle)
 			values = append(values, idxDatum)
