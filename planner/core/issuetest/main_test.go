@@ -29,7 +29,6 @@ var testDataMap = make(testdata.BookKeeper)
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "issue_test")
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -39,8 +38,4 @@ func TestMain(m *testing.M) {
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func GetIssueTestData() testdata.TestData {
-	return testDataMap["issue_test"]
 }

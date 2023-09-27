@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -178,7 +179,7 @@ func testDumpPartitionTableStats(t *testing.T, client *testserverclient.TestServ
 		}()
 		b, err := io.ReadAll(resp0.Body)
 		require.NoError(t, err)
-		jsonTable := &handle.JSONTable{}
+		jsonTable := &storage.JSONTable{}
 		err = json.Unmarshal(b, jsonTable)
 		require.NoError(t, err)
 		require.NotNil(t, jsonTable.Partitions[globalstats.TiDBGlobalStats])

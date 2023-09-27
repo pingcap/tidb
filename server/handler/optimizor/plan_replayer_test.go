@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -273,13 +274,13 @@ func getInfoFromPlanReplayerZip(
 	t *testing.T,
 	z *zip.Reader,
 ) (
-	jsonTbls []*handle.JSONTable,
+	jsonTbls []*storage.JSONTable,
 	metas []map[string]string,
 	errMsgs []string,
 ) {
 	for _, zipFile := range z.File {
 		if strings.HasPrefix(zipFile.Name, "stats/") {
-			jsonTbl := &handle.JSONTable{}
+			jsonTbl := &storage.JSONTable{}
 			r, err := zipFile.Open()
 			require.NoError(t, err)
 			//nolint: all_revive
