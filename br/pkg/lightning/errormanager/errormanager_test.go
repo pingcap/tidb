@@ -342,7 +342,7 @@ func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestReplaceConflictKeys(t *testing.T) {
+func TestReplaceConflictKeysColumnUniqueKey(t *testing.T) {
 	column1 := &model.ColumnInfo{
 		ID:           1,
 		Name:         model.NewCIStr("a"),
@@ -456,7 +456,7 @@ func TestReplaceConflictKeys(t *testing.T) {
 
 	data1IndexKey := kvPairs.Pairs[7].Key
 	data3IndexKey := kvPairs.Pairs[1].Key
-	data1IndexValue := kvPairs.Pairs[5].Val
+	data1IndexValue := kvPairs.Pairs[7].Val
 	data2IndexValue := kvPairs.Pairs[9].Val
 	data3IndexValue := kvPairs.Pairs[1].Val
 	data4IndexValue := kvPairs.Pairs[3].Val
@@ -488,10 +488,10 @@ func TestReplaceConflictKeys(t *testing.T) {
 			AddRow(data1IndexKey, "uni_b", data2IndexValue, data2RowKey).
 			AddRow(data3IndexKey, "uni_b", data3IndexValue, data3RowKey).
 			AddRow(data3IndexKey, "uni_b", data4IndexValue, data4RowKey))
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name = 'PRIMARY' ORDER BY raw_key\\E").
-		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value", "raw_handle"}).
-			AddRow(data1RowKey, data1RowValue, data1RowKey).
-			AddRow(data1RowKey, data3RowValue, data1RowKey))
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name = 'PRIMARY' ORDER BY raw_key\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
+			AddRow(data1RowKey, data1RowValue).
+			AddRow(data1RowKey, data3RowValue))
 
 	cfg := config.NewConfig()
 	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
@@ -533,6 +533,181 @@ func TestReplaceConflictKeys(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int32(9), fnGetLatestCount.Load())
 	require.Equal(t, int32(3), fnDeleteKeyCount.Load())
+	err = mockDB.ExpectationsWereMet()
+	require.NoError(t, err)
+}
+
+func TestReplaceConflictKeysColumnKey(t *testing.T) {
+	column1 := &model.ColumnInfo{
+		ID:           1,
+		Name:         model.NewCIStr("a"),
+		Offset:       0,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
+		Hidden:       true,
+		State:        model.StatePublic,
+	}
+	column1.AddFlag(mysql.PriKeyFlag)
+
+	column2 := &model.ColumnInfo{
+		ID:           2,
+		Name:         model.NewCIStr("b"),
+		Offset:       1,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(mysql.TypeLong),
+		Hidden:       true,
+		State:        model.StatePublic,
+	}
+
+	column3 := &model.ColumnInfo{
+		ID:           3,
+		Name:         model.NewCIStr("c"),
+		Offset:       2,
+		DefaultValue: 0,
+		FieldType:    *types.NewFieldType(mysql.TypeBlob),
+		Hidden:       true,
+		State:        model.StatePublic,
+	}
+
+	index := &model.IndexInfo{
+		ID:    1,
+		Name:  model.NewCIStr("key_b"),
+		Table: model.NewCIStr(""),
+		Columns: []*model.IndexColumn{
+			{
+				Name:   model.NewCIStr("b"),
+				Offset: 1,
+				Length: -1,
+			}},
+		Unique:  false,
+		Primary: false,
+		State:   model.StatePublic,
+	}
+
+	table := &model.TableInfo{
+		ID:         104,
+		Name:       model.NewCIStr("a"),
+		Charset:    "utf8mb4",
+		Collate:    "utf8mb4_bin",
+		Columns:    []*model.ColumnInfo{column1, column2, column3},
+		Indices:    []*model.IndexInfo{index},
+		PKIsHandle: true,
+		State:      model.StatePublic,
+	}
+
+	tbl, err := tables.TableFromMeta(tidbkv.NewPanickingAllocators(0), table)
+	require.NoError(t, err)
+
+	sessionOpts := encode.SessionOptions{
+		SQLMode:   mysql.ModeStrictAllTables,
+		Timestamp: 1234567890,
+	}
+
+	encoder, err := tidbkv.NewBaseKVEncoder(&encode.EncodingConfig{
+		Table:          tbl,
+		SessionOptions: sessionOpts,
+		Logger:         log.L(),
+	})
+	require.NoError(t, err)
+	encoder.SessionCtx.GetSessionVars().RowEncoder.Enable = true
+
+	data1 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(6),
+		types.NewStringDatum("1.csv"),
+	}
+	data2 := []types.Datum{
+		types.NewIntDatum(2),
+		types.NewIntDatum(6),
+		types.NewStringDatum("2.csv"),
+	}
+	data3 := []types.Datum{
+		types.NewIntDatum(3),
+		types.NewIntDatum(3),
+		types.NewStringDatum("3.csv"),
+	}
+	data4 := []types.Datum{
+		types.NewIntDatum(3),
+		types.NewIntDatum(4),
+		types.NewStringDatum("4.csv"),
+	}
+	data5 := []types.Datum{
+		types.NewIntDatum(5),
+		types.NewIntDatum(4),
+		types.NewStringDatum("5.csv"),
+	}
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data2)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data3)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data4)
+	require.NoError(t, err)
+	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data5)
+	require.NoError(t, err)
+	kvPairs := encoder.SessionCtx.TakeKvPairs()
+
+	data1IndexKey := kvPairs.Pairs[7].Key
+	data1IndexValue := kvPairs.Pairs[7].Val
+	data1RowKey := kvPairs.Pairs[4].Key
+	data1RowValue := kvPairs.Pairs[4].Val
+	data3RowValue := kvPairs.Pairs[6].Val
+
+	db, mockDB, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() {
+		_ = db.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	mockDB.ExpectExec("CREATE SCHEMA IF NOT EXISTS `lightning_task_info`").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mockDB.ExpectExec("CREATE TABLE IF NOT EXISTS `lightning_task_info`\\.conflict_error_v1.*").
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	mockDB.ExpectQuery("\\QSELECT raw_key, index_name, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name <> 'PRIMARY' ORDER BY raw_key\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}))
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name = 'PRIMARY' ORDER BY raw_key\\E").
+		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value"}).
+			AddRow(data1RowKey, data1RowValue).
+			AddRow(data1RowKey, data3RowValue))
+
+	cfg := config.NewConfig()
+	cfg.TikvImporter.DuplicateResolution = config.DupeResAlgReplace
+	cfg.App.TaskInfoSchemaName = "lightning_task_info"
+	em := New(db, cfg, log.L())
+	err = em.Init(ctx)
+	require.NoError(t, err)
+
+	fnGetLatestCount := atomic.NewInt32(0)
+	fnDeleteKeyCount := atomic.NewInt32(0)
+	pool := utils.NewWorkerPool(16, "resolve duplicate rows by replace")
+	err = em.ReplaceConflictKeys(
+		ctx, tbl, "test", pool,
+		func(ctx context.Context, key []byte) ([]byte, error) {
+			fnGetLatestCount.Add(1)
+			switch {
+			case bytes.Equal(key, data1IndexKey):
+				return data1IndexValue, nil
+			case bytes.Equal(key, data1RowKey):
+				return data1RowValue, nil
+			default:
+				return nil, fmt.Errorf("key %v is not expected", key)
+			}
+		},
+		func(ctx context.Context, key []byte) error {
+			fnDeleteKeyCount.Add(1)
+			if !bytes.Equal(key, data1IndexKey) {
+				return fmt.Errorf("key %v is not expected", key)
+			}
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, int32(3), fnGetLatestCount.Load())
+	require.Equal(t, int32(1), fnDeleteKeyCount.Load())
 	err = mockDB.ExpectationsWereMet()
 	require.NoError(t, err)
 }

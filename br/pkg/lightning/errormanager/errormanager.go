@@ -151,7 +151,7 @@ const (
 	`
 
 	selectDataConflictKeysReplace = `
-		SELECT raw_key, raw_value, raw_handle
+		SELECT raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
 		WHERE table_name = ? AND index_name = 'PRIMARY'
 		ORDER BY raw_key;
@@ -668,14 +668,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		var mustKeepKvPairs *kv.Pairs
 
 		for dataKvRows.Next() {
-			var rawKey, rawValue, rawHandle []byte
-			if err := dataKvRows.Scan(&rawKey, &rawValue, &rawHandle); err != nil {
+			var rawKey, rawValue []byte
+			if err := dataKvRows.Scan(&rawKey, &rawValue); err != nil {
 				return errors.Trace(err)
 			}
 			em.logger.Debug("got group raw_key, raw_value, raw_handle from table",
 				logutil.Key("raw_key", rawKey),
-				zap.Binary("raw_value", rawValue),
-				zap.Binary("raw_handle", rawHandle))
+				zap.Binary("raw_value", rawValue))
 
 			if !bytes.Equal(rawKey, previousRawKey) {
 				previousRawKey = rawKey
@@ -710,7 +709,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				continue
 			}
 
-			handle, err := tablecodec.DecodeRowKey(rawHandle)
+			handle, err := tablecodec.DecodeRowKey(rawKey)
 			if err != nil {
 				return errors.Trace(err)
 			}
