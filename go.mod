@@ -67,6 +67,7 @@ require (
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
+<<<<<<< HEAD
 	github.com/pingcap/badger v1.5.1-0.20220314162537-ab58fbf40580
 	github.com/pingcap/errors v0.11.5-0.20220729040631-518f63d66278
 	github.com/pingcap/failpoint v0.0.0-20220423142525-ae43b7f4e5c3
@@ -74,6 +75,15 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20230726063044-73d6d7f3756b
 	github.com/pingcap/log v1.1.1-0.20221116035753-734d527bc87c
 	github.com/pingcap/sysutil v0.0.0-20220114020952-ea68d2dbf5b4
+=======
+	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
+	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
+	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
+	github.com/pingcap/fn v1.0.0
+	github.com/pingcap/kvproto v0.0.0-20230925123611-87bebcc0d071
+	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
+	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
+>>>>>>> 32540a4a779 (snapshot_backup: deny executing tidb-lightning import while running snapshot_backup (#47001))
 	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20221123081521-2fb828910813
 	github.com/pkg/errors v0.9.1

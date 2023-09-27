@@ -16,7 +16,7 @@ type PauseGcConfig struct {
 	TTL       time.Duration `json:"ttl" yaml:"ttl"`
 }
 
-func DefineFlagsForPauseGcConfig(f *pflag.FlagSet) {
+func DefineFlagsForPrepareSnapBackup(f *pflag.FlagSet) {
 	_ = f.DurationP("ttl", "i", 5*time.Minute, "The time-to-live of the safepoint.")
 	_ = f.Uint64P("safepoint", "t", 0, "The GC safepoint to be kept.")
 }
