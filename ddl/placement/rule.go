@@ -206,24 +206,11 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 		}
 
 		for labels, cnt := range constraints2 {
-			innerLabels := strings.Split(labels, ",")
-			overrideRole := role
-			newLabels := make([]string, 0, len(innerLabels))
-			for _, str := range innerLabels {
-				if strings.HasPrefix(str, attributePrefix) {
-					switch str[1:] {
-					case attributeEvictLeader:
-						if role == Voter {
-							overrideRole = Follower
-						}
-					default:
-						return rules, fmt.Errorf("%w: unsupported attribute '%s'", ErrUnsupportedConstraint, str)
-					}
-					continue
-				}
-				newLabels = append(newLabels, str)
+			lbs, overrideRole, err := preCheckDictConstraintStr(labels, role)
+			if err != nil {
+				return rules, err
 			}
-			labelConstraints, err := NewConstraints(newLabels)
+			labelConstraints, err := NewConstraints(lbs)
 			if err != nil {
 				return rules, err
 			}
