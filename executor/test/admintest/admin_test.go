@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -91,100 +90,6 @@ func TestAdminCheckIndex(t *testing.T) {
 		PARTITION p1 VALUES LESS THAN (10),
 		PARTITION p2 VALUES LESS THAN (MAXVALUE))`)
 	check()
-}
-
-func TestAdminCheckIndexInTemporaryMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists temporary_admin_test;")
-	tk.MustExec("create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;")
-	tk.MustExec("insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
-	err := tk.ExecToErr("admin check table temporary_admin_test;")
-	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
-	err = tk.ExecToErr("admin check index temporary_admin_test c1;")
-	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check index").Error())
-	tk.MustExec("drop table if exists temporary_admin_test;")
-
-	tk.MustExec("drop table if exists non_temporary_admin_test;")
-	tk.MustExec("create table non_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2));")
-	tk.MustExec("insert non_temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);")
-	tk.MustExec("admin check table non_temporary_admin_test;")
-	tk.MustExec("drop table if exists non_temporary_admin_test;")
-
-	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test;")
-	tk.MustExec("drop table if exists temporary_admin_checksum_table_without_index_test;")
-	tk.MustExec("create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;")
-	tk.MustExec("create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;")
-	err = tk.ExecToErr("admin checksum table temporary_admin_checksum_table_with_index_test;")
-	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	err = tk.ExecToErr("admin checksum table temporary_admin_checksum_table_without_index_test;")
-	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	tk.MustExec("drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;")
-}
-
-func TestAdminCheckIndexInLocalTemporaryMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists local_temporary_admin_test;")
-	tk.MustExec("create temporary table local_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2))")
-	tk.MustExec("insert local_temporary_admin_test (c1, c2) values (1,1), (2,2), (3,3);")
-	err := tk.ExecToErr("admin check table local_temporary_admin_test;")
-	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin check table").Error())
-	tk.MustExec("drop table if exists temporary_admin_test;")
-
-	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test;")
-	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_without_index_test;")
-	tk.MustExec("create temporary table local_temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count))")
-	tk.MustExec("create temporary table local_temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id))")
-	err = tk.ExecToErr("admin checksum table local_temporary_admin_checksum_table_with_index_test;")
-	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	err = tk.ExecToErr("admin checksum table local_temporary_admin_checksum_table_without_index_test;")
-	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("admin checksum table").Error())
-	tk.MustExec("drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;")
-}
-
-func TestAdminCheckIndexInCacheTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists cache_admin_test;")
-	tk.MustExec("create table cache_admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2))")
-	tk.MustExec("insert cache_admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11)")
-	tk.MustExec("alter table cache_admin_test cache")
-	tk.MustExec("admin check table cache_admin_test;")
-	tk.MustExec("admin check index cache_admin_test c1;")
-	tk.MustExec("admin check index cache_admin_test c2;")
-	tk.MustExec("alter table cache_admin_test nocache;")
-	tk.MustExec("drop table if exists cache_admin_test;")
-
-	tk.MustExec(`drop table if exists check_index_test;`)
-	tk.MustExec(`create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b))`)
-	tk.MustExec(`insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi")`)
-	tk.MustExec("alter table  check_index_test cache")
-	result := tk.MustQuery("admin check index check_index_test a_b (2, 4);")
-	result.Check(testkit.Rows("1 ef 3", "2 cd 2"))
-	result = tk.MustQuery("admin check index check_index_test a_b (3, 5);")
-	result.Check(testkit.Rows("-1 hi 4", "1 ef 3"))
-	tk.MustExec("alter table check_index_test nocache;")
-	tk.MustExec("drop table if exists check_index_test;")
-
-	tk.MustExec("drop table if exists cache_admin_table_with_index_test;")
-	tk.MustExec("drop table if exists cache_admin_table_without_index_test;")
-	tk.MustExec("create table cache_admin_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count))")
-	tk.MustExec("create table cache_admin_table_without_index_test (id int, count int, PRIMARY KEY(id))")
-	tk.MustExec("alter table cache_admin_table_with_index_test cache")
-	tk.MustExec("alter table cache_admin_table_without_index_test cache")
-	tk.MustExec("admin checksum table cache_admin_table_with_index_test;")
-	tk.MustExec("admin checksum table cache_admin_table_without_index_test;")
-
-	tk.MustExec("alter table cache_admin_table_with_index_test nocache;")
-	tk.MustExec("alter table cache_admin_table_without_index_test nocache;")
-	tk.MustExec("drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;")
 }
 
 func TestAdminRecoverIndex(t *testing.T) {
@@ -597,17 +502,6 @@ func TestAdminRecoverIndex1(t *testing.T) {
 	tk.MustExec("admin check table admin_test")
 	tk.MustExec("admin check index admin_test c2")
 	tk.MustExec("admin check index admin_test `primary`")
-}
-
-// https://github.com/pingcap/tidb/issues/32915.
-func TestAdminRecoverIndexEdge(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id bigint(20) primary key, col varchar(255) unique key);")
-	tk.MustExec("insert into t values(9223372036854775807, 'test');")
-	tk.MustQuery("admin recover index t col;").Check(testkit.Rows("0 1"))
 }
 
 func TestAdminCleanupIndex(t *testing.T) {
@@ -1405,16 +1299,6 @@ func TestCheckFailReport(t *testing.T) {
 		logEntry.CheckFieldNotEmpty(t, "row_mvcc")
 		logEntry.CheckFieldNotEmpty(t, "index_mvcc")
 	}()
-}
-
-func TestAdminCheckPrimaryIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));")
-	tk.MustExec("insert into t values(1, 1, 1), (9223372036854775807, 2, 2);")
-	tk.MustExec("admin check index t idx;")
 }
 
 func TestAdminCheckWithSnapshot(t *testing.T) {

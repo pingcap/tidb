@@ -1,0 +1,82 @@
+# TestAdminCheckIndexInTemporaryMode
+drop table if exists temporary_admin_test;
+create global temporary table temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2)) ON COMMIT DELETE ROWS;
+insert temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);
+--error 8006
+admin check table temporary_admin_test;
+--error 8006
+admin check index temporary_admin_test c1;
+drop table if exists temporary_admin_test;
+drop table if exists non_temporary_admin_test;
+create table non_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2));
+insert non_temporary_admin_test (c1, c2) values (1, 1), (2, 2), (3, 3);
+admin check table non_temporary_admin_test;
+drop table if exists non_temporary_admin_test;
+drop table if exists temporary_admin_checksum_table_with_index_test;
+drop table if exists temporary_admin_checksum_table_without_index_test;
+create global temporary table temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count)) ON COMMIT DELETE ROWS;
+create global temporary table temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id)) ON COMMIT DELETE ROWS;
+--error 8006
+admin checksum table temporary_admin_checksum_table_with_index_test;
+--error 8006
+admin checksum table temporary_admin_checksum_table_without_index_test;
+drop table if exists temporary_admin_checksum_table_with_index_test,temporary_admin_checksum_table_without_index_test;
+
+# TestAdminCheckIndexInLocalTemporaryMode
+drop table if exists local_temporary_admin_test;
+create temporary table local_temporary_admin_test (c1 int, c2 int, c3 int default 1, primary key (c1), index (c1), unique key(c2));
+insert local_temporary_admin_test (c1, c2) values (1,1), (2,2), (3,3);
+--error 8006
+admin check table local_temporary_admin_test;
+drop table if exists temporary_admin_test;
+drop table if exists local_temporary_admin_checksum_table_with_index_test;
+drop table if exists local_temporary_admin_checksum_table_without_index_test;
+create temporary table local_temporary_admin_checksum_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count));
+create temporary table local_temporary_admin_checksum_table_without_index_test (id int, count int, PRIMARY KEY(id));
+--error 8006
+admin checksum table local_temporary_admin_checksum_table_with_index_test;
+--error 8006
+admin checksum table local_temporary_admin_checksum_table_without_index_test;
+drop table if exists local_temporary_admin_checksum_table_with_index_test,local_temporary_admin_checksum_table_without_index_test;
+
+# TestAdminCheckIndexInCacheTable
+drop table if exists cache_admin_test;
+create table cache_admin_test (c1 int, c2 int, c3 int default 1, index (c1), unique key(c2));
+insert cache_admin_test (c1, c2) values (1, 1), (2, 2), (5, 5), (10, 10), (11, 11);
+alter table cache_admin_test cache;
+admin check table cache_admin_test;
+admin check index cache_admin_test c1;
+admin check index cache_admin_test c2;
+alter table cache_admin_test nocache;
+drop table if exists cache_admin_test;
+drop table if exists check_index_test;
+create table check_index_test (a int, b varchar(10), index a_b (a, b), index b (b));
+insert check_index_test values (3, "ab"),(2, "cd"),(1, "ef"),(-1, "hi");
+alter table  check_index_test cache;
+admin check index check_index_test a_b (2, 4);
+admin check index check_index_test a_b (3, 5);
+alter table check_index_test nocache;
+drop table if exists check_index_test;
+drop table if exists cache_admin_table_with_index_test;
+drop table if exists cache_admin_table_without_index_test;
+create table cache_admin_table_with_index_test (id int, count int, PRIMARY KEY(id), KEY(count));
+create table cache_admin_table_without_index_test (id int, count int, PRIMARY KEY(id));
+alter table cache_admin_table_with_index_test cache;
+alter table cache_admin_table_without_index_test cache;
+admin checksum table cache_admin_table_with_index_test;
+admin checksum table cache_admin_table_without_index_test;
+alter table cache_admin_table_with_index_test nocache;
+alter table cache_admin_table_without_index_test nocache;
+drop table if exists cache_admin_table_with_index_test,cache_admin_table_without_index_test;
+
+# TestAdminRecoverIndexEdge
+drop table if exists t;
+create table t(id bigint(20) primary key, col varchar(255) unique key);
+insert into t values(9223372036854775807, 'test');
+admin recover index t col;
+
+# TestAdminCheckPrimaryIndex
+drop table if exists t;
+create table t(a bigint unsigned primary key, b int, c int, index idx(a, b));
+insert into t values(1, 1, 1), (9223372036854775807, 2, 2);
+admin check index t idx;
