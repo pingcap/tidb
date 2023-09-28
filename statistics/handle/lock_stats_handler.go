@@ -25,7 +25,7 @@ import (
 // Return the message of skipped tables and error.
 func (h *Handle) LockTables(tables map[int64]*lockstats.TableInfo) (skipped string, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		skipped, err = lockstats.AddLockedTables(sctx.(sqlexec.RestrictedSQLExecutor),tables)
+		skipped, err = lockstats.AddLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tables)
 		return err
 	})
 	return

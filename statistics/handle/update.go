@@ -312,59 +312,59 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			return err
 		}
 
-	var affectedRows uint64
-	// If it's a partitioned table and its global-stats exists,
-	// update its count and modify_count as well.
-	if tbl != nil {
-		// We need to check if the table and the partition are locked.
-		isTableLocked := false
-		isPartitionLocked := false
-		tableID := tbl.Meta().ID
-		if _, ok := lockedTables[tableID]; ok {
-			isTableLocked = true
-		}
-		if _, ok := lockedTables[physicalTableID]; ok {
-			isPartitionLocked = true
-		}
-		tableOrPartitionLocked := isTableLocked || isPartitionLocked
-		if err = updateStatsMeta(sctx, statsVersion, delta,
-			physicalTableID, tableOrPartitionLocked); err != nil {
-			return err
-		}
-		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-		// If the partition is locked, we don't need to update the global-stats.
-		// We will update its global-stats when the partition is unlocked.
-		// 1. If table is locked and partition is locked, we only stash the delta in the partition's lock info.
-		//    we will update its global-stats when the partition is unlocked.
-		// 2. If table is locked and partition is not locked(new partition after lock), we only stash the delta in the table's lock info.
-		//    we will update its global-stats when the table is unlocked. We don't need to specially handle this case.
-		//    Because updateStatsMeta will insert a new record if the record doesn't exist.
-		// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
-		//    we will update its global-stats when the partition is unlocked.
-		// 4. If table is not locked and partition is not locked, we update the global-stats.
-		// To sum up, we only need to update the global-stats when the table and the partition are not locked.
-		if !isTableLocked && !isPartitionLocked {
-			// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-			if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
+		var affectedRows uint64
+		// If it's a partitioned table and its global-stats exists,
+		// update its count and modify_count as well.
+		if tbl != nil {
+			// We need to check if the table and the partition are locked.
+			isTableLocked := false
+			isPartitionLocked := false
+			tableID := tbl.Meta().ID
+			if _, ok := lockedTables[tableID]; ok {
+				isTableLocked = true
+			}
+			if _, ok := lockedTables[physicalTableID]; ok {
+				isPartitionLocked = true
+			}
+			tableOrPartitionLocked := isTableLocked || isPartitionLocked
+			if err = updateStatsMeta(sctx, statsVersion, delta,
+				physicalTableID, tableOrPartitionLocked); err != nil {
+				return err
+			}
+			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			// If the partition is locked, we don't need to update the global-stats.
+			// We will update its global-stats when the partition is unlocked.
+			// 1. If table is locked and partition is locked, we only stash the delta in the partition's lock info.
+			//    we will update its global-stats when the partition is unlocked.
+			// 2. If table is locked and partition is not locked(new partition after lock), we only stash the delta in the table's lock info.
+			//    we will update its global-stats when the table is unlocked. We don't need to specially handle this case.
+			//    Because updateStatsMeta will insert a new record if the record doesn't exist.
+			// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
+			//    we will update its global-stats when the partition is unlocked.
+			// 4. If table is not locked and partition is not locked, we update the global-stats.
+			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
+			if !isTableLocked && !isPartitionLocked {
+				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+				if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
+					return err
+				}
+				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			}
+		} else {
+			// This is a non-partitioned table.
+			// Check if it's locked.
+			isTableLocked := false
+			if _, ok := lockedTables[physicalTableID]; ok {
+				isTableLocked = true
+			}
+			if err = updateStatsMeta(sctx, statsVersion, delta,
+				physicalTableID, isTableLocked); err != nil {
 				return err
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
-	} else {
-		// This is a non-partitioned table.
-		// Check if it's locked.
-		isTableLocked := false
-		if _, ok := lockedTables[physicalTableID]; ok {
-			isTableLocked = true
-		}
-		if err = updateStatsMeta(sctx, statsVersion, delta,
-			physicalTableID, isTableLocked); err != nil {
-			return err
-		}
-		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-	}
 
-	updated = affectedRows > 0
+		updated = affectedRows > 0
 		return nil
 	}, flagWrapTxn)
 	return
