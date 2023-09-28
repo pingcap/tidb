@@ -630,7 +630,7 @@ func (s *precheckImplSuite) TestCDCPITRCheckItem() {
 		s.Require().NoError(err)
 	}
 	// TiCDC >= v6.2
-	checkEtcdPut("/tidb/cdc//__cdc_meta__/capture/3ecd5c98-0148-4086-adfd-17641995e71f")
+	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/capture/3ecd5c98-0148-4086-adfd-17641995e71f")
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/meta-version")
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/meta/ticdc-delete-etcd-key-count")
 	checkEtcdPut("/tidb/cdc/default/__cdc_meta__/owner/22318498f4dd6639")
