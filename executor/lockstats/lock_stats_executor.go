@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -67,12 +68,12 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	} else {
-		tidAndNames, pidAndNames, err := populateTableAndPartitionIDs(e.Tables, is)
+		tableWithPartitions, err := populateTableAndPartitionIDs(e.Tables, is)
 		if err != nil {
 			return err
 		}
 
-		msg, err := h.LockTables(tidAndNames, pidAndNames)
+		msg, err := h.LockTables(tableWithPartitions)
 		if err != nil {
 			return err
 		}
@@ -130,35 +131,38 @@ func populatePartitionIDAndNames(
 	return tbl.Meta().ID, pidNames, nil
 }
 
-// populateTableAndPartitionIDs returns table IDs and partition IDs for the given table names.
+// populateTableAndPartitionIDs returns the lockstats.TableInfo for the given table names.
 func populateTableAndPartitionIDs(
 	tables []*ast.TableName,
 	is infoschema.InfoSchema,
-) (map[int64]string, map[int64]string, error) {
+) (map[int64]*lockstats.TableInfo, error) {
 	if len(tables) == 0 {
-		return nil, nil, errors.New("table list should not be empty")
+		return nil, errors.New("table list should not be empty")
 	}
-
-	tidAndNames := make(map[int64]string, len(tables))
-	pidAndNames := make(map[int64]string, len(tables))
+	tableWithPartitions := make(map[int64]*lockstats.TableInfo, len(tables))
 
 	for _, table := range tables {
 		tbl, err := is.TableByName(table.Schema, table.Name)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		tidAndNames[tbl.Meta().ID] = fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L)
+		tid := tbl.Meta().ID
+		tableWithPartitions[tid] = &lockstats.TableInfo{
+			FullName: fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L),
+		}
 
 		pi := tbl.Meta().GetPartitionInfo()
 		if pi == nil {
 			continue
 		}
+		tableWithPartitions[tid].PartitionInfo = make(map[int64]string, len(pi.Definitions))
+
 		for _, p := range pi.Definitions {
-			pidAndNames[p.ID] = genFullPartitionName(table, p.Name.L)
+			tableWithPartitions[tid].PartitionInfo[p.ID] = genFullPartitionName(table, p.Name.L)
 		}
 	}
 
-	return tidAndNames, pidAndNames, nil
+	return tableWithPartitions, nil
 }
 
 func genFullPartitionName(table *ast.TableName, partitionName string) string {

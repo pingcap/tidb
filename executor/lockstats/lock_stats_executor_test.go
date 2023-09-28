@@ -71,19 +71,14 @@ func TestPopulateTableAndPartitionIDs(t *testing.T) {
 		},
 	}
 
-	gotTIDAndNames, gotPIDAndNames, err := populateTableAndPartitionIDs(tables, fakeInfo)
+	tableWithPartitions, err := populateTableAndPartitionIDs(tables, fakeInfo)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]string{
-		1: "test.t1",
-		4: "test.t2",
-	}, gotTIDAndNames)
-	require.Equal(t, map[int64]string{
-		2: "test.t1 partition (p1)",
-		3: "test.t1 partition (p2)",
-	}, gotPIDAndNames)
-
+	require.Equal(t, 2, len(tableWithPartitions))
+	require.Equal(t, "test.t1", tableWithPartitions[1].FullName)
+	require.Equal(t, "test.t1 partition (p1)", tableWithPartitions[1].PartitionInfo[2])
+	require.Equal(t, "test.t2", tableWithPartitions[4].FullName)
 	// Empty table list.
-	_, _, err = populateTableAndPartitionIDs(nil, fakeInfo)
+	_, err = populateTableAndPartitionIDs(nil, fakeInfo)
 	require.Error(t, err)
 }
 

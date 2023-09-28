@@ -63,11 +63,11 @@ func (e *UnlockExec) Next(context.Context, *chunk.Chunk) error {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	} else {
-		tidAndNames, pidAndNames, err := populateTableAndPartitionIDs(e.Tables, is)
+		tableWithPartitions, err := populateTableAndPartitionIDs(e.Tables, is)
 		if err != nil {
 			return err
 		}
-		msg, err := h.RemoveLockedTables(tidAndNames, pidAndNames)
+		msg, err := h.RemoveLockedTables(tableWithPartitions)
 		if err != nil {
 			return err
 		}

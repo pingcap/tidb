@@ -79,7 +79,7 @@ func TestGenerateSkippedTablesMessage(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := generateStableSkippedTablesMessage(tt.totalTableIDs, tt.tables, tt.action, tt.status)
+			msg := generateStableSkippedTablesMessage(len(tt.totalTableIDs), tt.tables, tt.action, tt.status)
 			require.Equal(t, tt.expectedMsg, msg)
 		})
 	}
@@ -224,20 +224,117 @@ func TestAddLockedTables(t *testing.T) {
 		"COMMIT",
 	)
 
-	tidsAndNames := map[int64]string{
-		1: "test.t1",
-		2: "test.t2",
-		3: "test.t3",
-	}
-	pidAndNames := map[int64]string{
-		4: "p1",
+	tables := map[int64]*TableInfo{
+		1: {
+			FullName: "test.t1",
+			PartitionInfo: map[int64]string{
+				4: "p1",
+			},
+		},
+		2: {
+			FullName: "test.t2",
+		},
+		3: {
+			FullName: "test.t3",
+		},
 	}
 
 	msg, err := AddLockedTables(
 		exec,
-		tidsAndNames,
-		pidAndNames,
+		tables,
 	)
 	require.NoError(t, err)
 	require.Equal(t, "skip locking locked tables: test.t1, other tables locked successfully", msg)
+}
+
+func TestAddLockedPartitions(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		gomock.Eq("BEGIN PESSIMISTIC"),
+	)
+
+	// No table is locked.
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		selectSQL,
+	).Return(nil, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(2), int64(2)}),
+	)
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		insertSQL,
+		gomock.Eq([]interface{}{int64(3), int64(3)}),
+	)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		"COMMIT",
+	)
+
+	msg, err := AddLockedPartitions(
+		exec,
+		1,
+		"test.t1",
+		map[int64]string{
+			2: "p1",
+			3: "p2",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "", msg)
+}
+
+func TestAddLockedPartitionsFailed(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
+
+	// Executed SQL should be:
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		gomock.Eq("BEGIN PESSIMISTIC"),
+	)
+
+	// Return table 1 is locked.
+	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
+	c.AppendInt64(0, int64(1))
+	rows := []chunk.Row{c.GetRow(0)}
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		selectSQL,
+	).Return(rows, nil, nil)
+
+	exec.EXPECT().ExecRestrictedSQL(
+		gomock.All(&ctxMatcher{}),
+		useCurrentSession,
+		"COMMIT",
+	)
+
+	msg, err := AddLockedPartitions(
+		exec,
+		1,
+		"test.t1",
+		map[int64]string{
+			2: "p1",
+			3: "p2",
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "skip locking partitions of locked table: test.t1", msg)
 }
