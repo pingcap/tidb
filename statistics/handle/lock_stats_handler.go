@@ -15,7 +15,7 @@
 package handle
 
 import (
-	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -24,16 +24,12 @@ import (
 // - tidAndNames: table ids and names of which will be locked.
 // - pidAndNames: partition ids and names of which will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) LockTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-
-	return lockstats.AddLockedTables(exec, tidAndNames, pidAndNames)
+func (h *Handle) LockTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.AddLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tidAndNames, pidAndNames)
+		return err
+	})
+	return
 }
 
 // LockPartitions add locked partitions id to store.
@@ -47,31 +43,24 @@ func (h *Handle) LockPartitions(
 	tid int64,
 	tableName string,
 	pidNames map[int64]string,
-) (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-
-	return lockstats.AddLockedPartitions(exec, tid, tableName, pidNames)
+) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.AddLockedPartitions(sctx.(sqlexec.RestrictedSQLExecutor), tid, tableName, pidNames)
+		return err
+	})
+	return
 }
 
 // RemoveLockedTables remove tables from table locked records.
 // - tidAndNames:  table ids and names of which will be unlocked.
 // - pidAndNames: partition ids and names of which will be unlocked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return lockstats.RemoveLockedTables(exec, tidAndNames, pidAndNames)
+func (h *Handle) RemoveLockedTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.RemoveLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tidAndNames, pidAndNames)
+		return err
+	})
+	return
 }
 
 // RemoveLockedPartitions remove partitions from table locked records.
@@ -83,15 +72,12 @@ func (h *Handle) RemoveLockedPartitions(
 	tid int64,
 	tableName string,
 	pidNames map[int64]string,
-) (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return lockstats.RemoveLockedPartitions(exec, tid, tableName, pidNames)
+) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.RemoveLockedPartitions(sctx.(sqlexec.RestrictedSQLExecutor), tid, tableName, pidNames)
+		return err
+	})
+	return
 }
 
 // GetLockedTables returns the locked status of the given tables.
@@ -106,15 +92,12 @@ func (h *Handle) GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error) 
 }
 
 // queryLockedTables query locked tables from store.
-func (h *Handle) queryLockedTables() (map[int64]struct{}, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return lockstats.QueryLockedTables(exec)
+func (h *Handle) queryLockedTables() (tables map[int64]struct{}, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		tables, err = lockstats.QueryLockedTables(sctx.(sqlexec.RestrictedSQLExecutor))
+		return err
+	})
+	return
 }
 
 // GetTableLockedAndClearForTest for unit test only.
