@@ -1076,12 +1076,14 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 	}
 
 	// check cdc changefeed
-	nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
-	if err != nil {
-		return err
-	}
-	if !nameSet.Empty() {
-		return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+	if cfg.CheckRequirements {
+		nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+		if err != nil {
+			return err
+		}
+		if !nameSet.Empty() {
+			return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+		}
 	}
 	return nil
 }

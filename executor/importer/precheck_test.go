@@ -137,7 +137,7 @@ func TestCheckRequirements(t *testing.T) {
 	_, err = etcdCli.Delete(ctx, pitrKey)
 	require.NoError(t, err)
 	// example: /tidb/cdc/<clusterID>/<namespace>/changefeed/info/<changefeedID>
-	cdcKey := utils.CDCPrefix + "test_cluster/test_ns/changefeed/info/test_cf"
+	cdcKey := utils.CDCPrefix + "testcluster/test_ns/changefeed/info/test_cf"
 	_, err = etcdCli.Put(ctx, cdcKey, `{"state":"normal"}`)
 	require.NoError(t, err)
 	err = c.CheckRequirements(ctx, conn)
