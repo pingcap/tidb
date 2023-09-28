@@ -277,7 +277,8 @@ func New(selfAddr string, etcdAddr []string, store kv.Storage, tlsConfig *tls.Co
 
 func newWithCli(selfAddr string, cli *clientv3.Client, store kv.Storage) *Service {
 	l := owner.NewOwnerManager(context.Background(), cli, "autoid", selfAddr, autoIDLeaderPath)
-	err := l.CampaignOwner()
+	// 10 means that autoid service's etcd lease is 10s.
+	err := l.CampaignOwner(10)
 	if err != nil {
 		panic(err)
 	}
