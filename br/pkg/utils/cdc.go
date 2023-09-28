@@ -69,10 +69,8 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 		return nil, errors.Trace(err)
 	}
 
-	// Generate a random cluster ID in pd
-	// r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	// ts := uint64(time.Now().Unix())
-	// clusterID := (ts << 32) + uint64(r.Uint32())
+	// cluster id should be valid in
+	// https://github.com/pingcap/tiflow/blob/ca69c33948bea082aff9f4c0a357ace735b494ed/pkg/config/server_config.go#L218
 	reg, err := regexp.Compile("^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$")
 	if err != nil {
 		log.L().Warn("failed to parse cluster id, skip it", zap.Error(err))
