@@ -26,7 +26,8 @@ import (
 
 const (
 	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
-	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = CASE WHEN %? < 0 THEN IF(count > ABS(%?), count - ABS(%?), 0) ELSE count + %? END, modify_count = modify_count + %? WHERE table_id = %?"
+	// Make sure the count won't be negative.
+	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = IF(count + %? > 0, count + %?, 0), modify_count = modify_count + %? WHERE table_id = %?"
 	// DeleteLockSQL is used to delete the locked table record.
 	DeleteLockSQL = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
 )
@@ -163,8 +164,7 @@ func updateDelta(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, count,
 		ctx,
 		useCurrentSession,
 		updateDeltaSQL,
-		// I know it's ugly :(
-		version, count, count, count, count, modifyCount, tid,
+		version, count, count, modifyCount, tid,
 	); err != nil {
 		return err
 	}
