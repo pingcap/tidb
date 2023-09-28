@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "serverinfo",
+    srcs = ["main.go"],
+    importpath = "github.com/pingcap/tidb/cmd/serverinfo",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//util/cgroup",
+        "//util/memory",
+        "@org_uber_go_automaxprocs//:automaxprocs",
+    ],
+)
