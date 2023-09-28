@@ -515,17 +515,22 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 	case *ast.Join:
 		return b.buildJoin(ctx, x)
 	case *ast.TableSource:
-		var isTableName bool
+		var (
+			isTableName bool
+			isSubQuery  bool
+		)
 		switch v := x.Source.(type) {
 		case *ast.SelectStmt:
 			ci := b.prepareCTECheckForSubQuery()
 			defer resetCTECheckForSubQuery(ci)
 			b.optFlag = b.optFlag | flagConstantPropagation
 			p, err = b.buildSelect(ctx, v)
+			isSubQuery = true
 		case *ast.SetOprStmt:
 			ci := b.prepareCTECheckForSubQuery()
 			defer resetCTECheckForSubQuery(ci)
 			p, err = b.buildSetOpr(ctx, v)
+			isSubQuery = true
 		case *ast.TableName:
 			p, err = b.buildDataSource(ctx, v, &x.AsName)
 			isTableName = true
@@ -536,12 +541,31 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
+		var dbName4DerivedTable model.CIStr
+		if isSubQuery {
+			// change the derived table's database name.
+			asName := x.AsName
+			x.AsName = model.NewCIStr("")
+			var sb strings.Builder
+			// (select * from t) as t1 => db name as (select * from t)
+			err = x.Restore(format.NewRestoreCtx(0, &sb))
+			if err != nil {
+				return nil, err
+			}
+			dbName4DerivedTable = model.NewCIStr(sb.String())
+			x.AsName = asName
+		}
+
 		for _, name := range p.OutputNames() {
 			if name.Hidden {
 				continue
 			}
 			if x.AsName.L != "" {
 				name.TblName = x.AsName
+			}
+			if isSubQuery {
+				// change the derived table's database name.
+				name.DBName = dbName4DerivedTable
 			}
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
@@ -4405,6 +4429,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if strings.HasPrefix(b.ctx.GetSessionVars().StmtCtx.OriginalSQL, "SELECT LAST_VALUE((SELECT upper.j FROM t LIMIT 1)) OVER (PARTITION BY i)  FROM t AS upper") {
+		fmt.Println(1)
 	}
 
 	hasWindowFuncField := b.detectSelectWindow(sel)

@@ -756,7 +756,7 @@ type SessionVars struct {
 	// Port is the port of the connected socket
 	Port string
 
-	// CurrentDB is the default database of this session.
+	// CurrentDB is the default database (original case-sensitive name) of this session.
 	CurrentDB string
 
 	// CurrentDBChanged indicates if the CurrentDB has been updated, and if it is we should print it into

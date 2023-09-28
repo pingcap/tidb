@@ -1062,11 +1062,11 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
 	isOracleMode := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
 	if !isOracleMode {
-		if err := isTableAliasDuplicate(stmt.Left, tableAliases); err != nil {
+		if err := isTableAliasDuplicate(p.ctx, stmt.Left, tableAliases); err != nil {
 			p.err = err
 			return
 		}
-		if err := isTableAliasDuplicate(stmt.Right, tableAliases); err != nil {
+		if err := isTableAliasDuplicate(p.ctx, stmt.Right, tableAliases); err != nil {
 			p.err = err
 			return
 		}
@@ -1074,21 +1074,38 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	p.flag |= parentIsJoin
 }
 
-func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
+func isTableAliasDuplicate(ctx sessionctx.Context, node ast.ResultSetNode, tableAliases map[string]interface{}) error {
 	if ts, ok := node.(*ast.TableSource); ok {
 		tabName := ts.AsName
 		if tabName.L == "" {
 			if tableNode, ok := ts.Source.(*ast.TableName); ok {
 				if tableNode.Schema.L != "" {
-					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.L, tableNode.Name.L))
+					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.O, tableNode.Name.O))
 				} else {
-					tabName = tableNode.Name
+					currentDB := ctx.GetSessionVars().CurrentDB
+					if currentDB == "" {
+						return errors.Trace(ErrNoDB)
+					}
+					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", currentDB, tableNode.Name.O))
+				}
+			}
+		} else {
+			if tableNode, ok := ts.Source.(*ast.TableName); ok {
+				if tableNode.Schema.L != "" {
+					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", tableNode.Schema.O, tabName.O))
+				} else {
+					currentDB := ctx.GetSessionVars().CurrentDB
+					if currentDB == "" {
+						return errors.Trace(ErrNoDB)
+					}
+					tabName = model.NewCIStr(fmt.Sprintf("%s.%s", currentDB, tabName.O))
 				}
 			}
 		}
-		_, exists := tableAliases[tabName.L]
+		_, exists := tableAliases[tabName.O]
 		if len(tabName.L) != 0 && exists {
-			return ErrNonUniqTable.GenWithStackByArgs(tabName)
+			names := strings.Split(tabName.O, ".")
+			return ErrNonUniqTable.GenWithStackByArgs(names[len(names)-1])
 		}
 		tableAliases[tabName.L] = nil
 	}
