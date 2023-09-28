@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/analyze"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -487,11 +488,11 @@ func TestDefaultValForAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=1")
 	defer tk.MustExec("set @@tidb_analyze_version=2")
-	originalSampleSize := executor.MaxRegionSampleSize
+	originalSampleSize := analyze.MaxRegionSampleSize
 	// Increase MaxRegionSampleSize to ensure all samples are collected for building histogram, otherwise the test will be unstable.
-	executor.MaxRegionSampleSize = 10000
+	analyze.MaxRegionSampleSize = 10000
 	defer func() {
-		executor.MaxRegionSampleSize = originalSampleSize
+		analyze.MaxRegionSampleSize = originalSampleSize
 	}()
 	tk.MustExec("drop database if exists test_default_val_for_analyze;")
 	tk.MustExec("create database test_default_val_for_analyze;")
@@ -2320,7 +2321,7 @@ func TestAnalyzeJob(t *testing.T) {
 			PartitionName: "",
 			JobInfo:       "table all columns with 256 buckets, 500 topn, 1 samplerate",
 		}
-		executor.AddNewAnalyzeJob(se, job)
+		analyze.AddNewAnalyzeJob(se, job)
 		require.NotNil(t, job.ID)
 		rows := tk.MustQuery("show analyze status").Rows()
 		require.Len(t, rows, 1)
@@ -2340,7 +2341,7 @@ func TestAnalyzeJob(t *testing.T) {
 		connID := strconv.FormatUint(tk.Session().GetSessionVars().ConnectionID, 10)
 		require.Equal(t, connID, rows[0][10])
 
-		executor.StartAnalyzeJob(se, job)
+		analyze.StartAnalyzeJob(se, job)
 		ctx := context.WithValue(context.Background(), executor.AnalyzeProgressTest, 100)
 		rows = tk.MustQueryWithContext(ctx, "show analyze status").Rows()
 		checkTime := func(val interface{}) {
@@ -2360,7 +2361,7 @@ func TestAnalyzeJob(t *testing.T) {
 		lastDumpTime := time.Now().Add(-10 * time.Second)
 		job.Progress.SetLastDumpTime(lastDumpTime)
 		const smallCount int64 = 100
-		executor.UpdateAnalyzeJob(se, job, smallCount)
+		analyze.UpdateAnalyzeJob(se, job, smallCount)
 		// Delta count doesn't reach threshold so we don't dump it to mysql.analyze_jobs
 		require.Equal(t, smallCount, job.Progress.GetDeltaCount())
 		require.Equal(t, lastDumpTime, job.Progress.GetLastDumpTime())
@@ -2368,7 +2369,7 @@ func TestAnalyzeJob(t *testing.T) {
 		require.Equal(t, "0", rows[0][4])
 
 		const largeCount int64 = 15000000
-		executor.UpdateAnalyzeJob(se, job, largeCount)
+		analyze.UpdateAnalyzeJob(se, job, largeCount)
 		// Delta count reaches threshold so we dump it to mysql.analyze_jobs and update last dump time.
 		require.Equal(t, int64(0), job.Progress.GetDeltaCount())
 		require.True(t, job.Progress.GetLastDumpTime().After(lastDumpTime))
@@ -2376,7 +2377,7 @@ func TestAnalyzeJob(t *testing.T) {
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, strconv.FormatInt(smallCount+largeCount, 10), rows[0][4])
 
-		executor.UpdateAnalyzeJob(se, job, largeCount)
+		analyze.UpdateAnalyzeJob(se, job, largeCount)
 		// We have just updated mysql.analyze_jobs in the previous step so we don't update it until 5 second passes or the analyze job is over.
 		require.Equal(t, largeCount, job.Progress.GetDeltaCount())
 		require.Equal(t, lastDumpTime, job.Progress.GetLastDumpTime())
@@ -2387,7 +2388,7 @@ func TestAnalyzeJob(t *testing.T) {
 		if result == statistics.AnalyzeFailed {
 			analyzeErr = errors.Errorf("analyze meets error")
 		}
-		executor.FinishAnalyzeJob(se, job, analyzeErr)
+		analyze.FinishAnalyzeJob(se, job, analyzeErr)
 		rows = tk.MustQuery("show analyze status").Rows()
 		require.Equal(t, strconv.FormatInt(smallCount+2*largeCount, 10), rows[0][4])
 		checkTime(rows[0][6])

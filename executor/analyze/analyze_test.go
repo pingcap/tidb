@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor_test
+package analyze_test
 
 import (
 	"fmt"
@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/analyze"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -64,7 +65,7 @@ func TestAnalyzeFastSample(t *testing.T) {
 	require.NoError(t, err)
 	defer dom.Close()
 	tk := testkit.NewTestKit(t, store)
-	atomic.StoreInt64(&executor.RandSeed, 123)
+	atomic.StoreInt64(&analyze.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -75,8 +76,8 @@ func TestAnalyzeFastSample(t *testing.T) {
 	tid := tblInfo.ID
 
 	// construct 5 regions split by {12, 24, 36, 48}
-	splitKeys := generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
-	manipulateCluster(cls, splitKeys)
+	splitKeys := executor.generateTableSplitKeyForInt(tid, []int{12, 24, 36, 48})
+	executor.manipulateCluster(cls, splitKeys)
 
 	for i := 0; i < 60; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
@@ -104,7 +105,7 @@ func TestAnalyzeFastSample(t *testing.T) {
 	require.NoError(t, err)
 	ts := txn.StartTS()
 	tk.MustExec("commit")
-	mockExec := &executor.AnalyzeTestFastExec{
+	mockExec := &analyze.AnalyzeTestFastExec{
 		Ctx:         tk.Session().(sessionctx.Context),
 		HandleCols:  handleCols,
 		ColsInfo:    colsInfo,
@@ -154,7 +155,7 @@ func TestFastAnalyze(t *testing.T) {
 	dom.SetStatsUpdating(true)
 	defer dom.Close()
 	tk := testkit.NewTestKit(t, store)
-	atomic.StoreInt64(&executor.RandSeed, 123)
+	atomic.StoreInt64(&analyze.RandSeed, 123)
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -169,8 +170,8 @@ func TestFastAnalyze(t *testing.T) {
 	tid := tblInfo.Meta().ID
 
 	// construct 6 regions split by {10, 20, 30, 40, 50}
-	splitKeys := generateTableSplitKeyForInt(tid, []int{10, 20, 30, 40, 50})
-	manipulateCluster(cls, splitKeys)
+	splitKeys := executor.generateTableSplitKeyForInt(tid, []int{10, 20, 30, 40, 50})
+	executor.manipulateCluster(cls, splitKeys)
 
 	for i := 0; i < 20; i++ {
 		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d, "char")`, i*3, i*3))

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package analyze
 
 import (
 	"context"
@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -312,7 +313,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}
 
 	// Decode the data from sample collectors.
-	virtualColIdx := buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
+	virtualColIdx := executor.buildVirtualColumnIndex(e.schemaForVirtualColEval, e.colsInfo)
 	if len(virtualColIdx) > 0 {
 		fieldTps := make([]*types.FieldType, 0, len(virtualColIdx))
 		for _, colOffset := range virtualColIdx {
@@ -850,7 +851,7 @@ type samplingBuildTask struct {
 	slicePos         int
 }
 
-func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
+func readDataAndSendTask(ctx sessionctx.Context, handler *executor.tableResultHandler, mergeTaskCh chan []byte, memTracker *memory.Tracker) error {
 	// After all tasks are sent, close the mergeTaskCh to notify the mergeWorker that all tasks have been sent.
 	defer close(mergeTaskCh)
 	for {

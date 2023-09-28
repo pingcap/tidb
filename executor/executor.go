@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/executor/aggregate"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/executor/internal/pdhelper"
+	table2 "github.com/pingcap/tidb/executor/table"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -106,7 +107,7 @@ var (
 	_ exec.Executor = &SortExec{}
 	_ exec.Executor = &aggregate.StreamAggExec{}
 	_ exec.Executor = &TableDualExec{}
-	_ exec.Executor = &TableReaderExecutor{}
+	_ exec.Executor = &table2.TableReaderExecutor{}
 	_ exec.Executor = &TableScanExec{}
 	_ exec.Executor = &TopNExec{}
 	_ exec.Executor = &UnionExec{}
@@ -121,7 +122,7 @@ var (
 )
 
 var (
-	_ dataSourceExecutor = &TableReaderExecutor{}
+	_ dataSourceExecutor = &table2.TableReaderExecutor{}
 	_ dataSourceExecutor = &IndexReaderExecutor{}
 	_ dataSourceExecutor = &IndexLookUpExecutor{}
 	_ dataSourceExecutor = &IndexMergeReaderExecutor{}

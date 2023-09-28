@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package analyze
 
 import (
 	"context"
@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
@@ -48,7 +49,7 @@ func isAnalyzeWorkerPanic(err error) bool {
 
 func getAnalyzePanicErr(r interface{}) error {
 	if msg, ok := r.(string); ok {
-		if msg == globalPanicAnalyzeMemoryExceed {
+		if msg == executor.globalPanicAnalyzeMemoryExceed {
 			return errAnalyzeOOM
 		}
 		if strings.Contains(msg, memory.PanicMemoryExceedWarnMsg) {
@@ -56,7 +57,7 @@ func getAnalyzePanicErr(r interface{}) error {
 		}
 	}
 	if err, ok := r.(error); ok {
-		if err.Error() == globalPanicAnalyzeMemoryExceed {
+		if err.Error() == executor.globalPanicAnalyzeMemoryExceed {
 			return errAnalyzeOOM
 		}
 		return err

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package table
 
 import (
 	"context"
@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/distsql"
+	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/internal"
 	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
@@ -156,7 +158,7 @@ func buildMockBaseExec(sctx sessionctx.Context) exec.BaseExecutor {
 }
 
 func TestTableReaderRequiredRows(t *testing.T) {
-	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	maxChunkSize := internal.DefaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
 		requiredRows   []int
@@ -183,7 +185,7 @@ func TestTableReaderRequiredRows(t *testing.T) {
 		},
 	}
 	for _, testCase := range testCases {
-		sctx := defaultCtx()
+		sctx := internal.DefaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
 		executor := buildTableReader(sctx)
 		require.NoError(t, executor.Open(ctx))
@@ -198,7 +200,7 @@ func TestTableReaderRequiredRows(t *testing.T) {
 }
 
 func buildIndexReader(sctx sessionctx.Context) exec.Executor {
-	e := &IndexReaderExecutor{
+	e := &executor.IndexReaderExecutor{
 		BaseExecutor:     buildMockBaseExec(sctx),
 		dagPB:            buildMockDAGRequest(sctx),
 		index:            &model.IndexInfo{},
@@ -208,7 +210,7 @@ func buildIndexReader(sctx sessionctx.Context) exec.Executor {
 }
 
 func TestIndexReaderRequiredRows(t *testing.T) {
-	maxChunkSize := defaultCtx().GetSessionVars().MaxChunkSize
+	maxChunkSize := internal.DefaultCtx().GetSessionVars().MaxChunkSize
 	testCases := []struct {
 		totalRows      int
 		requiredRows   []int
@@ -235,7 +237,7 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 		},
 	}
 	for _, testCase := range testCases {
-		sctx := defaultCtx()
+		sctx := executor.defaultCtx()
 		ctx := mockDistsqlSelectCtxSet(testCase.totalRows, testCase.expectedRowsDS)
 		executor := buildIndexReader(sctx)
 		require.NoError(t, executor.Open(ctx))

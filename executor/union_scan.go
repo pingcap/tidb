@@ -20,6 +20,7 @@ import (
 	"runtime/trace"
 
 	"github.com/pingcap/tidb/executor/internal/exec"
+	table2 "github.com/pingcap/tidb/executor/table"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -112,7 +113,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	// 1. select without virtual columns
 	// 2. build virtual columns and select with virtual columns
 	switch x := reader.(type) {
-	case *TableReaderExecutor:
+	case *table2.TableReaderExecutor:
 		us.addedRowsIter, err = buildMemTableReader(ctx, us, x.kvRanges).getMemRowsIter(ctx)
 	case *IndexReaderExecutor:
 		us.addedRowsIter, err = buildMemIndexReader(ctx, us, x).getMemRowsIter(ctx)

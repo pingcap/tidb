@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	table2 "github.com/pingcap/tidb/executor/table"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -169,7 +170,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
 func (e *PointGetExecutor) buildVirtualColumnInfo() {
-	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
+	e.virtualColumnIndex = table2.buildVirtualColumnIndex(e.Schema(), e.columns)
 	if len(e.virtualColumnIndex) > 0 {
 		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {

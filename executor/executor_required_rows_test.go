@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -31,13 +30,9 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/memory"
-	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -204,17 +199,6 @@ func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int
 		end:          uint64(offset + count),
 	}
 	return limitExec
-}
-
-func defaultCtx() sessionctx.Context {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
-	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
-	ctx.GetSessionVars().SnapshotTS = uint64(1)
-	domain.BindDomain(ctx, domain.NewMockDomain())
-	return ctx
 }
 
 func TestSortRequiredRows(t *testing.T) {

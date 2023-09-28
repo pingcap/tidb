@@ -23,7 +23,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/executor/analyze"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser"
@@ -115,10 +115,10 @@ func TestTraceDebugSelectivity(t *testing.T) {
 
 	// Make the result of v1 analyze result stable
 	// 1. make sure all rows are always collect as samples
-	originalSampleSize := executor.MaxRegionSampleSize
-	executor.MaxRegionSampleSize = 10000
+	originalSampleSize := analyze.MaxRegionSampleSize
+	analyze.MaxRegionSampleSize = 10000
 	defer func() {
-		executor.MaxRegionSampleSize = originalSampleSize
+		analyze.MaxRegionSampleSize = originalSampleSize
 	}()
 	// 2. make the order of samples for building TopN stable
 	// (the earlier TopN entry will modify the CMSketch, therefore influence later TopN entry's row count,

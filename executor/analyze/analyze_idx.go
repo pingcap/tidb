@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package analyze
 
 import (
 	"context"
@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -101,7 +102,7 @@ func (e *AnalyzeIndexExec) buildStats(ranges []*ranger.Range, considerNull bool)
 		return nil, nil, nil, nil, err
 	}
 	defer func() {
-		err1 := closeAll(e.result, e.countNullRes)
+		err1 := executor.closeAll(e.result, e.countNullRes)
 		if err == nil {
 			err = err1
 		}
@@ -244,7 +245,7 @@ func (e *AnalyzeIndexExec) buildSimpleStats(ranges []*ranger.Range, considerNull
 		return nil, nil, err
 	}
 	defer func() {
-		err1 := closeAll(e.result, e.countNullRes)
+		err1 := executor.closeAll(e.result, e.countNullRes)
 		if err == nil {
 			err = err1
 		}

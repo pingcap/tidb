@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	table2 "github.com/pingcap/tidb/executor/table"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -79,7 +80,7 @@ type BatchPointGetExec struct {
 
 // buildVirtualColumnInfo saves virtual column indices and sort them in definition order
 func (e *BatchPointGetExec) buildVirtualColumnInfo() {
-	e.virtualColumnIndex = buildVirtualColumnIndex(e.Schema(), e.columns)
+	e.virtualColumnIndex = table2.buildVirtualColumnIndex(e.Schema(), e.columns)
 	if len(e.virtualColumnIndex) > 0 {
 		e.virtualColumnRetFieldTypes = make([]*types.FieldType, len(e.virtualColumnIndex))
 		for i, idx := range e.virtualColumnIndex {

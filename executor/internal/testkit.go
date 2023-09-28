@@ -17,7 +17,13 @@ package internal
 import (
 	"fmt"
 
+	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/mock"
 )
 
 // FillData fill data into table
@@ -28,4 +34,15 @@ func FillData(tk *testkit.TestKit, table string) {
 	// insert data
 	tk.MustExec(fmt.Sprintf("insert INTO %s VALUES (1, \"hello\");", table))
 	tk.MustExec(fmt.Sprintf("insert into %s values (2, \"hello\");", table))
+}
+
+func DefaultCtx() sessionctx.Context {
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = variable.DefInitChunkSize
+	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, ctx.GetSessionVars().MemQuotaQuery)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
+	ctx.GetSessionVars().SnapshotTS = uint64(1)
+	domain.BindDomain(ctx, domain.NewMockDomain())
+	return ctx
 }

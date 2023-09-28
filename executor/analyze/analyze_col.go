@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package analyze
 
 import (
 	"context"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -50,7 +51,7 @@ type AnalyzeColumnsExec struct {
 	colsInfo      []*model.ColumnInfo
 	handleCols    core.HandleCols
 	commonHandle  *model.IndexInfo
-	resultHandler *tableResultHandler
+	resultHandler *executor.tableResultHandler
 	indexes       []*model.IndexInfo
 	core.AnalyzeInfo
 
@@ -86,7 +87,7 @@ func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
 func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
-	e.resultHandler = &tableResultHandler{}
+	e.resultHandler = &executor.tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
 	firstResult, err := e.buildResp(firstPartRanges)
 	if err != nil {

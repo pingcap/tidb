@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	table2 "github.com/pingcap/tidb/executor/table"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -62,7 +63,7 @@ import (
 )
 
 var (
-	_ exec.Executor = &TableReaderExecutor{}
+	_ exec.Executor = &table2.TableReaderExecutor{}
 	_ exec.Executor = &IndexReaderExecutor{}
 	_ exec.Executor = &IndexLookUpExecutor{}
 )
@@ -207,7 +208,7 @@ type IndexReaderExecutor struct {
 
 	memTracker *memory.Tracker
 
-	selectResultHook // for testing
+	table2.SelectResultHook // for testing
 
 	// If dummy flag is set, this is not a real IndexReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
@@ -797,7 +798,7 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 	if e.partitionTableMode && task.partitionTable != nil {
 		table = task.partitionTable
 	}
-	tableReaderExec := &TableReaderExecutor{
+	tableReaderExec := &table2.TableReaderExecutor{
 		BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), e.Schema(), e.getTableRootPlanID()),
 		table:            table,
 		dagPB:            e.tableRequest,

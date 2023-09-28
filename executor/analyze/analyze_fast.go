@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package executor
+package analyze
 
 import (
 	"bytes"
@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/executor"
 	executor_metrics "github.com/pingcap/tidb/executor/metrics"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -396,7 +397,7 @@ func (e *AnalyzeFastExec) handleScanTasks(*tikv.Backoffer) (keysSize int, err er
 	if e.ctx.GetSessionVars().GetReplicaRead().IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, kv.ReplicaReadFollower)
 	}
-	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	executor.setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	snapshot.SetOption(kv.ResourceGroupName, e.ctx.GetSessionVars().ResourceGroupName)
 	for _, t := range e.scanTasks {
 		iter, err := snapshot.Iter(kv.Key(t.StartKey), kv.Key(t.EndKey))
@@ -425,7 +426,7 @@ func (e *AnalyzeFastExec) handleSampTasks(workID int, step uint32, err *error) {
 	snapshot.SetOption(kv.NotFillCache, true)
 	snapshot.SetOption(kv.Priority, kv.PriorityLow)
 	snapshot.SetOption(kv.ResourceGroupName, e.ctx.GetSessionVars().ResourceGroupName)
-	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
+	executor.setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, snapshot)
 	readReplicaType := e.ctx.GetSessionVars().GetReplicaRead()
 	if readReplicaType.IsFollowerRead() {
 		snapshot.SetOption(kv.ReplicaRead, readReplicaType)

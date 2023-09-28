@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/executor/internal/builder"
 	"github.com/pingcap/tidb/executor/internal/exec"
+	table2 "github.com/pingcap/tidb/executor/table"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -473,7 +474,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 			func() {
 				failpoint.Inject("testIndexMergePanicPartialTableWorker", nil)
 				var err error
-				partialTableReader := &TableReaderExecutor{
+				partialTableReader := &table2.TableReaderExecutor{
 					BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), ts.Schema(), e.getPartitalPlanID(workID)),
 					dagPB:            e.dagPBs[workID],
 					startTS:          e.startTS,
@@ -613,8 +614,8 @@ type partialTableWorker struct {
 // we need create a partitionHandle, otherwise create a normal handle.
 // In TableRowIDScan, the partitionHandle will be used to create key ranges.
 func (w *partialTableWorker) needPartitionHandle() (bool, error) {
-	cols := w.tableReader.(*TableReaderExecutor).plans[0].Schema().Columns
-	outputOffsets := w.tableReader.(*TableReaderExecutor).dagPB.OutputOffsets
+	cols := w.tableReader.(*table2.TableReaderExecutor).plans[0].Schema().Columns
+	outputOffsets := w.tableReader.(*table2.TableReaderExecutor).dagPB.OutputOffsets
 	col := cols[outputOffsets[len(outputOffsets)-1]]
 
 	needPartitionHandle := w.partitionTableMode && len(w.byItems) > 0
@@ -784,7 +785,7 @@ func (e *IndexMergeReaderExecutor) startIndexMergeTableScanWorker(ctx context.Co
 }
 
 func (e *IndexMergeReaderExecutor) buildFinalTableReader(ctx context.Context, tbl table.Table, handles []kv.Handle) (_ exec.Executor, err error) {
-	tableReaderExec := &TableReaderExecutor{
+	tableReaderExec := &table2.TableReaderExecutor{
 		BaseExecutor:     exec.NewBaseExecutor(e.Ctx(), e.Schema(), e.getTablePlanRootID()),
 		table:            tbl,
 		dagPB:            e.tableRequest,
