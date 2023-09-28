@@ -974,6 +974,10 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
+	// TiKVClientReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
+	TiKVClientReadTimeout uint64
+
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
 
@@ -3176,4 +3180,18 @@ func (s *SessionVars) GetRelatedTableForMDL() *sync.Map {
 // EnableForceInlineCTE returns the session variable enableForceInlineCTE
 func (s *SessionVars) EnableForceInlineCTE() bool {
 	return s.enableForceInlineCTE
+}
+
+// GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
+	val, ok := s.stmtVars[TiKVClientReadTimeout]
+	if ok {
+		timeout, err := strconv.ParseUint(val, 10, 64)
+		if err == nil {
+			return timeout
+		}
+		// Normally, we should not go into this branch, because we have checked the type of the variable in `SetStmtVar`.
+		// So just ignore the error here.
+	}
+	return s.TiKVClientReadTimeout
 }

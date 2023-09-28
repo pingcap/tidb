@@ -154,7 +154,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	)
 	buildTaskFunc := func(ranges []kv.KeyRange) error {
 		keyRanges := NewKeyRanges(ranges)
-		tasksFromRanges, err := buildCopTasks(bo, c.store.GetRegionCache(), keyRanges, req, eventCb)
+		tasksFromRanges, err := buildCopTasks(bo, c.store.GetRegionCache(), keyRanges, req, eventCb, false)
 		if err != nil {
 			return err
 		}
@@ -269,6 +269,9 @@ type copTask struct {
 	RowCountHint     int // used for extra concurrency of small tasks, -1 for unknown row count
 	batchTaskList    map[uint64]*batchedCopTask
 	meetLockFallback bool
+
+	// timeout value for one kv readonly request
+	tikvClientReadTimeout uint64
 	// firstReadType is used to indicate the type of first read when retrying.
 	firstReadType string
 }
@@ -305,7 +308,7 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
 const rangesPerTask = 25000
 
-func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback) ([]*copTask, error) {
+func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv.Request, eventCb trxevents.EventCallback, ignoreTiDBKVReadTimeout bool) ([]*copTask, error) {
 	start := time.Now()
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
@@ -414,6 +417,10 @@ func buildCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req *kv
 			} else {
 				tasks = append(tasks, task)
 			}
+			if !ignoreTiDBKVReadTimeout {
+				task.tikvClientReadTimeout = req.TiKVClientReadTimeout
+			}
+
 			i = nextI
 			if req.Paging.Enable {
 				if req.LimitSize != 0 && req.LimitSize < pagingSize {
@@ -1026,6 +1033,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if worker.req.ResourceGroupTagger != nil {
 		worker.req.ResourceGroupTagger(req)
 	}
+	timeout := tikv.ReadTimeoutMedium
+	if task.tikvClientReadTimeout > 0 {
+		timeout = time.Duration(task.tikvClientReadTimeout) * time.Millisecond
+	}
 	req.StoreTp = getEndPointType(task.storeType)
 	startTime := time.Now()
 	if worker.kvclient.Stats == nil {
@@ -1044,7 +1055,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if len(worker.req.MatchStoreLabels) > 0 {
 		ops = append(ops, tikv.WithMatchLabels(worker.req.MatchStoreLabels))
 	}
-	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, tikv.ReadTimeoutMedium, getEndPointType(task.storeType), task.storeAddr, ops...)
+	resp, rpcCtx, storeAddr, err := worker.kvclient.SendReqCtx(bo.TiKVBackoffer(), req, task.region, timeout, getEndPointType(task.storeType), task.storeAddr, ops...)
 	err = derr.ToTiDBErr(err)
 	if err != nil {
 		if task.storeType == kv.TiDB {
@@ -1183,7 +1194,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+		remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb, true)
 		if err != nil {
 			return remains, err
 		}
@@ -1330,7 +1341,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return nil, errors.Trace(err)
 			}
-			remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb)
+			remains, err := buildCopTasks(bo, worker.store.GetRegionCache(), task.ranges, worker.req, task.eventCb, true)
 			if err != nil {
 				return nil, err
 			}

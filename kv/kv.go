@@ -545,6 +545,8 @@ type Request struct {
 	StoreBatchSize int
 	// LimitSize indicates whether the request is scan and limit
 	LimitSize uint64
+	// TiKVClientReadTimeout is the timeout of kv read request
+	TiKVClientReadTimeout uint64
 }
 
 // CoprRequestAdjuster is used to check and adjust a copr request according to specific rules.
