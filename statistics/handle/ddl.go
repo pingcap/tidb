@@ -240,7 +240,15 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 		if globalIdxStatsBucketNum != 0 {
 			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
 		}
+<<<<<<< HEAD
 		newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(opts, is, tblInfo, true, []int64{idx.ID})
+=======
+		if globalColStatsBucketNum != 0 {
+			opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
+		}
+		// Generate the new column global-stats
+		newColGlobalStats, err := h.mergePartitionStats2GlobalStats(opts, is, tblInfo, false, nil, nil)
+>>>>>>> aa762784c58 (statistics: add cache for handleGlobalStats's load data (#47320))
 		if err != nil {
 			return err
 		}
@@ -260,8 +268,52 @@ func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
 				return err
 			}
 		}
+<<<<<<< HEAD
 	}
 	return nil
+=======
+
+		// Generate the new index global-stats
+		globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
+		for _, idx := range tblInfo.Indices {
+			globalIdxStatsTopN := globalStats.Indices[idx.ID].TopN
+			if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
+				globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
+			}
+			globalIdxStats := globalStats.Indices[idx.ID]
+			if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
+				globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
+			}
+			if globalIdxStatsTopNNum != 0 {
+				opts[ast.AnalyzeOptNumTopN] = uint64(globalIdxStatsTopNNum)
+			}
+			if globalIdxStatsBucketNum != 0 {
+				opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
+			}
+			newIndexGlobalStats, err := h.mergePartitionStats2GlobalStats(opts, is, tblInfo, true, []int64{idx.ID}, nil)
+			if err != nil {
+				return err
+			}
+			if len(newIndexGlobalStats.MissingPartitionStats) > 0 {
+				logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+					zap.String("item", "index "+idx.Name.L), zap.Strings("missing", newIndexGlobalStats.MissingPartitionStats))
+			}
+			for i := 0; i < newIndexGlobalStats.Num; i++ {
+				hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
+				if hg == nil {
+					// All partitions have no stats so global stats are not created.
+					continue
+				}
+				// fms for global stats doesn't need to dump to kv.
+				err = h.SaveStatsToStorage(tableID, newIndexGlobalStats.Count, newIndexGlobalStats.ModifyCount, 1, hg, cms, topN, 2, 1, false, StatsMetaHistorySourceSchemaChange)
+				if err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	})
+>>>>>>> aa762784c58 (statistics: add cache for handleGlobalStats's load data (#47320))
 }
 
 func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
