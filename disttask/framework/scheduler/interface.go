@@ -26,15 +26,17 @@ type TaskTable interface {
 	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
 	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
 
-	GetSubtaskInStates(instanceID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error)
+	GetSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) ([]*proto.Subtask, error)
+	GetFirstSubtaskInStates(instanceID string, taskID int64, step int64, states ...interface{}) (*proto.Subtask, error)
 	StartManager(tidbID string, role string) error
 	StartSubtask(subtaskID int64) error
 	UpdateSubtaskStateAndError(subtaskID int64, state string, err error) error
 	FinishSubtask(subtaskID int64, meta []byte) error
 
-	HasSubtasksInStates(instanceID string, taskID int64, step int64, states ...interface{}) (bool, error)
-	UpdateErrorToSubtask(instanceID string, taskID int64, err error) error
-	IsSchedulerCanceled(taskID int64, instanceID string) (bool, error)
+	HasSubtasksInStates(tidbID string, taskID int64, step int64, states ...interface{}) (bool, error)
+	UpdateErrorToSubtask(tidbID string, taskID int64, err error) error
+	IsSchedulerCanceled(tidbID string, taskID int64) (bool, error)
+	PauseSubtasks(tidbID string, taskID int64) error
 }
 
 // Pool defines the interface of a pool.
@@ -50,12 +52,18 @@ type Scheduler interface {
 	Init(context.Context) error
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
+	Pause(context.Context, *proto.Task) error
 	Close()
 }
 
 // Extension extends the scheduler.
 // each task type should implement this interface.
 type Extension interface {
+	// IsIdempotent returns whether the subtask is idempotent.
+	// when tidb restart, the subtask might be left in the running state.
+	// if it's idempotent, the scheduler can rerun the subtask, else
+	// the scheduler will mark the subtask as failed.
+	IsIdempotent(subtask *proto.Subtask) bool
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)

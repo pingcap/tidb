@@ -80,21 +80,14 @@ func MergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-	externalCache := false
-	if allPartitionStats == nil {
-		allPartitionStats = make(map[int64]*statistics.Table)
-	} else {
-		externalCache = true
-	}
 	if len(histIDs) == 0 {
 		for _, col := range globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
-			if col.IsGenerated() && !col.GeneratedStored {
+			if col.IsVirtualGenerated() {
 				continue
 			}
 			histIDs = append(histIDs, col.ID)
@@ -128,27 +121,21 @@ func MergePartitionStats2GlobalStats(
 			err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
 			return
 		}
-
 		tableInfo := partitionTable.Meta()
 		var partitionStats *statistics.Table
-
-		partitionStats, ok = allPartitionStats[partitionID]
-		// If pre-load partition stats isn't provided, then we load partition stats directly and set it into allPartitionStats
-		if !ok {
-			var err1 error
-			partitionStats, err1 = loadTablePartitionStatsFn(tableInfo, &def)
-			if err1 != nil {
-				if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
-					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
-					continue
-				}
-				err = err1
-				return
+		partitionStats, err1 := loadTablePartitionStatsFn(tableInfo, &def)
+		if err1 != nil {
+			if skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
+				globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
+				continue
 			}
-			allPartitionStats[partitionID] = partitionStats
+			err = err1
+			return
 		}
 
 		for i := 0; i < globalStats.Num; i++ {
+			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the data race.
+			// partitionStats will be released after the for loop.
 			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex)
 			skipPartition := false
 			if !analyzed {
@@ -195,6 +182,7 @@ func MergePartitionStats2GlobalStats(
 				allFms[i] = append(allFms[i], fms)
 			}
 		}
+		partitionStats.ReleaseAndPutToPool()
 	}
 
 	// After collect all the statistics from the partition-level stats,
@@ -205,6 +193,21 @@ func MergePartitionStats2GlobalStats(
 			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
 			continue
 		}
+		// FMSketch use many memory, so we first deal with it and then destroy it.
+		// Merge FMSketch.
+		globalStats.Fms[i] = allFms[i][0]
+		for j := 1; j < len(allFms[i]); j++ {
+			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
+			allFms[i][j].DestroyAndPutToPool()
+		}
+
+		// Update the global NDV.
+		globalStatsNDV := globalStats.Fms[i].NDV()
+		if globalStatsNDV > globalStats.Count {
+			globalStatsNDV = globalStats.Count
+		}
+		globalStats.Fms[i].DestroyAndPutToPool()
+
 		// Merge CMSketch.
 		globalStats.Cms[i] = allCms[i][0]
 		for j := 1; j < len(allCms[i]); j++ {
@@ -238,25 +241,7 @@ func MergePartitionStats2GlobalStats(
 			globalStats.Hg[i].Buckets[j].NDV = 0
 		}
 
-		// Merge FMSketch.
-		globalStats.Fms[i] = allFms[i][0]
-		for j := 1; j < len(allFms[i]); j++ {
-			globalStats.Fms[i].MergeFMSketch(allFms[i][j])
-			allFms[i][j].DestroyAndPutToPool()
-		}
-
-		// Update the global NDV.
-		globalStatsNDV := globalStats.Fms[i].NDV()
-		if globalStatsNDV > globalStats.Count {
-			globalStatsNDV = globalStats.Count
-		}
-		globalStats.Fms[i].DestroyAndPutToPool()
 		globalStats.Hg[i].NDV = globalStatsNDV
-	}
-	if !externalCache {
-		for _, value := range allPartitionStats {
-			value.ReleaseAndPutToPool()
-		}
 	}
 	return
 }
@@ -270,7 +255,6 @@ func MergePartitionStats2GlobalStatsByTableID(
 	physicalID int64,
 	isIndex bool,
 	histIDs []int64,
-	tablePartitionStats map[int64]*statistics.Table,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
@@ -282,8 +266,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 	}
 
 	globalTableInfo := globalTable.Meta()
-	globalStats, err = MergePartitionStats2GlobalStats(sc, gpool, opts, is, globalTableInfo, isIndex, histIDs,
-		tablePartitionStats, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
+	globalStats, err = MergePartitionStats2GlobalStats(sc, gpool, opts, is, globalTableInfo, isIndex, histIDs, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
 	if err != nil {
 		return
 	}

@@ -18,8 +18,8 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -41,8 +41,7 @@ func RemoveLockedTables(
 	tidAndNames map[int64]string,
 	pidAndNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
@@ -117,8 +116,7 @@ func RemoveLockedPartitions(
 	tableName string,
 	pidNames map[int64]string,
 ) (string, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
+	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
 	if err != nil {
 		return "", err
@@ -160,7 +158,7 @@ func RemoveLockedPartitions(
 			skippedPartitions = append(skippedPartitions, pidNames[pid])
 			continue
 		}
-		if err := updateStatsAndUnlockTable(ctx, exec, pid); err != nil {
+		if err := updateStatsAndUnlockPartition(ctx, exec, pid, tid); err != nil {
 			return "", err
 		}
 	}
@@ -191,6 +189,41 @@ func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLEx
 		useCurrentSession,
 		DeleteLockSQL, tid,
 	)
+	return err
+}
+
+// updateStatsAndUnlockPartition also update the stats to the table level.
+func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, partitionID int64, tid int64) error {
+	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, partitionID, exec)
+	if err != nil {
+		return err
+	}
+
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		version, count, modifyCount, partitionID,
+	); err != nil {
+		return err
+	}
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		version, count, modifyCount, tid,
+	); err != nil {
+		return err
+	}
+	cache.TableRowStatsCache.Invalidate(partitionID)
+	cache.TableRowStatsCache.Invalidate(tid)
+
+	_, _, err = exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		DeleteLockSQL, partitionID,
+	)
+
 	return err
 }
 

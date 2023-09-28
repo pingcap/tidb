@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/bindinfo/internal"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -387,35 +386,6 @@ func TestIssue19836(t *testing.T) {
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)).Check(explainResult)
 }
 
-func TestTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create global temporary table t(a int, b int, key(a), key(b)) on commit delete rows")
-	tk.MustExec("create table t2(a int, b int, key(a), key(b))")
-	tk.MustGetErrCode("create session binding for select * from t where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for insert into t select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for replace into t select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-}
-
-func TestLocalTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tmp2")
-	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
-	tk.MustGetErrCode("create session binding for select * from tmp2 where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for insert into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for replace into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for update tmp2 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for delete from tmp2 where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-}
-
 func TestDropSingleBindings(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -521,15 +491,4 @@ func TestPreparedStmt(t *testing.T) {
 	tk.MustExec("execute stmt using @p,@p")
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 1)
 	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-}
-
-func TestSetVarBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b varchar(20))")
-	tk.MustExec("insert into t1 values (1, '111111111111111')")
-	tk.MustExec("insert into t1 values (2, '222222222222222')")
-	tk.MustExec("create binding for select group_concat(b) from test.t1 using select /*+ SET_VAR(group_concat_max_len = 4) */ group_concat(b) from test.t1 ;")
-	tk.MustQuery("select group_concat(b) from test.t1").Check(testkit.Rows("1111"))
 }

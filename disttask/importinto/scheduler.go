@@ -107,7 +107,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
-	s.logger.Info("index writer memory size limit",
+	s.logger.Info("memory size limit per index writer per concurrency",
 		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
 	return nil
 }
@@ -464,6 +464,12 @@ func (s *importScheduler) Run(ctx context.Context, task *proto.Task) error {
 	defer metricsManager.unregister(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	return s.BaseScheduler.Run(subCtx, task)
+}
+
+func (*importScheduler) IsIdempotent(*proto.Subtask) bool {
+	// import don't have conflict detection and resolution now, so it's ok
+	// to import data twice.
+	return true
 }
 
 func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {

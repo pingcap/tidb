@@ -12,6 +12,7 @@ go_library(
     name = "ddl",
     srcs = [
         "backfilling.go",
+        "backfilling_clean_s3.go",
         "backfilling_dispatcher.go",
         "backfilling_dist_scheduler.go",
         "backfilling_import_cloud.go",
@@ -68,6 +69,7 @@ go_library(
         "//br/pkg/lightning/config",
         "//br/pkg/storage",
         "//config",
+        "//ddl/copr",
         "//ddl/ingest",
         "//ddl/internal/session",
         "//ddl/label",
@@ -237,6 +239,7 @@ go_test(
     deps = [
         "//autoid_service",
         "//config",
+        "//ddl/copr",
         "//ddl/ingest",
         "//ddl/internal/session",
         "//ddl/placement",
