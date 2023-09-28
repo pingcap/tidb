@@ -23,6 +23,7 @@ import (
 
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -252,6 +253,7 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 	if group.RunawaySettings == nil && rm.activeGroup[resourceGroupName] == 0 {
 		return nil
 	}
+	metrics.RunawayCheckerCounter.WithLabelValues(resourceGroupName, "hit", "").Inc()
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
 }
 
@@ -544,7 +546,9 @@ func (r *RunawayChecker) markQuarantine(now *time.Time) {
 }
 
 func (r *RunawayChecker) markRunaway(matchType RunawayMatchType, action rmpb.RunawayAction, now *time.Time) {
-	r.manager.markRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, strings.ToLower(rmpb.RunawayAction_name[int32(action)]), matchType, now)
+	actionStr := strings.ToLower(rmpb.RunawayAction_name[int32(action)])
+	metrics.RunawayCheckerCounter.WithLabelValues(r.resourceGroupName, matchType.String(), actionStr).Inc()
+	r.manager.markRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, actionStr, matchType, now)
 }
 
 func (r *RunawayChecker) getSettingConvictIdentifier() string {

@@ -93,6 +93,7 @@ func InitMetrics() {
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
+	InitResourceGroupMetrics()
 	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -269,6 +270,8 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistTaskStarttimeGauge)
 	prometheus.MustRegister(DistTaskSubTaskCntGauge)
 	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
+
+	prometheus.MustRegister(RunawayCheckerCounter)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
