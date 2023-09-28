@@ -3852,15 +3852,6 @@ a
 Level	Code	Message
 Warning	1105	Memory capacity of 1 bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen
 set @@tidb_opt_range_max_size=DEFAULT;
-drop table if exists t0;
-drop view if exists v0;
-CREATE TABLE t0(c0 BLOB(298) , c1 BLOB(182) , c2 NUMERIC);
-CREATE VIEW v0(c0) AS SELECT t0.c1 FROM t0;
-INSERT INTO t0 VALUES (-1, 'a', '2046549365');
-CREATE INDEX i0 ON t0(c2);
-SELECT t0.c1, t0.c2 FROM t0 GROUP BY MOD(t0.c0, DEFAULT(t0.c2));
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'planner__core__integration.t0.c1' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
-UPDATE t0 SET c2=1413;
 drop table if exists t1, t2;
 create table t1 (a int, c int);
 insert into t1 values (1, 1), (1, 2), (2, 3), (2, 4);

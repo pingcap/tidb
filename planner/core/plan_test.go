@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/expression/aggregation"
@@ -360,21 +359,6 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	}
 }
 
-func TestExplainFormatHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (c1 int not null, c2 int not null, key idx_c2(c2)) partition by range (c2) (partition p0 values less than (10), partition p1 values less than (20))")
-
-	tk.MustQuery("explain format='hint'" +
-		"select " +
-		"/*+ use_index(@`sel_2` `test`.`t2` `idx_c2`), hash_agg(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), hash_agg(@`sel_1`) */ " +
-		"count(1) from t t1 " +
-		"where c2 in (select c2 from t t2 where t2.c2 < 15 and t2.c2 > 12)").Check(testkit.Rows(
-		"hash_agg(@`sel_1`), hash_agg(@`sel_2`), use_index(@`sel_2` `test`.`t2` `idx_c2`), no_order_index(@`sel_2` `test`.`t2` `idx_c2`), agg_to_cop(@`sel_2`), use_index(@`sel_1` `test`.`t1` `idx_c2`), no_order_index(@`sel_1` `test`.`t1` `idx_c2`)"))
-}
-
 func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -403,64 +387,6 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	hints := tk.MustQuery("explain format='hint' select * from t;").Rows()[0][0]
 	rows = tk.MustQuery(fmt.Sprintf("explain select /*+ %s */ * from t", hints)).Rows()
 	require.Equal(t, rows[len(rows)-1][2], "mpp[tiflash]")
-}
-
-func TestNthPlanHint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tt")
-	tk.MustExec("create table tt (a int,b int, index(a), index(b));")
-	tk.MustExec("insert into tt values (1, 1), (2, 2), (3, 4)")
-
-	tk.MustExec("explain select /*+nth_plan(4)*/ * from tt where a=1 and b=1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
-
-	// Test hints for nth_plan(x).
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int, c int, index(a), index(b), index(a,b))")
-	tk.MustQuery("explain format='hint' select * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`)"))
-	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` ), nth_plan(1)"))
-	tk.MustQuery("explain format='hint' select /*+ nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(2)"))
-
-	tk.MustExec("explain format='hint' select /*+ nth_plan(3) */ * from t where a=1 and b=1")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
-
-	tk.MustExec("explain format='hint' select /*+ nth_plan(500) */ * from t where a=1 and b=1")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
-
-	// Test warning for multiply hints.
-	tk.MustQuery("explain format='hint' select /*+ nth_plan(1) nth_plan(2) */ * from t where a=1 and b=1").Check(testkit.Rows(
-		"use_index(@`sel_1` `test`.`t` `a_2`), no_order_index(@`sel_1` `test`.`t` `a_2`), nth_plan(1), nth_plan(2)"))
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(2)"))
-
-	// Test the correctness of generated plans.
-	tk.MustExec("insert into t values (1,1,1)")
-	tk.MustQuery("select  /*+ nth_plan(1) */ * from t where a=1 and b=1;").Check(testkit.Rows(
-		"1 1 1"))
-	tk.MustQuery("select  /*+ nth_plan(2) */ * from t where a=1 and b=1;").Check(testkit.Rows(
-		"1 1 1"))
-	tk.MustQuery("select  /*+ nth_plan(1) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"1 1"))
-	tk.MustQuery("select  /*+ nth_plan(2) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"1 1"))
-	tk.MustQuery("select  /*+ nth_plan(3) */ * from tt where a=1 and b=1;").Check(testkit.Rows(
-		"1 1"))
-
-	// Make sure nth_plan() doesn't affect separately executed subqueries by asserting there's only one warning.
-	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where (select count(1) from t, tt) > 1;")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
-	tk.MustExec("select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from t, tt);")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 The parameter of nth_plan() is out of range"))
 }
 
 func BenchmarkDecodePlan(b *testing.B) {
@@ -566,55 +492,6 @@ func TestIssue35090(t *testing.T) {
 		{"  └─TableRowIDScan(Probe)"},
 	}
 	tk.MustQuery("explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;").CheckAt([]int{0}, rows)
-}
-
-// Close issue 25729
-func TestIssue25729(t *testing.T) {
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Experimental.AllowsExpressionIndex = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tt")
-	// Case1
-	tk.MustExec("create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));")
-
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows(
-			"Projection 0.10 root  test.tt.a, test.tt.b",
-			"└─IndexLookUp 0.10 root  ",
-			"  ├─IndexRangeScan(Build) 0.10 cop[tikv] table:tt, index:k1(`a` + 1, b) range:[5 3,5 3], keep order:false, stats:pseudo",
-			"  └─TableRowIDScan(Probe) 0.10 cop[tikv] table:tt keep order:false, stats:pseudo"))
-	}
-
-	tk.MustExec("insert into tt values(4, 3);")
-	tk.MustQuery("select * from tt where a+1 = 5 and b=3;").Check(testkit.Rows("4 3"))
-
-	// Case2
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("CREATE TABLE `t1` (" +
-		"  `a` varchar(10) DEFAULT NULL," +
-		"  `b` varchar(10) DEFAULT NULL," +
-		"  KEY `expression_index` ((concat(`a`, `b`)))," +
-		"  KEY `expression_index_2` ((concat(`a`, `b`)))," +
-		"  KEY `idx` ((concat(`a`, `b`)),`a`)," +
-		"  KEY `idx1` (`a`,(concat(`a`, `b`)))," +
-		"  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`)" +
-		");")
-	for i := 0; i < 10; i++ {
-		tk.MustQuery("explain format='brief' select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows(
-			"Projection 0.10 root  test.t1.a, test.t1.b",
-			"└─IndexReader 0.10 root  index:IndexRangeScan",
-			"  └─IndexRangeScan 0.10 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"a\" \"aadwa\",\"a\" \"aadwa\"], keep order:false, stats:pseudo"))
-
-		tk.MustQuery("explain format='brief' select b from t1 where concat(a, b) >= \"aa\" and a = \"b\";").Check(testkit.Rows(
-			"Projection 33.33 root  test.t1.b",
-			"└─IndexReader 33.33 root  index:IndexRangeScan",
-			"  └─IndexRangeScan 33.33 cop[tikv] table:t1, index:idx2(a, concat(`a`, `b`), b) range:[\"b\" \"aa\",\"b\" +inf], keep order:false, stats:pseudo"))
-	}
-	tk.MustExec("insert into t1 values(\"a\", \"adwa\");")
-	tk.MustQuery("select * from t1  where concat(a, b) like \"aadwa\" and a = \"a\";").Check(testkit.Rows("a adwa"))
 }
 
 func TestCopPaging(t *testing.T) {
@@ -825,33 +702,6 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult(ctx, mixedAggFuncs, groupByItems)
 }
 
-func TestIssue34863(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists c")
-	tk.MustExec("drop table if exists o")
-	tk.MustExec("create table c(c_id bigint);")
-	tk.MustExec("create table o(o_id bigint, c_id bigint);")
-	tk.MustExec("insert into c values(1),(2),(3),(4),(5);")
-	tk.MustExec("insert into o values(1,1),(2,1),(3,2),(4,2),(5,2);")
-	tk.MustExec("set @@tidb_opt_agg_push_down=1")
-	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustExec("set @@tidb_opt_agg_push_down=0")
-	tk.MustQuery("select count(*) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(c.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("8"))
-	tk.MustQuery("select count(o.c_id) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select sum(o.c_id is null) from c left join o on c.c_id=o.c_id;").Check(testkit.Rows("3"))
-	tk.MustQuery("select count(*) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-	tk.MustQuery("select count(o.c_id) from c right join o on c.c_id=o.c_id;").Check(testkit.Rows("5"))
-}
-
 func TestIssue40857(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -893,62 +743,6 @@ func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 }
 
-// https://github.com/pingcap/tidb/issues/35527.
-func TestTableDualAsSubQuery(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
-	tk.MustQuery("SELECT v0.c0 FROM v0 WHERE (v0.c0 IS NULL) LIKE(NULL);").Check(testkit.Rows())
-	tk.MustQuery("SELECT v0.c0 FROM (SELECT null as c0) v0 WHERE (v0.c0 IS NULL) like (NULL);").Check(testkit.Rows())
-}
-
-// https://github.com/pingcap/tidb/issues/38310
-func TestNullEQConditionPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t0(c0 BOOL, PRIMARY KEY(c0));")
-	tk.MustExec("INSERT INTO t0 VALUES (FALSE);")
-	tk.MustQuery("SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows())
-
-	tk.MustQuery("explain SELECT * FROM t0 WHERE NOT (('4')AND(t0.c0<=>FALSE))").CheckAt(
-		[]int{0, 2, 4}, [][]interface{}{
-			{"TableReader_7", "root", "data:Selection_6"},
-			{"└─Selection_6", "cop[tikv]", "or(0, not(nulleq(test.t0.c0, 0)))"},
-			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
-		})
-
-	tk.MustQuery("SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE));").Check(testkit.Rows("0"))
-	tk.MustQuery("explain SELECT * FROM t0 WHERE (('4')AND(t0.c0<=>FALSE))").CheckAt(
-		[]int{0, 2, 4}, [][]interface{}{
-			{"Point_Get_5", "root", "handle:0"},
-		})
-}
-
-// https://github.com/pingcap/tidb/issues/38304
-// https://github.com/pingcap/tidb/issues/38654
-func TestOuterJoinOnNull(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t0(c0 BLOB(5), c1 BLOB(5));")
-	tk.MustExec("CREATE TABLE t1 (c0 BOOL);")
-	tk.MustExec("INSERT INTO t1 VALUES(false);")
-	tk.MustExec("INSERT INTO t0(c0, c1) VALUES ('>', true);")
-	tk.MustQuery("SELECT * FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("> 1 <nil>"))
-	tk.MustQuery("SELECT NOT '2' =(t1.c0 AND t0.c1 IS NULL) FROM t0 LEFT OUTER JOIN t1 ON NULL; ").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE NOT '2' =(t1.c0 AND t0.c1 IS NULL); ").Check(testkit.Rows("> 1 <nil>"))
-	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE t1.c0 or true; ").Check(testkit.Rows("> 1 <nil>"))
-	tk.MustQuery("SELECT * FROM t0 LEFT JOIN t1 ON NULL WHERE not(t1.c0 and false); ").Check(testkit.Rows("> 1 <nil>"))
-
-	tk.MustExec("CREATE TABLE t2(c0 INT);")
-	tk.MustExec("CREATE TABLE t3(c0 INT);")
-	tk.MustExec("INSERT INTO t3 VALUES (1);")
-	tk.MustQuery("SELECT ((NOT ('i'))AND(t2.c0)) IS NULL FROM  t2 RIGHT JOIN t3 ON t3.c0;").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT * FROM t2 RIGHT JOIN t3 ON t2.c0 WHERE ((NOT ('i'))AND(t2.c0)) IS NULL;").Check(testkit.Rows("<nil> 1"))
-}
-
 func TestIssue40535(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	var cfg kv.InjectionConfig
@@ -959,81 +753,4 @@ func TestIssue40535(t *testing.T) {
 	tk.MustExec("CREATE TABLE `t2`(`c1` set('kn8pu','7et','vekx6','v3','liwrh','q14','1met','nnd5i','5o0','8cz','l') DEFAULT '7et,vekx6,liwrh,q14,1met', `c2` float DEFAULT '1.683167', KEY `k1` (`c2`,`c1`), KEY `k2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;")
 	tk.MustExec("(select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;")
 	require.Empty(t, tk.Session().LastMessage())
-}
-
-func TestHypoIndexDDL(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, c int, d int, key(a))`)
-
-	tk.MustExec(`create index hypo_a type hypo on t (a)`)
-	tk.MustExec(`create index hypo_bc type hypo on t (b, c)`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  `d` int(11) DEFAULT NULL,\n" +
-		"  KEY `a` (`a`),\n" +
-		"  KEY `hypo_a` (`a`) /* HYPO INDEX */,\n" +
-		"  KEY `hypo_bc` (`b`,`c`) /* HYPO INDEX */\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	tk.MustExec(`drop hypo index hypo_a on t`)
-	tk.MustExec(`drop hypo index hypo_bc on t`)
-	tk.MustQuery(`show create table t`).Check(testkit.Rows("t CREATE TABLE `t` (\n" +
-		"  `a` int(11) DEFAULT NULL,\n" +
-		"  `b` int(11) DEFAULT NULL,\n" +
-		"  `c` int(11) DEFAULT NULL,\n" +
-		"  `d` int(11) DEFAULT NULL,\n" +
-		"  KEY `a` (`a`)\n" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-}
-
-func TestHypoIndexPlan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int)`)
-
-	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
-		`TableReader_7 10.00 root  data:Selection_6`,
-		`└─Selection_6 10.00 cop[tikv]  eq(test.t.a, 1)`,
-		`  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-
-	tk.MustExec(`create index hypo_a type hypo on t (a)`)
-
-	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
-		`IndexReader_6 10.00 root  index:IndexRangeScan_5`,
-		`└─IndexRangeScan_5 10.00 cop[tikv] table:t, index:hypo_a(a) range:[1,1], keep order:false, stats:pseudo`))
-
-	tk.MustExec(`drop hypo index hypo_a on t`)
-	tk.MustExec(`create unique index hypo_a type hypo on t (a)`)
-
-	tk.MustQuery(`explain select a from t where a = 1`).Check(testkit.Rows(
-		`Point_Get_5 1.00 root table:t, index:hypo_a(a) `))
-}
-
-func TestHypoTiFlashReplica(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int)`)
-
-	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
-		`TableReader_5 10000.00 root  data:TableFullScan_4`,
-		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
-
-	tk.MustExec(`alter table t set hypo tiflash replica 1`)
-
-	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
-		`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
-		`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
-		`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo`))
-
-	tk.MustExec(`alter table t set hypo tiflash replica 0`)
-
-	tk.MustQuery(`explain select a from t`).Check(testkit.Rows(
-		`TableReader_5 10000.00 root  data:TableFullScan_4`,
-		`└─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`))
 }

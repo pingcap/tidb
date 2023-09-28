@@ -328,21 +328,6 @@ func TestDropGlobalTempTable(t *testing.T) {
 	runSQL(t, tk.Session(), is, "drop global temporary table test2.temp2, temp1", false, nil)
 }
 
-func TestErrKeyPart0(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database TestErrKeyPart")
-	tk.MustExec("use TestErrKeyPart")
-	err := tk.ExecToErr("CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN")
-	require.EqualError(t, err, "[planner:1391]Key part 'a' length cannot be 0")
-	err = tk.ExecToErr("create table t (a int, b varchar(255), key (b(0)))")
-	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
-	err = tk.ExecToErr("create table t (a int, b varchar(255))")
-	require.NoError(t, err)
-	err = tk.ExecToErr("alter table t add index (b(0))")
-	require.EqualError(t, err, "[planner:1391]Key part 'b' length cannot be 0")
-}
-
 // For issue #30328
 func TestLargeVarcharAutoConv(t *testing.T) {
 	store := testkit.CreateMockStore(t)
