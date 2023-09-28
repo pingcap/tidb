@@ -758,7 +758,7 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 			}
 		}
 		return nil
-	})
+	}, flagWrapTxn)
 	return version, err
 }
 
