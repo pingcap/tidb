@@ -648,7 +648,7 @@ func (c *TopN) FindTopN(d []byte) int {
 		}
 		return -1
 	}
-	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < -1 {
+	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < 0 {
 		return -1
 	}
 	idx, match := slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
