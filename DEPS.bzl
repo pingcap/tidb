@@ -3420,19 +3420,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-<<<<<<< HEAD
-        sum = "h1:iAIjJVgrPuXjpAiMDcJvz4Y4Qf4KypiCsqy3UVzU6FQ=",
-        version = "v0.0.0-20230523065550-8b641fa69bf3",
-=======
-        sha256 = "f4b1d302bbbb5075222ff4ed7d5f7f8807d920aad1a5a7d4c31fdf2233d8568c",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20230925123611-87bebcc0d071",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
-        ],
->>>>>>> 32540a4a779 (snapshot_backup: deny executing tidb-lightning import while running snapshot_backup (#47001))
+        sum = "h1:5RDmWGqvcYbwpd5HuD+q81bYFbwPP4YwOH5nhzFnNaQ=",
+        version = "v0.0.0-20230928035053-f4a2db6417b6",
     )
     go_repository(
         name = "com_github_pingcap_log",

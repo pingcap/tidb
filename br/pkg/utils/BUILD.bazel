@@ -94,11 +94,7 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 29,
-=======
-    shard_count = 34,
->>>>>>> 32540a4a779 (snapshot_backup: deny executing tidb-lightning import while running snapshot_backup (#47001))
+    shard_count = 33,
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",
