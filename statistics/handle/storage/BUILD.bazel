@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "storage",
     srcs = [
+        "json.go",
         "read.go",
         "save.go",
     ],
@@ -10,22 +11,24 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
-        "//kv",
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
-        "//parser/terror",
         "//sessionctx",
         "//sessionctx/stmtctx",
         "//statistics",
         "//statistics/handle/cache",
+        "//statistics/handle/util",
         "//types",
         "//util/chunk",
+        "//util/compress",
         "//util/logutil",
         "//util/mathutil",
         "//util/sqlexec",
+        "@com_github_klauspost_compress//gzip",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -40,7 +43,6 @@ go_test(
         "//planner/cardinality",
         "//testkit",
         "//types",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

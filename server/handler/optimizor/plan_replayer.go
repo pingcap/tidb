@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/server/handler"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/replayer"
@@ -368,7 +369,7 @@ func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) 
 
 type tblInfo struct {
 	info      *model.TableInfo
-	jsonStats *handle.JSONTable
+	jsonStats *storage.JSONTable
 	dbName    string
 	tblName   string
 }

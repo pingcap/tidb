@@ -21,14 +21,12 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -42,7 +40,7 @@ const batchInsertSize = 10
 // maxInsertLength is the length limit for internal insert SQL.
 const maxInsertLength = 1024 * 1024
 
-func saveTopNToStorage(ctx context.Context, exec sqlexec.SQLExecutor, tableID int64, isIndex int, histID int64, topN *statistics.TopN) error {
+func saveTopNToStorage(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, topN *statistics.TopN) error {
 	if topN == nil {
 		return nil
 	}
@@ -66,17 +64,18 @@ func saveTopNToStorage(ctx context.Context, exec sqlexec.SQLExecutor, tableID in
 			sql.WriteString(val)
 		}
 		i = end
-		if _, err := exec.ExecuteInternal(ctx, sql.String()); err != nil {
+		if _, err := util.Exec(sctx, sql.String()); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stmtctx.StatementContext, tableID int64, isIndex int, hg *statistics.Histogram) (lastAnalyzePos []byte, err error) {
+func saveBucketsToStorage(sctx sessionctx.Context, tableID int64, isIndex int, hg *statistics.Histogram) (lastAnalyzePos []byte, err error) {
 	if hg == nil {
 		return
 	}
+	sc := sctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(hg.Buckets); {
 		end := i + batchInsertSize
 		if end > len(hg.Buckets) {
@@ -114,7 +113,7 @@ func saveBucketsToStorage(ctx context.Context, exec sqlexec.SQLExecutor, sc *stm
 			sql.WriteString(val)
 		}
 		i = end
-		if _, err = exec.ExecuteInternal(ctx, sql.String()); err != nil {
+		if _, err = util.Exec(sctx, sql.String()); err != nil {
 			return
 		}
 	}
@@ -139,14 +138,13 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			}
 		}
 	}()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	exec := sctx.(sqlexec.SQLExecutor)
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	ctx := util.StatsCtx(context.Background())
+	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
 		return err
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(sctx, err)
 	}()
 	txn, err := sctx.Txn(true)
 	if err != nil {
@@ -156,7 +154,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	// 1. Save mysql.stats_meta.
 	var rs sqlexec.RecordSet
 	// Lock this row to prevent writing of concurrent analyze.
-	rs, err = exec.ExecuteInternal(ctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id = %? for update", tableID)
+	rs, err = util.Exec(sctx, "select snapshot, count, modify_count from mysql.stats_meta where table_id = %? for update", tableID)
 	if err != nil {
 		return err
 	}
@@ -193,7 +191,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 			snapShot = 0
 			count = 0
 		}
-		if _, err = exec.ExecuteInternal(ctx,
+		if _, err = util.Exec(sctx,
 			"replace into mysql.stats_meta (version, table_id, count, snapshot) values (%?, %?, %?, %?)",
 			version,
 			tableID,
@@ -206,7 +204,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	} else if results.ForMVIndex {
 		// 1-2. There's already an existing record for this table, and we are handling stats for mv index now.
 		// In this case, we only update the version. See comments for AnalyzeResults.ForMVIndex for more details.
-		if _, err = exec.ExecuteInternal(ctx,
+		if _, err = util.Exec(sctx,
 			"update mysql.stats_meta set version=%? where table_id=%?",
 			version,
 			tableID,
@@ -246,7 +244,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 				zap.Int64("results.Count", results.Count),
 				zap.Int64("count", cnt))
 		}
-		if _, err = exec.ExecuteInternal(ctx,
+		if _, err = util.Exec(sctx,
 			"update mysql.stats_meta set version=%?, modify_count=%?, count=%?, snapshot=%? where table_id=%?",
 			version,
 			modifyCnt,
@@ -279,40 +277,39 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 				return err
 			}
 			// Delete outdated data
-			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+			if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return err
 			}
-			if err = saveTopNToStorage(ctx, exec, tableID, result.IsIndex, hg.ID, result.TopNs[i]); err != nil {
+			if err = saveTopNToStorage(sctx, tableID, result.IsIndex, hg.ID, result.TopNs[i]); err != nil {
 				return err
 			}
-			if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+			if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return err
 			}
 			if fmSketch != nil && needDumpFMS {
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, fmSketch); err != nil {
+				if _, err = util.Exec(sctx, "insert into mysql.stats_fm_sketch (table_id, is_index, hist_id, value) values (%?, %?, %?, %?)", tableID, result.IsIndex, hg.ID, fmSketch); err != nil {
 					return err
 				}
 			}
-			if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+			if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
 				tableID, result.IsIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, results.StatsVer, statistics.AnalyzeFlag, hg.Correlation); err != nil {
 				return err
 			}
-			if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
+			if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, result.IsIndex, hg.ID); err != nil {
 				return err
 			}
-			sc := sctx.GetSessionVars().StmtCtx
 			var lastAnalyzePos []byte
-			lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, result.IsIndex, hg)
+			lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, result.IsIndex, hg)
 			if err != nil {
 				return err
 			}
 			if len(lastAnalyzePos) > 0 {
-				if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
+				if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, result.IsIndex, hg.ID); err != nil {
 					return err
 				}
 			}
 			if result.IsIndex == 0 {
-				if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
+				if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = values(last_analyzed_at)", tableID, hg.ID); err != nil {
 					return err
 				}
 			}
@@ -337,7 +334,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 		case ast.StatsTypeDependency:
 			statsStr = item.StringVals
 		}
-		if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, statistics.ExtendedStatsAnalyzed); err != nil {
+		if _, err = util.Exec(sctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, statistics.ExtendedStatsAnalyzed); err != nil {
 			return err
 		}
 	}
@@ -359,27 +356,24 @@ func SaveStatsToStorage(sctx sessionctx.Context,
 		}
 	}()
 
-	exec := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(sctx, err)
 	}()
-	version, err := getStartTS(sctx)
+	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	// If the count is less than 0, then we do not want to update the modify count and count.
 	if count >= 0 {
-		_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+		_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 		cache.TableRowStatsCache.Invalidate(tableID)
 	} else {
-		_, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
+		_, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %?", version, tableID)
 	}
 	if err != nil {
 		return err
@@ -390,39 +384,38 @@ func SaveStatsToStorage(sctx sessionctx.Context,
 		return err
 	}
 	// Delete outdated data
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+	if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
 	}
-	if err = saveTopNToStorage(ctx, exec, tableID, isIndex, hg.ID, topN); err != nil {
+	if err = saveTopNToStorage(sctx, tableID, isIndex, hg.ID, topN); err != nil {
 		return err
 	}
-	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+	if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
 	}
 	flag := 0
 	if isAnalyzed == 1 {
 		flag = statistics.AnalyzeFlag
 	}
-	if _, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
+	if _, err = util.Exec(sctx, "replace into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, flag, correlation) values (%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)",
 		tableID, isIndex, hg.ID, hg.NDV, version, hg.NullCount, cmSketch, hg.TotColSize, statsVersion, flag, hg.Correlation); err != nil {
 		return err
 	}
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
+	if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, hg.ID); err != nil {
 		return err
 	}
-	sc := sctx.GetSessionVars().StmtCtx
 	var lastAnalyzePos []byte
-	lastAnalyzePos, err = saveBucketsToStorage(ctx, exec, sc, tableID, isIndex, hg)
+	lastAnalyzePos, err = saveBucketsToStorage(sctx, tableID, isIndex, hg)
 	if err != nil {
 		return err
 	}
 	if isAnalyzed == 1 && len(lastAnalyzePos) > 0 {
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
+		if _, err = util.Exec(sctx, "update mysql.stats_histograms set last_analyze_pos = %? where table_id = %? and is_index = %? and hist_id = %?", lastAnalyzePos, tableID, isIndex, hg.ID); err != nil {
 			return err
 		}
 	}
 	if updateAnalyzeTime && isIndex == 0 {
-		if _, err = exec.ExecuteInternal(ctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
+		if _, err = util.Exec(sctx, "insert into mysql.column_stats_usage (table_id, column_id, last_analyzed_at) values(%?, %?, current_timestamp()) on duplicate key update last_analyzed_at = current_timestamp()", tableID, hg.ID); err != nil {
 			return err
 		}
 	}
@@ -441,41 +434,19 @@ func SaveMetaToStorage(
 		}
 	}()
 
-	exec := sctx.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
-	_, err = exec.ExecuteInternal(ctx, "begin")
+	_, err = util.Exec(sctx, "begin")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = finishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(sctx, err)
 	}()
-	version, err := getStartTS(sctx)
+	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = exec.ExecuteInternal(ctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
+	_, err = util.Exec(sctx, "replace into mysql.stats_meta (version, table_id, count, modify_count) values (%?, %?, %?, %?)", version, tableID, count, modifyCount)
 	statsVer = version
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return err
-}
-
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(ctx context.Context, exec sqlexec.SQLExecutor, err error) error {
-	if err == nil {
-		_, err = exec.ExecuteInternal(ctx, "commit")
-	} else {
-		_, err1 := exec.ExecuteInternal(ctx, "rollback")
-		terror.Log(errors.Trace(err1))
-	}
-	return errors.Trace(err)
-}
-
-func getStartTS(sctx sessionctx.Context) (uint64, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-	return txn.StartTS(), nil
 }

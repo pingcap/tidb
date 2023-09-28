@@ -1165,6 +1165,7 @@ var (
 		upgradeToVer173,
 		upgradeToVer174,
 		upgradeToVer175,
+		upgradeToVer176,
 	}
 )
 
