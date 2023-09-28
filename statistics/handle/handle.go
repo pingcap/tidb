@@ -24,7 +24,6 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/infoschema"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/extstats"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
@@ -347,18 +347,12 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-) (*globalstats.GlobalStats, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return nil, err
-	}
-	defer h.pool.Put(se)
-	sc := se.(sessionctx.Context)
-
-	if err := UpdateSCtxVarsForStats(sc); err != nil {
-		return nil, err
-	}
-	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
+) (gstats *globalstats.GlobalStats, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
+		return err
+	})
+	return
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
@@ -568,9 +562,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 }
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
-func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
-	var es *statistics.ExtendedStatsColl
-	var err error
+func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (es *statistics.ExtendedStatsColl, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		es, err = extstats.BuildExtendedStats(sctx, tableID, cols, collectors)
 		return err
@@ -755,82 +747,33 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 		return version, errors.Trace(err)
 	}
 
-	se, err := h.pool.Get()
-	if err != nil {
-		return 0, err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return version, errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-	ts := time.Now().Format("2006-01-02 15:04:05.999999")
-
-	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
-	for i := 0; i < len(blocks); i++ {
-		if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
-			return version, errors.Trace(err)
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		ts := time.Now().Format("2006-01-02 15:04:05.999999")
+		const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+		for i := 0; i < len(blocks); i++ {
+			if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
+				return errors.Trace(err)
+			}
 		}
-	}
-	return version, nil
+		return nil
+	}, flagWrapTxn)
+	return version, err
 }
 
 // CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
 func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return false, err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil {
-		return false, err
-	}
-	return sctx.GetSessionVars().EnableHistoricalStats, nil
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		enable = sctx.GetSessionVars().EnableHistoricalStats
+		return nil
+	})
+	return
 }
 
 // InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
 func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	jobInfo := job.JobInfo
-	const textMaxLength = 65535
-	if len(jobInfo) > textMaxLength {
-		jobInfo = jobInfo[:textMaxLength]
-	}
-	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
-	_, _, err = util.ExecRows(sctx, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
-	if err != nil {
-		return err
-	}
-	const getJobID = "SELECT LAST_INSERT_ID()"
-	rows, _, err := util.ExecRows(sctx, getJobID)
-	if err != nil {
-		return err
-	}
-	job.ID = new(uint64)
-	*job.ID = rows[0].GetUint64(0)
-	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
-		if val.(bool) {
-			logutil.BgLogger().Info("InsertAnalyzeJob",
-				zap.String("table_schema", job.DBName),
-				zap.String("table_name", job.TableName),
-				zap.String("partition_name", job.PartitionName),
-				zap.String("job_info", jobInfo),
-				zap.Uint64("job_id", *job.ID),
-			)
-		}
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return autoanalyze.InsertAnalyzeJob(sctx, job, instance, procID)
 	})
-	return nil
 }
 
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
@@ -857,18 +800,6 @@ func (h *Handle) SetStatsCacheCapacity(c int64) {
 func (h *Handle) Close() {
 	h.gpool.Close()
 	h.statsCache.Load().Close()
-}
-
-func getSessionTxnStartTS(se interface{}) (uint64, error) {
-	sctx, ok := se.(sessionctx.Context)
-	if !ok {
-		return 0, errors.New("se is not sessionctx.Context")
-	}
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return 0, err
-	}
-	return txn.StartTS(), nil
 }
 
 const (

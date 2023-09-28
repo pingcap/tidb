@@ -251,38 +251,34 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 		h.tableDelta.Merge(deltaMap)
 	}()
 
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	currentTime := time.Now()
-	for id, item := range deltaMap {
-		if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
-			continue
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		currentTime := time.Now()
+		for id, item := range deltaMap {
+			if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
+				continue
+			}
+			updated, err := h.dumpTableStatCountToKV(is, id, item)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if updated {
+				usage.UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
+			}
+			if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+				delete(deltaMap, id)
+				return errors.Trace(err)
+			}
+			if updated {
+				delete(deltaMap, id)
+			} else {
+				m := deltaMap[id]
+				m.ColSize = nil
+				deltaMap[id] = m
+			}
 		}
-		updated, err := h.dumpTableStatCountToKV(is, id, item)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if updated {
-			usage.UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
-		}
-		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
-			delete(deltaMap, id)
-			return errors.Trace(err)
-		}
-		if updated {
-			delete(deltaMap, id)
-		} else {
-			m := deltaMap[id]
-			m.ColSize = nil
-			deltaMap[id] = m
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
@@ -297,81 +293,69 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		return true, nil
 	}
 
-	se, err := h.pool.Get()
-	if err != nil {
-		return false, err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	_, err = utilstats.Exec(sctx, "begin")
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	defer func() {
-		err = utilstats.FinishTransaction(sctx, err)
-	}()
-
-	statsVersion, err = getSessionTxnStartTS(se)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
-	// Check if the table and its partitions are locked.
-	tidAndPid := make([]int64, 0, 2)
-	if tbl != nil {
-		tidAndPid = append(tidAndPid, tbl.Meta().ID)
-	}
-	tidAndPid = append(tidAndPid, physicalTableID)
-	lockedTables, err := h.GetLockedTables(tidAndPid...)
-	if err != nil {
-		return
-	}
-
-	var affectedRows uint64
-	// If it's a partitioned table and its global-stats exists,
-	// update its count and modify_count as well.
-	if tbl != nil {
-		// We need to check if the table and the partition are locked.
-		isTableLocked := false
-		isPartitionLocked := false
-		tableID := tbl.Meta().ID
-		if _, ok := lockedTables[tableID]; ok {
-			isTableLocked = true
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		statsVersion, err = utilstats.GetStartTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if _, ok := lockedTables[physicalTableID]; ok {
-			isPartitionLocked = true
+
+		tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
+		// Check if the table and its partitions are locked.
+		tidAndPid := make([]int64, 0, 2)
+		if tbl != nil {
+			tidAndPid = append(tidAndPid, tbl.Meta().ID)
 		}
-		tableOrPartitionLocked := isTableLocked || isPartitionLocked
-		if err = updateStatsMeta(sctx, statsVersion, delta,
-			physicalTableID, tableOrPartitionLocked); err != nil {
-			return
+		tidAndPid = append(tidAndPid, physicalTableID)
+		lockedTables, err := h.GetLockedTables(tidAndPid...)
+		if err != nil {
+			return err
 		}
-		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-		// If only the partition is locked, we don't need to update the global-stats.
-		// We will update its global-stats when the partition is unlocked.
-		if isTableLocked || !isPartitionLocked {
-			// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-			if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
-				return
+
+		var affectedRows uint64
+		// If it's a partitioned table and its global-stats exists,
+		// update its count and modify_count as well.
+		if tbl != nil {
+			// We need to check if the table and the partition are locked.
+			isTableLocked := false
+			isPartitionLocked := false
+			tableID := tbl.Meta().ID
+			if _, ok := lockedTables[tableID]; ok {
+				isTableLocked = true
+			}
+			if _, ok := lockedTables[physicalTableID]; ok {
+				isPartitionLocked = true
+			}
+			tableOrPartitionLocked := isTableLocked || isPartitionLocked
+			if err = updateStatsMeta(sctx, statsVersion, delta,
+				physicalTableID, tableOrPartitionLocked); err != nil {
+				return err
+			}
+			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			// If only the partition is locked, we don't need to update the global-stats.
+			// We will update its global-stats when the partition is unlocked.
+			if isTableLocked || !isPartitionLocked {
+				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+				if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
+					return err
+				}
+				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			}
+		} else {
+			// This is a non-partitioned table.
+			// Check if it's locked.
+			isTableLocked := false
+			if _, ok := lockedTables[physicalTableID]; ok {
+				isTableLocked = true
+			}
+			if err = updateStatsMeta(sctx, statsVersion, delta,
+				physicalTableID, isTableLocked); err != nil {
+				return err
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
-	} else {
-		// This is a non-partitioned table.
-		// Check if it's locked.
-		isTableLocked := false
-		if _, ok := lockedTables[physicalTableID]; ok {
-			isTableLocked = true
-		}
-		if err = updateStatsMeta(sctx, statsVersion, delta,
-			physicalTableID, isTableLocked); err != nil {
-			return
-		}
-		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-	}
-
-	updated = affectedRows > 0
+		updated = affectedRows > 0
+		return nil
+	}, flagWrapTxn)
 	return
 }
 
@@ -502,15 +486,10 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func (h *Handle) GetCurrentPruneMode() (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil {
-		return "", err
-	}
-	return sctx.GetSessionVars().PartitionPruneMode.Load(), nil
+func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
+		return nil
+	})
+	return
 }

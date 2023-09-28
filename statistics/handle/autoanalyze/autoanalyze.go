@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
@@ -408,4 +409,37 @@ func execAnalyzeStmt(sctx sessionctx.Context,
 		sqlexec.ExecOptionWithSysProcTrack(opt.AutoAnalyzeProcIDGetter(), opt.SysProcTracker.Track, opt.SysProcTracker.UnTrack),
 	}
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
+}
+
+// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+func InsertAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
+	jobInfo := job.JobInfo
+	const textMaxLength = 65535
+	if len(jobInfo) > textMaxLength {
+		jobInfo = jobInfo[:textMaxLength]
+	}
+	const insertJob = "INSERT INTO mysql.analyze_jobs (table_schema, table_name, partition_name, job_info, state, instance, process_id) VALUES (%?, %?, %?, %?, %?, %?, %?)"
+	_, _, err = statsutil.ExecRows(sctx, insertJob, job.DBName, job.TableName, job.PartitionName, jobInfo, statistics.AnalyzePending, instance, procID)
+	if err != nil {
+		return err
+	}
+	const getJobID = "SELECT LAST_INSERT_ID()"
+	rows, _, err := statsutil.ExecRows(sctx, getJobID)
+	if err != nil {
+		return err
+	}
+	job.ID = new(uint64)
+	*job.ID = rows[0].GetUint64(0)
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
+		if val.(bool) {
+			logutil.BgLogger().Info("InsertAnalyzeJob",
+				zap.String("table_schema", job.DBName),
+				zap.String("table_name", job.TableName),
+				zap.String("partition_name", job.PartitionName),
+				zap.String("job_info", jobInfo),
+				zap.Uint64("job_id", *job.ID),
+			)
+		}
+	})
+	return nil
 }
