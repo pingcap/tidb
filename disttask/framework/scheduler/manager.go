@@ -375,13 +375,13 @@ func (m *Manager) removeHandlingTask(id int64) {
 }
 
 func (m *Manager) logErr(err error) {
-	logutil.Logger(m.logCtx).Error("task manager error", zap.Error(err))
+	logutil.Logger(m.logCtx).Error("task manager error", zap.Error(err), zap.Stack("stack"))
 }
 
 func (m *Manager) logErrAndPersist(err error, taskID int64) {
 	m.logErr(err)
 	err1 := m.taskTable.UpdateErrorToSubtask(m.id, taskID, err)
 	if err1 != nil {
-		logutil.Logger(m.logCtx).Error("update to subtask failed", zap.Error(err1))
+		logutil.Logger(m.logCtx).Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
 	}
 }
