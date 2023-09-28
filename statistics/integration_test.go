@@ -667,3 +667,20 @@ func TestUpdateNotLoadIndexFMSketch(t *testing.T) {
 	require.Nil(t, h.GetPartitionStats(tblInfo, p0.ID).Indices[idxInfo.ID].FMSketch)
 	require.Nil(t, h.GetPartitionStats(tblInfo, p1.ID).Indices[idxInfo.ID].FMSketch)
 }
+
+func TestIssue44369(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index iab(a,b));")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t value(1,1);")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t;")
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tk.MustExec("alter table t rename column b to bb;")
+	tk.MustExec("select * from t where a = 10 and bb > 20;")
+}
