@@ -4171,8 +4171,19 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:Ldvdc89v7GE6N7KpsgLEwKhWkE25pXM+hEI9ikZ914c=",
         version = "v2.0.8-0.20230713054852-a3875bcbc94f",
+=======
+        sha256 = "fda64379a1d2f8bc263aa1e9faac235a59c085bc06269a46a88f3dd60e37d372",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20230714052714-85fc8f337565",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230714052714-85fc8f337565.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230714052714-85fc8f337565.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230714052714-85fc8f337565.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230714052714-85fc8f337565.zip",
+        ],
+>>>>>>> bf3795c74ce (*: update tikv/client-go and fix stale read metrics in grafana (#45505))
     )
     go_repository(
         name = "com_github_tikv_pd",
