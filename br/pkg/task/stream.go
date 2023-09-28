@@ -1056,7 +1056,24 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig) error {
 		return err
 	}
 	if len(tasks) > 0 {
+<<<<<<< HEAD
 		return errors.Errorf("log backup task is running: %s, please stop the task before restore, and after PITR operation finished, create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+=======
+		return errors.Errorf("log backup task is running: %s, "+
+			"please stop the task before restore, and after PITR operation finished, "+
+			"create log-backup task again and create a full backup on this cluster", tasks[0].Info.Name)
+	}
+
+	// check cdc changefeed
+	if cfg.CheckRequirements {
+		nameSet, err := utils.GetCDCChangefeedNameSet(ctx, etcdCLI)
+		if err != nil {
+			return err
+		}
+		if !nameSet.Empty() {
+			return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+		}
+>>>>>>> 95378e5bede (br: check the correct changefeed info when restore/import data (#47322))
 	}
 	return nil
 }
