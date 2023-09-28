@@ -321,7 +321,7 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 			return err
 		}
 		return nil
-	})
+	}, flagWrapTxn)
 }
 
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
@@ -389,5 +389,5 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			}
 		}
 		return nil
-	})
+	}, flagWrapTxn)
 }
