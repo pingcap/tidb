@@ -43,7 +43,6 @@ go_test(
         "//planner/cardinality",
         "//testkit",
         "//types",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],
 )

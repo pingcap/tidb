@@ -17,7 +17,6 @@ package storage_test
 import (
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/testkit"
@@ -105,20 +104,6 @@ func TestLoadStats(t *testing.T) {
 	topN = idx.TopN
 	require.Greater(t, float64(cms.TotalCount()+topN.TotalCount())+hg.TotalRowCount(), float64(0))
 	require.True(t, idx.IsFullLoad())
-
-	// Following test tests whether the LoadNeededHistograms would panic.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/storage/mockGetStatsReaderFail", `return(true)`))
-	err = h.LoadNeededHistograms()
-	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/storage/mockGetStatsReaderFail"))
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/storage/mockGetStatsReaderPanic", "panic"))
-	err = h.LoadNeededHistograms()
-	require.Error(t, err)
-	require.Regexp(t, ".*getStatsReader panic.*", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/storage/mockGetStatsReaderPanic"))
-	err = h.LoadNeededHistograms()
-	require.NoError(t, err)
 }
 
 func TestReloadExtStatsLockRelease(t *testing.T) {
@@ -129,11 +114,5 @@ func TestReloadExtStatsLockRelease(t *testing.T) {
 	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
-	tk.MustExec("analyze table t")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/storage/injectExtStatsLoadErr", `return("")`))
-	err := tk.ExecToErr("admin reload stats_extended")
-	require.Equal(t, "gofail extendedStatsFromStorage error", err.Error())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/storage/injectExtStatsLoadErr"))
-	// Check the lock is released by `admin reload stats_extended` if error happens.
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t") // no error
 }

@@ -29,10 +29,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
+	utilstats "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -175,29 +175,16 @@ func (h *Handle) AppendNeededItem(task *NeededItemTask, timeout time.Duration) e
 
 var errExit = errors.New("Stop loading since domain is closed")
 
-// StatsReaderContext exported for testing
-type StatsReaderContext struct {
-	reader      *storage.StatsReader
-	createdTime time.Time
-}
-
 // SubLoadWorker loads hist data for each column
-func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
-	readerCtx := &StatsReaderContext{}
+func (h *Handle) SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper) {
 	defer func() {
 		exitWg.Done()
 		logutil.BgLogger().Info("SubLoadWorker exited.")
-		if readerCtx.reader != nil {
-			err := readerCtx.reader.Close()
-			if err != nil {
-				logutil.BgLogger().Error("Fail to release stats loader: ", zap.Error(err))
-			}
-		}
 	}()
 	// if the last task is not successfully handled in last round for error or panic, pass it to this round to retry
 	var lastTask *NeededItemTask
 	for {
-		task, err := h.HandleOneTask(lastTask, readerCtx, ctx.(sqlexec.RestrictedSQLExecutor), exit)
+		task, err := h.HandleOneTask(sctx, lastTask, exit)
 		lastTask = task
 		if err != nil {
 			switch err {
@@ -212,7 +199,7 @@ func (h *Handle) SubLoadWorker(ctx sessionctx.Context, exit chan struct{}, exitW
 }
 
 // HandleOneTask handles last task if not nil, else handle a new task from chan, and return current task if fail somewhere.
-func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor, exit chan struct{}) (task *NeededItemTask, err error) {
+func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error) {
 	defer func() {
 		// recover for each task, worker keeps working
 		if r := recover(); r != nil {
@@ -231,10 +218,10 @@ func (h *Handle) HandleOneTask(lastTask *NeededItemTask, readerCtx *StatsReaderC
 	} else {
 		task = lastTask
 	}
-	return h.handleOneItemTask(task, readerCtx, ctx)
+	return h.handleOneItemTask(sctx, task)
 }
 
-func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) (*NeededItemTask, error) {
+func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (*NeededItemTask, error) {
 	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
 	item := result.Item
 	oldCache := h.statsCache.Load()
@@ -266,11 +253,9 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
 	}
-	// refresh statsReader to get latest stats
-	h.loadFreshStatsReader(readerCtx, ctx)
 	t := time.Now()
 	needUpdate := false
-	wrapper, err = h.readStatsForOneItem(item, wrapper, readerCtx.reader)
+	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
 	if err != nil {
 		result.Error = err
 		return task, err
@@ -292,30 +277,8 @@ func (h *Handle) handleOneItemTask(task *NeededItemTask, readerCtx *StatsReaderC
 	return nil, nil
 }
 
-func (h *Handle) loadFreshStatsReader(readerCtx *StatsReaderContext, ctx sqlexec.RestrictedSQLExecutor) {
-	if !(readerCtx.reader == nil || readerCtx.createdTime.Add(h.Lease()).Before(time.Now())) {
-		return
-	}
-	if readerCtx.reader != nil {
-		err := readerCtx.reader.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("Fail to release stats loader: ", zap.Error(err))
-		}
-	}
-	for {
-		newReader, err := storage.GetStatsReader(0, ctx, nil)
-		if err == nil {
-			readerCtx.reader = newReader
-			readerCtx.createdTime = time.Now()
-			return
-		}
-		logutil.BgLogger().Error("Fail to new stats loader, retry after a while.", zap.Error(err))
-		time.Sleep(h.Lease() / 10)
-	}
-}
-
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, reader *storage.StatsReader) (*statsWrapper, error) {
+func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
@@ -332,30 +295,30 @@ func (*Handle) readStatsForOneItem(item model.TableItemID, w *statsWrapper, read
 		isIndexFlag = 1
 	}
 	if item.IsIndex {
-		hg, err = storage.HistogramFromStorage(reader, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+		hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	} else {
-		hg, err = storage.HistogramFromStorage(reader, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+		hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 	var cms *statistics.CMSketch
 	var topN *statistics.TopN
-	cms, topN, err = storage.CMSketchAndTopNFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+	cms, topN, err = storage.CMSketchAndTopNFromStorage(sctx, item.TableID, isIndexFlag, item.ID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	var fms *statistics.FMSketch
 	if loadFMSketch {
-		fms, err = storage.FMSketchFromStorage(reader, item.TableID, isIndexFlag, item.ID)
+		fms, err = storage.FMSketchFromStorage(sctx, item.TableID, isIndexFlag, item.ID)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
+	rows, _, err := utilstats.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
