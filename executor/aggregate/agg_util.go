@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/execdetails"
@@ -37,18 +36,6 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
 )
-
-// getPartialResultBatch fetches a batch of partial results from HashAggIntermData.
-func (d *HashAggIntermData) getPartialResultBatch(_ *stmtctx.StatementContext, prs [][]aggfuncs.PartialResult, _ []aggfuncs.AggFunc, maxChunkSize int) (_ [][]aggfuncs.PartialResult, groupKeys []string, reachEnd bool) {
-	keyStart := d.cursor
-	for ; d.cursor < len(d.groupKeys) && len(prs) < maxChunkSize; d.cursor++ {
-		prs = append(prs, d.partialResultMap[d.groupKeys[d.cursor]])
-	}
-	if d.cursor == len(d.groupKeys) {
-		reachEnd = true
-	}
-	return prs, d.groupKeys[keyStart:d.cursor], reachEnd
-}
 
 func closeBaseExecutor(b *exec.BaseExecutor) {
 	if r := recover(); r != nil {

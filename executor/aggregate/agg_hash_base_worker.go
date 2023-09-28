@@ -84,7 +84,7 @@ func (w *baseHashAggWorker) getPartialResult(_ *stmtctx.StatementContext, groupK
 
 func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
 	length := len(w.aggFuncs)
-	if len(w.aggFuncs) == 1 {
+	if length == 1 {
 		return 1
 	}
 	return length + length&1
