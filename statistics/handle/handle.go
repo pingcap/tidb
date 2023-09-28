@@ -562,9 +562,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 }
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
-func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
-	var es *statistics.ExtendedStatsColl
-	var err error
+func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (es *statistics.ExtendedStatsColl, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		es, err = extstats.BuildExtendedStats(sctx, tableID, cols, collectors)
 		return err
