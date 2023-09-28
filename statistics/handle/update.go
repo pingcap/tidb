@@ -282,6 +282,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
+// For a partitioned table, we will update its global-stats as well.
 func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
 	statsVersion := uint64(0)
 	defer func() {
@@ -331,9 +332,18 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 				return err
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-			// If only the partition is locked, we don't need to update the global-stats.
+			// If the partition is locked, we don't need to update the global-stats.
 			// We will update its global-stats when the partition is unlocked.
-			if isTableLocked || !isPartitionLocked {
+			// 1. If table is locked and partition is locked, we only stash the delta in the partition's lock info.
+			//    we will update its global-stats when the partition is unlocked.
+			// 2. If table is locked and partition is not locked(new partition after lock), we only stash the delta in the table's lock info.
+			//    we will update its global-stats when the table is unlocked. We don't need to specially handle this case.
+			//    Because updateStatsMeta will insert a new record if the record doesn't exist.
+			// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
+			//    we will update its global-stats when the partition is unlocked.
+			// 4. If table is not locked and partition is not locked, we update the global-stats.
+			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
+			if !isTableLocked && !isPartitionLocked {
 				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
 				if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
 					return err
@@ -353,6 +363,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
+
 		updated = affectedRows > 0
 		return nil
 	}, flagWrapTxn)
@@ -367,13 +378,11 @@ func updateStatsMeta(
 	isLocked bool,
 ) (err error) {
 	if isLocked {
-		if delta.Delta < 0 {
-			_, err = utilstats.Exec(sctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?",
-				startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-		} else {
-			_, err = utilstats.Exec(sctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?",
-				startTS, delta.Delta, delta.Count, id)
-		}
+		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
+		// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
+		_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
+			startTS, id, delta.Count, delta.Delta)
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.

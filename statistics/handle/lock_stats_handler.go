@@ -21,12 +21,11 @@ import (
 )
 
 // LockTables add locked tables id to store.
-// - tidAndNames: table ids and names of which will be locked.
-// - pidAndNames: partition ids and names of which will be locked.
+// - tables: tables that will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) LockTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (skipped string, err error) {
+func (h *Handle) LockTables(tables map[int64]*lockstats.TableInfo) (skipped string, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		skipped, err = lockstats.AddLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tidAndNames, pidAndNames)
+		skipped, err = lockstats.AddLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tables)
 		return err
 	})
 	return
@@ -52,12 +51,11 @@ func (h *Handle) LockPartitions(
 }
 
 // RemoveLockedTables remove tables from table locked records.
-// - tidAndNames:  table ids and names of which will be unlocked.
-// - pidAndNames: partition ids and names of which will be unlocked.
+// - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tidAndNames map[int64]string, pidAndNames map[int64]string) (skipped string, err error) {
+func (h *Handle) RemoveLockedTables(tables map[int64]*lockstats.TableInfo) (skipped string, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		skipped, err = lockstats.RemoveLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tidAndNames, pidAndNames)
+		skipped, err = lockstats.RemoveLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tables)
 		return err
 	})
 	return
