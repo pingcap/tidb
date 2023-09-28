@@ -15,7 +15,9 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -34,19 +36,16 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-<<<<<<< HEAD
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
-=======
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/server/internal"
-	"github.com/pingcap/tidb/server/internal/testutil"
-	"github.com/pingcap/tidb/server/internal/util"
->>>>>>> 9466e45f7d0 (executor: fix plan replayer for sql file input wrongly fetch startTS after `OnTxnEnd` (#46201))
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testenv"
+	"github.com/pingcap/tidb/util/arena"
+	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/replayer"
 	"github.com/pingcap/tidb/util/versioninfo"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -76,7 +75,6 @@ func newTestServerClient() *testServerClient {
 	}
 }
 
-<<<<<<< HEAD
 // statusURL return the full URL of a status path
 func (cli *testServerClient) statusURL(path string) string {
 	return fmt.Sprintf("%s://localhost:%d%s", cli.statusScheme, cli.statusPort, path)
@@ -2458,12 +2456,13 @@ func (cli *testServerClient) runTestInfoschemaClientErrors(t *testing.T) {
 			}
 		}
 	})
-=======
+}
+
 func TestIssue46197(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tidbdrv := NewTiDBDriver(store)
-	cfg := util.NewTestConfig()
+	cfg := newTestConfig()
 	cfg.Port, cfg.Status.StatusPort = 0, 0
 	cfg.Status.ReportStatus = false
 	server, err := NewServer(cfg, tidbdrv)
@@ -2480,18 +2479,18 @@ func TestIssue46197(t *testing.T) {
 	require.NoError(t, err)
 
 	// clientConn setup
-	brc := util.NewBufferedReadConn(&testutil.BytesConn{Buffer: inBuffer})
-	pkt := internal.NewPacketIO(brc)
-	pkt.SetBufWriter(bufio.NewWriter(bytes.NewBuffer(nil)))
+	brc := newBufferedReadConn(&bytesConn{b: inBuffer})
+	pkt := newPacketIO(brc)
+	pkt.bufWriter = bufio.NewWriter(bytes.NewBuffer(nil))
 	cc := &clientConn{
 		server:     server,
 		alloc:      arena.NewAllocator(1024),
 		chunkAlloc: chunk.NewAllocator(),
 		pkt:        pkt,
-		capability: mysql.ClientLocalFiles,
+		capability: tmysql.ClientLocalFiles,
 	}
 	ctx := context.Background()
-	cc.SetCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
+	cc.setCtx(&TiDBContext{Session: tk.Session(), stmts: make(map[int]*TiDBStatement)})
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int, b int)")
@@ -2502,5 +2501,4 @@ func TestIssue46197(t *testing.T) {
 	// clean up
 	path := testdata.ConvertRowsToStrings(tk.MustQuery("select @@tidb_last_plan_replayer_token").Rows())
 	require.NoError(t, os.Remove(filepath.Join(replayer.GetPlanReplayerDirName(), path[0])))
->>>>>>> 9466e45f7d0 (executor: fix plan replayer for sql file input wrongly fetch startTS after `OnTxnEnd` (#46201))
 }

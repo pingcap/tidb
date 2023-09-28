@@ -60,23 +60,13 @@ type PlanReplayerCaptureInfo struct {
 
 // PlanReplayerDumpInfo indicates dump info
 type PlanReplayerDumpInfo struct {
-<<<<<<< HEAD
 	ExecStmts []ast.StmtNode
 	Analyze   bool
+	StartTS   uint64
 	Path      string
 	File      *os.File
 	FileName  string
 	ctx       sessionctx.Context
-=======
-	ExecStmts         []ast.StmtNode
-	Analyze           bool
-	HistoricalStatsTS uint64
-	StartTS           uint64
-	Path              string
-	File              *os.File
-	FileName          string
-	ctx               sessionctx.Context
->>>>>>> 9466e45f7d0 (executor: fix plan replayer for sql file input wrongly fetch startTS after `OnTxnEnd` (#46201))
 }
 
 // Next implements the Executor Next interface.
@@ -99,7 +89,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
 	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
 	// So we must fetch the startTS now.
-	startTS, err := sessiontxn.GetTxnManager(e.Ctx()).GetStmtReadTS()
+	startTS, err := sessiontxn.GetTxnManager(e.ctx).GetStmtReadTS()
 	if err != nil {
 		return err
 	}
@@ -184,24 +174,13 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	fileName := e.FileName
 	zf := e.File
 	task := &domain.PlanReplayerDumpTask{
-<<<<<<< HEAD
-		StartTS:     startTS,
+		StartTS:     e.StartTS,
 		FileName:    fileName,
 		Zf:          zf,
 		SessionVars: e.ctx.GetSessionVars(),
 		TblStats:    nil,
 		ExecStmts:   e.ExecStmts,
 		Analyze:     e.Analyze,
-=======
-		StartTS:           e.StartTS,
-		FileName:          fileName,
-		Zf:                zf,
-		SessionVars:       e.ctx.GetSessionVars(),
-		TblStats:          nil,
-		ExecStmts:         e.ExecStmts,
-		Analyze:           e.Analyze,
-		HistoricalStatsTS: e.HistoricalStatsTS,
->>>>>>> 9466e45f7d0 (executor: fix plan replayer for sql file input wrongly fetch startTS after `OnTxnEnd` (#46201))
 	}
 	err = domain.DumpPlanReplayerInfo(ctx, e.ctx, task)
 	if err != nil {

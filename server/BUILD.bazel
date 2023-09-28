@@ -158,11 +158,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":server"],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 50,
-=======
-    shard_count = 47,
->>>>>>> 9466e45f7d0 (executor: fix plan replayer for sql file input wrongly fetch startTS after `OnTxnEnd` (#46201))
     deps = [
         "//config",
         "//ddl",
