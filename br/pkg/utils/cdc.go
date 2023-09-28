@@ -143,7 +143,8 @@ func isActiveCDCChangefeed(jsonBytes []byte) bool {
 		return false
 	}
 	switch s.State {
-	case "normal", "stopped", "error":
+	// https://docs.pingcap.com/zh/tidb/stable/ticdc-changefeed-overview
+	case "normal", "stopped", "error", "warning":
 		return true
 	default:
 		return false
