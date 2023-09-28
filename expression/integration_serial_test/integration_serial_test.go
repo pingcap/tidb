@@ -1310,23 +1310,6 @@ func TestSetVariables(t *testing.T) {
 	tk.MustExec("SET GLOBAL max_connections=0")
 }
 
-func TestPreparePlanCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	// Use the example from the docs https://docs.pingcap.com/tidb/stable/sql-prepare-plan-cache
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int);")
-	tk.MustExec("prepare stmt from 'select * from t where a = ?';")
-	tk.MustExec("set @a = 1;")
-	tk.MustExec("execute stmt using @a;")
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec("execute stmt using @a;")
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
-}
-
 func TestPreparePlanCacheOnCachedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1379,92 +1362,6 @@ func TestIssue16205(t *testing.T) {
 	rows2 := tk.MustQuery("execute stmt").Rows()
 	require.Len(t, rows2, 1)
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
-}
-
-func TestRowCountPlanCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int auto_increment primary key)")
-	tk.MustExec("prepare stmt from 'select row_count()';")
-	tk.MustExec("insert into t values()")
-	res := tk.MustQuery("execute stmt").Rows()
-	require.Len(t, res, 1)
-	require.Equal(t, "1", res[0][0])
-	tk.MustExec("insert into t values(),(),()")
-	res = tk.MustQuery("execute stmt").Rows()
-	require.Len(t, res, 1)
-	require.Equal(t, "3", res[0][0])
-}
-
-func TestCacheRegexpr(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a varchar(40))")
-	tk.MustExec("insert into t1 values ('C1'),('R1')")
-	tk.MustExec("prepare stmt1 from 'select a from t1 where a rlike ?'")
-	tk.MustExec("set @a='^C.*'")
-	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("C1"))
-	tk.MustExec("set @a='^R.*'")
-	tk.MustQuery("execute stmt1 using @a").Check(testkit.Rows("R1"))
-}
-
-func TestCacheRefineArgs(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(col_int int)")
-	tk.MustExec("insert into t values(null)")
-	tk.MustExec("prepare stmt from 'SELECT ((col_int is true) = ?) AS res FROM t'")
-	tk.MustExec("set @p0='0.8'")
-	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
-	tk.MustExec("set @p0='0'")
-	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("1"))
-
-	tk.MustExec("prepare stmt from 'SELECT UCASE(?) < col_int from t;';")
-	tk.MustExec("set @a1 = 'xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec';")
-	tk.MustQuery("execute stmt using @a1;").Check(testkit.Rows("<nil>"))
-
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("prepare stmt from 'SELECT col_int < ? FROM t'")
-	tk.MustExec("set @p0='-184467440737095516167.1'")
-	tk.MustQuery("execute stmt using @p0").Check(testkit.Rows("0"))
-}
-
-func TestCacheConstEval(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(col_double double)")
-	tk.MustExec("insert into t values (1)")
-	tk.Session().GetSessionVars().EnableVectorizedExpression = false
-	tk.MustExec("insert into mysql.expr_pushdown_blacklist values('cast', 'tikv,tiflash,tidb', 'for test')")
-	tk.MustExec("admin reload expr_pushdown_blacklist")
-	tk.MustExec("prepare stmt from 'SELECT * FROM (SELECT col_double AS c0 FROM t) t WHERE (ABS((REPEAT(?, ?) OR 5617780767323292672)) < LN(EXP(c0)) + (? ^ ?))'")
-	tk.MustExec("set @a1 = 'JuvkBX7ykVux20zQlkwDK2DFelgn7'")
-	tk.MustExec("set @a2 = 1")
-	tk.MustExec("set @a3 = -112990.35179796701")
-	tk.MustExec("set @a4 = 87997.92704840179")
-	// Main purpose here is checking no error is reported. 1 is the result when plan cache is disabled, it is
-	// incompatible with MySQL actually, update the result after fixing it.
-	tk.MustQuery("execute stmt using @a1, @a2, @a3, @a4").Check(testkit.Rows("1"))
-	tk.Session().GetSessionVars().EnableVectorizedExpression = true
-	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
-	tk.MustExec("admin reload expr_pushdown_blacklist")
 }
 
 // issues 14448, 19383, 17734
