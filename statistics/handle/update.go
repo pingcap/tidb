@@ -303,7 +303,6 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		return false, errors.Trace(err)
 	}
 
-<<<<<<< HEAD
 	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
 	// Check if the table and its partitions are locked.
 	tidAndPid := make([]int64, 0, 2)
@@ -336,9 +335,18 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			return
 		}
 		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-		// If only the partition is locked, we don't need to update the global-stats.
+		// If the partition is locked, we don't need to update the global-stats.
 		// We will update its global-stats when the partition is unlocked.
-		if isTableLocked || !isPartitionLocked {
+		// 1. If table is locked and partition is locked, we only stash the delta in the partition's lock info.
+		//    we will update its global-stats when the partition is unlocked.
+		// 2. If table is locked and partition is not locked(new partition after lock), we only stash the delta in the table's lock info.
+		//    we will update its global-stats when the table is unlocked. We don't need to specially handle this case.
+		//    Because updateStatsMeta will insert a new record if the record doesn't exist.
+		// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
+		//    we will update its global-stats when the partition is unlocked.
+		// 4. If table is not locked and partition is not locked, we update the global-stats.
+		// To sum up, we only need to update the global-stats when the table and the partition are not locked.
+		if !isTableLocked && !isPartitionLocked {
 			// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
 			if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
 				return
@@ -360,63 +368,6 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 	}
 
 	updated = affectedRows > 0
-=======
-		var affectedRows uint64
-		// If it's a partitioned table and its global-stats exists,
-		// update its count and modify_count as well.
-		if tbl != nil {
-			// We need to check if the table and the partition are locked.
-			isTableLocked := false
-			isPartitionLocked := false
-			tableID := tbl.Meta().ID
-			if _, ok := lockedTables[tableID]; ok {
-				isTableLocked = true
-			}
-			if _, ok := lockedTables[physicalTableID]; ok {
-				isPartitionLocked = true
-			}
-			tableOrPartitionLocked := isTableLocked || isPartitionLocked
-			if err = updateStatsMeta(sctx, statsVersion, delta,
-				physicalTableID, tableOrPartitionLocked); err != nil {
-				return err
-			}
-			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-			// If the partition is locked, we don't need to update the global-stats.
-			// We will update its global-stats when the partition is unlocked.
-			// 1. If table is locked and partition is locked, we only stash the delta in the partition's lock info.
-			//    we will update its global-stats when the partition is unlocked.
-			// 2. If table is locked and partition is not locked(new partition after lock), we only stash the delta in the table's lock info.
-			//    we will update its global-stats when the table is unlocked. We don't need to specially handle this case.
-			//    Because updateStatsMeta will insert a new record if the record doesn't exist.
-			// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
-			//    we will update its global-stats when the partition is unlocked.
-			// 4. If table is not locked and partition is not locked, we update the global-stats.
-			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
-			if !isTableLocked && !isPartitionLocked {
-				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-				if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
-					return err
-				}
-				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-			}
-		} else {
-			// This is a non-partitioned table.
-			// Check if it's locked.
-			isTableLocked := false
-			if _, ok := lockedTables[physicalTableID]; ok {
-				isTableLocked = true
-			}
-			if err = updateStatsMeta(sctx, statsVersion, delta,
-				physicalTableID, isTableLocked); err != nil {
-				return err
-			}
-			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-		}
-
-		updated = affectedRows > 0
-		return nil
-	}, flagWrapTxn)
->>>>>>> 05b97866f31 (statistics: Update global count and modify_count only if partition is not locked (#47319))
 	return
 }
 
@@ -429,21 +380,11 @@ func updateStatsMeta(
 	isLocked bool,
 ) (err error) {
 	if isLocked {
-<<<<<<< HEAD
-		if delta.Delta < 0 {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?",
-				startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-		} else {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?",
-				startTS, delta.Delta, delta.Count, id)
-		}
-=======
 		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
 		// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
-		_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+		_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
 			startTS, id, delta.Count, delta.Delta)
->>>>>>> 05b97866f31 (statistics: Update global count and modify_count only if partition is not locked (#47319))
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
