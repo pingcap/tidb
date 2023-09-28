@@ -114,9 +114,6 @@ func (h *Handle) NewSessionIndexUsageCollector() *usage.SessionIndexUsageCollect
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 
-// maxInsertLength is the length limit for internal insert SQL.
-const maxInsertLength = 1024 * 1024
-
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
@@ -124,7 +121,12 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	})
 }
 
-func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error) (err error) {
+var (
+	// flagWrapTxn indicates whether to wrap a transaction.
+	flagWrapTxn = 0
+)
+
+func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return err
@@ -138,6 +140,23 @@ func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error) (err error)
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 		return err
 	}
+
+	wrapTxn := false
+	for _, flag := range flags {
+		if flag == flagWrapTxn {
+			wrapTxn = true
+		}
+	}
+	if wrapTxn {
+		// use a transaction here can let different SQLs in this operation have the same data visibility.
+		if _, err := utilstats.Exec(sctx, "begin"); err != nil {
+			return err
+		}
+		defer func() {
+			err = utilstats.FinishTransaction(sctx, err)
+		}()
+	}
+
 	return f(sctx)
 }
 

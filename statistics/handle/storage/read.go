@@ -15,7 +15,6 @@
 package storage
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -40,77 +39,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// StatsReader is used for simplifying code that needs to read statistics from system tables(mysql.stats_xxx) in different sqls
-// but requires the same transactions.
-//
-// Note that:
-// 1. Remember to call (*StatsReader).Close after reading all statistics.
-// 2. StatsReader is not thread-safe. Different goroutines cannot call (*StatsReader).Read concurrently.
-type StatsReader struct {
-	ctx      sqlexec.RestrictedSQLExecutor
-	release  func() // a call back function to release all resources hold by this reader.
-	snapshot uint64
-}
-
-// GetStatsReader returns a StatsReader.
-func GetStatsReader(snapshot uint64, exec sqlexec.RestrictedSQLExecutor, releaseFunc func()) (reader *StatsReader, err error) {
-	failpoint.Inject("mockGetStatsReaderFail", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.New("gofail genStatsReader error"))
-		}
-	})
-	if snapshot > 0 {
-		return &StatsReader{ctx: exec, snapshot: snapshot, release: releaseFunc}, nil
-	}
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("getStatsReader panic %v", r)
-		}
-	}()
-	ctx := util.StatsCtx(context.Background())
-	failpoint.Inject("mockGetStatsReaderPanic", nil)
-	_, err = exec.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
-	if err != nil {
-		return nil, err
-	}
-	return &StatsReader{ctx: exec, release: releaseFunc}, nil
-}
-
-// Read is a thin wrapper reading statistics from storage by sql command.
-func (sr *StatsReader) Read(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
-	ctx := util.StatsCtx(context.Background())
-	if sr.snapshot > 0 {
-		return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseSessionPool, sqlexec.ExecOptionWithSnapshot(sr.snapshot)}, sql, args...)
-	}
-	return sr.ctx.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
-}
-
-// IsHistory indicates whether to read history statistics.
-func (sr *StatsReader) IsHistory() bool {
-	return sr.snapshot > 0
-}
-
-// Close closes the StatsReader.
-func (sr *StatsReader) Close() error {
-	defer func() {
-		if sr.release != nil {
-			sr.release()
-		}
-		sr.release = nil
-		sr.ctx = nil
-	}()
-
-	if sr.IsHistory() || sr.ctx == nil {
-		return nil
-	}
-	ctx := util.StatsCtx(context.Background())
-	_, err := sr.ctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
-	return err
-}
-
 // HistogramFromStorage reads histogram from storage.
-func HistogramFromStorage(reader *StatsReader, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
-	rows, fields, err := reader.Read("select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
+func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
+	rows, fields, err := util.ExecRows(sctx, "select count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets where table_id = %? and is_index = %? and hist_id = %? order by bucket_id", tableID, isIndex, colID)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -158,12 +89,12 @@ func HistogramFromStorage(reader *StatsReader, tableID int64, colID int64, tp *t
 }
 
 // CMSketchAndTopNFromStorage reads CMSketch and TopN from storage.
-func CMSketchAndTopNFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
-	topNRows, _, err := reader.Read("select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+func CMSketchAndTopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.CMSketch, _ *statistics.TopN, err error) {
+	topNRows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
 	}
-	rows, _, err := reader.Read("select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -174,8 +105,8 @@ func CMSketchAndTopNFromStorage(reader *StatsReader, tblID int64, isIndex, histI
 }
 
 // FMSketchFromStorage reads FMSketch from storage
-func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
-	rows, _, err := reader.Read("select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
+	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
@@ -183,7 +114,7 @@ func FMSketchFromStorage(reader *StatsReader, tblID int64, isIndex, histID int64
 }
 
 // ExtendedStatsFromStorage reads extended stats from storage.
-func ExtendedStatsFromStorage(reader *StatsReader, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
 		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
 	})
@@ -193,7 +124,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *statistics.Table, phys
 	} else {
 		table.ExtendedStats = statistics.NewExtendedStatsColl()
 	}
-	rows, _, err := reader.Read("select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?",
+	rows, _, err := util.ExecRows(sctx, "select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?",
 		physicalID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
 	if err != nil || len(rows) == 0 {
 		return table, nil
@@ -233,7 +164,7 @@ func ExtendedStatsFromStorage(reader *StatsReader, table *statistics.Table, phys
 	return table, nil
 }
 
-func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -271,11 +202,11 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistics
 			break
 		}
 		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
+			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, topN, err := CMSketchAndTopNFromStorage(reader, table.PhysicalID, 1, idxInfo.ID)
+			cms, topN, err := CMSketchAndTopNFromStorage(sctx, table.PhysicalID, 1, idxInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -283,7 +214,7 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistics
 			if loadAll {
 				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
 				// we load all the statistics, i.e., loadAll is true.
-				fmSketch, err = FMSketchFromStorage(reader, table.PhysicalID, 1, histID)
+				fmSketch, err = FMSketchFromStorage(sctx, table.PhysicalID, 1, histID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -313,7 +244,7 @@ func indexStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistics
 	return nil
 }
 
-func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -367,11 +298,11 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistic
 			break
 		}
 		if col == nil || col.LastUpdateVersion < histVer || loadAll {
-			hg, err := HistogramFromStorage(reader, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
+			hg, err := HistogramFromStorage(sctx, table.PhysicalID, histID, &colInfo.FieldType, distinct, 0, histVer, nullCount, totColSize, correlation)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			cms, topN, err := CMSketchAndTopNFromStorage(reader, table.PhysicalID, 0, colInfo.ID)
+			cms, topN, err := CMSketchAndTopNFromStorage(sctx, table.PhysicalID, 0, colInfo.ID)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -379,7 +310,7 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistic
 			if loadAll {
 				// FMSketch is only used when merging partition stats into global stats. When merging partition stats into global stats,
 				// we load all the statistics, i.e., loadAll is true.
-				fmSketch, err = FMSketchFromStorage(reader, table.PhysicalID, 0, histID)
+				fmSketch, err = FMSketchFromStorage(sctx, table.PhysicalID, 0, histID)
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -420,10 +351,10 @@ func columnStatsFromStorage(reader *StatsReader, row chunk.Row, table *statistic
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, physicalID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, physicalID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
-	if table == nil || reader.IsHistory() {
+	if table == nil || snapshot > 0 {
 		histColl := statistics.HistColl{
 			PhysicalID:     physicalID,
 			HavePhysicalID: true,
@@ -439,39 +370,39 @@ func TableStatsFromStorage(reader *StatsReader, tableInfo *model.TableInfo, phys
 	}
 	table.Pseudo = false
 
-	rows, _, err := reader.Read("select modify_count, count from mysql.stats_meta where table_id = %?", physicalID)
+	rows, _, err := util.ExecRows(sctx, "select modify_count, count from mysql.stats_meta where table_id = %?", physicalID)
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
 	table.ModifyCount = rows[0].GetInt64(0)
 	table.RealtimeCount = rows[0].GetInt64(1)
 
-	rows, _, err = reader.Read("select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
+	rows, _, err = util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
+			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
 		} else {
-			err = columnStatsFromStorage(reader, row, table, tableInfo, loadAll, lease)
+			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
-	return ExtendedStatsFromStorage(reader, table, physicalID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table, physicalID, loadAll)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(reader *StatsReader, statsCache *cache.StatsCachePointer, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, loadFMSketch bool) (err error) {
 	items := statistics.HistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
-			err = loadNeededColumnHistograms(reader, statsCache, item, loadFMSketch)
+			err = loadNeededColumnHistograms(sctx, statsCache, item, loadFMSketch)
 		} else {
-			err = loadNeededIndexHistograms(reader, statsCache, item, loadFMSketch)
+			err = loadNeededIndexHistograms(sctx, statsCache, item, loadFMSketch)
 		}
 		if err != nil {
 			return err
@@ -480,7 +411,7 @@ func LoadNeededHistograms(reader *StatsReader, statsCache *cache.StatsCachePoint
 	return nil
 }
 
-func loadNeededColumnHistograms(reader *StatsReader, statsCache *cache.StatsCachePointer, col model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, col model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := statsCache.Load()
 	tbl, ok := oldCache.Get(col.TableID)
 	if !ok {
@@ -491,22 +422,22 @@ func loadNeededColumnHistograms(reader *StatsReader, statsCache *cache.StatsCach
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
-	hg, err := HistogramFromStorage(reader, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
+	hg, err := HistogramFromStorage(sctx, col.TableID, c.ID, &c.Info.FieldType, c.Histogram.NDV, 0, c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cms, topN, err := CMSketchAndTopNFromStorage(reader, col.TableID, 0, col.ID)
+	cms, topN, err := CMSketchAndTopNFromStorage(sctx, col.TableID, 0, col.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var fms *statistics.FMSketch
 	if loadFMSketch {
-		fms, err = FMSketchFromStorage(reader, col.TableID, 0, col.ID)
+		fms, err = FMSketchFromStorage(sctx, col.TableID, 0, col.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ID)
+	rows, _, err := util.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where is_index = 0 and table_id = %? and hist_id = %?", col.TableID, col.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -542,7 +473,7 @@ func loadNeededColumnHistograms(reader *StatsReader, statsCache *cache.StatsCach
 	return nil
 }
 
-func loadNeededIndexHistograms(reader *StatsReader, statsCache *cache.StatsCachePointer, idx model.TableItemID, loadFMSketch bool) (err error) {
+func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, idx model.TableItemID, loadFMSketch bool) (err error) {
 	oldCache := statsCache.Load()
 	tbl, ok := oldCache.Get(idx.TableID)
 	if !ok {
@@ -553,22 +484,22 @@ func loadNeededIndexHistograms(reader *StatsReader, statsCache *cache.StatsCache
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
-	hg, err := HistogramFromStorage(reader, idx.TableID, index.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, 1, index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
+	hg, err := HistogramFromStorage(sctx, idx.TableID, index.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, 1, index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cms, topN, err := CMSketchAndTopNFromStorage(reader, idx.TableID, 1, idx.ID)
+	cms, topN, err := CMSketchAndTopNFromStorage(sctx, idx.TableID, 1, idx.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	var fms *statistics.FMSketch
 	if loadFMSketch {
-		fms, err = FMSketchFromStorage(reader, idx.TableID, 1, idx.ID)
+		fms, err = FMSketchFromStorage(sctx, idx.TableID, 1, idx.ID)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
-	rows, _, err := reader.Read("select stats_ver from mysql.stats_histograms where is_index = 1 and table_id = %? and hist_id = %?", idx.TableID, idx.ID)
+	rows, _, err := util.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where is_index = 1 and table_id = %? and hist_id = %?", idx.TableID, idx.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}

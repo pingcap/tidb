@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tiancaiamao/gp"
 	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
@@ -443,19 +442,11 @@ func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statisti
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (h *Handle) LoadNeededHistograms() (err error) {
-	reader, err := h.getGlobalStatsReader(0)
-	if err != nil {
-		return err
-	}
-
-	defer func() {
-		err1 := h.releaseGlobalStatsReader(reader)
-		if err1 != nil && err == nil {
-			err = err1
-		}
-	}()
-	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-	return storage.LoadNeededHistograms(reader, h.statsCache, loadFMSketch)
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
+		return storage.LoadNeededHistograms(sctx, h.statsCache, loadFMSketch)
+	}, flagWrapTxn)
+	return err
 }
 
 // LastUpdateVersion gets the last update version.
@@ -477,53 +468,34 @@ func (h *Handle) FlushStats() {
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (_ *statistics.Table, err error) {
-	reader, err := h.getGlobalStatsReader(snapshot)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err1 := h.releaseGlobalStatsReader(reader)
-		if err == nil && err1 != nil {
-			err = err1
+func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		var ok bool
+		statsTbl, ok = h.statsCache.Load().Get(physicalID)
+		if !ok {
+			statsTbl = nil
 		}
-	}()
-	statsTbl, ok := h.statsCache.Load().Get(physicalID)
-	if !ok {
-		statsTbl = nil
-	}
-	statsTbl, err = storage.TableStatsFromStorage(reader, tableInfo, physicalID, loadAll, h.Lease(), statsTbl)
-	if err != nil {
-		return nil, err
-	}
-	if reader.IsHistory() || statsTbl == nil {
-		return statsTbl, nil
-	}
-	return statsTbl, nil
+		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, h.Lease(), statsTbl)
+		return err
+	}, flagWrapTxn)
+	return
 }
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
-	reader, err := h.getGlobalStatsReader(0)
-	if err != nil {
-		return 0, 0, err
-	}
-	defer func() {
-		err1 := h.releaseGlobalStatsReader(reader)
-		if err1 != nil && err == nil {
-			err = err1
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+		if err != nil {
+			return err
 		}
-	}()
-	rows, _, err := reader.Read("select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
-	if err != nil {
-		return 0, 0, err
-	}
-	if len(rows) == 0 {
-		return 0, 0, nil
-	}
-	count = int64(rows[0].GetUint64(0))
-	modifyCount = rows[0].GetInt64(1)
-	return count, modifyCount, nil
+		if len(rows) == 0 {
+			return nil
+		}
+		count = int64(rows[0].GetUint64(0))
+		modifyCount = rows[0].GetInt64(1)
+		return nil
+	}, flagWrapTxn)
+	return
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
@@ -557,21 +529,6 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 	})
 }
 
-func (h *Handle) getGlobalStatsReader(snapshot uint64) (reader *storage.StatsReader, err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return nil, err
-	}
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return storage.GetStatsReader(snapshot, exec, func() {
-		h.pool.Put(se)
-	})
-}
-
-func (*Handle) releaseGlobalStatsReader(reader *storage.StatsReader) error {
-	return reader.Close()
-}
-
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
@@ -591,31 +548,23 @@ const updateStatsCacheRetryCnt = 5
 // ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 // TODO: move this method to the `extstats` package.
 func (h *Handle) ReloadExtendedStatistics() error {
-	reader, err := h.getGlobalStatsReader(0)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err1 := h.releaseGlobalStatsReader(reader)
-		if err1 != nil && err == nil {
-			err = err1
-		}
-	}()
-	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := h.statsCache.Load()
-		tables := make([]*statistics.Table, 0, oldCache.Len())
-		for _, tbl := range oldCache.Values() {
-			t, err := storage.ExtendedStatsFromStorage(reader, tbl.Copy(), tbl.PhysicalID, true)
-			if err != nil {
-				return err
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
+			oldCache := h.statsCache.Load()
+			tables := make([]*statistics.Table, 0, oldCache.Len())
+			for _, tbl := range oldCache.Values() {
+				t, err := storage.ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
+				if err != nil {
+					return err
+				}
+				tables = append(tables, t)
 			}
-			tables = append(tables, t)
+			if h.updateStatsCache(oldCache, tables, nil) {
+				return nil
+			}
 		}
-		if h.updateStatsCache(oldCache, tables, nil) {
-			return nil
-		}
-	}
-	return fmt.Errorf("update stats cache failed for %d attempts", updateStatsCacheRetryCnt)
+		return fmt.Errorf("update stats cache failed for %d attempts", updateStatsCacheRetryCnt)
+	}, flagWrapTxn)
 }
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
