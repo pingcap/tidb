@@ -1,6 +1,7 @@
 set tidb_cost_model_version=1;
 
 # ChangingCharsetToUtf8
+drop table if exists t, t1;
 create table t1(a varchar(20) charset utf8);
 insert into t1 values ("t1_value");
 alter table t1 collate uTf8mB4_uNiCoDe_Ci charset Utf8mB4 charset uTF8Mb4 collate UTF8MB4_BiN;

@@ -1,3 +1,5 @@
+show tables;
+Tables_in_privilege__privileges
 CREATE TABLE viewsecurity(c int);
 CREATE USER 'selectusr'@'localhost';
 GRANT CREATE VIEW ON privilege__privileges.* TO  'selectusr'@'localhost';

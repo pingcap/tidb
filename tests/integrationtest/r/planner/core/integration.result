@@ -3890,8 +3890,8 @@ a	b	c	a	b	c	a	b	c	a	b	c
 select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';
 plan
 	id           	task	estRows	operator info                                                                         	actRows	execution info                        	memory 	disk
-	Projection_3 	root	1      	Release Version: None\nEdition: Community\nGit Commit Hash: None\nG(len:186)->Column#1	1      	time:23.3µs, loops:2, Concurrency:OFF	0 Bytes	N/A
-	└─TableDual_4	root	1      	rows:1                                                                                	1      	time:6.18µs, loops:2                 	N/A    	N/A
+	Projection_3 	root	1      	Release Version: None\nEdition: Community\nGit Commit Hash: None\nG(len:186)->Column#1	1      	time:25.5µs, loops:2, Concurrency:OFF	0 Bytes	N/A
+	└─TableDual_4	root	1      	rows:1                                                                                	1      	time:6.23µs, loops:2                 	N/A    	N/A
 CREATE TABLE `sbtest1` ( `id` bigint(20) NOT NULL AUTO_INCREMENT, `k` int(11) NOT NULL DEFAULT '0', `c` char(120) NOT NULL DEFAULT '', `pad` char(60) NOT NULL DEFAULT '', PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */ , KEY `k_1` (`k`) );
 set @@tidb_opt_range_max_size = 111;
 explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);

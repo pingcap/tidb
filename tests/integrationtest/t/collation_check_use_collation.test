@@ -2,6 +2,7 @@ set tidb_cost_model_version=1;
 # These tests check that the used collation is correct.
 
 # Check subquery.
+drop table if exists t;
 CREATE TABLE `t` (
   `a` char(10) DEFAULT NULL
 );
