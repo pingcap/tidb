@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 type globalStatsKey struct {
@@ -46,21 +47,21 @@ type globalStatsInfo struct {
 type globalStatsMap map[globalStatsKey]globalStatsInfo
 
 func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap globalStatsMap) error {
-	globalStatsTableIDs := make(map[int64]struct{}, len(globalStatsMap))
+	globalStatsTableIDs := make(map[int64]int, len(globalStatsMap))
 	for globalStatsID := range globalStatsMap {
-		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
+		globalStatsTableIDs[globalStatsID.tableID]++
 	}
 
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
-	for tableID := range globalStatsTableIDs {
+	tableAllPartitionStats := make(map[int64]*statistics.Table)
+	for tableID, count := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
-
+		maps.Clear(tableAllPartitionStats)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
 			}
-
 			job := e.newAnalyzeHandleGlobalStatsJob(globalStatsID)
 			if job == nil {
 				logutil.BgLogger().Warn("cannot find the partitioned table, skip merging global stats", zap.Int64("tableID", globalStatsID.tableID))
@@ -76,6 +77,12 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 						globalOpts = v2Options.FilledOpts
 					}
 				}
+				var cache map[int64]*statistics.Table
+				if count > 1 {
+					cache = tableAllPartitionStats
+				} else {
+					cache = nil
+				}
 
 				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
@@ -83,6 +90,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					globalStatsID.tableID,
 					info.isIndex == 1,
 					info.histIDs,
+					cache,
 				)
 				if err != nil {
 					logutil.BgLogger().Warn("merge global stats failed",
@@ -120,8 +128,10 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 				}
 				return err
 			}()
-
 			FinishAnalyzeMergeJob(e.Ctx(), job, mergeStatsErr)
+		}
+		for _, value := range tableAllPartitionStats {
+			value.ReleaseAndPutToPool()
 		}
 	}
 
