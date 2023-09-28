@@ -15,6 +15,7 @@
 package lockstats
 
 import (
+	"fmt"
 	"strconv"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -228,7 +230,7 @@ func TestUnlockOnePartitionOfLockedTableWouldFail(t *testing.T) {
 	require.Equal(t, 3, num)
 }
 
-func TestUnlockTheWholeTableWouldUnlockLockedPartitionsAndGenerateWarning(t *testing.T) {
+func TestUnlockTheUnlockedTableWouldGenerateWarning(t *testing.T) {
 	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
 
 	handle := dom.StatsHandle()
@@ -255,10 +257,10 @@ func TestUnlockTheWholeTableWouldUnlockLockedPartitionsAndGenerateWarning(t *tes
 		"Warning 1105 skip unlocking unlocked table: test.t",
 	))
 
-	// Should unlock the locked partition.
+	// No partition is unlocked.
 	rows = tk.MustQuery(selectTableLockSQL).Rows()
 	num, _ = strconv.Atoi(rows[0][0].(string))
-	require.Equal(t, 0, num)
+	require.Equal(t, 1, num)
 }
 
 func TestSkipLockALotOfPartitions(t *testing.T) {
@@ -423,15 +425,15 @@ func TestExchangePartitionShouldChangeNothing(t *testing.T) {
 func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
 
-	handle := dom.StatsHandle()
+	h := dom.StatsHandle()
 	// Get partition stats.
 	p0Id := tbl.GetPartitionInfo().Definitions[0].ID
-	partition0Stats := handle.GetPartitionStats(tbl, p0Id)
+	partition0Stats := h.GetPartitionStats(tbl, p0Id)
 	for _, col := range partition0Stats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
 	p1Id := tbl.GetPartitionInfo().Definitions[1].ID
-	partition1Stats := handle.GetPartitionStats(tbl, p1Id)
+	partition1Stats := h.GetPartitionStats(tbl, p1Id)
 	for _, col := range partition1Stats.Columns {
 		require.True(t, col.IsStatsInitialized())
 	}
@@ -443,14 +445,66 @@ func TestNewPartitionShouldBeLockedIfWholeTableLocked(t *testing.T) {
 
 	// Add a new partition.
 	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
+	tk.MustExec("insert into t(a, b) values(21,'a')")
+	tk.MustExec("insert into t(a, b) values(22,'b')")
+	// Dump stats delta to KV.
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	// Check the mysql.stats_table_locked is updated correctly.
+	// And the new partition is locked.
+	rows = tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
+	require.Len(t, rows, 4)
+	require.Equal(t, "0", rows[0][0])
+	require.Equal(t, "0", rows[0][1])
+	require.Equal(t, "0", rows[1][0])
+	require.Equal(t, "0", rows[1][1])
+	require.Equal(t, "0", rows[2][0])
+	require.Equal(t, "0", rows[2][1])
+	require.Equal(t, "2", rows[3][0])
+	require.Equal(t, "2", rows[3][1])
 
 	// Check the new partition is locked.
 	tk.MustExec("analyze table t partition p2")
-
-	// Check the new partition is locked.
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 skip analyze locked table: test.t partition (p2)",
 	))
+
+	// Unlock the whole table.
+	tk.MustExec("unlock stats t")
+	// Check the meta is updated correctly.
+	rows = tk.MustQuery(fmt.Sprint("select count, modify_count from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "2", rows[0][0])
+	require.Equal(t, "2", rows[0][1])
+}
+
+func TestUnlockSomePartitionsWouldUpdateGlobalCountCorrectly(t *testing.T) {
+	_, dom, tk, tbl := setupTestEnvironmentWithPartitionedTableT(t)
+
+	h := dom.StatsHandle()
+	tk.MustExec("lock stats t partition p0, p1")
+	tk.MustExec("insert into t(a, b) values(1,'a')")
+	tk.MustExec("insert into t(a, b) values(2,'b')")
+	tk.MustExec("analyze table test.t partition p0, p1")
+	tblStats := h.GetTableStats(tbl)
+	require.Equal(t, int64(0), tblStats.RealtimeCount)
+
+	// Dump stats delta to KV.
+	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	// Check the mysql.stats_table_locked is updated correctly.
+	rows := tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
+	require.Len(t, rows, 2)
+	require.Equal(t, "2", rows[0][0])
+	require.Equal(t, "2", rows[0][1])
+	require.Equal(t, "0", rows[1][0])
+	require.Equal(t, "0", rows[1][1])
+
+	// Unlock partition p0 and p1.
+	tk.MustExec("unlock stats t partition p0, p1")
+	// Check the global count is updated correctly.
+	rows = tk.MustQuery(fmt.Sprint("select count, modify_count, table_id from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "2", rows[0][0])
+	require.Equal(t, "2", rows[0][1])
 }
 
 func setupTestEnvironmentWithPartitionedTableT(t *testing.T) (kv.Storage, *domain.Domain, *testkit.TestKit, *model.TableInfo) {

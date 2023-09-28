@@ -54,3 +54,6 @@ id	estRows	task	access object	operator info
 TableReader	3323.33	root		data:Selection
 └─Selection	3323.33	cop[tikv]		lt(black_list.t.a, 1)
   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+
