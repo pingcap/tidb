@@ -16,7 +16,6 @@ package handle
 
 import (
 	"encoding/json"
-	"github.com/pingcap/tidb/statistics/handle/storage"
 	"strconv"
 	"time"
 
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"

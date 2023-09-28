@@ -17,7 +17,6 @@ package handle
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"math"
 	"strconv"
 	"sync"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/extstats"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"

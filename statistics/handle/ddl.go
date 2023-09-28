@@ -16,7 +16,6 @@ package handle
 
 import (
 	"context"
-	"github.com/pingcap/tidb/statistics/handle/storage"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/util"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	statsutil "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -281,7 +281,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	}()
 
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		startTS, err := getSessionTxnStartTS(sctx)
+		startTS, err := statsutil.GetStartTS(sctx)
 		if err != nil {
 			return errors.Trace(err)
 		}
