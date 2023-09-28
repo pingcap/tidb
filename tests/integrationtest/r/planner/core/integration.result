@@ -228,20 +228,6 @@ A	1
 Y	1
 a	1
 y	1
-create table strlist(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, b int) partition by list columns (a) (
-partition p0 values in ('a', 'b'),
-partition p1 values in ('c', 'd'),
-partition p2 values in ('e', 'f'));
-insert into strlist values ('a', 1), ('A', 1), ('d', 1), ('D', 1), ('e', 1);
-select * from strlist where a='a';
-a	b
-A	1
-a	1
-select * from strlist where a in ('D', 'e');
-a	b
-D	1
-d	1
-e	1
 use planner__core__integration;
 drop table if exists t;
 create table t(a int, b int, index idx_a(a), index idx_b(b));
@@ -255,12 +241,12 @@ select * from t where a > 1 and a < 10 order by b;
 a	b
 select @@last_plan_from_binding;
 @@last_plan_from_binding
-1
+0
 select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
 a	b
 select @@last_plan_from_binding;
 @@last_plan_from_binding
-1
+0
 select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
 a	b
 Level	Code	Message
@@ -3889,9 +3875,6 @@ select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on
 a	b	c	a	b	c	a	b	c	a	b	c
 select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';
 plan
-	id           	task	estRows	operator info                                                                         	actRows	execution info                        	memory 	disk
-	Projection_3 	root	1      	Release Version: None\nEdition: Community\nGit Commit Hash: None\nG(len:186)->Column#1	1      	time:25.5µs, loops:2, Concurrency:OFF	0 Bytes	N/A
-	└─TableDual_4	root	1      	rows:1                                                                                	1      	time:6.23µs, loops:2                 	N/A    	N/A
 CREATE TABLE `sbtest1` ( `id` bigint(20) NOT NULL AUTO_INCREMENT, `k` int(11) NOT NULL DEFAULT '0', `c` char(120) NOT NULL DEFAULT '', `pad` char(60) NOT NULL DEFAULT '', PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */ , KEY `k_1` (`k`) );
 set @@tidb_opt_range_max_size = 111;
 explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);

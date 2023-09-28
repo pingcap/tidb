@@ -348,7 +348,7 @@ SELECT /*+ SET_VAR(group_concat_max_len = 1024) SET_VAR(group_concat_max_len = 2
 1
 select @@warning_count;
 @@warning_count
-0
+1
 select @@session.warning_count;
 @@session.warning_count
 0

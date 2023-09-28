@@ -1,5 +1,4 @@
 set tidb_cost_model_version=1;
-drop table if exists t;
 CREATE TABLE `t` (
 `a` char(10) DEFAULT NULL
 );

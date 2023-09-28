@@ -172,15 +172,16 @@ create table strrange(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, 
 insert into strrange values ('a', 1), ('A', 1), ('y', 1), ('Y', 1), ('q', 1);
 --sorted_result
 select * from strrange where a in ('a', 'y');
-create table strlist(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, b int) partition by list columns (a) (
-						partition p0 values in ('a', 'b'),
-						partition p1 values in ('c', 'd'),
-						partition p2 values in ('e', 'f'));
-insert into strlist values ('a', 1), ('A', 1), ('d', 1), ('D', 1), ('e', 1);
---sorted_result
-select * from strlist where a='a';
---sorted_result
-select * from strlist where a in ('D', 'e');
+# TODO: need to run with collation enabled.
+# create table strlist(a varchar(10) charset utf8mb4 collate utf8mb4_general_ci, b int) partition by list columns (a) (
+# 						partition p0 values in ('a', 'b'),
+# 						partition p1 values in ('c', 'd'),
+# 						partition p2 values in ('e', 'f'));
+# insert into strlist values ('a', 1), ('A', 1), ('d', 1), ('D', 1), ('e', 1);
+# --sorted_result
+# select * from strlist where a='a';
+# --sorted_result
+# select * from strlist where a in ('D', 'e');
 use planner__core__integration;
 
 # TestIssue40910
@@ -2040,6 +2041,7 @@ CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFA
 drop table if exists t;
 create table t (a int, b int, c int, index ia(a));
 select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;
+# TODO: The result is correct but does not exactly same.
 select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';
 
 

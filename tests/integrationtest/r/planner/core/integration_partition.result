@@ -835,8 +835,8 @@ select * from t where a = 2 and b = "2022-01-02" and c < "Hi";
 a	b	c
 select * from t where a < 2;
 a	b	c
--2147483648	0000-00-00 00:00:00	
 -2147483648	0000-00-00 00:00:00	NULL
+-2147483648	0000-00-00 00:00:00	
 1	NULL	Wow
 select * from t where a <= 2 and b <= "2022-01-02" and c < "Hi";
 a	b	c
