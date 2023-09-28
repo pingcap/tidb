@@ -73,7 +73,7 @@ func GetCDCChangefeedNameSet(ctx context.Context, cli *clientv3.Client) (*CDCNam
 	// r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	// ts := uint64(time.Now().Unix())
 	// clusterID := (ts << 32) + uint64(r.Uint32())
-	reg, err := regexp.Compile("^[0-9]+$")
+	reg, err := regexp.Compile("^[a-zA-Z0-9]+(-[a-zA-Z0-9]+)*$")
 	if err != nil {
 		log.L().Warn("failed to parse cluster id, skip it", zap.Error(err))
 		reg = nil
