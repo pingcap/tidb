@@ -895,6 +895,9 @@ type SessionVars struct {
 	// EnableOuterJoinWithJoinReorder enables TiDB to involve the outer join into the join reorder.
 	EnableOuterJoinReorder bool
 
+	// DisableHashJoin indicates whether to disable hash join.
+	DisableHashJoin bool
+
 	// OptimizerEnableNAAJ enables TiDB to use null-aware anti join.
 	OptimizerEnableNAAJ bool
 
