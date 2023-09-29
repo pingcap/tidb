@@ -407,6 +407,7 @@ func (e *AnalyzeExec) handleResultsError(
 			finishJobWithLog(e.Ctx(), results.Job, exeerrors.ErrQueryInterrupted)
 			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
+		results.DestroyAndPutToPool()
 	}
 	// Dump stats to historical storage.
 	for tableID := range tableIDs {
