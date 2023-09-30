@@ -35,25 +35,25 @@ func (a *analyzeItem) Less(b *analyzeItem) bool {
 	return a.tid > b.tid
 }
 
-type analyzeProrityQueue []*analyzeItem
+type analyzePriorityQueue []*analyzeItem
 
-func (a *analyzeProrityQueue) Len() int {
+func (a *analyzePriorityQueue) Len() int {
 	return len(*a)
 }
 
-func (a *analyzeProrityQueue) Less(i, j int) bool {
+func (a *analyzePriorityQueue) Less(i, j int) bool {
 	return (*a)[i].Less((*a)[j])
 }
 
-func (a *analyzeProrityQueue) Swap(i, j int) {
+func (a *analyzePriorityQueue) Swap(i, j int) {
 	(*a)[i], (*a)[j] = (*a)[j], (*a)[i]
 }
 
-func (a *analyzeProrityQueue) Push(x any) {
+func (a *analyzePriorityQueue) Push(x any) {
 	*a = append(*a, x.(*analyzeItem))
 }
 
-func (a *analyzeProrityQueue) Pop() any {
+func (a *analyzePriorityQueue) Pop() any {
 	old := *a
 	n := len(old)
 	x := old[n-1]

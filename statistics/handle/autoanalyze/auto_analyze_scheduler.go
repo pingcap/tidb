@@ -13,3 +13,44 @@
 // limitations under the License.
 
 package autoanalyze
+
+import (
+	"container/heap"
+
+	"golang.org/x/exp/maps"
+)
+
+type analyzeScheduler struct {
+	// priorityQueue is a priority queue for tables to be analyzed.
+	priorityQueue *analyzePriorityQueue
+	taskset       map[int64]struct{}
+}
+
+func newAnalyzeScheduler() *analyzeScheduler {
+	result := &analyzeScheduler{
+		priorityQueue: &analyzePriorityQueue{},
+		taskset:       make(map[int64]struct{}),
+	}
+	heap.Init(result.priorityQueue)
+	return result
+}
+
+func (s *analyzeScheduler) addTask(item analyzeItem) {
+	if _, ok := s.taskset[item.tid]; ok {
+		return
+	}
+	s.taskset[item.tid] = struct{}{}
+	heap.Push(s.priorityQueue, item)
+}
+
+func (s *analyzeScheduler) popTask() analyzeItem {
+	item := heap.Pop(s.priorityQueue).(analyzeItem)
+	delete(s.taskset, item.tid)
+	return item
+}
+
+func (s *analyzeScheduler) Clear() {
+	s.priorityQueue = &analyzePriorityQueue{}
+	maps.Clear(s.taskset)
+	heap.Init(s.priorityQueue)
+}
