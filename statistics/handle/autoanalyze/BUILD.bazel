@@ -4,7 +4,8 @@ go_library(
     name = "autoanalyze",
     srcs = [
         "auto_analyze.go",
-        "auto_analyze_scehduler.go",
+        "auto_analyze_scheduler.go",
+        "auto_analyze_scheduler_util.go",
     ],
     importpath = "github.com/pingcap/tidb/statistics/handle/autoanalyze",
     visibility = ["//visibility:public"],
@@ -31,11 +32,14 @@ go_library(
 go_test(
     name = "autoanalyze_test",
     timeout = "short",
-    srcs = ["auto_analyze_test.go"],
+    srcs = [
+        "auto_analyze_scheduler_test.go",
+        "auto_analyze_test.go",
+    ],
+    embed = [":autoanalyze"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
-        ":autoanalyze",
         "//parser/model",
         "//statistics",
         "//statistics/handle",

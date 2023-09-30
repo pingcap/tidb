@@ -32,7 +32,7 @@ func (a *analyzeItem) Less(b *analyzeItem) bool {
 			return true
 		}
 	}
-	return a.tid < b.tid
+	return a.tid > b.tid
 }
 
 type analyzeProrityQueue []*analyzeItem
