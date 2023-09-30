@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "autoanalyze",
-    srcs = ["autoanalyze.go"],
+    srcs = [
+        "auto_analyze.go",
+        "auto_analyze_scehduler.go",
+    ],
     importpath = "github.com/pingcap/tidb/statistics/handle/autoanalyze",
     visibility = ["//visibility:public"],
     deps = [
@@ -28,7 +31,7 @@ go_library(
 go_test(
     name = "autoanalyze_test",
     timeout = "short",
-    srcs = ["autoanalyze_test.go"],
+    srcs = ["auto_analyze_test.go"],
     flaky = True,
     shard_count = 6,
     deps = [
