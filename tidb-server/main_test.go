@@ -48,12 +48,15 @@ func TestRunMain(t *testing.T) {
 	}
 }
 
+// TestSetGlobalVars is a test case for setting global variables in TiDB.
 func TestSetGlobalVars(t *testing.T) {
 	defer view.Stop()
 	require.Equal(t, "tikv,tiflash,tidb", variable.GetSysVar(variable.TiDBIsolationReadEngines).Value)
 	require.Equal(t, "1073741824", variable.GetSysVar(variable.TiDBMemQuotaQuery).Value)
 	require.NotEqual(t, "test", variable.GetSysVar(variable.Version).Value)
 
+	// This section of code handles the configuration and global variable setup.
+    // It ensures that the TiDB server configuration is properly updated.
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.IsolationRead.Engines = []string{"tikv", "tidb"}
 		conf.ServerVersion = "test"
