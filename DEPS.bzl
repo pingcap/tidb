@@ -9602,10 +9602,6 @@ def go_deps():
         name = "io_etcd_go_etcd_api_v3",
         build_file_proto_mode = "disable",
         importpath = "go.etcd.io/etcd/api/v3",
-        patch_args = ["-p2"],
-        patches = [
-            "//build/patches:io_etcd_go_etcd_api_v3.patch",
-        ],
         sha256 = "bfd9ce626389c8a11c2d33eb3c823cc277898c51254a6e02ed967f948aec79f6",
         strip_prefix = "go.etcd.io/etcd/api/v3@v3.5.2",
         urls = [
