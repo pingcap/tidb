@@ -285,11 +285,17 @@ func MergePartitionStats2GlobalStatsByTableID(
 	}
 
 	globalTableInfo := globalTable.Meta()
-	globalStats, err = MergePartitionStats2GlobalStats(sc, gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
-	if err != nil {
-		return
-	}
 
+	worker := NewAsyncMergePartitionStats2GlobalStats(gpool, allPartitionStats, globalTableInfo, sc, histIDs, is, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
+	err = worker.prepare()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	err = worker.MergePartitionStats2GlobalStats(sc, opts, isIndex)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	globalStats = worker.Result()
 	if len(globalStats.MissingPartitionStats) > 0 {
 		var item string
 		if !isIndex {

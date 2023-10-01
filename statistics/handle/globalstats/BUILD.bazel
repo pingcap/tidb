@@ -4,6 +4,7 @@ go_library(
     name = "globalstats",
     srcs = [
         "global_stats.go",
+        "global_stats_async.go",
         "merge_worker.go",
         "topn.go",
     ],
@@ -13,6 +14,7 @@ go_library(
         "//infoschema",
         "//parser/ast",
         "//parser/model",
+        "//parser/terror",
         "//sessionctx",
         "//statistics",
         "//table",
@@ -21,6 +23,7 @@ go_library(
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tiancaiamao_gp//:gp",
+        "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
     ],
 )

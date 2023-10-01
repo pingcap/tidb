@@ -404,6 +404,94 @@ func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram,
 	return nil, nil, nil, nil, false
 }
 
+// GetHistogram returns the histogram of the column or index.
+func (t *Table) GetHistogram(id int64, isIndex bool) (*Histogram, bool) {
+	if isIndex {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
+			return idxStatsInfo.Histogram.Copy(), true
+		}
+		// newly added index which is not analyzed yet
+		return nil, false
+	}
+	if colStatsInfo, ok := t.Columns[id]; ok {
+		return colStatsInfo.Histogram.Copy(), true
+	}
+	// newly added column which is not analyzed yet
+	return nil, false
+}
+
+// GetCMSketch returns the CMSketch of the column or index.
+func (t *Table) GetCMSketch(id int64, isIndex bool) (*CMSketch, bool) {
+	if isIndex {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
+			return idxStatsInfo.CMSketch.Copy(), true
+		}
+		// newly added index which is not analyzed yet
+		return nil, false
+	}
+	if colStatsInfo, ok := t.Columns[id]; ok {
+		return colStatsInfo.CMSketch.Copy(), true
+	}
+	// newly added column which is not analyzed yet
+	return nil, false
+}
+
+// GetTopN returns the TopN of the column or index.
+func (t *Table) GetTopN(id int64, isIndex bool) (*TopN, bool) {
+	if isIndex {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
+			return idxStatsInfo.TopN.Copy(), true
+		}
+		// newly added index which is not analyzed yet
+		return nil, false
+	}
+	if colStatsInfo, ok := t.Columns[id]; ok {
+		return colStatsInfo.TopN.Copy(), true
+	}
+	// newly added column which is not analyzed yet
+	return nil, false
+}
+
+// GetFMSketch returns the FMSketch of the column or index.
+func (t *Table) GetFMSketch(id int64, isIndex bool) (*FMSketch, bool) {
+	if isIndex {
+		if idxStatsInfo, ok := t.Indices[id]; ok {
+			return idxStatsInfo.FMSketch.Copy(), true
+		}
+		// newly added index which is not analyzed yet
+		return nil, false
+	}
+	if colStatsInfo, ok := t.Columns[id]; ok {
+		return colStatsInfo.FMSketch.Copy(), true
+	}
+	// newly added column which is not analyzed yet
+	return nil, false
+}
+
+// IsSkipPartition checks if the partition is skipped.
+func (t *Table) IsSkipPartition(id int64, isIndex bool) (skip bool, isAnalyze bool) {
+	var hg *Histogram
+	var topN *TopN
+	if isIndex {
+		idxStatsInfo, ok := t.Indices[id]
+		if !ok {
+			// newly added index which is not analyzed yet
+			return true, false
+		}
+		hg = &idxStatsInfo.Histogram
+		topN = idxStatsInfo.TopN
+	} else {
+		colStatsInfo, ok := t.Columns[id]
+		if !ok {
+			// newly added index which is not analyzed yet
+			return true, false
+		}
+		hg = &colStatsInfo.Histogram
+		topN = colStatsInfo.TopN
+	}
+	return (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0), true
+}
+
 // GetAnalyzeRowCount tries to get the row count of a column or an index if possible.
 // This method is useful because this row count doesn't consider the modify count.
 func (coll *HistColl) GetAnalyzeRowCount() float64 {
