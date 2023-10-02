@@ -61,6 +61,7 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 	return n
 }
 
+// SortSampleItemsWithoutCopy sorts a slice of SampleItem without copying.
 func SortSampleItemsWithoutCopy(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	var err error
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
