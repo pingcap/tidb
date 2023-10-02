@@ -2864,7 +2864,6 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
