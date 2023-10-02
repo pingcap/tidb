@@ -61,24 +61,9 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 	return n
 }
 
-// SortSampleItemsWithoutCopy sorts a slice of SampleItem without copying.
-func SortSampleItemsWithoutCopy(sc *stmtctx.StatementContext, items []*SampleItem) error {
-	var err error
-	slices.SortStableFunc(items, func(i, j *SampleItem) int {
-		var cmp int
-		cmp, err = i.Value.Compare(sc, &j.Value, collate.GetBinaryCollator())
-		if err != nil {
-			return -1
-		}
-		return cmp
-	})
-	return err
-}
-
 // SortSampleItems shallow copies and sorts a slice of SampleItem.
 func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
-	sortedItems := make([]*SampleItem, len(items))
-	copy(sortedItems, items)
+	sortedItems := slices.Clone(items)
 	var err error
 	slices.SortStableFunc(sortedItems, func(i, j *SampleItem) int {
 		var cmp int
