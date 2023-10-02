@@ -311,14 +311,14 @@ func TestShowStatsExtended(t *testing.T) {
 	require.Equal(t, "s1", result.Rows()[0][2])
 	require.Equal(t, "[a,b]", result.Rows()[0][3])
 	require.Equal(t, "correlation", result.Rows()[0][4])
-	require.Equal(t, "1.000000", result.Rows()[0][5])
+	require.Equal(t, "1.500000", result.Rows()[0][5])
 
 	require.Equal(t, "test", result.Rows()[1][0])
 	require.Equal(t, "t", result.Rows()[1][1])
 	require.Equal(t, "s2", result.Rows()[1][2])
 	require.Equal(t, "[a,c]", result.Rows()[1][3])
 	require.Equal(t, "correlation", result.Rows()[1][4])
-	require.Equal(t, "-1.000000", result.Rows()[1][5])
+	require.Equal(t, "-1.500000", result.Rows()[1][5])
 	require.Equal(t, result.Rows()[1][6], result.Rows()[0][6])
 
 	tk.MustExec("alter table t drop stats_extended s1")
