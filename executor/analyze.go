@@ -109,6 +109,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		return err
 	}
 	concurrency = min(len(tasks), concurrency)
+	if len(tasks) > 10*concurrency {
+		concurrency = max(min(2, concurrency/2), 1)
+	}
 
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, concurrency)
