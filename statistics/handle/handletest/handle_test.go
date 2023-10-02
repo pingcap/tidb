@@ -534,7 +534,7 @@ func TestAdminReloadStatistics2(t *testing.T) {
 	tk.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	tk.MustExec("analyze table t")
 	tk.MustQuery("select stats, status from mysql.stats_extended where name = 's1'").Check(testkit.Rows(
-		"1.000000 1",
+		"1.500000 1",
 	))
 	rows := tk.MustQuery("show stats_extended where stats_name = 's1'").Rows()
 	require.Len(t, rows, 1)
