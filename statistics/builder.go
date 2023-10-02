@@ -274,11 +274,11 @@ func BuildHistAndTopN(
 		return NewHistogram(id, ndv, nullCount, 0, tp, 0, collector.TotalSize), nil, nil
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	samples := collector.Samples
-	samples, err := SortSampleItems(sc, samples)
+	err := SortSampleItemsWithoutCopy(sc, collector.Samples)
 	if err != nil {
 		return nil, nil, err
 	}
+	samples := collector.Samples
 	hg := NewHistogram(id, ndv, nullCount, 0, tp, numBuckets, collector.TotalSize)
 
 	sampleNum := int64(len(samples))
