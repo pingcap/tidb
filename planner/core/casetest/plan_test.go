@@ -161,19 +161,33 @@ func TestPlanDigest4InList(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int);")
 	tk.Session().GetSessionVars().PlanID.Store(0)
-	tk.MustExec("select * from t where a in (1, 2);")
-	info := tk.Session().ShowProcess()
-	require.NotNil(t, info)
-	p, ok := info.Plan.(core.Plan)
-	require.True(t, ok)
-	_, digest := core.NormalizePlan(p)
-	tk.MustExec("select * from t where a in (1, 2, 3);")
-	latestinfo := tk.Session().ShowProcess()
-	require.NotNil(t, latestinfo)
-	latestp, ok := latestinfo.Plan.(core.Plan)
-	require.True(t, ok)
-	_, latestdigest := core.NormalizePlan(latestp)
-	require.Equal(t, digest, latestdigest)
+	queriesGroup1 := []string{
+		"select * from t where a in (1, 2);",
+		"select a in (1, 2) from t;",
+	}
+	queriesGroup2 := []string{
+		"select * from t where a in (1, 2, 3);",
+		"select a in (1, 2, 3) from t;",
+	}
+	for i := 0; i < len(queriesGroup1); i++ {
+		query1 := queriesGroup1[i]
+		query2 := queriesGroup2[i]
+		t.Run(query1+" vs "+query2, func(t *testing.T) {
+			tk.MustExec(query1)
+			info1 := tk.Session().ShowProcess()
+			require.NotNil(t, info1)
+			p1, ok := info1.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest1 := core.NormalizePlan(p1)
+			tk.MustExec(query2)
+			info2 := tk.Session().ShowProcess()
+			require.NotNil(t, info2)
+			p2, ok := info2.Plan.(core.Plan)
+			require.True(t, ok)
+			_, digest2 := core.NormalizePlan(p2)
+			require.Equal(t, digest1, digest2)
+		})
+	}
 }
 
 func TestNormalizedPlanForDiffStore(t *testing.T) {
