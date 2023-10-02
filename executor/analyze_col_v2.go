@@ -269,8 +269,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}
 
 	// Start workers to merge the result from collectors.
-	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
-	mergeTaskCh := make(chan []byte, statsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, 1)
+	mergeTaskCh := make(chan []byte, 1)
 	taskEg, _ := errgroup.WithContext(context.Background())
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() error {
@@ -364,7 +364,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
 	buildResultChan := make(chan error, totalLen)
-	buildTaskChan := make(chan *samplingBuildTask, totalLen)
+	buildTaskChan := make(chan *samplingBuildTask, 1)
 	if totalLen < statsConcurrency {
 		statsConcurrency = totalLen
 	}
