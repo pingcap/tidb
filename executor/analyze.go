@@ -112,10 +112,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if len(tasks) > 10*concurrency {
 		concurrency = max(min(2, concurrency/2), 1)
 	}
-
+	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, concurrency)
-	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
+	resultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
