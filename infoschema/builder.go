@@ -309,8 +309,6 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff)
 	return tblIDs, nil
 }
 
-<<<<<<< HEAD
-=======
 func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// The partitioned table is not affected until the last stage
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
@@ -367,7 +365,6 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	return append(ptIDs, ntIDs...), nil
 }
 
->>>>>>> 48e22971729 (ddl: Exchange part schema load fix (#46126))
 func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
@@ -474,12 +471,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		newTableID = diff.TableID
 	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
 		oldTableID = diff.TableID
-<<<<<<< HEAD
-	case model.ActionTruncateTable, model.ActionCreateView, model.ActionExchangeTablePartition:
-=======
 	case model.ActionTruncateTable, model.ActionCreateView,
 		model.ActionExchangeTablePartition:
->>>>>>> 48e22971729 (ddl: Exchange part schema load fix (#46126))
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:

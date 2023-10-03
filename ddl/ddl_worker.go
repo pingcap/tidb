@@ -1366,17 +1366,6 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		diff.OldSchemaID = oldSchemaIDs[0]
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
-<<<<<<< HEAD
-		var (
-			ptSchemaID     int64
-			ptTableID      int64
-			partName       string
-			withValidation bool
-		)
-		err = job.DecodeArgs(&diff.TableID, &ptSchemaID, &ptTableID, &partName, &withValidation)
-		if err != nil {
-			return 0, errors.Trace(err)
-=======
 		// From start of function: diff.SchemaID = job.SchemaID
 		// Old is original non partitioned table
 		diff.OldTableID = job.TableID
@@ -1395,7 +1384,6 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			return 0, errors.Trace(err)
 		}
 		// This is needed for not crashing TiFlash!
-		// TODO: Update TiFlash, to handle StateWriteOnly
 		diff.AffectedOpts = []*model.AffectedOption{{
 			TableID: ptTableID,
 		}}
@@ -1411,7 +1399,6 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			diff.TableID = ptDefID
 			// Also add correct SchemaID in case different schemas
 			diff.AffectedOpts[0].SchemaID = ptSchemaID
->>>>>>> 48e22971729 (ddl: Exchange part schema load fix (#46126))
 		}
 		diff.OldTableID = job.TableID
 		affects := make([]*model.AffectedOption, 1)

@@ -2141,13 +2141,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	index, _, err := getPartitionDef(pt, partName)
+	index, partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
-<<<<<<< HEAD
-	if nt.ExchangePartitionInfo == nil || !nt.ExchangePartitionInfo.ExchangePartitionFlag {
-=======
 	if job.SchemaState == model.StateNone {
 		if pt.State != model.StatePublic {
 			job.State = model.JobStateCancelled
@@ -2181,7 +2178,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 				return ver, errors.Trace(err)
 			}
 		}
->>>>>>> 48e22971729 (ddl: Exchange part schema load fix (#46126))
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
 			ExchangePartitionFlag:  true,
 			ExchangePartitionID:    ptID,
@@ -2222,12 +2218,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	// non-partition table auto IDs.
 	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	_, partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -2303,7 +2293,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	})
 
-	err = checkExchangePartitionPlacementPolicy(t, partDef.PlacementPolicyRef, nt.PlacementPolicyRef)
+	err = checkExchangePartitionPlacementPolicy(t, nt.PlacementPolicyRef, pt.PlacementPolicyRef, partDef.PlacementPolicyRef)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
@@ -3106,16 +3096,20 @@ func checkExchangePartitionRecordValidation(w *worker, pt *model.TableInfo, inde
 	return nil
 }
 
-func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPlacementPolicyRef *model.PolicyRefInfo, ptPlacementPolicyRef *model.PolicyRefInfo) error {
-	if ntPlacementPolicyRef == nil && ptPlacementPolicyRef == nil {
+func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPPRef, ptPPRef, partPPRef *model.PolicyRefInfo) error {
+	partitionPPRef := partPPRef
+	if partitionPPRef == nil {
+		partitionPPRef = ptPPRef
+	}
+	if ntPPRef == nil && partitionPPRef == nil {
 		return nil
 	}
-	if ntPlacementPolicyRef == nil || ptPlacementPolicyRef == nil {
+	if ntPPRef == nil || partitionPPRef == nil {
 		return dbterror.ErrTablesDifferentMetadata
 	}
 
-	ptPlacementPolicyInfo, _ := getPolicyInfo(t, ptPlacementPolicyRef.ID)
-	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPlacementPolicyRef.ID)
+	ptPlacementPolicyInfo, _ := getPolicyInfo(t, partitionPPRef.ID)
+	ntPlacementPolicyInfo, _ := getPolicyInfo(t, ntPPRef.ID)
 	if ntPlacementPolicyInfo == nil && ptPlacementPolicyInfo == nil {
 		return nil
 	}
