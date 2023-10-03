@@ -269,6 +269,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		return 0, nil, nil, nil, nil, err
 	}
 	statsConcurrency = statsConcurrency / 2
+	if count > 100 {
+		statsConcurrency = 1
+	}
 
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
