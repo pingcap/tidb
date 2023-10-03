@@ -242,10 +242,10 @@ func TestCompressedWriterLong(t *testing.T) {
 		cw.Flush()
 
 		// Header:
-		// 3c 00 00   Compressed length: 60
+		// 18 00 00   Compressed length: 24
 		// 00         Packetnr: 0
 		// 45 00 00   Uncompressed length: 69
-		compressedLength := []byte{0x3c, 0x0, 0x0}
+		compressedLength := []byte{0x18, 0x0, 0x0}
 		packetNr := []byte{0x0}
 		uncompressedLength := []byte{0x45, 0x0, 0x0}
 		require.Equal(t, compressedLength, testdata.Bytes()[:3])

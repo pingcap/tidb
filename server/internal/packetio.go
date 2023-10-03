@@ -381,12 +381,13 @@ func (cw *compressedWriter) Flush() error {
 	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
 	// suggests a MIN_COMPRESS_LENGTH of 50.
 	minCompressLength := 50
+	zlibCompressDefaultLevel := 6
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
 
 	switch cw.compressionAlgorithm {
 	case mysql.CompressionZlib:
-		w, err = zlib.NewWriterLevel(&payload, zlib.HuffmanOnly)
+		w, err = zlib.NewWriterLevel(&payload, zlibCompressDefaultLevel)
 	case mysql.CompressionZstd:
 		w, err = zstd.NewWriter(&payload, zstd.WithEncoderLevel(cw.zstdLevel))
 	default:
