@@ -173,7 +173,7 @@ func MergePartitionStats2GlobalStats(
 			}
 
 			// Partition stats is not empty but column stats(hist, topN) is missing.
-			if partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
+			if !skipPartition && partitionStats.RealtimeCount > 0 && (hg == nil || hg.TotalRowCount() <= 0) && (topN == nil || topN.TotalCount() <= 0) {
 				var missingPart string
 				if !isIndex {
 					missingPart = fmt.Sprintf("partition `%s` column `%s`", def.Name.L, tableInfo.FindColumnNameByID(histIDs[i]))
