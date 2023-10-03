@@ -285,7 +285,14 @@ func MergePartitionStats2GlobalStatsByTableID(
 	}
 
 	globalTableInfo := globalTable.Meta()
-	globalStats, err = MergePartitionStats2GlobalStats(sc, gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
+	var cache map[int64]*statistics.Table
+	partitionNum := len(globalTableInfo.Partition.Definitions)
+	if partitionNum > 512 {
+		cache = nil
+	} else {
+		cache = allPartitionStats
+	}
+	globalStats, err = MergePartitionStats2GlobalStats(sc, gpool, opts, is, globalTableInfo, isIndex, histIDs, cache, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
 	if err != nil {
 		return
 	}
