@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // AnalyzeColumnsExecV2 is used to maintain v2 analyze process
@@ -275,38 +276,50 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for i := 0; i < statsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
 	}
-
-	// Start read data from resultHandler and send them to mergeTaskCh.
-	if err = readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker); err != nil {
-		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
-	}
-
 	// Merge the result from collectors.
 	mergeWorkerPanicCnt := 0
-	for mergeWorkerPanicCnt < statsConcurrency {
-		mergeResult, ok := <-mergeResultCh
-		if !ok {
-			break
-		}
-		if mergeResult.err != nil {
-			err = mergeResult.err
-			if isAnalyzeWorkerPanic(mergeResult.err) {
-				mergeWorkerPanicCnt++
+	mergeEg, _ := errgroup.WithContext(context.Background())
+	mergeEg.Go(func() (err error) {
+		for mergeWorkerPanicCnt < statsConcurrency {
+			mergeResult, ok := <-mergeResultCh
+			if !ok {
+				break
 			}
-			continue
+			if mergeResult.err != nil {
+				err = mergeResult.err
+				if isAnalyzeWorkerPanic(mergeResult.err) {
+					mergeWorkerPanicCnt++
+				}
+				continue
+			}
+			oldRootCollectorSize := rootRowCollector.Base().MemSize
+			oldRootCollectorCount := rootRowCollector.Base().Count
+			// Merge the result from sub-collectors.
+			rootRowCollector.MergeCollector(mergeResult.collector)
+			newRootCollectorCount := rootRowCollector.Base().Count
+			printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
+				mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
+				"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
+			logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when merging collector to root", rootRowCollector.Base().MemSize-oldRootCollectorSize-mergeResult.collector.Base().MemSize))
+			e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
+			mergeResult.collector.DestroyAndPutToPool()
 		}
-		oldRootCollectorSize := rootRowCollector.Base().MemSize
-		oldRootCollectorCount := rootRowCollector.Base().Count
-		// Merge the result from sub-collectors.
-		rootRowCollector.MergeCollector(mergeResult.collector)
-		newRootCollectorCount := rootRowCollector.Base().Count
-		printAnalyzeMergeCollectorLog(oldRootCollectorCount, newRootCollectorCount,
-			mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
-			"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
-		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
-		mergeResult.collector.DestroyAndPutToPool()
+		return err
+	})
+	taskEg, _ := errgroup.WithContext(context.Background())
+	// Start read data from resultHandler and send them to mergeTaskCh.
+	taskEg.Go(func() error {
+		return readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
+	})
+	err = taskEg.Wait()
+	if err != nil {
+		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
 	}
-	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
+	err = mergeEg.Wait()
+	defer func() {
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when releasing the samples", -rootRowCollector.Base().MemSize))
+		e.memTracker.Release(-rootRowCollector.Base().MemSize)
+	}()
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
@@ -427,6 +440,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			}
 		}
 		e.memTracker.Release(totalSampleCollectorSize)
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when releasing sub collectors", -totalSampleCollectorSize))
 	}()
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
@@ -649,6 +663,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		// Consume the memory of the data.
 		colRespSize := int64(colResp.Size())
 		e.memTracker.Consume(colRespSize)
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when unmarhal resp", colRespSize))
 
 		// Update processed rows.
 		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
@@ -668,7 +683,9 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		newRetCollectorSize := retCollector.Base().MemSize
 		subCollectorSize := subCollector.Base().MemSize
 		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when merging collector", newRetCollectorSize-oldRetCollectorSize-subCollectorSize))
 		e.memTracker.Release(dataSize + colRespSize)
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when release resp", -dataSize-colRespSize))
 		subCollector.DestroyAndPutToPool()
 	}
 
@@ -711,6 +728,7 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
+				logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when building samples for column", collectorMemSize))
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
@@ -734,6 +752,7 @@ workLoop:
 						deltaSize := int64(cap(val.GetBytes()))
 						collectorMemSize += deltaSize
 						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+						e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   val,
@@ -762,6 +781,7 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
+				logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when building samples for index", collectorMemSize))
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
@@ -812,6 +832,7 @@ workLoop:
 			releaseCollectorMemory := func() {
 				if !task.isColumn {
 					e.memTracker.Release(collector.MemSize)
+					logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when releasing samples for index", -collector.MemSize))
 				}
 			}
 			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker)
@@ -822,6 +843,7 @@ workLoop:
 			}
 			finalMemSize := hist.MemoryUsage() + topn.MemoryUsage()
 			e.memTracker.Consume(finalMemSize)
+			logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when build hist and topn", finalMemSize))
 			hists[task.slicePos] = hist
 			topns[task.slicePos] = topn
 			resultCh <- nil
@@ -872,7 +894,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 		if data == nil {
 			break
 		}
-
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when recv raw data", int64(cap(data))))
 		memTracker.Consume(int64(cap(data)))
 		mergeTaskCh <- data
 	}
