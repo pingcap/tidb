@@ -137,8 +137,8 @@ github.com/aws/aws-sdk-go v1.44.256/go.mod h1:aVsgQcEevwlmQ7qHE9I3h+dtQgpqhFB+i8
 github.com/aws/aws-sdk-go v1.44.259 h1:7yDn1dcv4DZFMKpu+2exIH5O6ipNj9qXrKfdMUaIJwY=
 github.com/aws/aws-sdk-go v1.44.259/go.mod h1:aVsgQcEevwlmQ7qHE9I3h+dtQgpqhFB+i8Phjh7fkwI=
 github.com/aymerick/raymond v2.0.3-0.20180322193309-b565731e1464+incompatible/go.mod h1:osfaiScAUVup+UC9Nfq76eWqDhXlp+4UYaA8uhTBO6g=
-github.com/bazelbuild/buildtools v0.0.0-20230317132445-9c3c1fc0106e h1:XmPu4mXICgdGnC5dXGjUGbwUD/kUmS0l5Aop3LaevBM=
-github.com/bazelbuild/buildtools v0.0.0-20230317132445-9c3c1fc0106e/go.mod h1:689QdV3hBP7Vo9dJMmzhoYIyo/9iMhEmHkJcnaPRCbo=
+github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb h1:4k69c5E7Sa7jmNtv9itBHYA4Z5pfurInuRrtgohxZeA=
+github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb/go.mod h1:689QdV3hBP7Vo9dJMmzhoYIyo/9iMhEmHkJcnaPRCbo=
 github.com/bazelbuild/rules_go v0.40.0 h1:i2HspGKiHMAnq2xIsp7sGJ7CiIlLlEKBtL1aogLJhEo=
 github.com/bazelbuild/rules_go v0.40.0/go.mod h1:TMHmtfpvyfsxaqfL9WnahCsXMWDMICTw7XeK9yVb+YU=
 github.com/benbjohnson/clock v1.0.3/go.mod h1:bGMdMPoPVvcYyt1gHDf4J2KE153Yf9BuiUKYMaxlTDM=

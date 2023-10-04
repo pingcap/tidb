@@ -567,13 +567,13 @@ def go_deps():
         name = "com_github_bazelbuild_buildtools",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/bazelbuild/buildtools",
-        sha256 = "7492d11e4458e1ed0675f34d9a6d236330e6d6657c549836ac342d997ae1f62b",
-        strip_prefix = "github.com/bazelbuild/buildtools@v0.0.0-20230317132445-9c3c1fc0106e",
+        sha256 = "5ec0befc70edf16728838d94b240dfd01ba576f8a3901de84c0861c0ce2b8db6",
+        strip_prefix = "github.com/bazelbuild/buildtools@v0.0.0-20230926111657-7d855c59baeb",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
-            "http://ats.apps.svc/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
+            "http://ats.apps.svc/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
         ],
     )
     go_repository(
