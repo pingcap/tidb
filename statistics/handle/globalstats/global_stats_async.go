@@ -158,20 +158,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(isIndex bool) error {
 	close(a.fmsketch)
 	for i := 0; i < a.globalStats.Num; i++ {
 		for partitionID, partitionStats := range a.allPartitionStats {
-			var analyzed, isSkip bool
-			isSkip, analyzed = partitionStats.IsSkipPartition(a.histIDs[i], isIndex)
-			if !analyzed {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionStatsMissing)
-				if err != nil {
-					return err
-				}
-				continue
+			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
+			if err != nil {
+				return err
 			}
-			if partitionStats.RealtimeCount > 0 && isSkip {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionColumnStatsMissing)
-				if err != nil {
-					return err
-				}
+			if isContinue {
 				continue
 			}
 			cmsketch, find := partitionStats.GetCMSketch(a.histIDs[i], isIndex)
@@ -185,20 +176,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(isIndex bool) error {
 	close(a.cmsketch)
 	for i := 0; i < a.globalStats.Num; i++ {
 		for partitionID, partitionStats := range a.allPartitionStats {
-			var analyzed, isSkip bool
-			isSkip, analyzed = partitionStats.IsSkipPartition(a.histIDs[i], isIndex)
-			if !analyzed {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionStatsMissing)
-				if err != nil {
-					return err
-				}
-				continue
+			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
+			if err != nil {
+				return err
 			}
-			if partitionStats.RealtimeCount > 0 && isSkip {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionColumnStatsMissing)
-				if err != nil {
-					return err
-				}
+			if isContinue {
 				continue
 			}
 			topn, find := partitionStats.GetTopN(a.histIDs[i], isIndex)
@@ -212,20 +194,11 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(isIndex bool) error {
 	close(a.topn)
 	for i := 0; i < a.globalStats.Num; i++ {
 		for partitionID, partitionStats := range a.allPartitionStats {
-			var analyzed, isSkip bool
-			isSkip, analyzed = partitionStats.IsSkipPartition(a.histIDs[i], isIndex)
-			if !analyzed {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionStatsMissing)
-				if err != nil {
-					return err
-				}
-				continue
+			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
+			if err != nil {
+				return err
 			}
-			if partitionStats.RealtimeCount > 0 && isSkip {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionColumnStatsMissing)
-				if err != nil {
-					return err
-				}
+			if isContinue {
 				continue
 			}
 			hists, find := partitionStats.GetHistogram(a.histIDs[i], isIndex)
