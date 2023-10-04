@@ -151,39 +151,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(isIndex boo
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(isIndex bool) error {
-	for i := 0; i < a.globalStats.Num; i++ {
-		for partitionID, partitionStats := range a.allPartitionStats {
-			var analyzed, isSkip bool
-			isSkip, analyzed = partitionStats.IsSkipPartition(a.histIDs[i], isIndex)
-			if !analyzed {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionStatsMissing)
-				if err != nil {
-					close(a.fmsketch)
-					close(a.cmsketch)
-					close(a.histogram)
-					close(a.topn)
-					return err
-				}
-				continue
-			}
-			if partitionStats.RealtimeCount > 0 && isSkip {
-				err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionColumnStatsMissing)
-				if err != nil {
-					close(a.fmsketch)
-					close(a.cmsketch)
-					close(a.histogram)
-					close(a.topn)
-					return err
-				}
-				continue
-			}
-			fmsketch, find := partitionStats.GetFMSketch(a.histIDs[i], isIndex)
-			if find {
-				a.fmsketch <- mergeItem[*statistics.FMSketch]{
-					fmsketch, i,
-				}
-			}
-		}
+	err := a.loadFmsketch(isIndex)
+	if err != nil {
+		return err
 	}
 	close(a.fmsketch)
 	for i := 0; i < a.globalStats.Num; i++ {
@@ -351,7 +321,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) Result() *GlobalStats {
 }
 
 // MergePartitionStats2GlobalStats merges partition stats to global stats.
-func (a AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
+func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64,
 	isIndex bool,
@@ -373,4 +343,53 @@ func (a AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 		return err
 	}
 	return mergeWg.Wait()
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(isIndex bool) error {
+	for i := 0; i < a.globalStats.Num; i++ {
+		for partitionID, partitionStats := range a.allPartitionStats {
+			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
+			if err != nil {
+				return err
+			}
+			if isContinue {
+				continue
+			}
+			fmsketch, find := partitionStats.GetFMSketch(a.histIDs[i], isIndex)
+			if find {
+				a.fmsketch <- mergeItem[*statistics.FMSketch]{
+					fmsketch, i,
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) checkSkipPartition(partitionStats *statistics.Table, partitionID int64, i int, isIndex bool) (isContine bool, err error) {
+	var analyzed, isSkip bool
+	isSkip, analyzed = partitionStats.IsSkipPartition(a.histIDs[i], isIndex)
+	if !analyzed {
+		err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionStatsMissing)
+		if err != nil {
+			close(a.fmsketch)
+			close(a.cmsketch)
+			close(a.histogram)
+			close(a.topn)
+			return false, err
+		}
+		return true, nil
+	}
+	if partitionStats.RealtimeCount > 0 && isSkip {
+		err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionColumnStatsMissing)
+		if err != nil {
+			close(a.fmsketch)
+			close(a.cmsketch)
+			close(a.histogram)
+			close(a.topn)
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
