@@ -27,9 +27,11 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
+	"go.uber.org/zap"
 )
 
 // RowSampleCollector implements the needed interface for a row-based sample collector.
@@ -233,6 +235,7 @@ func (s *baseCollector) destroyAndPutToPool() {
 	for _, sketch := range s.FMSketches {
 		sketch.DestroyAndPutToPool()
 	}
+	s.FMSketches = nil
 }
 
 func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
@@ -310,6 +313,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		initMemSize := int64(sampleNum) * (int64(rowLen)*types.EmptyDatumSize + EmptyReservoirSampleItemSize + 8)
 		s.MemSize += initMemSize
 		memTracker.Consume(initMemSize)
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when building a collector", initMemSize))
 	}
 	bufferedMemSize := int64(0)
 	for _, pbSample := range pbCollector.Samples {
@@ -325,6 +329,7 @@ func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTrack
 		s.Samples = append(s.Samples, sampleItem)
 		deltaSize := sampleItem.MemUsage() - EmptyReservoirSampleItemSize - int64(rowLen)*types.EmptyDatumSize
 		memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+		logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when inserting item to collector", deltaSize))
 		s.MemSize += deltaSize
 	}
 	memTracker.Consume(bufferedMemSize)

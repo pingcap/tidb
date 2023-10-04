@@ -146,6 +146,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for _, task := range tasks {
 		if task.colExec != nil && task.colExec.memTracker != nil {
 			task.colExec.memTracker.Detach()
+			logutil.BgLogger().Warn("update analyze memory usage", zap.Int64("update the mem when release resp", task.colExec.memTracker.BytesConsumed()), zap.Int64("current release mem of this tracker", task.colExec.memTracker.BytesReleased()))
 		}
 	}
 	if err != nil {
@@ -406,6 +407,7 @@ func (e *AnalyzeExec) handleResultsError(
 			finishJobWithLog(e.Ctx(), results.Job, exeerrors.ErrQueryInterrupted)
 			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
+		results.DestroyAndPutToPool()
 	}
 	// Dump stats to historical storage.
 	for tableID := range tableIDs {

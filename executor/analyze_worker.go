@@ -68,6 +68,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		} else {
 			finishJobWithLog(worker.sctx, results.Job, nil)
 		}
+		results.DestroyAndPutToPool()
 		if err != nil {
 			return
 		}

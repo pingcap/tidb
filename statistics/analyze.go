@@ -69,6 +69,14 @@ type AnalyzeResult struct {
 	IsIndex int
 }
 
+// DestroyAndPutToPool put the AnalyzeResult to pool and set the pointer to nil.
+func (a *AnalyzeResult) DestroyAndPutToPool() {
+	for _, fm := range a.Fms {
+		fm.DestroyAndPutToPool()
+	}
+	a.Fms = nil
+}
+
 // AnalyzeResults represents the analyze results of a task.
 type AnalyzeResults struct {
 	Err      error
@@ -99,4 +107,12 @@ type AnalyzeResults struct {
 	// In conclusion, when saving the analyze result for mv index, we need to store the index stats, as for the
 	// table-level fields, we only need to update the version.
 	ForMVIndex bool
+}
+
+// DestroyAndPutToPool put the AnalyzeResult to pool and set the pointer to nil.
+func (a *AnalyzeResults) DestroyAndPutToPool() {
+	for _, fm := range a.Ars {
+		fm.DestroyAndPutToPool()
+	}
+	a.Ars = nil
 }
