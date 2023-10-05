@@ -16,7 +16,7 @@ require (
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/ashanbrown/makezero v1.1.1
 	github.com/aws/aws-sdk-go v1.44.259
-	github.com/bazelbuild/buildtools v0.0.0-20230317132445-9c3c1fc0106e
+	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
 	github.com/bazelbuild/rules_go v0.40.0
 	github.com/blacktear23/go-proxyprotocol v1.0.6
 	github.com/butuzov/mirror v1.1.0
