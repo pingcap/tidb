@@ -326,7 +326,14 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sc sessionctx.Contex
 	for i := 0; i < a.globalStats.Num; i++ {
 		if a.allPartitionStats != nil {
 			// use cache to load fmsketch
-			for _, partitionStats := range a.allPartitionStats {
+			for partitionID, partitionStats := range a.allPartitionStats {
+				isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
+				if err != nil {
+					return err
+				}
+				if isContinue {
+					continue
+				}
 				fmsketch, find := partitionStats.GetFMSketch(a.histIDs[i], isIndex)
 				if find {
 					a.fmsketch <- mergeItem[*statistics.FMSketch]{
