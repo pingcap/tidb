@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/types"
 	"github.com/tiancaiamao/gp"
 	"golang.org/x/sync/errgroup"
@@ -53,6 +54,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
+	partitionIDs              []int64
 	partitionNum              int
 	skipMissingPartitionStats bool
 }
@@ -78,6 +80,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		histogram:                 make(chan mergeItem[*statistics.Histogram], 10),
 		PartitionDefinition:       make(map[int64]model.PartitionDefinition),
 		tableInfo:                 make(map[int64]*model.TableInfo),
+		partitionIDs:              make([]int64, 0, partitionNum),
 		gpool:                     gpool,
 		allPartitionStats:         allPartitionStats,
 		globalTableInfo:           globalTableInfo,
@@ -108,6 +111,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare() (err error) {
 	// get all partition stats
 	for _, def := range a.globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
+		a.partitionIDs = append(a.partitionIDs, partitionID)
 		a.PartitionDefinition[partitionID] = def
 		partitionTable, ok := a.getTableByPhysicalIDFn(a.is, partitionID)
 		if !ok {
@@ -150,8 +154,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(isIndex boo
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(isIndex bool) error {
-	err := a.loadFmsketch(isIndex)
+func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sc sessionctx.Context, isIndex bool) error {
+	err := a.loadFmsketch(sc, isIndex)
 	if err != nil {
 		return err
 	}
@@ -303,7 +307,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	metawg, _ := errgroup.WithContext(ctx)
 	mergeWg, _ := errgroup.WithContext(ctx)
 	metawg.Go(func() error {
-		return a.ioWorker(isIndex)
+		return a.ioWorker(sc, isIndex)
 	})
 	mergeWg.Go(func() error {
 		return a.cpuWorker(sc, opts, isIndex)
@@ -318,18 +322,29 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	return mergeWg.Wait()
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sc sessionctx.Context, isIndex bool) error {
 	for i := 0; i < a.globalStats.Num; i++ {
-		for partitionID, partitionStats := range a.allPartitionStats {
-			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
-			if err != nil {
-				return err
+		if a.allPartitionStats != nil {
+			// use cache to load fmsketch
+			for _, partitionStats := range a.allPartitionStats {
+				fmsketch, find := partitionStats.GetFMSketch(a.histIDs[i], isIndex)
+				if find {
+					a.fmsketch <- mergeItem[*statistics.FMSketch]{
+						fmsketch, i,
+					}
+				}
 			}
-			if isContinue {
-				continue
-			}
-			fmsketch, find := partitionStats.GetFMSketch(a.histIDs[i], isIndex)
-			if find {
+		} else {
+			// load fmsketch from tikv
+			for _, partitionID := range a.partitionIDs {
+				var index = int64(0)
+				if isIndex {
+					index = 1
+				}
+				fmsketch, err := storage.FMSketchFromStorage(sc, partitionID, index, a.histIDs[i])
+				if err != nil {
+					return err
+				}
 				a.fmsketch <- mergeItem[*statistics.FMSketch]{
 					fmsketch, i,
 				}
@@ -345,7 +360,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) checkSkipPartition(partitionStats
 	if !analyzed {
 		err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionStatsMissing)
 		if err != nil {
-			close(a.fmsketch)
 			close(a.cmsketch)
 			close(a.histogram)
 			close(a.topn)
@@ -356,7 +370,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) checkSkipPartition(partitionStats
 	if partitionStats.RealtimeCount > 0 && isSkip {
 		err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionColumnStatsMissing)
 		if err != nil {
-			close(a.fmsketch)
 			close(a.cmsketch)
 			close(a.histogram)
 			close(a.topn)

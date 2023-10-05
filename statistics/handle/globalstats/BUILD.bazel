@@ -17,6 +17,7 @@ go_library(
         "//parser/terror",
         "//sessionctx",
         "//statistics",
+        "//statistics/handle/storage",
         "//table",
         "//types",
         "//util/hack",
