@@ -36,6 +36,10 @@ func (c *AsyncGlobalStatsCache) GetTableStats(tableID int64) *statistics.Table {
 	return c.cache[tableID]
 }
 
+func (c *AsyncGlobalStatsCache) SetTableStats(partitionID int64, tbl *statistics.Table) {
+	c.cache[partitionID] = tbl
+}
+
 func (c *AsyncGlobalStatsCache) SkipPartiton(sctx sessionctx.Context, partitionID int64, histID int64, isIndex bool) (bool, error) {
 	if c.cache != nil {
 		partitionStats, ok := c.cache[partitionID]
