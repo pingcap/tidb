@@ -127,6 +127,24 @@ func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID i
 	return statistics.DecodeFMSketch(rows[0].GetBytes(0))
 }
 
+func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (bool, error) {
+	rows, _, err := util.ExecRows(sctx, "select count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return true, err
+	}
+	if rows[0].GetInt64(0) == 0 {
+		return true, nil
+	}
+	rows, _, err = util.ExecRows(sctx, "select count(*) from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return true, nil
+	}
+	if rows[0].GetInt64(0) == 0 {
+		return true, nil
+	}
+	return false, nil
+}
+
 // ExtendedStatsFromStorage reads extended stats from storage.
 func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
