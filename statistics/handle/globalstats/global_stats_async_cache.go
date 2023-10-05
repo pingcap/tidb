@@ -20,11 +20,13 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/storage"
 )
 
+// AsyncGlobalStatsCache is a cache for global stats when is in async mode.
 type AsyncGlobalStatsCache struct {
 	cache         map[int64]*statistics.Table
 	skipPartition map[int64]struct{}
 }
 
+// NewAsyncGlobalStatsCache creates a new AsyncGlobalStatsCache.
 func NewAsyncGlobalStatsCache(cache map[int64]*statistics.Table) *AsyncGlobalStatsCache {
 	return &AsyncGlobalStatsCache{
 		cache:         cache,
@@ -32,14 +34,17 @@ func NewAsyncGlobalStatsCache(cache map[int64]*statistics.Table) *AsyncGlobalSta
 	}
 }
 
+// GetTableStats gets the table stats from the cache.
 func (c *AsyncGlobalStatsCache) GetTableStats(tableID int64) *statistics.Table {
 	return c.cache[tableID]
 }
 
+// SetTableStats sets the table stats to the cache.
 func (c *AsyncGlobalStatsCache) SetTableStats(partitionID int64, tbl *statistics.Table) {
 	c.cache[partitionID] = tbl
 }
 
+// SkipPartiton checks whether the partition should be skipped.
 func (c *AsyncGlobalStatsCache) SkipPartiton(sctx sessionctx.Context, partitionID int64, histID int64, isIndex bool) (bool, error) {
 	if c.cache != nil {
 		partitionStats, ok := c.cache[partitionID]
