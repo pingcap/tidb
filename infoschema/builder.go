@@ -347,7 +347,6 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	}
 	// partID is the new id for the non-partitioned table!
 	b.markTableBundleShouldUpdate(partID)
-	//b.markPartitionBundleShouldUpdate(partID)
 	// Then the partitioned table, will re-read the whole table, including all partitions!
 	currDiff.TableID = ptID
 	currDiff.SchemaID = ptSchemaID
@@ -462,9 +461,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
-	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
-		oldTableID = diff.TableID
-	case model.ActionTruncateTable, model.ActionCreateView:
+	case model.ActionTruncateTable, model.ActionCreateView,
+		model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
 	default:

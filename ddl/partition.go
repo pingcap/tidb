@@ -2127,6 +2127,23 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	if pt.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", pt.Name, pt.State)
+	}
+
+	err = checkExchangePartition(pt, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	err = checkTableDefCompatible(pt, nt)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
 	index, partDef, err := getPartitionDef(pt, partName)
 	if err != nil {
 		return ver, errors.Trace(err)
@@ -2154,6 +2171,16 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			return ver, errors.Trace(err)
 		}
 
+		if defID != partDef.ID {
+			logutil.BgLogger().Info("Exchange partition id changed, updating to actual id", zap.String("category", "ddl"),
+				zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
+			job.Args[0] = partDef.ID
+			defID = partDef.ID
+			err = updateDDLJob2Table(w.sess, job, true)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
+		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
 			ExchangePartitionID:    ptID,
 			ExchangePartitionDefID: defID,
@@ -2173,6 +2200,18 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	if d.lease > 0 {
 		delayForAsyncCommit()
+	}
+
+	if defID != partDef.ID {
+		// Should never happen, should have been updated above, in previous state!
+		logutil.BgLogger().Error("Exchange partition id changed, updating to actual id", zap.String("category", "ddl"),
+			zap.String("job", job.String()), zap.Int64("defID", defID), zap.Int64("partDef.ID", partDef.ID))
+		job.Args[0] = partDef.ID
+		defID = partDef.ID
+		err = updateDDLJob2Table(w.sess, job, true)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	if withValidation {
@@ -2282,6 +2321,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	ntr := rules[ntrID]
 	ptr := rules[ptrID]
 
+	// This must be a bug, nt cannot be partitioned!
 	partIDs := getPartitionIDs(nt)
 
 	var setRules []*label.Rule
