@@ -141,7 +141,7 @@ func MergePartitionStats2GlobalStats(
 			partitionStats, err1 = loadTablePartitionStatsFn(tableInfo, &def)
 			if err1 != nil {
 				if skipMissingPartitionStats && (types.ErrPartitionStatsMissing.Equal(err1) ||
-					types.ErrPartitionStatsMissing.Equal(err1)) {
+					types.ErrPartitionColumnStatsMissing.Equal(err1)) {
 					globalStats.MissingPartitionStats = append(globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
 					continue
 				}
