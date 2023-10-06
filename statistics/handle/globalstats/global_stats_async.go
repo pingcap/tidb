@@ -51,6 +51,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	tableInfo                 map[int64]*model.TableInfo
 	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc
+	exitChan                  chan struct{}
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
@@ -81,6 +82,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		PartitionDefinition:       make(map[int64]model.PartitionDefinition),
 		tableInfo:                 make(map[int64]*model.TableInfo),
 		partitionIDs:              make([]int64, 0, partitionNum),
+		exitChan:                  make(chan struct{}),
 		gpool:                     gpool,
 		allPartitionStats:         allPartitionStats,
 		globalTableInfo:           globalTableInfo,
@@ -157,6 +159,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(isIndex boo
 func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sc sessionctx.Context, isIndex bool) error {
 	err := a.loadFmsketch(sc, isIndex)
 	if err != nil {
+		close(a.exitChan)
 		return err
 	}
 	close(a.fmsketch)
@@ -164,6 +167,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sc sessionctx.Context, i
 		for partitionID, partitionStats := range a.allPartitionStats {
 			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
 			if err != nil {
+				close(a.exitChan)
 				return err
 			}
 			if isContinue {
@@ -182,6 +186,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sc sessionctx.Context, i
 		for partitionID, partitionStats := range a.allPartitionStats {
 			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
 			if err != nil {
+				close(a.exitChan)
 				return err
 			}
 			if isContinue {
@@ -200,6 +205,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sc sessionctx.Context, i
 		for partitionID, partitionStats := range a.allPartitionStats {
 			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
 			if err != nil {
+				close(a.exitChan)
 				return err
 			}
 			if isContinue {
@@ -219,13 +225,23 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sc sessionctx.Context, i
 
 func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, isIndex bool) error {
-	for fms := range a.fmsketch {
-		if a.globalStats.Fms[fms.idx] == nil {
-			a.globalStats.Fms[fms.idx] = fms.item
-		} else {
-			a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
+	func() {
+		for {
+			select {
+			case fms, ok := <-a.fmsketch:
+				if !ok {
+					return
+				}
+				if a.globalStats.Fms[fms.idx] == nil {
+					a.globalStats.Fms[fms.idx] = fms.item
+				} else {
+					a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
+				}
+			case <-a.exitChan:
+				return
+			}
 		}
-	}
+	}()
 	for i := 0; i < a.globalStats.Num; i++ {
 		// Update the global NDV.
 		globalStatsNDV := a.globalStats.Fms[i].NDV()
@@ -235,15 +251,28 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sc sessionctx.Context,
 		a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
 		a.globalStats.Fms[i].DestroyAndPutToPool()
 	}
-	for cms := range a.cmsketch {
-		if a.globalStats.Cms[cms.idx] == nil {
-			a.globalStats.Cms[cms.idx] = cms.item
-		} else {
-			err := a.globalStats.Cms[cms.idx].MergeCMSketch(cms.item)
-			if err != nil {
-				return err
+	err := func() error {
+		for {
+			select {
+			case cms, ok := <-a.cmsketch:
+				if !ok {
+					return nil
+				}
+				if a.globalStats.Cms[cms.idx] == nil {
+					a.globalStats.Cms[cms.idx] = cms.item
+				} else {
+					err := a.globalStats.Cms[cms.idx].MergeCMSketch(cms.item)
+					if err != nil {
+						return err
+					}
+				}
+			case <-a.exitChan:
+				return nil
 			}
 		}
+	}()
+	if err != nil {
+		return err
 	}
 	allHg := make([][]*statistics.Histogram, a.globalStats.Num)
 	allTopN := make([][]*statistics.TopN, a.globalStats.Num)
@@ -251,12 +280,32 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sc sessionctx.Context,
 		allHg[i] = make([]*statistics.Histogram, 0, a.partitionNum)
 		allTopN[i] = make([]*statistics.TopN, 0, a.partitionNum)
 	}
-	for topn := range a.topn {
-		allTopN[topn.idx] = append(allTopN[topn.idx], topn.item)
-	}
-	for hists := range a.histogram {
-		allHg[hists.idx] = append(allHg[hists.idx], hists.item)
-	}
+	func() {
+		for {
+			select {
+			case topn, ok := <-a.topn:
+				if !ok {
+					return
+				}
+				allTopN[topn.idx] = append(allTopN[topn.idx], topn.item)
+			case <-a.exitChan:
+				return
+			}
+		}
+	}()
+	func() {
+		for {
+			select {
+			case hists, ok := <-a.histogram:
+				if !ok {
+					return
+				}
+				allHg[hists.idx] = append(allHg[hists.idx], hists.item)
+			case <-a.exitChan:
+				return
+			}
+		}
+	}()
 	for i := 0; i < a.globalStats.Num; i++ {
 		if len(allHg[i]) == 0 {
 			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
