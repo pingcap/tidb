@@ -62,7 +62,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
 func NewAsyncMergePartitionStats2GlobalStats(
-	gpool *gp.Pool, allPartitionStats map[int64]*statistics.Table,
+	gpool *gp.Pool, _ map[int64]*statistics.Table,
 	globalTableInfo *model.TableInfo,
 	sc sessionctx.Context,
 	histIDs []int64,
@@ -84,7 +84,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		partitionIDs:              make([]int64, 0, partitionNum),
 		exitChan:                  make(chan struct{}),
 		gpool:                     gpool,
-		allPartitionStats:         allPartitionStats,
+		allPartitionStats:         make(map[int64]*statistics.Table),
 		globalTableInfo:           globalTableInfo,
 		getTableByPhysicalIDFn:    getTableByPhysicalIDFn,
 		loadTablePartitionStatsFn: loadTablePartitionStatsFn,
@@ -98,9 +98,6 @@ func NewAsyncMergePartitionStats2GlobalStats(
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) prepare() (err error) {
-	if a.allPartitionStats == nil {
-		a.allPartitionStats = make(map[int64]*statistics.Table)
-	}
 	if len(a.histIDs) == 0 {
 		for _, col := range a.globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
