@@ -126,7 +126,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sc sessionctx.Context, is
 		a.tableInfo[partitionID] = tableInfo
 		for _, hists := range a.histIDs {
 			var err1 error
-			err1 := skipPartiton(sc, partitionID, hists, isIndex)
+			err1 = skipPartiton(sc, partitionID, hists, isIndex)
 			if err1 != nil {
 				if a.skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
 					a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))

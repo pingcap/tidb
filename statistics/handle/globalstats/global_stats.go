@@ -287,7 +287,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 	globalTableInfo := globalTable.Meta()
 
 	worker := NewAsyncMergePartitionStats2GlobalStats(gpool, allPartitionStats, globalTableInfo, sc, histIDs, is, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
-	err = worker.prepare()
+	err = worker.prepare(sc, isIndex)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
