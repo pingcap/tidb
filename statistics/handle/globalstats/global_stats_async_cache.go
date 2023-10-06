@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
+	"github.com/pingcap/tidb/types"
 )
 
 // AsyncGlobalStatsCache is a cache for global stats when is in async mode.
@@ -69,4 +70,19 @@ func (c *AsyncGlobalStatsCache) SkipPartiton(sctx sessionctx.Context, partitionI
 		return true, err
 	}
 	return skip, nil
+}
+
+func skipPartiton(sctx sessionctx.Context, partitionID int64, histID int64, isIndex bool) error {
+	var index = int64(0)
+	if isIndex {
+		index = 0
+	}
+	skip, err := storage.CheckSkipPartition(sctx, partitionID, histID, index)
+	if err != nil {
+		return err
+	}
+	if skip {
+		return types.ErrPartitionStatsMissing
+	}
+	return nil
 }

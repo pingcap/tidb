@@ -37,6 +37,11 @@ type mergeItem[T any] struct {
 	idx  int
 }
 
+type skipItem struct {
+	partitionID int64
+	histsID     int64
+}
+
 // AsyncMergePartitionStats2GlobalStats is used to merge partition stats to global stats.
 type AsyncMergePartitionStats2GlobalStats struct {
 	is                        infoschema.InfoSchema
@@ -49,6 +54,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	allPartitionStats         map[int64]*statistics.Table
 	PartitionDefinition       map[int64]model.PartitionDefinition
 	tableInfo                 map[int64]*model.TableInfo
+	skipPartition             map[skipItem]struct{}
 	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc
 	exitChan                  chan struct{}
@@ -97,7 +103,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	}
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) prepare() (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) prepare(sc sessionctx.Context, isIndex bool) (err error) {
 	if len(a.histIDs) == 0 {
 		for _, col := range a.globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
@@ -118,6 +124,20 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare() (err error) {
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
+		for _, hists := range a.histIDs {
+			var err1 error
+			err1 := skipPartiton(sc, partitionID, hists, isIndex)
+			if err1 != nil {
+				if a.skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
+					a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
+					continue
+				}
+				// TODO: add partition name and table name
+				err = err1
+				return
+			}
+		}
+
 		partitionStats, okLoad := a.allPartitionStats[partitionID]
 		if !okLoad {
 			var err1 error
