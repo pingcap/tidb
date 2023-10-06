@@ -118,6 +118,24 @@ func CMSketchAndTopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex, h
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
+// CMSketchFromStorage reads CMSketch from storage
+func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.CMSketch, err error) {
+	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeCMSketch(rows[0].GetBytes(0))
+}
+
+// TopNFromStorage reads TopN from storage
+func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
+	rows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeTopN(rows)
+}
+
 // FMSketchFromStorage reads FMSketch from storage
 func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
 	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
@@ -128,22 +146,22 @@ func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID i
 }
 
 // CheckSkipPartition checks if we can skip loading the partition.
-func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (bool, error) {
-	rows, _, err := util.ExecRows(sctx, "select count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
-	if err != nil || len(rows) == 0 {
-		return true, err
+func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex int, histsID int64) error {
+	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id =%?", tblID)
+	if err != nil {
+		return err
 	}
-	if rows[0].GetInt64(0) == 0 {
-		return true, nil
+	if len(rows) == 0 {
+		return types.ErrPartitionStatsMissing
 	}
-	rows, _, err = util.ExecRows(sctx, "select count(*) from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
-	if err != nil || len(rows) == 0 {
-		return true, nil
+	rows, _, err = util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histsID)
+	if err != nil {
+		return err
 	}
-	if rows[0].GetInt64(0) == 0 {
-		return true, nil
+	if len(rows) == 0 {
+		return types.ErrPartitionColumnStatsMissing
 	}
-	return false, nil
+	return nil
 }
 
 // ExtendedStatsFromStorage reads extended stats from storage.
@@ -426,6 +444,33 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		}
 	}
 	return ExtendedStatsFromStorage(sctx, table, physicalID, loadAll)
+}
+
+// LoadHistogram will load histogram from storage.
+func LoadHistogram(sctx sessionctx.Context, physicalID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
+	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", physicalID, isIndex, histID)
+	if err != nil || len(row) == 0 {
+		return nil, err
+	}
+	distinct := row[0].GetInt64(0)
+	histVer := row[0].GetUint64(1)
+	nullCount := row[0].GetInt64(2)
+	var totColSize int64
+	var corr float64
+	var tp types.FieldType
+	if isIndex == 0 {
+		totColSize = row[0].GetInt64(3)
+		corr = row[0].GetFloat64(6)
+		for _, colInfo := range tableInfo.Columns {
+			if histID != colInfo.ID {
+				continue
+			}
+			tp = colInfo.FieldType
+			break
+		}
+		return HistogramFromStorage(sctx, physicalID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr)
+	}
+	return HistogramFromStorage(sctx, physicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.

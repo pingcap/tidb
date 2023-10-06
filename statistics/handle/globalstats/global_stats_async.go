@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/tiancaiamao/gp"
 	"golang.org/x/sync/errgroup"
@@ -38,23 +38,34 @@ type mergeItem[T any] struct {
 }
 
 type skipItem struct {
+	histID      int64
 	partitionID int64
-	histsID     int64
+}
+
+// toSQLIndex is used to convert bool to int64.
+func toSQLIndex(isIndex bool) int {
+	var index = int(0)
+	if isIndex {
+		index = 1
+	}
+	return index
 }
 
 // AsyncMergePartitionStats2GlobalStats is used to merge partition stats to global stats.
 type AsyncMergePartitionStats2GlobalStats struct {
-	is                        infoschema.InfoSchema
-	globalStats               *GlobalStats
-	cmsketch                  chan mergeItem[*statistics.CMSketch]
-	fmsketch                  chan mergeItem[*statistics.FMSketch]
-	topn                      chan mergeItem[*statistics.TopN]
-	histogram                 chan mergeItem[*statistics.Histogram]
-	gpool                     *gp.Pool
-	allPartitionStats         map[int64]*statistics.Table
-	PartitionDefinition       map[int64]model.PartitionDefinition
-	tableInfo                 map[int64]*model.TableInfo
-	skipPartition             map[skipItem]struct{}
+	is                  infoschema.InfoSchema
+	globalStats         *GlobalStats
+	pool                util.SessionPool
+	cmsketch            chan mergeItem[*statistics.CMSketch]
+	fmsketch            chan mergeItem[*statistics.FMSketch]
+	topn                chan mergeItem[*statistics.TopN]
+	histogram           chan mergeItem[*statistics.Histogram]
+	gpool               *gp.Pool
+	allPartitionStats   map[int64]*statistics.Table
+	PartitionDefinition map[int64]model.PartitionDefinition
+	tableInfo           map[int64]*model.TableInfo
+	// key is partition id and histID
+	skipPartition             map[skipItem]struct{} //
 	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc
 	exitChan                  chan struct{}
@@ -68,27 +79,26 @@ type AsyncMergePartitionStats2GlobalStats struct {
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
 func NewAsyncMergePartitionStats2GlobalStats(
-	gpool *gp.Pool, _ map[int64]*statistics.Table,
+	pool util.SessionPool,
+	gpool *gp.Pool,
+	_ map[int64]*statistics.Table,
 	globalTableInfo *model.TableInfo,
-	sc sessionctx.Context,
 	histIDs []int64,
 	is infoschema.InfoSchema,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
-	loadTablePartitionStatsFn loadTablePartitionStatsFunc) *AsyncMergePartitionStats2GlobalStats {
-	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
-	globalStats := newGlobalStats(len(histIDs))
-	globalStats.Num = len(histIDs)
+	loadTablePartitionStatsFn loadTablePartitionStatsFunc) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
-	globalStatsNDV := make([]int64, 0, globalStats.Num)
 	return &AsyncMergePartitionStats2GlobalStats{
-		cmsketch:                  make(chan mergeItem[*statistics.CMSketch], 10),
-		fmsketch:                  make(chan mergeItem[*statistics.FMSketch], 10),
-		topn:                      make(chan mergeItem[*statistics.TopN], 10),
-		histogram:                 make(chan mergeItem[*statistics.Histogram], 10),
+		pool:                      pool,
+		cmsketch:                  make(chan mergeItem[*statistics.CMSketch]),
+		fmsketch:                  make(chan mergeItem[*statistics.FMSketch]),
+		topn:                      make(chan mergeItem[*statistics.TopN]),
+		histogram:                 make(chan mergeItem[*statistics.Histogram]),
 		PartitionDefinition:       make(map[int64]model.PartitionDefinition),
 		tableInfo:                 make(map[int64]*model.TableInfo),
 		partitionIDs:              make([]int64, 0, partitionNum),
 		exitChan:                  make(chan struct{}),
+		skipPartition:             make(map[skipItem]struct{}),
 		gpool:                     gpool,
 		allPartitionStats:         make(map[int64]*statistics.Table),
 		globalTableInfo:           globalTableInfo,
@@ -96,14 +106,11 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		loadTablePartitionStatsFn: loadTablePartitionStatsFn,
 		histIDs:                   histIDs,
 		is:                        is,
-		skipMissingPartitionStats: skipMissingPartitionStats,
-		globalStats:               globalStats,
 		partitionNum:              partitionNum,
-		globalStatsNDV:            globalStatsNDV,
-	}
+	}, nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) prepare(sc sessionctx.Context, isIndex bool) (err error) {
+func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, isIndex bool) (err error) {
 	if len(a.histIDs) == 0 {
 		for _, col := range a.globalTableInfo.Columns {
 			// The virtual generated column stats can not be merged to the global stats.
@@ -113,6 +120,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sc sessionctx.Context, is
 			a.histIDs = append(a.histIDs, col.ID)
 		}
 	}
+	a.globalStats = newGlobalStats(len(a.histIDs))
+	a.globalStats.Num = len(a.histIDs)
+	a.globalStatsNDV = make([]int64, 0, a.globalStats.Num)
 	// get all partition stats
 	for _, def := range a.globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
@@ -124,42 +134,57 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sc sessionctx.Context, is
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
-		for _, hists := range a.histIDs {
-			var err1 error
-			err1 = skipPartiton(sc, partitionID, hists, isIndex)
+		for idx, hist := range a.histIDs {
+			isSkip := false
+			err1 := skipPartiton(sctx, partitionID, isIndex, hist)
 			if err1 != nil {
-				if a.skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
-					a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
-					continue
+				err := a.dealWithSkipPartition(isIndex, partitionID, idx, err1)
+				if err != nil {
+					return err
 				}
-				// TODO: add partition name and table name
-				err = err1
-				return
+				if types.ErrPartitionStatsMissing.Equal(err1) {
+					break
+				}
+				isSkip = true
+			}
+			if !isSkip && idx == 0 {
+				realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, partitionID)
+				if err != nil || isNull {
+					return err
+				}
+				// In a partition, we will only update globalStats.Count once.
+				a.globalStats.Count += realtimeCount
+				a.globalStats.ModifyCount += modifyCount
 			}
 		}
-
-		partitionStats, okLoad := a.allPartitionStats[partitionID]
-		if !okLoad {
-			var err1 error
-			partitionStats, err1 = a.loadTablePartitionStatsFn(tableInfo, &def)
-			if err1 != nil {
-				if a.skipMissingPartitionStats && types.ErrPartitionStatsMissing.Equal(err) {
-					a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, fmt.Sprintf("partition `%s`", def.Name.L))
-					continue
-				}
-				err = err1
-				return
-			}
-			a.allPartitionStats[partitionID] = partitionStats
-		}
-		// In a partition, we will only update globalStats.Count once.
-		a.globalStats.Count += partitionStats.RealtimeCount
-		a.globalStats.ModifyCount += partitionStats.ModifyCount
 	}
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(isIndex bool, partitionID int64, idx int, err *terror.Error) error {
+func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(isIndex bool, partitionID int64, idx int, err error) error {
+	switch {
+	case types.ErrPartitionStatsMissing.Equal(err):
+		return a.dealErrPartitionStatsMissing(partitionID)
+	case types.ErrPartitionColumnStatsMissing.Equal(err):
+		return a.dealErrPartitionColumnStatsMissing(isIndex, partitionID, idx)
+	default:
+		return err
+	}
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionStatsMissing(partitionID int64) error {
+	missingPart := fmt.Sprintf("partition `%s`", a.PartitionDefinition[partitionID].Name.L)
+	a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, missingPart)
+	for _, histID := range a.histIDs {
+		a.skipPartition[skipItem{
+			histID:      histID,
+			partitionID: partitionID,
+		}] = struct{}{}
+	}
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissing(isIndex bool, partitionID int64, idx int) error {
 	var missingPart string
 	if isIndex {
 		missingPart = fmt.Sprintf("partition `%s` index `%s`", a.PartitionDefinition[partitionID].Name.L, a.tableInfo[partitionID].FindIndexNameByID(a.histIDs[idx]))
@@ -167,81 +192,45 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealWithSkipPartition(isIndex boo
 		missingPart = fmt.Sprintf("partition `%s` column `%s`", a.PartitionDefinition[partitionID].Name.L, a.tableInfo[partitionID].FindColumnNameByID(a.histIDs[idx]))
 	}
 	if !a.skipMissingPartitionStats {
-		return err.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", a.tableInfo[partitionID].Name.L, missingPart))
+		return types.ErrPartitionColumnStatsMissing.GenWithStackByArgs(fmt.Sprintf("table `%s` %s", a.tableInfo[partitionID].Name.L, missingPart))
 	}
 	a.globalStats.MissingPartitionStats = append(a.globalStats.MissingPartitionStats, missingPart)
+	a.skipPartition[skipItem{
+		histID:      a.histIDs[idx],
+		partitionID: partitionID,
+	}] = struct{}{}
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sc sessionctx.Context, isIndex bool) error {
-	err := a.loadFmsketch(sc, isIndex)
+func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) error {
+	err := a.loadFmsketch(sctx, isIndex)
 	if err != nil {
 		close(a.exitChan)
 		return err
 	}
 	close(a.fmsketch)
-	for i := 0; i < a.globalStats.Num; i++ {
-		for partitionID, partitionStats := range a.allPartitionStats {
-			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
-			if err != nil {
-				close(a.exitChan)
-				return err
-			}
-			if isContinue {
-				continue
-			}
-			cmsketch, find := partitionStats.GetCMSketch(a.histIDs[i], isIndex)
-			if find {
-				a.cmsketch <- mergeItem[*statistics.CMSketch]{
-					cmsketch, i,
-				}
-			}
-		}
+	err = a.loadCMsketch(sctx, isIndex)
+	if err != nil {
+		close(a.exitChan)
+		return err
 	}
 	close(a.cmsketch)
-	for i := 0; i < a.globalStats.Num; i++ {
-		for partitionID, partitionStats := range a.allPartitionStats {
-			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
-			if err != nil {
-				close(a.exitChan)
-				return err
-			}
-			if isContinue {
-				continue
-			}
-			topn, find := partitionStats.GetTopN(a.histIDs[i], isIndex)
-			if find {
-				a.topn <- mergeItem[*statistics.TopN]{
-					topn, i,
-				}
-			}
-		}
+	err = a.loadTopN(sctx, isIndex)
+	if err != nil {
+		close(a.exitChan)
+		return err
 	}
 	close(a.topn)
-	for i := 0; i < a.globalStats.Num; i++ {
-		for partitionID, partitionStats := range a.allPartitionStats {
-			isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
-			if err != nil {
-				close(a.exitChan)
-				return err
-			}
-			if isContinue {
-				continue
-			}
-			hists, find := partitionStats.GetHistogram(a.histIDs[i], isIndex)
-			if find {
-				a.histogram <- mergeItem[*statistics.Histogram]{
-					hists, i,
-				}
-			}
-		}
+	err = a.loadHistogram(sctx, a.globalTableInfo, isIndex)
+	if err != nil {
+		close(a.exitChan)
+		return err
 	}
 	close(a.histogram)
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sc sessionctx.Context,
-	opts map[ast.AnalyzeOptionType]uint64, isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) error {
 	func() {
 		for {
 			select {
@@ -336,14 +325,14 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sc sessionctx.Context,
 		var err error
 		var poppedTopN []statistics.TopNMeta
 		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
-		a.globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(a.gpool, sc, wrapper,
-			sc.GetSessionVars().StmtCtx.TimeZone, sc.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+		a.globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(a.gpool, sctx, wrapper,
+			sctx.GetSessionVars().StmtCtx.TimeZone, sctx.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
 		if err != nil {
 			return err
 		}
 
 		// Merge histogram.
-		a.globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sc.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
+		a.globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sctx.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
 			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
 		if err != nil {
 			return err
@@ -365,10 +354,26 @@ func (a *AsyncMergePartitionStats2GlobalStats) Result() *GlobalStats {
 
 // MergePartitionStats2GlobalStats merges partition stats to global stats.
 func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
-	sc sessionctx.Context,
+	sctx sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64,
 	isIndex bool,
 ) error {
+	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
+
+	se, err := a.pool.Get()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil { // only recycle when no error
+			a.pool.Put(se)
+		}
+	}()
+	sc := se.(sessionctx.Context)
+	err = a.prepare(sc, isIndex)
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 	metawg, _ := errgroup.WithContext(ctx)
 	mergeWg, _ := errgroup.WithContext(ctx)
@@ -378,7 +383,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	mergeWg.Go(func() error {
 		return a.cpuWorker(sc, opts, isIndex)
 	})
-	err := metawg.Wait()
+	err = metawg.Wait()
 	if err != nil {
 		if err1 := mergeWg.Wait(); err1 != nil {
 			err = stderrors.Join(err, err1)
@@ -388,67 +393,95 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	return mergeWg.Wait()
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sc sessionctx.Context, isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {
 	for i := 0; i < a.globalStats.Num; i++ {
-		if a.allPartitionStats != nil {
-			// use cache to load fmsketch
-			for partitionID, partitionStats := range a.allPartitionStats {
-				isContinue, err := a.checkSkipPartition(partitionStats, partitionID, i, isIndex)
-				if err != nil {
-					return err
-				}
-				if isContinue {
-					continue
-				}
-				fmsketch, find := partitionStats.GetFMSketch(a.histIDs[i], isIndex)
-				if find {
-					a.fmsketch <- mergeItem[*statistics.FMSketch]{
-						fmsketch, i,
-					}
-				}
+		// load fmsketch from tikv
+		for _, partitionID := range a.partitionIDs {
+			_, ok := a.skipPartition[skipItem{
+				histID:      a.histIDs[i],
+				partitionID: partitionID,
+			}]
+			if ok {
+				continue
 			}
-		} else {
-			// load fmsketch from tikv
-			for _, partitionID := range a.partitionIDs {
-				var index = int64(0)
-				if isIndex {
-					index = 1
-				}
-				fmsketch, err := storage.FMSketchFromStorage(sc, partitionID, index, a.histIDs[i])
-				if err != nil {
-					return err
-				}
-				a.fmsketch <- mergeItem[*statistics.FMSketch]{
-					fmsketch, i,
-				}
+			fmsketch, err := storage.FMSketchFromStorage(sctx, partitionID, int64(toSQLIndex(isIndex)), a.histIDs[i])
+			if err != nil {
+				return err
+			}
+			a.fmsketch <- mergeItem[*statistics.FMSketch]{
+				fmsketch, i,
 			}
 		}
 	}
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) checkSkipPartition(partitionStats *statistics.Table, partitionID int64, i int, isIndex bool) (isContine bool, err error) {
-	var analyzed, isSkip bool
-	isSkip, analyzed = partitionStats.IsSkipPartition(a.histIDs[i], isIndex)
-	if !analyzed {
-		err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionStatsMissing)
-		if err != nil {
-			close(a.cmsketch)
-			close(a.histogram)
-			close(a.topn)
-			return false, err
+func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
+	for i := 0; i < a.globalStats.Num; i++ {
+		for _, partitionID := range a.partitionIDs {
+			_, ok := a.skipPartition[skipItem{
+				histID:      a.histIDs[i],
+				partitionID: partitionID,
+			}]
+			if ok {
+				continue
+			}
+			cmsketch, err := storage.CMSketchFromStorage(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i])
+			if err != nil {
+				return err
+			}
+			a.cmsketch <- mergeItem[*statistics.CMSketch]{
+				cmsketch, i,
+			}
 		}
-		return true, nil
 	}
-	if partitionStats.RealtimeCount > 0 && isSkip {
-		err := a.dealWithSkipPartition(isIndex, partitionID, i, types.ErrPartitionColumnStatsMissing)
-		if err != nil {
-			close(a.cmsketch)
-			close(a.histogram)
-			close(a.topn)
-			return false, err
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) loadTopN(sctx sessionctx.Context, isIndex bool) error {
+	for i := 0; i < a.globalStats.Num; i++ {
+		for _, partitionID := range a.partitionIDs {
+			_, ok := a.skipPartition[skipItem{
+				histID:      a.histIDs[i],
+				partitionID: partitionID,
+			}]
+			if ok {
+				continue
+			}
+			topn, err := storage.TopNFromStorage(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i])
+			if err != nil {
+				return err
+			}
+			a.topn <- mergeItem[*statistics.TopN]{
+				topn, i,
+			}
 		}
-		return true, nil
 	}
-	return false, nil
+	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) loadHistogram(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
+	for i := 0; i < a.globalStats.Num; i++ {
+		for _, partitionID := range a.partitionIDs {
+			_, ok := a.skipPartition[skipItem{
+				histID:      a.histIDs[i],
+				partitionID: partitionID,
+			}]
+			if ok {
+				continue
+			}
+			histogram, err := storage.LoadHistogram(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i], tableInfo)
+			if err != nil {
+				return err
+			}
+			a.histogram <- mergeItem[*statistics.Histogram]{
+				histogram, i,
+			}
+		}
+	}
+	return nil
+}
+
+func skipPartiton(sctx sessionctx.Context, partitionID int64, isIndex bool, histsID int64) error {
+	return storage.CheckSkipPartition(sctx, partitionID, toSQLIndex(isIndex), histsID)
 }
