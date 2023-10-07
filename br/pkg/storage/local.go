@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"go.uber.org/zap"
 )
 
@@ -151,27 +150,56 @@ func (l *LocalStorage) Open(_ context.Context, path string, o *ReaderOption) (Ex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	pos, endPos := int64(0), int64(-1)
 	if o != nil {
 		if o.EndOffset != nil {
-			return nil, errors.Annotatef(
-				berrors.ErrUnsupportedOperation,
-				"currently LocalStorage backend does not support EndOffset")
+			endPos = *o.EndOffset
 		}
 		if o.StartOffset != nil {
 			_, err = f.Seek(*o.StartOffset, io.SeekStart)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
+			pos = *o.StartOffset
 		}
 	}
-	return localFile{f}, nil
+	return &localFile{File: f, pos: pos, endPos: endPos}, nil
 }
 
 type localFile struct {
 	*os.File
+	pos    int64
+	endPos int64
 }
 
-func (f localFile) GetFileSize() (int64, error) {
+func (f *localFile) Read(p []byte) (n int, err error) {
+	if f.endPos == -1 {
+		return f.File.Read(p)
+	}
+
+	pEnd := f.endPos - f.pos
+	if pEnd <= 0 {
+		return 0, io.EOF
+	}
+	if pEnd > int64(len(p)) {
+		pEnd = int64(len(p))
+	}
+	p = p[:pEnd]
+	n, err = f.File.Read(p)
+	f.pos += int64(n)
+	return n, err
+}
+
+func (f *localFile) Seek(offset int64, whence int) (int64, error) {
+	n, err := f.File.Seek(offset, whence)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	f.pos, _ = f.File.Seek(0, io.SeekCurrent)
+	return n, nil
+}
+
+func (f *localFile) GetFileSize() (int64, error) {
 	stat, err := f.Stat()
 	if err != nil {
 		return 0, errors.Trace(err)
