@@ -342,11 +342,9 @@ func TestString(t *testing.T) {
 		ID: GroupID(1),
 	}
 
-	rules1, isDictConst, err := NewRules(Voter, 3, `["+zone=sh", "+zone=sh"]`)
-	require.False(t, isDictConst)
+	rules1, err := NewRules(Voter, 3, `["+zone=sh", "+zone=sh"]`)
 	require.NoError(t, err)
-	rules2, isDictConst, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
-	require.False(t, isDictConst)
+	rules2, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	require.NoError(t, err)
 	bundle.Rules = append(rules1, rules2...)
 
@@ -398,7 +396,7 @@ func TestNewBundleFromOptions(t *testing.T) {
 		input: &model.PlacementSettings{
 			LearnerConstraints: "[+region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		err: ErrInvalidConstraintsReplicas,
 	})
 
 	tests = append(tests, TestCase{
@@ -642,7 +640,7 @@ func TestNewBundleFromOptions(t *testing.T) {
 			LeaderConstraints:  "[+region=as]",
 			LearnerConstraints: "[-region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		err: ErrInvalidConstraintsReplicas,
 	})
 
 	tests = append(tests, TestCase{
@@ -747,7 +745,7 @@ func TestNewBundleFromOptions(t *testing.T) {
 			LearnerConstraints: `{"+region=us": 2}`,
 			Learners:           4,
 		},
-		err: ErrInvalidConstraintsRelicas,
+		err: ErrInvalidConstraintsReplicas,
 	})
 
 	tests = append(tests, TestCase{
@@ -801,8 +799,7 @@ func TestResetBundleWithSingleRule(t *testing.T) {
 		ID: GroupID(1),
 	}
 
-	rules, isDictConst, err := NewRules(Voter, 3, `["+zone=sh", "+zone=sh"]`)
-	require.False(t, isDictConst)
+	rules, err := NewRules(Voter, 3, `["+zone=sh", "+zone=sh"]`)
 	require.NoError(t, err)
 	bundle.Rules = rules
 
@@ -919,18 +916,15 @@ func TestTidy(t *testing.T) {
 		ID: GroupID(1),
 	}
 
-	rules0, isDictConst, err := NewRules(Voter, 1, `["+zone=sh", "+zone=sh"]`)
-	require.False(t, isDictConst)
+	rules0, err := NewRules(Voter, 1, `["+zone=sh", "+zone=sh"]`)
 	require.NoError(t, err)
 	require.Len(t, rules0, 1)
 	rules0[0].Count = 0 // test prune useless rules
 
-	rules1, isDictConst, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
-	require.False(t, isDictConst)
+	rules1, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	require.NoError(t, err)
 	require.Len(t, rules1, 1)
-	rules2, isDictConst, err := NewRules(Voter, 0, `{"-zone=sh,+zone=bj": 4}}`)
-	require.True(t, isDictConst)
+	rules2, err := NewRules(Voter, 0, `{"-zone=sh,+zone=bj": 4}}`)
 	require.NoError(t, err)
 	bundle.Rules = append(bundle.Rules, rules0...)
 	bundle.Rules = append(bundle.Rules, rules1...)
@@ -949,13 +943,11 @@ func TestTidy(t *testing.T) {
 	}, bundle.Rules[0].Constraints[2])
 
 	// merge
-	rules3, isDictConst, err := NewRules(Follower, 4, "")
-	require.False(t, isDictConst)
+	rules3, err := NewRules(Follower, 4, "")
 	require.NoError(t, err)
 	require.Len(t, rules3, 1)
 
-	rules4, isDictConst, err := NewRules(Follower, 5, "")
-	require.False(t, isDictConst)
+	rules4, err := NewRules(Follower, 5, "")
 	require.NoError(t, err)
 	require.Len(t, rules4, 1)
 

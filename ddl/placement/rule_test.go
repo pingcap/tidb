@@ -70,9 +70,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name:     "zero replicas",
 		input:    "",
 		replicas: 0,
-		output: []*Rule{
-			NewRule(Voter, 0, NewConstraintsDirect()),
-		},
+		output:   nil,
 	})
 
 	tests = append(tests, TestCase{
@@ -102,9 +100,8 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal dict constraints, with count",
-		input:    "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
-		replicas: 4,
+		name:  "normal dict constraints, with count",
+		input: "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
 		output: []*Rule{
 			NewRule(Voter, 2, NewConstraintsDirect(
 				NewConstraintDirect("zone", In, "sh"),
@@ -149,7 +146,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 
 	for _, tt := range tests {
 		comment := fmt.Sprintf("[%s]", tt.name)
-		output, _, err := NewRules(Voter, tt.replicas, tt.input)
+		output, err := NewRules(Voter, tt.replicas, tt.input)
 		if tt.err == nil {
 			require.NoError(t, err, comment)
 			matchRules(tt.output, output, comment, t)

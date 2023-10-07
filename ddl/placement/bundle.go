@@ -71,14 +71,6 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	learnerCount := options.Learners
 
 	rules := []*Rule{}
-	appendRule := func(enqueueRules []*Rule) {
-		for _, rule := range enqueueRules {
-			if rule.Count == 0 {
-				continue
-			}
-			rules = append(rules, rule)
-		}
-	}
 	commonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
 	if err != nil {
 		// If it's not in array format, attempt to parse it as a dictionary for more detailed definitions.
@@ -89,7 +81,7 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 		if err != nil {
 			return nil, err
 		}
-		appendRule(normalReplicasRules)
+		rules = append(rules, normalReplicasRules...)
 	}
 	needCreateDefault := len(rules) == 0
 	leaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConst))
@@ -116,44 +108,44 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			followerReplicas = 0
 		}
 	}
-	leaderRule := NewRule(Leader, leaderReplicas, leaderConstraints)
-	appendRule([]*Rule{leaderRule})
 
-	followerRules, isDictConst, err := NewRules(Voter, followerReplicas, followerConstraints)
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+	// create leader rule.
+	// if no constraints, we need create default leader rule.
+	if leaderReplicas > 0 {
+		leaderRule := NewRule(Leader, leaderReplicas, leaderConstraints)
+		rules = append(rules, leaderRule)
 	}
-	if isDictConst && followerCount > 0 {
-		return nil, fmt.Errorf("%w: should not specify followers=%d when using dict syntax", ErrInvalidConstraintsRelicas, followerCount)
-	}
-	for _, followerRule := range followerRules {
-		for _, cnst := range commonConstraints {
-			if err := followerRule.Constraints.Add(cnst); err != nil {
-				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
+
+	// create follower rules.
+	// if no constraints, we need create default follower rules.
+	if followerReplicas > 0 {
+		followerRules, err := NewRules(Voter, followerReplicas, followerConstraints)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+		}
+		for _, followerRule := range followerRules {
+			for _, cnst := range commonConstraints {
+				if err := followerRule.Constraints.Add(cnst); err != nil {
+					return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
+				}
 			}
 		}
+		rules = append(rules, followerRules...)
 	}
-	appendRule(followerRules)
-	learnerRules, isDictConst, err := NewRules(Learner, learnerCount, learnerConstraints)
+
+	// create learner rules.
+	learnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
 	}
-	if isDictConst && learnerCount > 0 {
-		return nil, fmt.Errorf("%w: should not specify learners=%d when using dict syntax", ErrInvalidConstraintsRelicas, learnerCount)
-	}
 	for _, rule := range learnerRules {
-		if rule.Count == 0 {
-			if len(rule.Constraints) > 0 {
-				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
-			}
-		}
 		for _, cnst := range commonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
 	}
-	appendRule(learnerRules)
+	rules = append(rules, learnerRules...)
 	labels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
 	if err != nil {
 		return nil, err

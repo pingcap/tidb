@@ -172,10 +172,16 @@ func getYamlMapFormatError(str string) error {
 // NewRules constructs []*Rule from a yaml-compatible representation of
 // 'array' or 'dict' constraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
-func NewRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, isDictConst bool, err error) {
+func NewRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, err error) {
 	cnstbytes := []byte(cnstr)
 	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
+		if replicas == 0 {
+			if len(cnstr) > 0 {
+				return nil, fmt.Errorf("%w: count of replicas should be positive, but got %d, constraint %s", ErrInvalidConstraintsReplicas, replicas, cnstr)
+			}
+			return nil, nil
+		}
 		rules = append(rules, NewRule(role, replicas, constraints1))
 		err = err1
 		return
@@ -186,9 +192,17 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, 
 		err = fmt.Errorf("%w: should be [constraint1, ...] (error %s), {constraint1: cnt1, ...} (error %s), or any yaml compatible representation", ErrInvalidConstraintsFormat, err1, err2)
 		return
 	}
+
 	rules, err = NewRulesWithDictConstraints(role, cnstr)
+	// check if replicas is consistent
 	if err == nil {
-		isDictConst = true
+		totalCnt := 0
+		for _, rule := range rules {
+			totalCnt += rule.Count
+		}
+		if replicas != 0 && replicas != uint64(totalCnt) {
+			err = fmt.Errorf("%w: count of replicas in dict constrains is %d, but got %d", ErrInvalidConstraintsReplicas, totalCnt, replicas)
+		}
 	}
 	return
 }
@@ -215,7 +229,9 @@ func NewRulesWithDictConstraints(role PeerRoleType, cnstr string) ([]*Rule, erro
 			if err != nil {
 				return rules, err
 			}
-
+			if cnt == 0 {
+				return nil, fmt.Errorf("%w: count of replicas should be positive, but got %d", ErrInvalidConstraintsReplicas, cnt)
+			}
 			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
 		}
 		return rules, nil
