@@ -255,12 +255,12 @@ select * from t where a > 1 and a < 10 order by b;
 a	b
 select @@last_plan_from_binding;
 @@last_plan_from_binding
-0
+1
 select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
 a	b
 select @@last_plan_from_binding;
 @@last_plan_from_binding
-0
+1
 select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
 a	b
 Level	Code	Message
