@@ -759,9 +759,6 @@ func (h *Handle) GetPredicateColumns(tableID int64) ([]int64, error) {
 	return columnIDs, nil
 }
 
-// Max column size is 6MB. Refer https://docs.pingcap.com/tidb/dev/tidb-limitations/#limitation-on-a-single-column
-const maxColumnSize = 6 << 20
-
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error) {
 	var js *storage.JSONTable
@@ -774,31 +771,11 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	version := uint64(0)
-	if len(js.Partitions) == 0 {
-		version = js.Version
-	} else {
-		for _, p := range js.Partitions {
-			version = p.Version
-			if version != 0 {
-				break
-			}
-		}
-	}
-	blocks, err := storage.JSONTableToBlocks(js, maxColumnSize)
-	if err != nil {
-		return version, errors.Trace(err)
-	}
 
+	var version uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		ts := time.Now().Format("2006-01-02 15:04:05.999999")
-		const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
-		for i := 0; i < len(blocks); i++ {
-			if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
-				return errors.Trace(err)
-			}
-		}
-		return nil
+		version, err = history.RecordHistoricalStatsToStorage(sctx, physicalID, js)
+		return err
 	}, flagWrapTxn)
 	return version, err
 }

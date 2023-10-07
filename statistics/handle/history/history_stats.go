@@ -16,7 +16,6 @@ package history
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/storage"
@@ -57,18 +56,11 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	return nil
 }
 
+// Max column size is 6MB. Refer https://docs.pingcap.com/tidb/dev/tidb-limitations/#limitation-on-a-single-column
+const maxColumnSize = 6 << 20
+
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-func RecordHistoricalStatsToStorage(js *storage.JSONTable) (uint64, error) {
-	var js *storage.JSONTable
-	var err error
-	if isPartition {
-		js, err = h.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
-	} else {
-		js, err = h.DumpStatsToJSON(dbName, tableInfo, nil, true)
-	}
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
+func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *storage.JSONTable) (uint64, error) {
 	version := uint64(0)
 	if len(js.Partitions) == 0 {
 		version = js.Version
@@ -85,15 +77,12 @@ func RecordHistoricalStatsToStorage(js *storage.JSONTable) (uint64, error) {
 		return version, errors.Trace(err)
 	}
 
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		ts := time.Now().Format("2006-01-02 15:04:05.999999")
-		const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
-		for i := 0; i < len(blocks); i++ {
-			if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
-				return errors.Trace(err)
-			}
+	ts := time.Now().Format("2006-01-02 15:04:05.999999")
+	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+	for i := 0; i < len(blocks); i++ {
+		if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
+			return 0, errors.Trace(err)
 		}
-		return nil
-	}, flagWrapTxn)
+	}
 	return version, err
 }
