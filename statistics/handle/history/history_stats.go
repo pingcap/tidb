@@ -15,12 +15,13 @@
 package history
 
 import (
+	"time"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/util"
-	"time"
 )
 
 // RecordHistoricalStatsMeta records the historical stats meta.
