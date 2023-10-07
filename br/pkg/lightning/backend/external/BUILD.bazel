@@ -47,6 +47,7 @@ go_test(
     srcs = [
         "byte_reader_test.go",
         "codec_test.go",
+        "concurrent_reader_test.go",
         "engine_test.go",
         "file_test.go",
         "iter_test.go",
@@ -56,7 +57,7 @@ go_test(
     ],
     embed = [":external"],
     flaky = True,
-    shard_count = 36,
+    shard_count = 39,
     deps = [
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/common",
