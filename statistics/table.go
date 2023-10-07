@@ -377,6 +377,8 @@ func (t *Table) ColumnByName(colName string) *Column {
 }
 
 // GetStatsInfo returns their statistics according to the ID of the column or index, including histogram, CMSketch, TopN and FMSketch.
+//
+//	needCopy: In order to protect the item in the cache from being damaged., we need to copy the item.
 func (t *Table) GetStatsInfo(id int64, isIndex bool, needCopy bool) (*Histogram, *CMSketch, *TopN, *FMSketch, bool) {
 	if isIndex {
 		if idxStatsInfo, ok := t.Indices[id]; ok {
