@@ -2862,9 +2862,8 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-	))
+	rows := tk.MustQuery("show warnings").Rows()
+	require.Len(t, rows, 0)
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
