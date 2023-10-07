@@ -739,39 +739,39 @@ a	b	c
 10	2022-01-01 00:00:00	Wowe
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
 id	estRows	task	access object	operator info
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p3	data:Selection
 Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
 └─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")
+  └─TableReader	0.00	root	partition:p3	data:Selection
+    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), eq(rangecolumnsmulti.t.c, "Wow")
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
 id	estRows	task	access object	operator info
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p2,p3	data:Selection
 Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
 └─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
+  └─TableReader	0.00	root	partition:p2,p3	data:Selection
+    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), le(rangecolumnsmulti.t.c, "Wow")
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
 id	estRows	task	access object	operator info
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p2	data:Selection
 Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
 └─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableReader	0.00	root	partition:p2	data:Selection
+    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
 id	estRows	task	access object	operator info
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p3	data:Selection
 Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
 └─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")
+  └─TableReader	0.00	root	partition:p3	data:Selection
+    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), gt(rangecolumnsmulti.t.c, "Wow")
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
 id	estRows	task	access object	operator info
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	0.00	root	partition:p3	data:Selection
 Projection	0.00	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
 └─UnionScan	0.00	root		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")
+  └─TableReader	0.00	root	partition:p3	data:Selection
+    └─Selection	0.00	cop[tikv]		eq(rangecolumnsmulti.t.a, 10), eq(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), ge(rangecolumnsmulti.t.c, "Wow")
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 a	b	c
 -2147483648	0000-00-00 00:00:00	
@@ -788,11 +788,11 @@ a	b	c
 5	0000-00-00 00:00:00	Hi
 explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 id	estRows	task	access object	operator info
-      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-    └─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
-  └─TableReader	367.05	root	partition:p1,p2,p3	data:Selection
 Projection	367.05	root		rangecolumnsmulti.t.a, rangecolumnsmulti.t.b, rangecolumnsmulti.t.c
 └─UnionScan	367.05	root		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+  └─TableReader	367.05	root	partition:p1,p2,p3	data:Selection
+    └─Selection	367.05	cop[tikv]		le(rangecolumnsmulti.t.a, 10), le(rangecolumnsmulti.t.b, 2022-01-01 00:00:00.000000), lt(rangecolumnsmulti.t.c, "Wow")
+      └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow";
 a	b	c
 -2147483648	0000-00-00 00:00:00	
