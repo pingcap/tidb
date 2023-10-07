@@ -223,6 +223,9 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 // LowerBound searches on the non-decreasing Column colIdx,
 // returns the smallest index i such that the value at row i is not less than `d`.
 func (c *Chunk) LowerBound(colIdx int, d *types.Datum) (index int, match bool) {
+	if Compare(c.GetRow(c.NumRows()-1), colIdx, d) < 0 {
+		return c.NumRows(), false
+	}
 	index = sort.Search(c.NumRows(), func(i int) bool {
 		cmp := Compare(c.GetRow(i), colIdx, d)
 		if cmp == 0 {
