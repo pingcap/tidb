@@ -2734,8 +2734,6 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tbl = h.GetTableStats(tableInfo)
 	require.Equal(t, tbl.Version, lastVersion) // global stats not updated
