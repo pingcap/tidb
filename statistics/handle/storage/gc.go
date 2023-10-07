@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	"github.com/pingcap/tidb/parser/model"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
@@ -109,6 +110,39 @@ func GCHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error)
 	sql = "delete from mysql.stats_meta_history where table_id = %?"
 	_, err = util.Exec(sctx, sql, physicalID)
 	return err
+}
+
+// DeleteHistStatsForTable deletes statistics of dropped indexes or columns of this table.
+func DeleteHistStatsForTable(sctx sessionctx.Context, physicalID int64, tblInfo *model.TableInfo) error {
+	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		isIndex, histID := row.GetInt64(0), row.GetInt64(1)
+		find := false
+		if isIndex == 1 {
+			for _, idx := range tblInfo.Indices {
+				if idx.ID == histID {
+					find = true
+					break
+				}
+			}
+		} else {
+			for _, col := range tblInfo.Columns {
+				if col.ID == histID {
+					find = true
+					break
+				}
+			}
+		}
+		if !find {
+			if err := DeleteHistStatsFromKV(sctx, physicalID, histID, int(isIndex)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+	return nil
 }
 
 // DeleteHistStatsFromKV deletes all records about a column or an index and updates version.
