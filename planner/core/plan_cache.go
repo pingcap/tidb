@@ -43,12 +43,14 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-var (
-	// PlanCacheKeyTestIssue43667 is only for test.
-	PlanCacheKeyTestIssue43667 struct{}
-	// PlanCacheKeyTestIssue46760 is only for test.
-	PlanCacheKeyTestIssue46760 struct{}
-)
+// PlanCacheKeyTestIssue43667 is only for test.
+type PlanCacheKeyTestIssue43667 struct{}
+
+// PlanCacheKeyTestIssue46760 is only for test.
+type PlanCacheKeyTestIssue46760 struct{}
+
+// PlanCacheKeyTestIssue47133 is only for test.
+type PlanCacheKeyTestIssue47133 struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
