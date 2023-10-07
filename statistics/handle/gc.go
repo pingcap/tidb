@@ -132,10 +132,29 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 		return errors.Trace(h.DeleteTableStatsFromKV([]int64{physicalID}))
 	}
 	tblInfo := tbl.Meta()
-	if err := h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return storage.DeleteHistStatsForTable(sctx, physicalID, tblInfo)
-	}); err != nil {
-		return err
+	for _, row := range rows {
+		isIndex, histID := row.GetInt64(0), row.GetInt64(1)
+		find := false
+		if isIndex == 1 {
+			for _, idx := range tblInfo.Indices {
+				if idx.ID == histID {
+					find = true
+					break
+				}
+			}
+		} else {
+			for _, col := range tblInfo.Columns {
+				if col.ID == histID {
+					find = true
+					break
+				}
+			}
+		}
+		if !find {
+			if err := h.deleteHistStatsFromKV(physicalID, histID, int(isIndex)); err != nil {
+				return errors.Trace(err)
+			}
+		}
 	}
 
 	// Mark records in mysql.stats_extended as `deleted`.
@@ -186,6 +205,13 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.GCHistoryStatsFromKV(sctx, physicalID)
+	}, flagWrapTxn)
+}
+
+// deleteHistStatsFromKV deletes all records about a column or an index and updates version.
+func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.DeleteHistStatsFromKV(sctx, physicalID, histID, isIndex)
 	}, flagWrapTxn)
 }
 
