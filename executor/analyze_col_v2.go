@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"math"
 	"sort"
 	"sync/atomic"
@@ -313,7 +314,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	err = taskEg.Wait()
 	if err != nil {
 		mergeCtx.Done()
-		mergeEg.Wait()
+		if err1 := mergeEg.Wait(); err1 != nil {
+			err = stderrors.Join(err, err1)
+		}
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
 	}
 	err = mergeEg.Wait()
