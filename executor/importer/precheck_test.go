@@ -25,10 +25,10 @@ func TestPreCheckCollector(t *testing.T) {
 	c := newPreCheckCollector()
 	require.True(t, c.success())
 
-<<<<<<< HEAD
 	c.fail(precheck.CheckTargetTableEmpty, "target table is not empty")
 	require.False(t, c.success())
-=======
+}
+
 func createMockETCD(t *testing.T) (string, *embed.Etcd) {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
@@ -150,5 +150,4 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, backend.CreateBucket("test-bucket"))
 	c.Plan.CloudStorageURI = fmt.Sprintf("s3://test-bucket/path?region=us-east-1&endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", ts.URL)
 	require.NoError(t, c.CheckRequirements(ctx, conn))
->>>>>>> 95378e5bede (br: check the correct changefeed info when restore/import data (#47322))
 }
