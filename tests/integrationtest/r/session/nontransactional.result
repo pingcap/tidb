@@ -2,6 +2,8 @@ drop table if exists t;
 create table t(id int, v int);
 insert into t values (1, 1);
 batch limit 1 insert into t select * from t;
+number of jobs	job status
+1	all succeeded
 select * from t;
 id	v
 1	1
@@ -12,6 +14,8 @@ create table t2(id int, v int, key(id));
 insert into t values (1, 1), (2, 2), (3, 3);
 insert into t2 values (1, 1), (2, 2), (4, 4);
 batch on session__nontransactional.t.id limit 1 update t join t2 on t.id=t2.id set t2.id = t2.id+1;
+number of jobs	job status
+3	all succeeded
 select * from t2;
 id	v
 4	1
@@ -29,6 +33,8 @@ create table t3(id int, v int, key (id));
 insert into t values (1, 1, 1), (2, 2, 2);
 use session__nontransactional;
 batch on id limit 1 insert into t select * from session__nontransactional2.t;
+number of jobs	job status
+2	all succeeded
 select * from t;
 id	v1	v2
 1	1	1
@@ -65,6 +71,8 @@ id	v1	v2
 2	3	2
 3	4	3
 batch on session__nontransactional.tt2.id limit 1 replace into t select tt2.id, tt2.v, t3.v from t2 as tt2 join t3 on tt2.id=t3.id;
+number of jobs	job status
+3	all succeeded
 select * from t order by id;
 id	v1	v2
 1	2	1
@@ -78,6 +86,8 @@ create table t3(id int, v int, key i1(id));
 insert into t2 values (1, 2), (2, 3), (3, 4);
 insert into t3 values (1, 4), (2, 5), (4, 6);
 batch on session__nontransactional.t2.id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id;
+number of jobs	job status
+3	all succeeded
 select * from t;
 id	v1	v2
 1	2	4
@@ -87,6 +97,8 @@ Error 1105 (HY000): Non-transactional DML, shard column must be fully specified 
 batch on session__nontransactional.t1.id limit 1 insert into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id;
 Error 1105 (HY000): Non-transactional DML, shard column session__nontransactional.t1.id is not in the tables involved in the join
 batch on session__nontransactional.t2.id limit 1 update t2 join t3 on t2.id=t3.id set t2.v=t2.v*100, t3.v=t3.v*200;
+number of jobs	job status
+3	all succeeded
 select * from t2;
 id	v
 1	200
@@ -98,11 +110,15 @@ id	v
 2	1000
 4	6
 batch limit 1 delete t2 from t2 join t3 on t2.id=t3.id;
+number of jobs	job status
+3	all succeeded
 select * from t2;
 id	v
 3	4
 insert into t2 values (1, 11), (2, 22);
 batch limit 1 replace into t select t2.id, t2.v, t3.v from t2 join t3 on t2.id=t3.id;
+number of jobs	job status
+3	all succeeded
 select * from t;
 id	v1	v2
 1	11	800
@@ -153,6 +169,8 @@ insert into session__nontransactional.t values (2, 4);
 insert into session__nontransactional.t values (3, 6);
 insert into session__nontransactional.t values (4, 8);
 batch on session__nontransactional.t1.a limit 5 delete t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select count(*) from session__nontransactional.t;
 count(*)
 0
@@ -162,6 +180,8 @@ insert into session__nontransactional.t values (2, 4);
 insert into session__nontransactional.t values (3, 6);
 insert into session__nontransactional.t values (4, 8);
 batch on a limit 5 delete t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select count(*) from session__nontransactional.t;
 count(*)
 0
@@ -171,6 +191,8 @@ insert into session__nontransactional.t values (2, 4);
 insert into session__nontransactional.t values (3, 6);
 insert into session__nontransactional.t values (4, 8);
 batch on _tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select count(*) from session__nontransactional.t;
 count(*)
 0
@@ -180,6 +202,8 @@ insert into session__nontransactional.t values (2, 4);
 insert into session__nontransactional.t values (3, 6);
 insert into session__nontransactional.t values (4, 8);
 batch on t1._tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select count(*) from session__nontransactional.t;
 count(*)
 0
@@ -189,6 +213,8 @@ insert into session__nontransactional.t values (2, 4);
 insert into session__nontransactional.t values (3, 6);
 insert into session__nontransactional.t values (4, 8);
 batch on session__nontransactional.t1._tidb_rowid limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select count(*) from session__nontransactional.t;
 count(*)
 0
@@ -198,6 +224,8 @@ insert into session__nontransactional.t values (2, 4);
 insert into session__nontransactional.t values (3, 6);
 insert into session__nontransactional.t values (4, 8);
 batch limit 5 delete from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select count(*) from session__nontransactional.t;
 count(*)
 0
@@ -207,6 +235,8 @@ insert into session__nontransactional.t values (2, 4);
 insert into session__nontransactional.t values (3, 6);
 insert into session__nontransactional.t values (4, 8);
 batch on session__nontransactional.t1.a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -216,6 +246,8 @@ a	b
 4	8
 update session__nontransactional.s set b=a;
 batch on session__nontransactional.t1.a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -225,6 +257,8 @@ a	b
 4	8
 truncate session__nontransactional.s;
 batch on a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -234,6 +268,8 @@ a	b
 4	8
 update session__nontransactional.s set b=a;
 batch on a limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -243,6 +279,8 @@ a	b
 4	8
 truncate session__nontransactional.s;
 batch on _tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -252,6 +290,8 @@ a	b
 4	8
 update session__nontransactional.s set b=a;
 batch on _tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -261,6 +301,8 @@ a	b
 4	8
 truncate session__nontransactional.s;
 batch on t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -270,6 +312,8 @@ a	b
 4	8
 update session__nontransactional.s set b=a;
 batch on t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -279,6 +323,8 @@ a	b
 4	8
 truncate session__nontransactional.s;
 batch on session__nontransactional.t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -288,6 +334,8 @@ a	b
 4	8
 update session__nontransactional.s set b=a;
 batch on session__nontransactional.t1._tidb_rowid limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -297,6 +345,8 @@ a	b
 4	8
 truncate session__nontransactional.s;
 batch limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -306,6 +356,8 @@ a	b
 4	8
 update session__nontransactional.s set b=a;
 batch limit 5 insert into session__nontransactional.s select t1.* from session__nontransactional.t as t1 on duplicate key update s.b=t1.b;
+number of jobs	job status
+1	all succeeded
 select * from session__nontransactional.s order by a;
 a	b
 0	0
@@ -491,8 +543,14 @@ insert into t values ('7', 14);
 insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t` )*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
 batch on a limit 10 dry run insert into t1 select /*+ USE_INDEX(t) */ * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT /*+ USE_INDEX(`t` )*/ * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
 batch on a limit 10 dry run delete /*+ USE_INDEX(t) */ from t;
+split statement examples
+DELETE /*+ USE_INDEX(`t` )*/ FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 9
 set @@tidb_max_chunk_size=35;
 set @@tidb_read_staleness=-100;
 drop table if exists t, t1;
@@ -599,6 +657,8 @@ insert into t values (97, 194);
 insert into t values (98, 196);
 insert into t values (99, 198);
 batch on a limit 10 insert into t1 select * from t;
+number of jobs	job status
+10	all succeeded
 select * from t1 order by a;
 a	b
 0	0
@@ -703,7 +763,11 @@ a	b
 99	198
 update t1 set b=a;
 batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+10	all succeeded
 batch on a limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
 set @@tidb_read_staleness=0;
 select * from t;
 a	b
@@ -917,6 +981,8 @@ insert into t values (97, 194);
 insert into t values (98, 196);
 insert into t values (99, 198);
 batch on a limit 10 insert into t1 select * from t;
+number of jobs	job status
+10	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -929,6 +995,8 @@ a	b
 a	b
 update t1 set b=a;
 batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+10	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -940,6 +1008,8 @@ a	b
 (select * from t order by a) except (select * from t1 order by a);
 a	b
 batch on a limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
 select * from t;
 a	b
 set @@tidb_max_chunk_size=default;
@@ -1065,6 +1135,8 @@ Error 1105 (HY000): Non-transactional DML, shard column a is not indexed
 CREATE UNIQUE INDEX c2 ON t (a);
 CREATE UNIQUE INDEX c2 ON t1 (a);
 batch on a limit 10 insert into t1 select * from t;
+number of jobs	job status
+10	all succeeded
 select count(t1.a) = count(t.a) from t, t1;
 count(t1.a) = count(t.a)
 1
@@ -1074,6 +1146,8 @@ a	b
 a	b
 update t1 set b=a;
 batch on a limit 10 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+10	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -1085,6 +1159,8 @@ a	b
 (select * from t order by a) except (select * from t1 order by a);
 a	b
 batch on a limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
 select count(*) from t;
 count(*)
 0
@@ -1104,8 +1180,14 @@ insert into t values ('7', 14);
 insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
 batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
 batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
 drop table if exists t, t1;
 create table t(a int, b int, primary key(a) clustered);
 create table t1(a int, b int, primary key(a) clustered);
@@ -1120,8 +1202,14 @@ insert into t values ('7', 14);
 insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
 batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
 batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
 drop table if exists t, t1;
 create table t(a int, b int, primary key(a) nonclustered);
 create table t1(a int, b int, primary key(a) nonclustered);
@@ -1136,8 +1224,14 @@ insert into t values ('7', 14);
 insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
 batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
 batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
 drop table if exists t, t1;
 create table t(a int, b int, primary key(a, b) nonclustered);
 create table t1(a int, b int, primary key(a, b) nonclustered);
@@ -1152,8 +1246,14 @@ insert into t values ('7', 14);
 insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
 batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
 batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
 drop table if exists t, t1;
 create table t(a varchar(30), b int, primary key(a) clustered);
 create table t1(a varchar(30), b int, primary key(a) clustered);
@@ -1168,8 +1268,14 @@ insert into t values ('7', 14);
 insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
 batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
 batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
 drop table if exists t, t1;
 create table t(a varchar(30), b int, primary key(a, b) nonclustered);
 create table t1(a varchar(30), b int, primary key(a, b) nonclustered);
@@ -1184,8 +1290,14 @@ insert into t values ('7', 14);
 insert into t values ('8', 16);
 insert into t values ('9', 18);
 batch limit 3 insert into t1 select * from t;
+number of jobs	job status
+4	all succeeded
 batch limit 3 insert into t1 select * from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+4	all succeeded
 batch limit 3 delete from t;
+number of jobs	job status
+4	all succeeded
 drop table if exists t, t1;
 create table t(a int, b int, primary key(a, b) clustered);
 create table t1(a int, b int, primary key(a, b) clustered);
@@ -1329,6 +1441,8 @@ insert into t values (97, 194, default);
 insert into t values (98, 196, default);
 insert into t values (99, 198, default);
 batch on c limit 10 insert into t1(a, b) select a, b from t;
+number of jobs	job status
+10	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -1351,6 +1465,8 @@ b	a
 (select b, a from t order by a) except (select a, b from t1 order by a);
 b	a
 batch on c limit 10 insert into t1(a, b) select a, b from t on duplicate key update t1.a=t.a, t1.b=t.b;
+number of jobs	job status
+10	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -1362,6 +1478,8 @@ a	b	c
 (select * from t order by a) except (select * from t1 order by a);
 a	b	c
 batch on c limit 10 delete from t;
+number of jobs	job status
+10	all succeeded
 select count(*) from t;
 count(*)
 0
@@ -1391,9 +1509,17 @@ insert into t values (null, null);
 insert into t values ('9', 18);
 insert into t values (null, null);
 batch on a limit 1000 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE ((`a` <= 9) OR `a` IS NULL)
 batch on a limit 1000 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE ((`a` <= 9) OR `a` IS NULL)
 batch on a limit 1000 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE ((`a` <= 9) OR `a` IS NULL) ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
 batch on a limit 1000 insert into t1 select * from t;
+number of jobs	job status
+1	all succeeded
 select count(*) from t;
 count(*)
 20
@@ -1406,6 +1532,8 @@ a	b
 a	b
 update t1 set b = a;
 batch on a limit 1000 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+1	all succeeded
 select count(*) from t where a is not null;
 count(*)
 10
@@ -1417,6 +1545,8 @@ a	b
 (select * from t where a is not null order by a) except (select * from t1 where a is not null order by a);
 a	b
 batch on a limit 1000 delete from t;
+number of jobs	job status
+1	all succeeded
 select count(*) from t;
 count(*)
 0
@@ -1626,6 +1756,8 @@ insert into t values (null, null);
 insert into t values ('99', 198);
 insert into t values (null, null);
 batch on a limit 3 delete from t;
+number of jobs	job status
+35	all succeeded
 select count(*) from t;
 count(*)
 0
@@ -1730,6 +1862,8 @@ insert into t values (null, null);
 insert into t values (null, null);
 insert into t values (null, null);
 batch on a limit 3 insert into t1 select * from t;
+number of jobs	job status
+1	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -1741,10 +1875,14 @@ a	b
 (select * from t order by a) except (select * from t1 order by a);
 a	b
 batch on a limit 3 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+1	all succeeded
 select count(*) from t1;
 count(*)
 200
 batch on a limit 3 delete from t;
+number of jobs	job status
+1	all succeeded
 select count(*) from t;
 count(*)
 0
@@ -1854,18 +1992,56 @@ insert into t values ('97', 194);
 insert into t values ('98', 196);
 insert into t values ('99', 198);
 batch limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3
+DELETE FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100
 batch limit 3 dry run update t set b = 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100
 batch limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100
 batch limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 1 AND 3 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `session__nontransactional`.`t`.`_tidb_rowid` BETWEEN 100 AND 100 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
 batch on _tidb_rowid limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3
+DELETE FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100
 batch on t._tidb_rowid limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3
+DELETE FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100
 batch on _tidb_rowid limit 3 dry run update t set b = 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 1 AND 3
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `_tidb_rowid` BETWEEN 100 AND 100
 batch on t._tidb_rowid limit 3 dry run update t set b = 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3
+UPDATE `session__nontransactional`.`t` SET `b`=42 WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100
 batch on _tidb_rowid limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100
 batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100
 batch on _tidb_rowid limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 1 AND 3 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `_tidb_rowid` BETWEEN 100 AND 100 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
 batch on t._tidb_rowid limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 1 AND 3 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `t`.`_tidb_rowid` BETWEEN 100 AND 100 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
 batch on _tidb_rowid limit 3 insert into t1 select * from t;
+number of jobs	job status
+34	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -1878,6 +2054,8 @@ a	b
 a	b
 update t1 set b = 0;
 batch on _tidb_rowid limit 3 insert into t1 select * from t on duplicate key update t1.b=t.b;
+number of jobs	job status
+34	all succeeded
 select count(*) from t;
 count(*)
 100
@@ -1889,10 +2067,14 @@ a	b
 (select * from t order by a) except (select * from t1 order by a);
 a	b
 batch on _tidb_rowid limit 3 update t set b = 42;
+number of jobs	job status
+34	all succeeded
 select sum(b) from t;
 sum(b)
 4200
 batch on _tidb_rowid limit 3 delete from t;
+number of jobs	job status
+34	all succeeded
 select count(*) from t;
 count(*)
 0
@@ -2002,13 +2184,33 @@ insert into t values ('97', 194);
 insert into t values ('98', 196);
 insert into t values ('99', 198);
 batch on a limit 3 dry run insert into t1 select * from t;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 2
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 99 AND 99
 batch on a limit 3 dry run insert into t1 select * from t on duplicate key update t1.b=t.b;
+split statement examples
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 2 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
+INSERT INTO `session__nontransactional`.`t1` SELECT * FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 99 AND 99 ON DUPLICATE KEY UPDATE `t1`.`b`=`t`.`b`
 batch on a limit 3 dry run delete from t;
+split statement examples
+DELETE FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 0 AND 2
+DELETE FROM `session__nontransactional`.`t` WHERE `a` BETWEEN 99 AND 99
 batch on a limit 3 dry run update t set b = b + 42;
+split statement examples
+UPDATE `session__nontransactional`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN 0 AND 2
+UPDATE `session__nontransactional`.`t` SET `b`=(`b` + 42) WHERE `a` BETWEEN 99 AND 99
 batch on a limit 3 dry run query insert into t1 select * from t;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
 batch on a limit 3 dry run query insert into t1 select * from t on duplicate key update t1.b=t.b;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
 batch on a limit 3 dry run query delete from t;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
 batch on a limit 3 dry run query update t set b = b + 42;
+query statement
+SELECT `a` FROM `session__nontransactional`.`t` WHERE TRUE ORDER BY IF(ISNULL(`a`),0,1),`a`
 select count(*) from t;
 count(*)
 100
