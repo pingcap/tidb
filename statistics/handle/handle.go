@@ -371,7 +371,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-<<<<<<< HEAD
+	allPartitionStats map[int64]*statistics.Table,
 ) (*globalstats.GlobalStats, error) {
 	se, err := h.pool.Get()
 	if err != nil {
@@ -383,16 +383,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	if err := UpdateSCtxVarsForStats(sc); err != nil {
 		return nil, err
 	}
-	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, h.getTableByPhysicalID, h.loadTablePartitionStats)
-=======
-	allPartitionStats map[int64]*statistics.Table,
-) (gstats *globalstats.GlobalStats, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
-		return err
-	})
-	return
->>>>>>> aa762784c58 (statistics: add cache for handleGlobalStats's load data (#47320))
+	return globalstats.MergePartitionStats2GlobalStats(sc, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
