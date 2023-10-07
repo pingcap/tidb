@@ -43,12 +43,14 @@ import (
 	"github.com/pingcap/tidb/util/ranger"
 )
 
-var (
-	// PlanCacheKeyTestIssue43667 is only for test.
-	PlanCacheKeyTestIssue43667 struct{}
-	// PlanCacheKeyTestIssue46760 is only for test.
-	PlanCacheKeyTestIssue46760 struct{}
-)
+// PlanCacheKeyTestIssue43667 is only for test.
+type PlanCacheKeyTestIssue43667 struct{}
+
+// PlanCacheKeyTestIssue46760 is only for test.
+type PlanCacheKeyTestIssue46760 struct{}
+
+// PlanCacheKeyTestIssue47133 is only for test.
+type PlanCacheKeyTestIssue47133 struct{}
 
 // SetParameterValuesIntoSCtx sets these parameters into session context.
 func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers []ast.ParamMarkerExpr, params []expression.Expression) error {
@@ -310,7 +312,7 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 	if err != nil {
 		return nil, nil, err
 	}
-	err = tryCachePointPlan(ctx, sctx, stmt, is, p)
+	err = tryCachePointPlan(ctx, sctx, stmt, p, names)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -752,7 +754,7 @@ func CheckPreparedPriv(sctx sessionctx.Context, stmt *PlanCacheStmt, is infosche
 // tryCachePointPlan will try to cache point execution plan, there may be some
 // short paths for these executions, currently "point select" and "point update"
 func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
-	stmt *PlanCacheStmt, _ infoschema.InfoSchema, p Plan) error {
+	stmt *PlanCacheStmt, p Plan, names types.NameSlice) error {
 	if !sctx.GetSessionVars().StmtCtx.UseCache {
 		return nil
 	}
@@ -760,12 +762,10 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		stmtAst = stmt.PreparedAst
 		ok      bool
 		err     error
-		names   types.NameSlice
 	)
 
 	if plan, _ok := p.(*PointGetPlan); _ok {
 		ok, err = IsPointGetWithPKOrUniqueKeyByAutoCommit(sctx, p)
-		names = p.OutputNames()
 		if err != nil {
 			return err
 		}

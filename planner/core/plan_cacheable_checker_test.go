@@ -101,7 +101,7 @@ func TestIssue46760(t *testing.T) {
 	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 
-	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760, struct{}{})
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760{}, struct{}{})
 	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.t failed: mock error"))
 	tk.MustExec(`set @a=1`)

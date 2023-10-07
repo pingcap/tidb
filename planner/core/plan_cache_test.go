@@ -2710,8 +2710,33 @@ func TestIssue43667(t *testing.T) {
 		v.Datum.SetInt64(7)
 	}
 
-	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667, updateAST)
+	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue43667{}, updateAST)
 	tk.MustQueryWithContext(tctx, `select (val) from cycle where pk = 4`).Check(testkit.Rows("4"))
+}
+
+func TestIssue47133(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
+	tk.MustExec(`CREATE TABLE t (id int NOT NULL, personId int NOT NULL,
+      name varchar(255) NOT NULL, PRIMARY KEY (id, personId))`)
+	tk.MustExec(`insert into t values (1, 1, '')`)
+
+	cnt := 0
+	checkFieldNames := func(names []*types.FieldName) {
+		require.Equal(t, len(names), 2)
+		require.Equal(t, names[0].String(), "test.t.user_id")
+		require.Equal(t, names[1].String(), "test.t.user_personid")
+		cnt += 1
+	}
+	tctx := context.WithValue(context.Background(), plannercore.PlanCacheKeyTestIssue47133{}, checkFieldNames)
+	tk.MustQueryWithContext(tctx, `SELECT id AS User_id, personId AS User_personId FROM t WHERE (id = 1 AND personId = 1)`).Check(
+		testkit.Rows("1 1"))
+	tk.MustQueryWithContext(tctx, `SELECT id AS User_id, personId AS User_personId FROM t WHERE (id = 1 AND personId = 1)`).Check(
+		testkit.Rows("1 1"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	require.Equal(t, cnt, 2)
 }
 
 func TestIssue45253(t *testing.T) {

@@ -102,8 +102,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667) != nil { // update the AST in the middle of the process
-		ctx.Value(core.PlanCacheKeyTestIssue43667).(func(stmt ast.StmtNode))(stmt)
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667{}) != nil { // update the AST in the middle of the process
+		ctx.Value(core.PlanCacheKeyTestIssue43667{}).(func(stmt ast.StmtNode))(stmt)
 	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	paramExprs := core.Params2Expressions(paramsVals)
@@ -134,6 +134,11 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	if err != nil {
 		return nil, nil, false, err
 	}
+
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue47133{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestIssue47133{}).(func(names []*types.FieldName))(names)
+	}
+
 	return cachedPlan, names, true, nil
 }
 
