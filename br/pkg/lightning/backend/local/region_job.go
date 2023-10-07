@@ -158,6 +158,27 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 	}
 }
 
+// ref means that the ingestData of job will be accessed soon.
+func (j *regionJob) ref(wg *sync.WaitGroup) {
+	if wg != nil {
+		wg.Add(1)
+	}
+	if j.ingestData != nil {
+		j.ingestData.IncRef()
+	}
+}
+
+// done promises that the ingestData of job will not be accessed. Same amount of
+// done should be called to release the ingestData.
+func (j *regionJob) done(wg *sync.WaitGroup) {
+	if j.ingestData != nil {
+		j.ingestData.DecRef()
+	}
+	if wg != nil {
+		wg.Done()
+	}
+}
+
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.
 // if any write logic has error, writeToTiKV will set job to a proper stage and return nil. TODO: <-check this
 // if any underlying logic has error, writeToTiKV will return an error.
@@ -809,13 +830,11 @@ func (q *regionJobRetryer) close() {
 	defer q.protectedClosed.mu.Unlock()
 	q.protectedClosed.closed = true
 
-	count := len(q.protectedQueue.q)
 	if q.protectedToPutBack.toPutBack != nil {
-		count++
+		q.protectedToPutBack.toPutBack.done(q.jobWg)
 	}
-	for count > 0 {
-		q.jobWg.Done()
-		count--
+	for _, job := range q.protectedQueue.q {
+		job.done(q.jobWg)
 	}
 }
 
