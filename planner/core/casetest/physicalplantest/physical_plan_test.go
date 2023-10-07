@@ -1235,44 +1235,6 @@ func TestSingleConsumerCTE(t *testing.T) {
 	}
 }
 
-func TestPushdownDistinctEnable(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	vars := []string{
-		fmt.Sprintf("set @@session.%s = 1", variable.TiDBOptDistinctAggPushDown),
-		"set session tidb_opt_agg_push_down = 1",
-		"set tidb_cost_model_version = 2",
-	}
-	doTestPushdownDistinct(t, vars, input, output)
-}
-
-func TestPushdownDistinctDisable(t *testing.T) {
-	var (
-		input  []string
-		output []struct {
-			SQL    string
-			Plan   []string
-			Result []string
-		}
-	)
-
-	planSuiteData := GetPlanSuiteData()
-	planSuiteData.LoadTestCases(t, &input, &output)
-	vars := []string{
-		fmt.Sprintf("set @@session.%s = 0", variable.TiDBOptDistinctAggPushDown),
-		"set session tidb_opt_agg_push_down = 1",
-	}
-	doTestPushdownDistinct(t, vars, input, output)
-}
-
 func TestPushdownDistinctEnableAggPushDownDisable(t *testing.T) {
 	var (
 		input  []string

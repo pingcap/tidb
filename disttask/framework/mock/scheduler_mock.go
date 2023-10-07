@@ -420,3 +420,17 @@ func (mr *MockExtensionMockRecorder) GetSubtaskExecutor(arg0, arg1, arg2 interfa
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskExecutor", reflect.TypeOf((*MockExtension)(nil).GetSubtaskExecutor), arg0, arg1, arg2)
 }
+
+// IsIdempotent mocks base method.
+func (m *MockExtension) IsIdempotent(arg0 *proto.Subtask) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsIdempotent", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsIdempotent indicates an expected call of IsIdempotent.
+func (mr *MockExtensionMockRecorder) IsIdempotent(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsIdempotent", reflect.TypeOf((*MockExtension)(nil).IsIdempotent), arg0)
+}

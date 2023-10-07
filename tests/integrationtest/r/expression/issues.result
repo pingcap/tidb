@@ -901,6 +901,9 @@ j
 ""
 null
 "0"
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
+
 drop table if exists t0;
 CREATE TABLE t0(c0 int);
 INSERT INTO t0 VALUES (1);
