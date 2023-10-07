@@ -15,7 +15,6 @@
 package usage
 
 import (
-	"context"
 	"strings"
 	"sync"
 	"time"
@@ -146,15 +145,8 @@ func sweepIdxUsageList(listHead *SessionIndexUsageCollector) indexUsageMap {
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 
-var (
-	// useCurrentSession to make sure the sql is executed in current session.
-	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
-)
-
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func DumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageCollector) error {
-	ctx := util.StatsCtx(context.Background())
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	mapper := sweepIdxUsageList(listHead)
 	type FullIndexUsageInformation struct {
 		information IndexUsageInformation
@@ -180,7 +172,7 @@ func DumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageColl
 			}
 		}
 		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
-		if _, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, sql.String()); err != nil {
+		if _, _, err := util.ExecRows(sctx, sql.String()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -193,8 +185,6 @@ func GCIndexUsageOnKV(sctx sessionctx.Context) error {
 	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
 	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
 	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
-	ctx := util.StatsCtx(context.Background())
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, sql)
+	_, _, err := util.ExecRows(sctx, sql)
 	return err
 }

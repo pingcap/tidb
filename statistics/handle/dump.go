@@ -25,9 +25,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
 )
 
 // DumpStatsToJSON dumps statistic to json.
@@ -172,67 +170,12 @@ func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
 	return jt, false, nil
 }
 
-func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (*storage.JSONTable, bool, error) {
-	reader, err := h.getGlobalStatsReader(0)
-	if err != nil {
-		return nil, false, err
-	}
-	defer func() {
-		err1 := h.releaseGlobalStatsReader(reader)
-		if err == nil && err1 != nil {
-			err = err1
-		}
-	}()
-
-	// get meta version
-	rows, _, err := reader.Read("select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get records of stats_meta_history",
-			zap.Int64("table-id", physicalID),
-			zap.Uint64("snapshotTS", snapshot))
-		return nil, false, nil
-	}
-	statsMetaVersion := rows[0].GetInt64(0)
-	// get stats meta
-	rows, _, err = reader.Read("select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?", physicalID, statsMetaVersion)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
-
-	// get stats version
-	rows, _, err = reader.Read("select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get record of stats_history",
-			zap.Int64("table-id", physicalID),
-			zap.Uint64("snapshotTS", snapshot))
-		return nil, false, nil
-	}
-	statsVersion := rows[0].GetInt64(0)
-
-	// get stats
-	rows, _, err = reader.Read("select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no", physicalID, statsVersion)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	blocks := make([][]byte, 0)
-	for _, row := range rows {
-		blocks = append(blocks, row.GetBytes(0))
-	}
-	jsonTbl, err := storage.BlocksToJSONTable(blocks)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	jsonTbl.Count = count
-	jsonTbl.ModifyCount = modifyCount
-	jsonTbl.IsHistoricalStats = true
-	return jsonTbl, true, nil
+func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *storage.JSONTable, exist bool, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		jt, exist, err = storage.TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
+		return err
+	}, flagWrapTxn)
+	return
 }
 
 func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error) {
