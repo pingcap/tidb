@@ -17,7 +17,6 @@ package autoanalyze
 import (
 	"fmt"
 	"math"
-	"math/rand"
 	"strconv"
 	"strings"
 	"time"
@@ -32,11 +31,9 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	statsutil "github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -93,111 +90,112 @@ type Opt struct {
 }
 
 // HandleAutoAnalyze analyzes the newly created table or index.
-func HandleAutoAnalyze(sctx sessionctx.Context,
-	opt *Opt,
-	is infoschema.InfoSchema) (analyzed bool) {
-	defer func() {
-		if r := recover(); r != nil {
-			logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
-		}
-	}()
-	dbs := is.AllSchemaNames()
-	parameters := getAutoAnalyzeParameters(sctx)
-	autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
-	start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
-	if err != nil {
-		logutil.BgLogger().Error("parse auto analyze period failed", zap.String("category", "stats"), zap.Error(err))
-		return false
-	}
-	if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
-		return false
-	}
-
-	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
-	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
-	rd.Shuffle(len(dbs), func(i, j int) {
-		dbs[i], dbs[j] = dbs[j], dbs[i]
-	})
-	for _, db := range dbs {
-		if util.IsMemOrSysDB(strings.ToLower(db)) {
-			continue
-		}
-		tbls := is.SchemaTables(model.NewCIStr(db))
-		// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
-		// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
-		// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
-		// TODO: Design a priority queue to place the table which needs analyze most in the front.
-		rd.Shuffle(len(tbls), func(i, j int) {
-			tbls[i], tbls[j] = tbls[j], tbls[i]
-		})
-
-		// We need to check every partition of every table to see if it needs to be analyzed.
-		tidsAndPids := make([]int64, 0, len(tbls))
-		for _, tbl := range tbls {
-			tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
-			tblInfo := tbl.Meta()
-			pi := tblInfo.GetPartitionInfo()
-			if pi != nil {
-				for _, def := range pi.Definitions {
-					tidsAndPids = append(tidsAndPids, def.ID)
-				}
-			}
-		}
-
-		lockedTables, err := opt.GetLockedTables(tidsAndPids...)
-		if err != nil {
-			logutil.BgLogger().Error("check table lock failed",
-				zap.String("category", "stats"), zap.Error(err))
-			continue
-		}
-
-		for _, tbl := range tbls {
-			// If table locked, skip analyze all partitions of the table.
-			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
-			if _, ok := lockedTables[tbl.Meta().ID]; ok {
-				continue
-			}
-			tblInfo := tbl.Meta()
-			if tblInfo.IsView() {
-				continue
-			}
-			pi := tblInfo.GetPartitionInfo()
-			if pi == nil {
-				statsTbl := opt.GetTableStats(tblInfo)
-				sql := "analyze table %n.%n"
-				analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
-				if analyzed {
-					// analyze one table at a time to let it get the freshest parameters.
-					// others will be analyzed next round which is just 3s later.
-					return true
-				}
-				continue
-			}
-			// Only analyze the partition that has not been locked.
-			var partitionDefs []model.PartitionDefinition
-			for _, def := range pi.Definitions {
-				if _, ok := lockedTables[def.ID]; !ok {
-					partitionDefs = append(partitionDefs, def)
-				}
-			}
-			if pruneMode == variable.Dynamic {
-				analyzed := autoAnalyzePartitionTableInDynamicMode(sctx, opt, tblInfo, partitionDefs, db, autoAnalyzeRatio)
-				if analyzed {
-					return true
-				}
-				continue
-			}
-			for _, def := range partitionDefs {
-				sql := "analyze table %n.%n partition %n"
-				statsTbl := opt.GetPartitionStats(tblInfo, def.ID)
-				analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
-				if analyzed {
-					return true
-				}
-			}
-		}
-	}
-	return false
+func HandleAutoAnalyze(_ sessionctx.Context,
+	_ *Opt,
+	_ infoschema.InfoSchema) (analyzed bool) {
+	return true
+	//defer func() {
+	//	if r := recover(); r != nil {
+	//		logutil.BgLogger().Error("HandleAutoAnalyze panicked", zap.Any("error", r), zap.Stack("stack"))
+	//	}
+	//}()
+	//dbs := is.AllSchemaNames()
+	//parameters := getAutoAnalyzeParameters(sctx)
+	//autoAnalyzeRatio := parseAutoAnalyzeRatio(parameters[variable.TiDBAutoAnalyzeRatio])
+	//start, end, err := parseAnalyzePeriod(parameters[variable.TiDBAutoAnalyzeStartTime], parameters[variable.TiDBAutoAnalyzeEndTime])
+	//if err != nil {
+	//	logutil.BgLogger().Error("parse auto analyze period failed", zap.String("category", "stats"), zap.Error(err))
+	//	return false
+	//}
+	//if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+	//	return false
+	//}
+	//
+	//pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
+	//rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
+	//rd.Shuffle(len(dbs), func(i, j int) {
+	//	dbs[i], dbs[j] = dbs[j], dbs[i]
+	//})
+	//for _, db := range dbs {
+	//	if util.IsMemOrSysDB(strings.ToLower(db)) {
+	//		continue
+	//	}
+	//	tbls := is.SchemaTables(model.NewCIStr(db))
+	//	// We shuffle dbs and tbls so that the order of iterating tables is random. If the order is fixed and the auto
+	//	// analyze job of one table fails for some reason, it may always analyze the same table and fail again and again
+	//	// when the HandleAutoAnalyze is triggered. Randomizing the order can avoid the problem.
+	//	// TODO: Design a priority queue to place the table which needs analyze most in the front.
+	//	rd.Shuffle(len(tbls), func(i, j int) {
+	//		tbls[i], tbls[j] = tbls[j], tbls[i]
+	//	})
+	//
+	//	// We need to check every partition of every table to see if it needs to be analyzed.
+	//	tidsAndPids := make([]int64, 0, len(tbls))
+	//	for _, tbl := range tbls {
+	//		tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
+	//		tblInfo := tbl.Meta()
+	//		pi := tblInfo.GetPartitionInfo()
+	//		if pi != nil {
+	//			for _, def := range pi.Definitions {
+	//				tidsAndPids = append(tidsAndPids, def.ID)
+	//			}
+	//		}
+	//	}
+	//
+	//	lockedTables, err := opt.GetLockedTables(tidsAndPids...)
+	//	if err != nil {
+	//		logutil.BgLogger().Error("check table lock failed",
+	//			zap.String("category", "stats"), zap.Error(err))
+	//		continue
+	//	}
+	//
+	//	for _, tbl := range tbls {
+	//		// If table locked, skip analyze all partitions of the table.
+	//		// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
+	//		if _, ok := lockedTables[tbl.Meta().ID]; ok {
+	//			continue
+	//		}
+	//		tblInfo := tbl.Meta()
+	//		if tblInfo.IsView() {
+	//			continue
+	//		}
+	//		pi := tblInfo.GetPartitionInfo()
+	//		if pi == nil {
+	//			statsTbl := opt.GetTableStats(tblInfo)
+	//			sql := "analyze table %n.%n"
+	//			analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+	//			if analyzed {
+	//				// analyze one table at a time to let it get the freshest parameters.
+	//				// others will be analyzed next round which is just 3s later.
+	//				return true
+	//			}
+	//			continue
+	//		}
+	//		// Only analyze the partition that has not been locked.
+	//		var partitionDefs []model.PartitionDefinition
+	//		for _, def := range pi.Definitions {
+	//			if _, ok := lockedTables[def.ID]; !ok {
+	//				partitionDefs = append(partitionDefs, def)
+	//			}
+	//		}
+	//		if pruneMode == variable.Dynamic {
+	//			analyzed := autoAnalyzePartitionTableInDynamicMode(sctx, opt, tblInfo, partitionDefs, db, autoAnalyzeRatio)
+	//			if analyzed {
+	//				return true
+	//			}
+	//			continue
+	//		}
+	//		for _, def := range partitionDefs {
+	//			sql := "analyze table %n.%n partition %n"
+	//			statsTbl := opt.GetPartitionStats(tblInfo, def.ID)
+	//			analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+	//			if analyzed {
+	//				return true
+	//			}
+	//		}
+	//	}
+	//}
+	//return false
 }
 
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we needn't do auto analyze.
