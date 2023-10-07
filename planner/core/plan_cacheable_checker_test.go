@@ -89,6 +89,29 @@ func TestFixControl44823(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+<<<<<<< HEAD
+=======
+func TestIssue46760(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760{}, struct{}{})
+	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.t failed: mock error"))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+}
+
+>>>>>>> 35d576516e0 (planner: fix wrong output alias names when using non-prep cache with point plans (#47417))
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	mockCtx := mock.NewContext()

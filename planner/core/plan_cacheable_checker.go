@@ -701,3 +701,58 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 	}
 	return v
 }
+<<<<<<< HEAD
+=======
+
+// checkTableCacheable checks whether a query accessing this table is cacheable.
+func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
+	tableSchema := node.Schema
+	if tableSchema.L == "" {
+		tableSchema.O = sctx.GetSessionVars().CurrentDB
+		tableSchema.L = strings.ToLower(tableSchema.O)
+	}
+	tb, err := schema.TableByName(tableSchema, node.Name)
+	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760{}) != nil {
+		err = errors.New("mock error")
+	}
+	if err != nil {
+		sql := sctx.GetSessionVars().StmtCtx.OriginalSQL
+		if len(sql) > 256 {
+			sql = sql[:256]
+		}
+		logutil.BgLogger().Warn("find table failed", zap.Error(err), zap.String("sql", sql),
+			zap.String("table_schema", tableSchema.O), zap.String("table_name", node.Name.O))
+		return false, fmt.Sprintf("find table %s.%s failed: %s", tableSchema, node.Name, err.Error())
+	}
+
+	if tb.Meta().GetPartitionInfo() != nil {
+		// Temporary disable prepared plan cache until https://github.com/pingcap/tidb/issues/33031
+		// is fixed and additional tests with dynamic partition prune mode has been added.
+		/*
+			if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+				return in, false // dynamic-mode for partition tables can use plan-cache
+			}
+		*/
+		return false, "query accesses partitioned tables is un-cacheable"
+	}
+	for _, col := range tb.Cols() {
+		if col.IsGenerated() {
+			return false, "query accesses generated columns is un-cacheable"
+		}
+	}
+	if tb.Meta().TempTableType != model.TempTableNone {
+		return false, "query accesses temporary tables is un-cacheable"
+	}
+
+	if isNonPrep { // non-prep plan cache is stricter
+		if tb.Meta().IsView() {
+			return false, "queries that access views are not supported"
+		}
+		if !tb.Type().IsNormalTable() {
+			return false, "queries that access in-memory tables"
+		}
+	}
+
+	return true, ""
+}
+>>>>>>> 35d576516e0 (planner: fix wrong output alias names when using non-prep cache with point plans (#47417))
