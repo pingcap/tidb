@@ -26,20 +26,19 @@ import (
 
 const (
 	selectDeltaSQL = "SELECT count, modify_count, version FROM mysql.stats_table_locked WHERE table_id = %?"
-	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = count + %?, modify_count = modify_count + %? WHERE table_id = %?"
+	// Make sure the count won't be negative.
+	updateDeltaSQL = "UPDATE mysql.stats_meta SET version = %?, count = IF(count + %? > 0, count + %?, 0), modify_count = modify_count + %? WHERE table_id = %?"
 	// DeleteLockSQL is used to delete the locked table record.
 	DeleteLockSQL = "DELETE FROM mysql.stats_table_locked WHERE table_id = %?"
 )
 
 // RemoveLockedTables remove tables from table locked records.
 // - exec: sql executor.
-// - tidAndNames: table ids and names of which will be unlocked.
-// - pidAndNames: partition ids and names of which will be unlocked.
+// - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
 func RemoveLockedTables(
 	exec sqlexec.RestrictedSQLExecutor,
-	tidAndNames map[int64]string,
-	pidAndNames map[int64]string,
+	tables map[int64]*TableInfo,
 ) (string, error) {
 	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
@@ -56,50 +55,42 @@ func RemoveLockedTables(
 	if err != nil {
 		return "", err
 	}
-	skippedTables := make([]string, 0, len(tidAndNames))
-	tids := make([]int64, 0, len(tidAndNames))
-	tables := make([]string, 0, len(tidAndNames))
-	for tid, tableName := range tidAndNames {
-		tids = append(tids, tid)
-		tables = append(tables, tableName)
-	}
-	pids := make([]int64, 0, len(pidAndNames))
-	partitions := make([]string, 0, len(pidAndNames))
-	for pid, partitionName := range pidAndNames {
-		pids = append(pids, pid)
-		partitions = append(partitions, partitionName)
+	skippedTables := make([]string, 0, len(tables))
+	ids := make([]int64, 0, len(tables))
+	for tid, table := range tables {
+		ids = append(ids, tid)
+		for pid := range table.PartitionInfo {
+			ids = append(ids, pid)
+		}
 	}
 
 	statsLogger.Info("unlock table",
-		zap.Int64s("tableIDs", tids),
-		zap.Strings("tableNames", tables),
-		zap.Int64s("partitionIDs", pids),
-		zap.Strings("partitionNames", partitions),
+		zap.Any("tables", tables),
 	)
 
-	checkedTables := GetLockedTables(lockedTables, tids...)
-	for _, tid := range tids {
-		if _, ok := checkedTables[tid]; !ok {
-			skippedTables = append(skippedTables, tidAndNames[tid])
+	lockedTablesAndPartitions := GetLockedTables(lockedTables, ids...)
+
+	for tid, table := range tables {
+		if _, ok := lockedTablesAndPartitions[tid]; !ok {
+			skippedTables = append(skippedTables, table.FullName)
 			continue
 		}
 		if err := updateStatsAndUnlockTable(ctx, exec, tid); err != nil {
 			return "", err
 		}
+
+		// Delete related partitions while don't warning delete empty partitions
+		for pid := range table.PartitionInfo {
+			if _, ok := lockedTablesAndPartitions[pid]; !ok {
+				continue
+			}
+			if err := updateStatsAndUnlockPartition(ctx, exec, pid, tid); err != nil {
+				return "", err
+			}
+		}
 	}
 
-	// Delete related partitions while don't warning delete empty partitions
-	checkedTables = GetLockedTables(lockedTables, pids...)
-	for _, pid := range pids {
-		if _, ok := checkedTables[pid]; !ok {
-			continue
-		}
-		if err := updateStatsAndUnlockTable(ctx, exec, pid); err != nil {
-			return "", err
-		}
-	}
-
-	msg := generateStableSkippedTablesMessage(tids, skippedTables, unlockAction, unlockedStatus)
+	msg := generateStableSkippedTablesMessage(len(tables), skippedTables, unlockAction, unlockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
@@ -168,18 +159,26 @@ func RemoveLockedPartitions(
 	return msg, err
 }
 
+func updateDelta(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, count, modifyCount int64, version uint64, tid int64) error {
+	if _, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		useCurrentSession,
+		updateDeltaSQL,
+		version, count, count, modifyCount, tid,
+	); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func updateStatsAndUnlockTable(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, tid int64) error {
 	count, modifyCount, version, err := getStatsDeltaFromTableLocked(ctx, tid, exec)
 	if err != nil {
 		return err
 	}
 
-	if _, _, err := exec.ExecRestrictedSQL(
-		ctx,
-		useCurrentSession,
-		updateDeltaSQL,
-		version, count, modifyCount, tid,
-	); err != nil {
+	if err := updateDelta(ctx, exec, count, modifyCount, version, tid); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(tid)
@@ -199,23 +198,13 @@ func updateStatsAndUnlockPartition(ctx context.Context, exec sqlexec.RestrictedS
 		return err
 	}
 
-	if _, _, err := exec.ExecRestrictedSQL(
-		ctx,
-		useCurrentSession,
-		updateDeltaSQL,
-		version, count, modifyCount, partitionID,
-	); err != nil {
-		return err
-	}
-	if _, _, err := exec.ExecRestrictedSQL(
-		ctx,
-		useCurrentSession,
-		updateDeltaSQL,
-		version, count, modifyCount, tid,
-	); err != nil {
+	if err := updateDelta(ctx, exec, count, modifyCount, version, partitionID); err != nil {
 		return err
 	}
 	cache.TableRowStatsCache.Invalidate(partitionID)
+	if err := updateDelta(ctx, exec, count, modifyCount, version, tid); err != nil {
+		return err
+	}
 	cache.TableRowStatsCache.Invalidate(tid)
 
 	_, _, err = exec.ExecRestrictedSQL(
