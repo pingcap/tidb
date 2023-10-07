@@ -1,0 +1,19 @@
+drop table if exists t;
+create table t(id int, v int);
+insert into t values (1, 1);
+batch limit 1 insert into t select * from t;
+select * from t;
+id	v
+1	1
+1	1
+drop table t;
+create table t(id int, v int, key(id));
+create table t2(id int, v int, key(id));
+insert into t values (1, 1), (2, 2), (3, 3);
+insert into t2 values (1, 1), (2, 2), (4, 4);
+batch on session__nontransactional.t.id limit 1 update t join t2 on t.id=t2.id set t2.id = t2.id+1;
+select * from t2;
+id	v
+4	1
+4	2
+4	4

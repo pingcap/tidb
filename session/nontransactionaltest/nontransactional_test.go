@@ -926,28 +926,6 @@ func TestNonTransactionalWithJoin(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1 11 800", "2 22 1000"))
 }
 
-func TestAnomalousNontransactionalDML(t *testing.T) {
-	// some weird and error-prone behavior
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, v int)")
-
-	// self-insert, this is allowed but can be dangerous
-	tk.MustExec("insert into t values (1, 1)")
-	tk.MustExec("batch limit 1 insert into t select * from t")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "1 1"))
-	tk.MustExec("drop table t")
-
-	tk.MustExec("create table t(id int, v int, key(id))")
-	tk.MustExec("create table t2(id int, v int, key(id))")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
-	tk.MustExec("insert into t2 values (1, 1), (2, 2), (4, 4)")
-
-	tk.MustExec("batch on test.t.id limit 1 update t join t2 on t.id=t2.id set t2.id = t2.id+1")
-	tk.MustQuery("select * from t2").Check(testkit.Rows("4 1", "4 2", "4 4"))
-}
-
 func TestAlias(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
