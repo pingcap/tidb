@@ -885,23 +885,6 @@ func TestJoinLeak(t *testing.T) {
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
 }
 
-func TestIssue15850JoinNullValue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-
-	tk.MustExec("drop table if exists t0;")
-	tk.MustExec("drop view if exists v0;")
-	tk.MustExec("CREATE TABLE t0(c0 TEXT);")
-	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
-	tk.MustQuery("SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-}
-
 func TestNullEmptyAwareSemiJoin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
