@@ -1123,7 +1123,9 @@ func (local *DupeController) deleteDuplicateRow(
 		}
 	}()
 
-	logger.Debug("will delete key", zap.String("category", "resolve-dupe"), logutil.Key("key", key))
+	logger.Debug("deleteDuplicateRow will delete key",
+		zap.String("category", "resolve-dupe"),
+		logutil.Key("key", key))
 	err = txn.Delete(key)
 
 	return errors.Trace(err)
