@@ -1,0 +1,9 @@
+# TestSplitRegionEdgeCase
+drop table if exists t;
+create table t(a bigint(20) auto_increment primary key);
+split table t between (-9223372036854775808) and (9223372036854775807) regions 16;
+drop table if exists t;
+create table t(a int(20) auto_increment primary key);
+-- error 1690
+split table t between (-9223372036854775808) and (9223372036854775807) regions 16;
+drop table if exists t;
