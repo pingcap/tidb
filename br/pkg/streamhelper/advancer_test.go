@@ -283,11 +283,6 @@ func TestBlocked(t *testing.T) {
 	})
 	req.ErrorIs(errors.Cause(err), context.DeadlineExceeded)
 }
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
-=======
->>>>>>> ef7b941... This is an automated cherry-pick of #46903
 
 func TestResolveLock(t *testing.T) {
 	c := createFakeCluster(t, 4, false)
@@ -297,11 +292,8 @@ func TestResolveLock(t *testing.T) {
 		}
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks", `return(true)`))
-<<<<<<< HEAD
-=======
 	// make sure asyncResolveLocks stuck in optionalTick later.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/streamhelper/AsyncResolveLocks", `pause`))
->>>>>>> ef7b941... This is an automated cherry-pick of #46903
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/br/pkg/streamhelper/NeedResolveLocks"))
 	}()
@@ -355,12 +347,6 @@ func TestResolveLock(t *testing.T) {
 		time.Second, 50*time.Millisecond)
 	coll := streamhelper.NewClusterCollector(ctx, env)
 	err := adv.GetCheckpointInRange(ctx, []byte{}, []byte{}, coll)
-<<<<<<< HEAD
-
-	require.Eventually(t, func() bool { return resolveLockRef.Load() },
-		8*time.Second, 50*time.Microsecond)
-	require.NoError(t, err)
-=======
 	require.NoError(t, err)
 	// now the lock state must be ture. because tick finished and asyncResolveLocks got stuck.
 	require.True(t, adv.GetInResolvingLock())
@@ -370,13 +356,8 @@ func TestResolveLock(t *testing.T) {
 	// state must set to false after tick
 	require.Eventually(t, func() bool { return !adv.GetInResolvingLock() },
 		8*time.Second, 50*time.Microsecond)
->>>>>>> ef7b941... This is an automated cherry-pick of #46903
 	r, err := coll.Finish(ctx)
 	require.NoError(t, err)
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 }
-<<<<<<< HEAD
-=======
->>>>>>> 9f8a412fd8c (br: fix the issue that state not set correctly after resolve locks (#46903))
->>>>>>> ef7b941... This is an automated cherry-pick of #46903
