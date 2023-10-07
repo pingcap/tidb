@@ -466,6 +466,12 @@ func (s *importScheduler) Run(ctx context.Context, task *proto.Task) error {
 	return s.BaseScheduler.Run(subCtx, task)
 }
 
+func (*importScheduler) IsIdempotent(*proto.Subtask) bool {
+	// import don't have conflict detection and resolution now, so it's ok
+	// to import data twice.
+	return true
+}
+
 func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
