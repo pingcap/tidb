@@ -15,25 +15,19 @@
 package handle
 
 import (
-	"context"
 	"encoding/json"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
-	"github.com/pingcap/tidb/statistics/handle/lockstats"
-	"github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -202,183 +196,34 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 
 // ClearOutdatedHistoryStats clear outdated historical stats
 func (h *Handle) ClearOutdatedHistoryStats() error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-	rs, err := util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-	if err != nil {
-		return err
-	}
-	if rs == nil {
-		return nil
-	}
-	var rows []chunk.Row
-	defer terror.Call(rs.Close)
-	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
-		return errors.Trace(err)
-	}
-	count := rows[0].GetInt64(0)
-	if count > 0 {
-		sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		if err != nil {
-			return err
-		}
-		sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		logutil.BgLogger().Info("clear outdated historical stats")
-		return err
-	}
-	return nil
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.ClearOutdatedHistoryStats(sctx)
+	})
 }
 
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-	sql := "delete from mysql.stats_history where table_id = %?"
-	_, err = util.Exec(sctx, sql, physicalID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sql = "delete from mysql.stats_meta_history where table_id = %?"
-	_, err = util.Exec(sctx, sql, physicalID)
-	return err
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.GCHistoryStatsFromKV(sctx, physicalID)
+	}, flagWrapTxn)
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-
-	_, err = util.Exec(sctx, "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-	startTS, err := getSessionTxnStartTS(se)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
-		return err
-	}
-	// delete histogram meta
-	if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	// delete top n data
-	if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	// delete all buckets
-	if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	// delete all fm sketch
-	if _, err := util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	if isIndex == 0 {
-		// delete the record in mysql.column_stats_usage
-		if _, err = util.Exec(sctx, "delete from mysql.column_stats_usage where table_id = %? and column_id = %?", physicalID, histID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.DeleteHistStatsFromKV(sctx, physicalID, histID, isIndex)
+	}, flagWrapTxn)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	_, err = util.Exec(sctx, "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-	startTS, err := getSessionTxnStartTS(se)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, statsID := range statsIDs {
-		// We only update the version so that other tidb will know that this table is deleted.
-		if _, err = util.Exec(sctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_buckets where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_top_n where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, statistics.ExtendedStatsDeleted, statsID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "delete from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, "delete from mysql.analyze_options where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = util.Exec(sctx, lockstats.DeleteLockSQL, statsID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.DeleteTableStatsFromKV(sctx, statsIDs)
+	}, flagWrapTxn)
 }
 
 func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
-	_, err = util.Exec(sctx, sql, statistics.ExtendedStatsDeleted, version)
-	return
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.RemoveDeletedExtendedStats(sctx, version)
+	}, flagWrapTxn)
 }
