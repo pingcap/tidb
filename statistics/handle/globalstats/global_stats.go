@@ -155,7 +155,7 @@ func MergePartitionStats2GlobalStats(
 		for i := 0; i < globalStats.Num; i++ {
 			// GetStatsInfo will return the copy of the statsInfo, so we don't need to worry about the data race.
 			// partitionStats will be released after the for loop.
-			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex)
+			hg, cms, topN, fms, analyzed := partitionStats.GetStatsInfo(histIDs[i], isIndex, externalCache)
 			skipPartition := false
 			if !analyzed {
 				var missingPart string
@@ -200,9 +200,6 @@ func MergePartitionStats2GlobalStats(
 				allTopN[i] = append(allTopN[i], topN)
 				allFms[i] = append(allFms[i], fms)
 			}
-		}
-		if !externalCache {
-			partitionStats.ReleaseAndPutToPool()
 		}
 	}
 
