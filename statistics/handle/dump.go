@@ -208,7 +208,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
 	jsonTbl *storage.JSONTable, concurrencyForPartition uint8) error {
-	nCPU := uint8(runtime.NumCPU())
+	nCPU := uint8(runtime.GOMAXPROCS(0))
 	if concurrencyForPartition == 0 {
 		concurrencyForPartition = nCPU / 2 // default
 	}
