@@ -301,7 +301,7 @@ func TestReplaceConflictKeysIndexKvChecking(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "index_name", "raw_value", "raw_handle"}).
 			AddRow(data1IndexKey, "uni_b", data1IndexValue, data1RowKey).
 			AddRow(data1IndexKey, "uni_b", data2IndexValue, data2RowKey))
-	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value, raw_handle FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name = 'PRIMARY' ORDER BY raw_key\\E").
+	mockDB.ExpectQuery("\\QSELECT raw_key, raw_value FROM `lightning_task_info`.conflict_error_v1 WHERE table_name = ? AND index_name = 'PRIMARY' ORDER BY raw_key\\E").
 		WillReturnRows(sqlmock.NewRows([]string{"raw_key", "raw_value", "raw_handle"}))
 
 	cfg := config.NewConfig()
