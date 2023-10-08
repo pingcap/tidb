@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/logutil"
@@ -2043,30 +2045,65 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 	taskType := BackfillTaskType
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
-	elemIDs := make([]int64, 0, len(reorgInfo.elements))
-	for _, elem := range reorgInfo.elements {
-		elemIDs = append(elemIDs, elem.ID)
-	}
+	g, ctx := errgroup.WithContext(context.Background())
+	done := make(chan struct{})
 
-	taskMeta := &BackfillGlobalMeta{
-		Job:             *reorgInfo.Job.Clone(),
-		EleIDs:          elemIDs,
-		EleTypeKey:      reorgInfo.currElement.TypeKey,
-		CloudStorageURI: variable.CloudStorageURI.Load(),
-	}
-
-	metaData, err := json.Marshal(taskMeta)
+	// for resuming add index task.
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
+	task, err := taskManager.GetGlobalTaskByKey(taskKey)
+	if err != nil {
+		return err
+	}
+	if task != nil {
+		g.Go(func() error {
+			defer close(done)
+			backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+			err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logutil.BgLogger(),
+				func(ctx context.Context) (bool, error) {
+					return true, handle.ResumeTask(taskKey)
+				},
+			)
+			if err != nil {
+				return err
+			}
+			err = handle.WaitGlobalTask(ctx, task)
+			if w.isReorgPaused(reorgInfo.Job.ID) {
+				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"))
+				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+			}
+			return err
+		})
+	} else {
+		elemIDs := make([]int64, 0, len(reorgInfo.elements))
+		for _, elem := range reorgInfo.elements {
+			elemIDs = append(elemIDs, elem.ID)
+		}
 
-	done := make(chan struct{})
-	g, ctx := errgroup.WithContext(context.Background())
+		taskMeta := &BackfillGlobalMeta{
+			Job:             *reorgInfo.Job.Clone(),
+			EleIDs:          elemIDs,
+			EleTypeKey:      reorgInfo.currElement.TypeKey,
+			CloudStorageURI: variable.CloudStorageURI.Load(),
+		}
 
-	g.Go(func() error {
-		defer close(done)
-		return handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
-	})
+		metaData, err := json.Marshal(taskMeta)
+		if err != nil {
+			return err
+		}
+
+		g.Go(func() error {
+			defer close(done)
+			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+			if w.isReorgPaused(reorgInfo.Job.ID) {
+				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"))
+				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+			}
+			return err
+		})
+	}
 
 	g.Go(func() error {
 		checkFinishTk := time.NewTicker(CheckBackfillJobFinishInterval)
@@ -2080,10 +2117,15 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 				return nil
 			case <-checkFinishTk.C:
 				if err = w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+					if dbterror.ErrPausedDDLJob.Equal(err) {
+						if err = handle.PauseTask(taskKey); err != nil {
+							logutil.BgLogger().Error("pause global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+							continue
+						}
+					}
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
 					}
-
 					if err = handle.CancelGlobalTask(taskKey); err != nil {
 						logutil.BgLogger().Error("cancel global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 						// continue to cancel global task

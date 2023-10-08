@@ -251,9 +251,16 @@ func (d *BaseDispatcher) onPausing() error {
 	return nil
 }
 
+var MockDMLExecutionOnPausedState func(task *proto.Task)
+
 // handle task in paused state
 func (d *BaseDispatcher) onPaused() error {
 	logutil.Logger(d.logCtx).Info("on paused state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
+		if val.(bool) && MockDMLExecutionOnPausedState != nil {
+			MockDMLExecutionOnPausedState(d.Task)
+		}
+	})
 	return nil
 }
 
