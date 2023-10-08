@@ -27,7 +27,6 @@ type KeyValueStore struct {
 
 	rc     *rangePropertiesCollector
 	ctx    context.Context
-	seq    int
 	offset uint64
 }
 
@@ -38,13 +37,11 @@ func NewKeyValueStore(
 	ctx context.Context,
 	dataWriter storage.ExternalFileWriter,
 	rangePropertiesCollector *rangePropertiesCollector,
-	seq int,
 ) (*KeyValueStore, error) {
 	kvStore := &KeyValueStore{
 		dataWriter: dataWriter,
 		ctx:        ctx,
 		rc:         rangePropertiesCollector,
-		seq:        seq,
 	}
 	return kvStore, nil
 }

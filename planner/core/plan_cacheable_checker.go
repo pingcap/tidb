@@ -630,7 +630,7 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 		tableSchema.L = strings.ToLower(tableSchema.O)
 	}
 	tb, err := schema.TableByName(tableSchema, node.Name)
-	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760) != nil {
+	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760{}) != nil {
 		err = errors.New("mock error")
 	}
 	if err != nil {

@@ -1,0 +1,8 @@
+drop table if exists t;
+create table t(a bigint(20) auto_increment primary key);
+split table t between (-9223372036854775808) and (9223372036854775807) regions 16;
+drop table if exists t;
+create table t(a int(20) auto_increment primary key);
+split table t between (-9223372036854775808) and (9223372036854775807) regions 16;
+Error 1690 (22003): constant -9223372036854775808 overflows int
+drop table if exists t;

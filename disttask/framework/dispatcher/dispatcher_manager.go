@@ -307,7 +307,6 @@ var WaitCleanUpFinished = make(chan struct{})
 //
 //	tasks with global sort should clean up tmp files stored on S3.
 func (dm *Manager) doCleanUpRoutine() {
-	logutil.Logger(dm.ctx).Info("cleanUp routine start")
 	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
 		proto.TaskStateFailed,
 		proto.TaskStateReverted,
@@ -317,6 +316,10 @@ func (dm *Manager) doCleanUpRoutine() {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
 		return
 	}
+	if len(tasks) == 0 {
+		return
+	}
+	logutil.Logger(dm.ctx).Info("cleanUp routine start")
 	err = dm.cleanUpFinishedTasks(tasks)
 	if err != nil {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))

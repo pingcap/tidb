@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -28,12 +29,23 @@ import (
 
 type heapElem interface {
 	sortKey() []byte
+	// cloneInnerFields should clone the fields of this struct to let all fields uses
+	// owned memory. Sometimes to reduce allocation the memory is shared between
+	// multiple elements and it's needed to call it before we free the shared memory.
+	cloneInnerFields()
 }
 
 type sortedReader[T heapElem] interface {
 	path() string
 	next() (T, error)
-	setReadMode(useConcurrency bool)
+	// When `need` is changed from false to true, the reader should prefetch more
+	// data than usual when local cache is used up. It's used when one reader is more
+	// frequently accessed than others and usual prefetching strategy is the
+	// bottleneck.
+	// When `need` is changed from true to false, the reader should
+	// immediately release the memory for large prefetching to avoid OOM.
+	// TODO(lance6716): learn more about external merge sort prefetch strategy.
+	switchConcurrentMode(useConcurrent bool) error
 	close() error
 }
 
@@ -76,6 +88,8 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 	err             error
 	hotspotMap      map[int]int
 	checkHotspotCnt int
+	lastHotspotIdx  int
+	elemFromHotspot *T
 
 	logger *zap.Logger
 }
@@ -196,6 +210,8 @@ func (i *mergeIter[T, R]) currElem() T {
 	return i.curr
 }
 
+var checkHotspotPeriod = 1000
+
 // next forwards the iterator to the next element. It returns false if there is
 // no available element.
 func (i *mergeIter[T, R]) next() bool {
@@ -205,11 +221,36 @@ func (i *mergeIter[T, R]) next() bool {
 		i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
 		i.checkHotspotCnt++
 
-		checkPeriod := 1000
-		// check hot point every checkPeriod times
-		if i.checkHotspotCnt == checkPeriod {
+		// check hotspot every checkPeriod times
+		if i.checkHotspotCnt == checkHotspotPeriod {
+			oldHotspotIdx := i.lastHotspotIdx
+			i.lastHotspotIdx = -1
 			for idx, cnt := range i.hotspotMap {
-				(*i.readers[idx]).setReadMode(cnt > (checkPeriod / 2))
+				// currently only one reader will become hotspot
+				if cnt > (checkHotspotPeriod / 2) {
+					i.lastHotspotIdx = idx
+					break
+				}
+			}
+			// we are going to switch concurrent reader and free its memory. Clone
+			// the fields to avoid use-after-free.
+			if oldHotspotIdx != i.lastHotspotIdx {
+				if i.elemFromHotspot != nil {
+					(*i.elemFromHotspot).cloneInnerFields()
+					i.elemFromHotspot = nil
+				}
+			}
+
+			for idx, rp := range i.readers {
+				if rp == nil {
+					continue
+				}
+				isHotspot := i.lastHotspotIdx == idx
+				err := (*rp).switchConcurrentMode(isHotspot)
+				if err != nil {
+					i.err = err
+					return false
+				}
 			}
 			i.checkHotspotCnt = 0
 			i.hotspotMap = make(map[int]int)
@@ -217,8 +258,12 @@ func (i *mergeIter[T, R]) next() bool {
 
 		rd := *i.readers[i.lastReaderIdx]
 		e, err := rd.next()
+
 		switch err {
 		case nil:
+			if i.lastReaderIdx == i.lastHotspotIdx {
+				i.elemFromHotspot = &e
+			}
 			heap.Push(&i.h, mergeHeapElem[T]{elem: e, readerIdx: i.lastReaderIdx})
 		case io.EOF:
 			closeErr := rd.close()
@@ -252,8 +297,13 @@ type kvPair struct {
 	value []byte
 }
 
-func (p kvPair) sortKey() []byte {
+func (p *kvPair) sortKey() []byte {
 	return p.key
+}
+
+func (p *kvPair) cloneInnerFields() {
+	p.key = append([]byte{}, p.key...)
+	p.value = append([]byte{}, p.value...)
 }
 
 type kvReaderProxy struct {
@@ -265,16 +315,16 @@ func (p kvReaderProxy) path() string {
 	return p.p
 }
 
-func (p kvReaderProxy) next() (kvPair, error) {
+func (p kvReaderProxy) next() (*kvPair, error) {
 	k, v, err := p.r.nextKV()
 	if err != nil {
-		return kvPair{}, err
+		return nil, err
 	}
-	return kvPair{key: k, value: v}, nil
+	return &kvPair{key: k, value: v}, nil
 }
 
-func (p kvReaderProxy) setReadMode(useConcurrency bool) {
-	p.r.byteReader.switchReaderMode(useConcurrency)
+func (p kvReaderProxy) switchConcurrentMode(useConcurrent bool) error {
+	return p.r.byteReader.switchConcurrentMode(useConcurrent)
 }
 
 func (p kvReaderProxy) close() error {
@@ -283,7 +333,8 @@ func (p kvReaderProxy) close() error {
 
 // MergeKVIter is an iterator that merges multiple sorted KV pairs from different files.
 type MergeKVIter struct {
-	iter *mergeIter[kvPair, kvReaderProxy]
+	iter    *mergeIter[*kvPair, kvReaderProxy]
+	memPool *membuf.Pool
 }
 
 // NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
@@ -296,7 +347,13 @@ func NewMergeKVIter(
 	exStorage storage.ExternalStorage,
 	readBufferSize int,
 ) (*MergeKVIter, error) {
-	readerOpeners := make([]readerOpenerFn[kvPair, kvReaderProxy], 0, len(paths))
+	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
+	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
+	memPool := membuf.NewPool(
+		membuf.WithPoolSize(1), // currently only one reader will become hotspot
+		membuf.WithBlockSize(largeBufSize),
+		membuf.WithLargeAllocThreshold(largeBufSize),
+	)
 
 	for i := range paths {
 		i := i
@@ -305,12 +362,19 @@ func NewMergeKVIter(
 			if err != nil {
 				return nil, err
 			}
+			rd.byteReader.enableConcurrentRead(
+				exStorage,
+				paths[i],
+				ConcurrentReaderConcurrency,
+				ConcurrentReaderBufferSizePerConc,
+				memPool.NewBuffer(),
+			)
 			return &kvReaderProxy{p: paths[i], r: rd}, nil
 		})
 	}
 
-	it, err := newMergeIter[kvPair, kvReaderProxy](ctx, readerOpeners)
-	return &MergeKVIter{iter: it}, err
+	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners)
+	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
 // Error returns the error of the iterator.
@@ -335,11 +399,21 @@ func (i *MergeKVIter) Value() []byte {
 
 // Close closes the iterator.
 func (i *MergeKVIter) Close() error {
-	return i.iter.close()
+	if err := i.iter.close(); err != nil {
+		return err
+	}
+	// memPool should be destroyed after reader's buffer pool.
+	i.memPool.Destroy()
+	return nil
 }
 
-func (p rangeProperty) sortKey() []byte {
+func (p *rangeProperty) sortKey() []byte {
 	return p.firstKey
+}
+
+func (p *rangeProperty) cloneInnerFields() {
+	p.firstKey = append([]byte{}, p.firstKey...)
+	p.lastKey = append([]byte{}, p.lastKey...)
 }
 
 type statReaderProxy struct {
@@ -355,9 +429,7 @@ func (p statReaderProxy) next() (*rangeProperty, error) {
 	return p.r.nextProp()
 }
 
-func (p statReaderProxy) setReadMode(useConcurrency bool) {
-	p.r.byteReader.switchReaderMode(useConcurrency)
-}
+func (p statReaderProxy) switchConcurrentMode(bool) error { return nil }
 
 func (p statReaderProxy) close() error {
 	return p.r.Close()
