@@ -390,7 +390,6 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) {
 	e.initPartialWorkers(partialConcurrency, ctx, &workerSync)
 	e.initFinalWorkers(finalConcurrency, &workerSync)
 
-	// TODO some agg functions' spill is not supported, set it.
 	vars := e.Ctx().GetSessionVars()
 	e.spillHelper.isTrackerEnabled = e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
 	if e.spillHelper.isTrackerEnabled {
