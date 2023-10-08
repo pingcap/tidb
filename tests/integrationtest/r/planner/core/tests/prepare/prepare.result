@@ -31,7 +31,7 @@ execute stmt;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 deallocate prepare stmt;
 prepare stmt from 'select * from t';
 execute stmt;
@@ -50,14 +50,14 @@ execute stmt;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 deallocate prepare stmt;
 prepare stmt from 'select * from t';
 execute stmt;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists t1;
 drop table if exists t2;
@@ -70,7 +70,7 @@ execute stmt1;
 id	a	b	id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt2 from 'SELECT * from t1';
 execute stmt2;
 id	a	b
@@ -78,7 +78,7 @@ execute stmt2;
 id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt3 from 'SELECT * from t1 where id = 1';
 execute stmt3;
 id	a	b
@@ -86,7 +86,7 @@ execute stmt3;
 id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 admin flush session plan_cache;
 
 execute stmt1;
@@ -108,32 +108,32 @@ execute stmt1;
 id	a	b	id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt2;
 id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt3;
 id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt1;
 id	a	b	id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt2;
 id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt3;
 id	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 admin flush global plan_cache;
 Error 1105 (HY000): Do not support the 'admin flush global scope.'
 set tidb_enable_prepared_plan_cache=0;
@@ -169,6 +169,7 @@ admin flush session plan_cache;
 
 show warnings;
 Level	Code	Message
+Warning	1105	The plan cache is disable. So there no need to flush the plan cache
 execute stmt1;
 id	a	b	id	a	b
 select @@last_plan_from_cache;
@@ -243,7 +244,7 @@ execute s using @x;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set character_set_connection=latin1;
 set @x='c';
 execute s using @x;
@@ -256,7 +257,7 @@ execute s using @x;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set collation_connection=binary;
 set @x='e';
 execute s using @x;
@@ -269,7 +270,7 @@ execute s using @x;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists t1;
 create table t1 (
@@ -315,7 +316,7 @@ execute stmt1 using @a;
 
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from t2 order by a;
 a	b
 1	1
@@ -325,7 +326,7 @@ execute stmt1 using @a;
 
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from t2 order by a;
 a	b
 1	1
@@ -505,7 +506,7 @@ id
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt2 using @doma;
 id
 1
@@ -517,7 +518,7 @@ id
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from t where id=1;
 id
 1
@@ -539,7 +540,7 @@ execute stmt using @p;
 a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set @p = 18446744073709551615;
 execute stmt using @p;
 a
@@ -561,7 +562,7 @@ pk
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a3;
 pk
 1
@@ -570,7 +571,7 @@ pk
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a0;
 pk
 select @@last_plan_from_cache;
@@ -584,7 +585,7 @@ pk
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a1;
 pk
 select @@last_plan_from_cache;
@@ -603,7 +604,7 @@ pk
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a3;
 pk
 1
@@ -612,7 +613,7 @@ pk
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a0;
 pk
 select @@last_plan_from_cache;
@@ -626,7 +627,7 @@ pk
 1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a1;
 pk
 select @@last_plan_from_cache;
@@ -646,7 +647,7 @@ a	b
 1	7
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 drop table if exists t;
 create table t(pk int primary key);
 insert into t values (1), (2), (3), (4), (5);
@@ -664,14 +665,14 @@ pk
 3
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a0, @a4;
 pk
 1
 4
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a1_1, @a5;
 pk
 1
@@ -696,14 +697,14 @@ pk
 3
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a0, @a4;
 pk
 1
 4
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @a1_1, @a5;
 pk
 1
@@ -842,7 +843,7 @@ c1	c2	c3
 2	1	1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 create table t4(c1 int primary key, c2 int, c3 int, key(c2));
 insert into t4 values(2,1,1);
 prepare s4 from 'select /*+ use_index_merge(t4) */ * from t4 where (c1 >= ? and c1 <= ?) or c2 > 1';
@@ -864,7 +865,7 @@ execute s4 using @b4,@a4;
 c1	c2	c3
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute s4 using @a4,@b4;
 c1	c2	c3
 2	1	1

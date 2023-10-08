@@ -31,33 +31,21 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
-	StatsMetaHistorySourceExtendedStats = "extended stats"
-)
-
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func InsertExtendedStats(sctx sessionctx.Context,
-	recordHistoricalStatsMeta func(tableID int64, version uint64, source string),
 	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
 	currentCache *cache.StatsCache,
-	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
-		}
-	}()
+	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
 	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	strColIDs := string(bytes)
 
 	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	defer func() {
 		err = util.FinishTransaction(sctx, err)
@@ -65,7 +53,7 @@ func InsertExtendedStats(sctx sessionctx.Context,
 	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
 	rows, _, err := util.ExecRows(sctx, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	for _, row := range rows {
 		currStatsName := row.GetString(0)
@@ -73,26 +61,26 @@ func InsertExtendedStats(sctx sessionctx.Context,
 		currStrColIDs := row.GetString(2)
 		if currStatsName == statsName {
 			if ifNotExists {
-				return nil
+				return 0, nil
 			}
-			return errors.Errorf("extended statistics '%s' for the specified table already exists", statsName)
+			return 0, errors.Errorf("extended statistics '%s' for the specified table already exists", statsName)
 		}
 		if tp == int(currTp) && currStrColIDs == strColIDs {
-			return errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
+			return 0, errors.Errorf("extended statistics '%s' with same type on same columns already exists", statsName)
 		}
 	}
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	// Bump version in `mysql.stats_meta` to trigger stats cache refresh.
 	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
-		return err
+		return 0, err
 	}
 	statsVer = version
 	// Remove the existing 'deleted' records.
 	if _, err = util.Exec(sctx, "DELETE FROM mysql.stats_extended WHERE name = %? and table_id = %?", statsName, tableID); err != nil {
-		return err
+		return 0, err
 	}
 	// Remove the cache item, which is necessary for cases like a cluster with 3 tidb instances, e.g, a, b and c.
 	// If tidb-a executes `alter table drop stats_extended` to mark the record as 'deleted', and before this operation
@@ -102,32 +90,25 @@ func InsertExtendedStats(sctx sessionctx.Context,
 	removeExtendedStatsItem(currentCache, updateStatsCache, tableID, statsName)
 	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
 	if _, err = util.Exec(sctx, sql, statsName, tp, tableID, strColIDs, version, statistics.ExtendedStatsInited); err != nil {
-		return err
+		return 0, err
 	}
 	return
 }
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func MarkExtendedStatsDeleted(sctx sessionctx.Context,
-	recordHistoricalStatsMeta func(tableID int64, version uint64, source string),
 	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
 	currentCache *cache.StatsCache,
-	statsName string, tableID int64, ifExists bool) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
-		}
-	}()
+	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
 	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if len(rows) == 0 {
 		if ifExists {
-			return nil
+			return 0, nil
 		}
-		return fmt.Errorf("extended statistics '%s' for the specified table does not exist", statsName)
+		return 0, fmt.Errorf("extended statistics '%s' for the specified table does not exist", statsName)
 	}
 	if len(rows) > 1 {
 		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
@@ -135,7 +116,7 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 
 	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	defer func() {
 		err1 := util.FinishTransaction(sctx, err)
@@ -146,16 +127,16 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 	}()
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
-		return err
+		return 0, err
 	}
 	statsVer = version
 	if _, err = util.Exec(sctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, statistics.ExtendedStatsDeleted, statsName, tableID); err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return
 }
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
@@ -270,33 +251,26 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *statistics.ExtendedStat
 
 // SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
 func SaveExtendedStatsToStorage(sctx sessionctx.Context,
-	recordHistoricalStatsMeta func(tableID int64, version uint64, source string),
-	tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
-	statsVer := uint64(0)
-	defer func() {
-		if err == nil && statsVer != 0 {
-			recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
-		}
-	}()
+	tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (statsVer uint64, err error) {
 	if extStats == nil || len(extStats.Stats) == 0 {
-		return nil
+		return 0, nil
 	}
 
 	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	defer func() {
 		err = util.FinishTransaction(sctx, err)
 	}()
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
-		return errors.Trace(err)
+		return 0, errors.Trace(err)
 	}
 	for name, item := range extStats.Stats {
 		bytes, err := json.Marshal(item.ColIDs)
 		if err != nil {
-			return errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
 		strColIDs := string(bytes)
 		var statsStr string
@@ -308,16 +282,16 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 		}
 		// If isLoad is true, it's INSERT; otherwise, it's UPDATE.
 		if _, err := util.Exec(sctx, "replace into mysql.stats_extended values (%?, %?, %?, %?, %?, %?, %?)", name, item.Tp, tableID, strColIDs, statsStr, version, statistics.ExtendedStatsAnalyzed); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	if !isLoad {
 		if _, err := util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
-			return err
+			return 0, err
 		}
 		statsVer = version
 	}
-	return nil
+	return statsVer, nil
 }
 
 const updateStatsCacheRetryCnt = 5
