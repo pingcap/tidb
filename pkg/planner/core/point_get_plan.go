@@ -1552,13 +1552,79 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 	return -1
 }
 
-func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
-	// avoid using the point_get when assignment_list contains the subquery in the UPDATE.
-	for _, list := range updateStmt.List {
-		if _, ok := list.Expr.(*ast.SubqueryExpr); ok {
-			return nil
+func checkIfCaseExprHasSubQuery(expr ast.ExprNode) bool {
+	if c, ok := expr.(*ast.CaseExpr); ok {
+		for _, clause := range c.WhenClauses {
+			if b, ok := clause.Expr.(*ast.BinaryOperationExpr); ok {
+				if _, ok := b.L.(*ast.SubqueryExpr); ok {
+					return true
+				}
+				if _, ok := b.R.(*ast.SubqueryExpr); ok {
+					return true
+				}
+			}
 		}
 	}
+
+	return false
+}
+
+func checkIfParenthesesCaseExprHasSubQuery(expr ast.ExprNode) bool {
+	if pe, ok := expr.(*ast.ParenthesesExpr); ok {
+		return checkIfCaseExprHasSubQuery(pe.Expr)
+	}
+	return false
+}
+
+func checkIfExprHasSubQuery(expr ast.ExprNode) bool {
+	if _, ok := expr.(*ast.SubqueryExpr); ok {
+		return true
+	}
+
+	return false
+}
+
+func checkIfParenthesesExprHasSubQuery(expr ast.ExprNode) bool {
+	if pe, ok := expr.(*ast.ParenthesesExpr); ok {
+		return checkIfExprHasSubQuery(pe.Expr)
+	}
+	return false
+}
+
+func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
+	for _, a := range list {
+		// For example: update t a set foo = (select bar from t1 b where b.id = a.id) where id = 1;
+		if checkIfParenthesesExprHasSubQuery(a.Expr) {
+			return true
+		}
+		// TODO: do we really check this case? Shouldn't this case be handled by the check above?
+		if checkIfExprHasSubQuery(a.Expr) {
+			return true
+		}
+
+		// For example: update t a set foo =
+		// (case when (select bar from t1 b where b.id = a.id) > (select bar from t2 c where c.id = a.id) then 1 else 0 end)
+		// where id = 1;
+		if checkIfParenthesesCaseExprHasSubQuery(a.Expr) {
+			return true
+		}
+		// For example: update t a set foo =
+		// case when (select bar from t1 b where b.id = a.id) > (select bar from t2 c where c.id = a.id) then 1 else 0 end
+		// where id = 1;
+		if checkIfCaseExprHasSubQuery(a.Expr) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func tryUpdatePointPlan(ctx sessionctx.Context, updateStmt *ast.UpdateStmt) Plan {
+	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
+	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
+		return nil
+	}
+
 	selStmt := &ast.SelectStmt{
 		Fields:  &ast.FieldList{},
 		From:    updateStmt.TableRefs,
