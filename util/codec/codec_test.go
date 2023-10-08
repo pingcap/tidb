@@ -1190,6 +1190,7 @@ func TestHashChunkRow(t *testing.T) {
 
 	testHashChunkRowEqual(t, types.CreateBinaryJSON(int64(1)), types.CreateBinaryJSON(float64(1.0)), true)
 	testHashChunkRowEqual(t, types.CreateBinaryJSON(uint64(math.MaxUint64)), types.CreateBinaryJSON(float64(math.MaxUint64)), false)
+	testHashChunkRowEqual(t, types.CreateBinaryJSON(int64(math.MinInt64)), types.CreateBinaryJSON(float64(math.MinInt64)), true)
 }
 
 func TestValueSizeOfSignedInt(t *testing.T) {
