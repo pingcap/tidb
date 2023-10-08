@@ -19,8 +19,8 @@ import (
 	"os"
 	"path"
 
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 )
 
 func (s *mockGCSSuite) TestImportFromServer() {

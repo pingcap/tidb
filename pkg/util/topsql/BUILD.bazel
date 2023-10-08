@@ -1,0 +1,50 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "topsql",
+    srcs = ["topsql.go"],
+    importpath = "github.com/pingcap/tidb/pkg/util/topsql",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser",
+        "//pkg/util/logutil",
+        "//pkg/util/plancodec",
+        "//pkg/util/topsql/collector",
+        "//pkg/util/topsql/reporter",
+        "//pkg/util/topsql/stmtstats",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@org_golang_google_grpc//:grpc",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "topsql_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "topsql_test.go",
+    ],
+    embed = [":topsql"],
+    flaky = True,
+    shard_count = 5,
+    deps = [
+        "//pkg/config",
+        "//pkg/parser",
+        "//pkg/testkit/testsetup",
+        "//pkg/util",
+        "//pkg/util/cpuprofile",
+        "//pkg/util/topsql/collector",
+        "//pkg/util/topsql/collector/mock",
+        "//pkg/util/topsql/reporter",
+        "//pkg/util/topsql/reporter/mock",
+        "//pkg/util/topsql/state",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//credentials/insecure",
+        "@org_golang_google_grpc//keepalive",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

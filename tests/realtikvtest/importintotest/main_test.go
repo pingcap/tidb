@@ -17,7 +17,7 @@ package importintotest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 )
 

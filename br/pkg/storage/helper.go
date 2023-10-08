@@ -5,7 +5,7 @@ package storage
 import (
 	"context"
 
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 func init() {

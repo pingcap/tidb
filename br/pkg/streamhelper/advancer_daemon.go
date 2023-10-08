@@ -7,8 +7,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/owner"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/owner"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 

@@ -26,8 +26,8 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	tmysql "github.com/pingcap/tidb/errno"
-	drivererr "github.com/pingcap/tidb/store/driver/error"
+	tmysql "github.com/pingcap/tidb/pkg/errno"
+	drivererr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )

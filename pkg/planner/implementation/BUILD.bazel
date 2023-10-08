@@ -1,0 +1,43 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "implementation",
+    srcs = [
+        "base.go",
+        "datasource.go",
+        "join.go",
+        "simple_plans.go",
+        "sort.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/planner/implementation",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/expression",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/planner/cardinality",
+        "//pkg/planner/core",
+        "//pkg/planner/memo",
+        "//pkg/statistics",
+    ],
+)
+
+go_test(
+    name = "implementation_test",
+    timeout = "short",
+    srcs = [
+        "base_test.go",
+        "main_test.go",
+    ],
+    embed = [":implementation"],
+    flaky = True,
+    deps = [
+        "//pkg/domain",
+        "//pkg/planner/core",
+        "//pkg/planner/memo",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@io_opencensus_go//stats/view",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

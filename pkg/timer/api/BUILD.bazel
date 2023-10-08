@@ -1,0 +1,48 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "api",
+    srcs = [
+        "client.go",
+        "error.go",
+        "hook.go",
+        "mem_store.go",
+        "store.go",
+        "timer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/timer/api",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/duration",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "//pkg/util/timeutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_robfig_cron_v3//:cron",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "api_test",
+    timeout = "short",
+    srcs = [
+        "client_test.go",
+        "main_test.go",
+        "schedule_policy_test.go",
+        "store_test.go",
+        "timer_test.go",
+    ],
+    embed = [":api"],
+    flaky = True,
+    race = "on",
+    shard_count = 13,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "//pkg/util/timeutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

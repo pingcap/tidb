@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/bazelbuild/buildtools/build"
-	"github.com/pingcap/tidb/util/set"
+	"github.com/pingcap/tidb/pkg/util/set"
 )
 
 func write(path string, f *build.File) error {

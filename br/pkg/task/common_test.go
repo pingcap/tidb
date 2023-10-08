@@ -9,7 +9,7 @@ import (
 
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )

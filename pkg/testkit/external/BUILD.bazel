@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "external",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/pkg/testkit/external",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/parser/model",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

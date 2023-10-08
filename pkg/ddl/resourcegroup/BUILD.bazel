@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "resourcegroup",
+    srcs = [
+        "errors.go",
+        "group.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/resourcegroup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/model",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
+    ],
+)

@@ -24,14 +24,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/ddl/testutil"
-	"github.com/pingcap/tidb/ddl/util/callback"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/testutil"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -209,7 +209,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 	tk.MustExec(sb.String())
 	tk.MustQuery("split table t between (0) and (20000) regions 20;").Check(testkit.Rows("19 1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum", `return(true)`))
 	done := make(chan error, 1)
 	atomic.StoreInt32(&ddl.TestCheckWorkerNumber, 2)
 	testutil.SessionExecInGoroutine(store, "addindexlit", "alter table t add index idx(a);", done)
@@ -230,7 +230,7 @@ func TestAddIndexIngestAdjustBackfillWorker(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/checkBackfillWorkerNum"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkBackfillWorkerNum"))
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
@@ -386,9 +386,9 @@ func TestAddIndexFinishImportError(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d);", i*10000, i*10000))
 	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/mockFinishImportErr", "1*return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockFinishImportErr", "1*return"))
 	tk.MustExec("alter table t add index idx(a);")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/mockFinishImportErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockFinishImportErr"))
 	tk.MustExec("admin check table t;")
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	//nolint: forcetypeassert
@@ -471,11 +471,11 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 		assert.NoError(t, err)
 	}
 	d.SetHook(hook)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport", "1*return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeImport", "1*return"))
 	tk.MustExec("alter table t add unique index idx(b);")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 2 1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionStateBeforeImport"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionStateBeforeImport"))
 }
 
 func TestAddIndexPreCheckFailed(t *testing.T) {
@@ -488,7 +488,7 @@ func TestAddIndexPreCheckFailed(t *testing.T) {
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustExec("insert into t values (1, 1, 1);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/mockIngestCheckEnvFailed", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed", "return"))
 	tk.MustGetErrMsg("alter table t add index idx(b);", "[ddl:8256]Check ingest environment failed: mock error")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/mockIngestCheckEnvFailed"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/ingest/mockIngestCheckEnvFailed"))
 }

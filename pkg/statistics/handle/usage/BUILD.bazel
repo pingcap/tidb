@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "usage",
+    srcs = [
+        "index_usage.go",
+        "stats_usage.go",
+        "table_delta.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/usage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/util",
+        "//pkg/types",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)

@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "rowindexcodec",
+    srcs = ["rowindexcodec.go"],
+    importpath = "github.com/pingcap/tidb/pkg/tablecodec/rowindexcodec",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "rowindexcodec_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "rowindexcodec_test.go",
+    ],
+    embed = [":rowindexcodec"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -60,7 +60,7 @@ func (s *mockGCSSuite) TestDetachedLoadParquet() {
 
 	s.tk.MustExec("TRUNCATE TABLE t;")
 	s.T().Cleanup(func() { executor.TestDetachedTaskFinished.Store(false) })
-	s.enableFailpoint("github.com/pingcap/tidb/executor/testDetachedTaskFinished", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/testDetachedTaskFinished", "return(true)")
 	sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://test-load-parquet/p?endpoint=%s'
 		FORMAT 'parquet' WITH detached;`, gcsEndpoint)
 	rows := s.tk.MustQuery(sql).Rows()
