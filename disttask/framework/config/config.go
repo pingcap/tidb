@@ -44,7 +44,7 @@ var (
 	DefaultDispatchConcurrency = 4
 	// CheckTaskRunningInterval is the interval for loading running/unfinished tasks.
 	CheckTaskRunningInterval = 3 * time.Second
-	// CheckTaskFinishedInterval
+	// CheckTaskFinishedInterval is the interval for checking tasks' state.
 	CheckTaskFinishedInterval = 500 * time.Millisecond
 	// RetrySQLInterval is the initial interval between two SQL retries.
 	RetrySQLInterval = 3 * time.Second
