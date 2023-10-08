@@ -16,9 +16,11 @@ package scheduler
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
@@ -27,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
+	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/logutil"
@@ -561,10 +564,50 @@ func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask
 	metrics.IncDistTaskSubTaskCnt(subtask)
 }
 
+var (
+	// Retryable1105Msgs list the error messages of some retryable error with `1105` code (`ErrUnknown`).
+	Retryable1105Msgs = []string{
+		"Information schema is out of date",
+		"Information schema is changed",
+	}
+)
+
+func IsRetryableError(err error) bool {
+	err = errors.Cause(err) // check the original error
+	mysqlErr, ok := err.(*mysql.MySQLError)
+	if !ok {
+		return false
+	}
+
+	switch mysqlErr.Number {
+	case errno.ErrLockDeadlock: // https://dev.mysql.com/doc/refman/5.7/en/innodb-deadlocks.html
+		return true // retryable error in MySQL
+	case errno.ErrPDServerTimeout,
+		errno.ErrTiKVServerBusy,
+		errno.ErrResolveLockTimeout,
+		errno.ErrInfoSchemaExpired,
+		errno.ErrInfoSchemaChanged,
+		errno.ErrWriteConflictInTiDB,
+		errno.ErrTxnRetryable,
+		errno.ErrWriteConflict,
+		errno.ErrColumnInChange,
+		errno.ErrRegionUnavailable:
+		return true // retryable error in TiDB
+	case errno.ErrUnknown: // the old version of TiDB uses `1105` frequently, this should be compatible.
+		for _, msg := range Retryable1105Msgs {
+			if strings.Contains(mysqlErr.Message, msg) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
 func (s *BaseScheduler) markTaskCancelOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
 		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
+		} else if IsRetryableError(err) {
 		} else if errors.Cause(err) != context.Canceled {
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
 		}
