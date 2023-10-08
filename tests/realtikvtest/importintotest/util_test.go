@@ -17,6 +17,7 @@ package importintotest
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/failpoint"
@@ -42,6 +43,8 @@ var (
 	// NOTE: must end with '/'
 	gcsEndpointFormat = "http://%s:%d/storage/v1/"
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
+
+	maxWaitTime = 30 * time.Second
 )
 
 func TestLoadRemote(t *testing.T) {

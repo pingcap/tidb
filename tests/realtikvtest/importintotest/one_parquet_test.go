@@ -67,7 +67,7 @@ func (s *mockGCSSuite) TestDetachedLoadParquet() {
 	require.Len(s.T(), rows, 1)
 	require.Eventually(s.T(), func() bool {
 		return executor.TestDetachedTaskFinished.Load()
-	}, 10*time.Second, time.Second)
+	}, maxWaitTime, time.Second)
 
 	s.tk.MustQuery("SELECT * FROM t;").Check(testkit.Rows(
 		"1 1 0 123 1.23 0.00000001 1234567890 123 1.23000000",

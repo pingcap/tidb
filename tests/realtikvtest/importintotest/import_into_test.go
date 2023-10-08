@@ -965,7 +965,7 @@ func (s *mockGCSSuite) TestRegisterTask() {
 		resp, err2 := client.GetClient().Get(context.Background(), etcdKey)
 		s.NoError(err2)
 		return len(resp.Kvs) == 1
-	}, 5*time.Second, 300*time.Millisecond)
+	}, maxWaitTime, 300*time.Millisecond)
 	// continue the execution
 	importinto.TestSyncChan <- struct{}{}
 	wg.Wait()
