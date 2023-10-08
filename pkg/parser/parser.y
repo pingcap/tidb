@@ -29,14 +29,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/opcode"
-	"github.com/pingcap/tidb/parser/auth"
-	"github.com/pingcap/tidb/parser/charset"
-	"github.com/pingcap/tidb/parser/types"
-	"github.com/pingcap/tidb/parser/duration"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/pingcap/tidb/pkg/parser/duration"
 )
 
 %}
