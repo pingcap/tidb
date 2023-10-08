@@ -614,15 +614,6 @@ func GetLocalIP() string {
 	return ""
 }
 
-// QueryStrForLog trim the query if the query length more than 4096
-func QueryStrForLog(query string) string {
-	const size = 4096
-	if len(query) > size {
-		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
-	}
-	return query
-}
-
 // CreateCertificates creates and writes a cert based on the params.
 func CreateCertificates(certpath string, keypath string, rsaKeySize int, pubKeyAlgo x509.PublicKeyAlgorithm,
 	signAlgo x509.SignatureAlgorithm) error {
