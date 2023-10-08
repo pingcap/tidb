@@ -189,6 +189,9 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 				logutil.Logger(s.logCtx).Warn("GetGlobalTaskByID meets error", zap.Error(err))
 				continue
 			}
+			if newTask == nil {
+				break
+			}
 			// When the task move to next step or task state changes, the scheduler should exit.
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
