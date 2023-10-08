@@ -836,11 +836,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	w.registerSync(job)
 
 	if runJobErr != nil && !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
-		// Omit the ErrPausedDDLJob
-		w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
-			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		// In test and job is cancelling we can ignore the sleep.
+		// Or error is non-Retryable.
 		if !(intest.InTest && job.IsCancelling()) && errorIsRetryable(runJobErr, job) {
+			// Omit the ErrPausedDDLJob
+			w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
+				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
