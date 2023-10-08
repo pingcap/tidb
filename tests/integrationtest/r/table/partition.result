@@ -396,7 +396,7 @@ PARTITION BY KEY (`col1`)
  PARTITION `pp2` COMMENT 'zhenjiang',
  PARTITION `pp3` COMMENT 'suzhou')
 drop placement policy if exists fivereplicas;
-CREATE PLACEMENT POLICY fivereplicas FOLLOWERS=4;
+CREATE PLACEMENT POLICY fivereplicas WITH REPLICAS=5;
 CREATE TABLE tkey13 (`col1` int, `col2` char(5),`col3` date) placement policy fivereplicas
 PARTITION BY KEY (col1) PARTITIONS 4;
 show create table tkey13;
