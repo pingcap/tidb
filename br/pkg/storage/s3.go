@@ -78,7 +78,6 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-	session *session.Session
 	svc     s3iface.S3API
 	options *backuppb.S3
 }
@@ -263,7 +262,6 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 // NewS3StorageForTest creates a new S3Storage for testing only.
 func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
 	return &S3Storage{
-		session: nil,
 		svc:     svc,
 		options: options,
 	}
@@ -419,7 +417,6 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3Storage := &S3Storage{
-		session: ses,
 		svc:     c,
 		options: &qs,
 	}
