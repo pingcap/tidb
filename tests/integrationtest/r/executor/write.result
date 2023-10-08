@@ -789,3 +789,1102 @@ id	name
 2	b
 set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (id int, name varchar(10)) partition by list  (id) (
+partition p0 values in (3,5,6,9,17),
+partition p1 values in (1,2,10,11,19,20),
+partition p2 values in (4,12,13,14,18),
+partition p3 values in (7,8,15,16,null)
+);
+insert into t values  (1, 'a'),(1,'b');
+alter table t add unique index idx (id);
+Error 1062 (23000): Duplicate entry '1' for key 't.idx'
+delete from t where name='b';
+alter table t add unique index idx (id);
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(10,'c');
+select * from t partition(p1) order by id;
+id	name
+1	a
+2	b
+10	c
+delete from t;
+insert into t values  (1, 'a'),(3,'c'),(4,'e');
+select * from t partition(p0) order by id;
+id	name
+3	c
+select * from t partition(p1) order by id;
+id	name
+1	a
+select * from t partition(p2) order by id;
+id	name
+4	e
+select * from t partition(p3) order by id;
+id	name
+insert into t values (1, 'd'), (3,'f'),(5,'g') on duplicate key update name='x';
+select * from t partition(p0) order by id;
+id	name
+3	x
+5	g
+select * from t partition(p1) order by id;
+id	name
+1	x
+select * from t partition(p2) order by id;
+id	name
+4	e
+select * from t partition(p3) order by id;
+id	name
+insert into t values (3, 'a'), (11,'x') on duplicate key update id=id+1;
+Error 1062 (23000): Duplicate entry '4' for key 't.idx'
+select * from t order by id;
+id	name
+1	x
+3	x
+4	e
+5	g
+insert ignore into t values  (1, 'b'), (5,'a'),(null,'y');
+Level	Code	Message
+Warning	1062	Duplicate entry '1' for key 't.idx'
+Warning	1062	Duplicate entry '5' for key 't.idx'
+select * from t partition(p0) order by id;
+id	name
+3	x
+5	g
+select * from t partition(p1) order by id;
+id	name
+1	x
+select * from t partition(p2) order by id;
+id	name
+4	e
+select * from t partition(p3) order by id;
+id	name
+NULL	y
+insert ignore into t values  (15, 'a'),(17,'a');
+select * from t partition(p0,p1,p2) order by id;
+id	name
+1	x
+3	x
+4	e
+5	g
+17	a
+select * from t partition(p3) order by id;
+id	name
+NULL	y
+15	a
+insert into t values (100, 'd');
+Error 1526 (HY000): Table has no partition for value 100
+delete from t;
+insert into t values  (1, 'a'),(2,'b'),(3,'c');
+update t set name='b' where id=2;
+select * from t partition(p1);
+id	name
+1	a
+2	b
+update t set name='x' where id in (1,2);
+select * from t partition(p1);
+id	name
+1	x
+2	x
+update t set name='y' where id < 3;
+select * from t order by id;
+id	name
+1	y
+2	y
+3	c
+update t set id=2 where id = 1;
+Error 1062 (23000): Duplicate entry '2' for key 't.idx'
+select * from t order by id;
+id	name
+1	y
+2	y
+3	c
+update t set name='z' where id in (1,2,3);
+select * from t order by id;
+id	name
+1	z
+2	z
+3	z
+update t set name='a' limit 3;
+select * from t order by id;
+id	name
+1	a
+2	a
+3	a
+update t set id=id*10 where id in (1,2);
+select * from t order by id;
+id	name
+3	a
+10	a
+20	a
+update t set id=id+17 where id in (3,10);
+Error 1526 (HY000): Table has no partition for value 27
+select * from t order by id;
+id	name
+3	a
+10	a
+20	a
+update t set id=id*2 where id in (3,20);
+Error 1526 (HY000): Table has no partition for value 40
+select * from t order by id;
+id	name
+3	a
+10	a
+20	a
+delete from t;
+replace into t values  (1, 'a'),(2,'b');
+select * from t order by id;
+id	name
+1	a
+2	b
+replace into t values  (3, 'c'),(4,'d'),(7,'f');
+select * from t partition(p0) order by id;
+id	name
+3	c
+select * from t partition(p1) order by id;
+id	name
+1	a
+2	b
+select * from t partition(p2) order by id;
+id	name
+4	d
+select * from t partition(p3) order by id;
+id	name
+7	f
+replace into t values  (1, 'x'),(7,'x');
+select * from t order by id;
+id	name
+1	x
+2	b
+3	c
+4	d
+7	x
+replace into t values  (10,'x'),(50,'x');
+Error 1526 (HY000): Table has no partition for value 50
+select * from t order by id;
+id	name
+1	x
+2	b
+3	c
+4	d
+7	x
+delete from t where id = 3;
+select * from t partition(p0) order by id;
+id	name
+delete from t where id in (1,2);
+select * from t partition(p1) order by id;
+id	name
+delete from t where id in (4,7,10,11);
+select * from t;
+id	name
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t where id < 10;
+select * from t;
+id	name
+insert into t values  (3, 'c'),(4,'d'),(7,'f');
+delete from t limit 3;
+select * from t;
+id	name
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (location varchar(10), id int, a int) partition by list columns (location,id) (
+partition p_west  values in (('w', 1),('w', 2),('w', 3),('w', 4)),
+partition p_east  values in (('e', 5),('e', 6),('e', 7),('e', 8)),
+partition p_north values in (('n', 9),('n',10),('n',11),('n',12)),
+partition p_south values in (('s',13),('s',14),('s',15),('s',16))
+);
+insert into t values  ('w', 1, 1),('w', 1, 2);
+alter table t add unique index idx (location,id);
+Error 1062 (23000): Duplicate entry 'w-1' for key 't.idx'
+delete from t where a=2;
+alter table t add unique index idx (location,id);
+delete from t;
+insert into t values  ('w', 1, 1),('w', 2, 2),('w', 3, 3);
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	1
+w	2	2
+w	3	3
+delete from t;
+insert into t values  ('w', 1, 1),('e', 5, 5),('n', 9, 9);
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	1
+select * from t partition(p_east) order by id;
+location	id	a
+e	5	5
+select * from t partition(p_north) order by id;
+location	id	a
+n	9	9
+select * from t partition(p_south) order by id;
+location	id	a
+insert into t values  ('w', 1, 1) on duplicate key update a=a+1;
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	2
+insert into t values  ('w', 1, 1) on duplicate key update location='s', id=13;
+select * from t partition(p_south) order by id;
+location	id	a
+s	13	2
+select * from t partition(p_west) order by id;
+location	id	a
+insert into t values  ('w', 2, 2), ('w', 1, 1);
+insert into t values  ('w', 2, 3) on duplicate key update id=1;
+Error 1062 (23000): Duplicate entry 'w-1' for key 't.idx'
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	1
+w	2	2
+insert ignore into t values  ('w', 2, 2), ('w', 3, 3), ('n', 10, 10);
+Level	Code	Message
+Warning	1062	Duplicate entry 'w-2' for key 't.idx'
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	1
+w	2	2
+w	3	3
+select * from t partition(p_north) order by id;
+location	id	a
+n	9	9
+n	10	10
+insert ignore into t values  ('w', 4, 4), ('s', 14, 14);
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	1
+w	2	2
+w	3	3
+w	4	4
+select * from t partition(p_south) order by id;
+location	id	a
+s	13	2
+s	14	14
+insert into t values  ('w', 5, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+insert into t values  ('s', 5, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+insert into t values  ('s', 100, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+insert into t values  ('x', 1, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+delete from t;
+insert into t values  ('w', 1, 1),('w', 2, 2),('w', 3, 3);
+update t set a=2 where a=1;
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	2
+w	2	2
+w	3	3
+update t set a=3 where location='w';
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	3
+w	2	3
+w	3	3
+update t set a=4 where location='w' and id=1;
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	4
+w	2	3
+w	3	3
+update t set a=5 where id=1;
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	5
+w	2	3
+w	3	3
+update t set a=a+id where id>1;
+select * from t partition(p_west) order by id,a;
+location	id	a
+w	1	5
+w	2	5
+w	3	6
+update t set id=id+1 where location='w' and id<2;
+Error 1062 (23000): Duplicate entry 'w-2' for key 't.idx'
+select * from t partition(p_west) order by id,a;
+location	id	a
+w	1	5
+w	2	5
+w	3	6
+delete from t;
+insert into t values  ('w', 1, 1), ('w', 2, 2), ('e', 8, 8),('n', 11, 11);
+update t set a=a+1 where id < 20;
+select * from t order by id;
+location	id	a
+w	1	2
+w	2	3
+e	8	9
+n	11	12
+update t set a=a+1 where location in ('w','s','n');
+select * from t order by id;
+location	id	a
+w	1	3
+w	2	4
+e	8	9
+n	11	13
+update t set a=a+1 where location in ('w','s','n') and id in (1,3,5,7,8,9,11);
+select * from t order by id;
+location	id	a
+w	1	4
+w	2	4
+e	8	9
+n	11	14
+update t set a=a+1 where location='n' and id=12;
+select * from t order by id;
+location	id	a
+w	1	4
+w	2	4
+e	8	9
+n	11	14
+update t set a=a+1 where location='n' and id=11;
+select * from t order by id;
+location	id	a
+w	1	4
+w	2	4
+e	8	9
+n	11	15
+update t set id=id+1 where location='w' and id in (1,2);
+Error 1062 (23000): Duplicate entry 'w-2' for key 't.idx'
+select * from t order by id;
+location	id	a
+w	1	4
+w	2	4
+e	8	9
+n	11	15
+update t set id=id+3 where location='w' and id in (1,2);
+Error 1526 (HY000): Table has no partition for value from column_list
+select * from t order by id;
+location	id	a
+w	1	4
+w	2	4
+e	8	9
+n	11	15
+update t set location='s', id=14 where location='e' and id=8;
+select * from t order by id;
+location	id	a
+w	1	4
+w	2	4
+n	11	15
+s	14	9
+delete from t;
+replace into t values  ('w', 1, 1),('w', 2, 2),('w', 3, 3);
+select * from t partition(p_west) order by id;
+location	id	a
+w	1	1
+w	2	2
+w	3	3
+delete from t;
+replace into t values  ('w', 1, 1),('e', 5, 5),('n', 9, 9);
+select * from t order by id;
+location	id	a
+w	1	1
+e	5	5
+n	9	9
+replace into t values  ('w', 1, 2),('n', 10, 10);
+select * from t order by id;
+location	id	a
+w	1	2
+e	5	5
+n	9	9
+n	10	10
+replace into t values  ('w', 5, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+replace into t values  ('s', 5, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+replace into t values  ('s', 100, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+replace into t values  ('x', 1, 5);
+Error 1526 (HY000): Table has no partition for value from column_list
+delete from t where location='w' and id=2;
+select * from t order by id;
+location	id	a
+w	1	2
+e	5	5
+n	9	9
+n	10	10
+delete from t where location='w' and id=1;
+select * from t order by id;
+location	id	a
+e	5	5
+n	9	9
+n	10	10
+delete from t where location in ('w','e','n') and id in (1,2,3,4,5,8,9);
+select * from t order by id;
+location	id	a
+n	10	10
+delete from t where a=10;
+select * from t order by id;
+location	id	a
+replace into t values  ('w', 1, 1),('e', 5, 5),('n', 11, 11);
+delete from t where id < 10;
+select * from t order by id;
+location	id	a
+n	11	11
+delete from t limit 1;
+select * from t order by id;
+location	id	a
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a int) partition by list (a%10) (partition p0 values in (0,1));
+replace into t values  (null);
+Error 1526 (HY000): Table has no partition for value NULL
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+a
+1
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+1	1
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+a
+2
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+select * from t where a = 2;
+a	b
+2	2
+delete from t where a>10;
+select count(1) from t;
+count(1)
+5
+delete from t where a=9;
+select a from t partition (p1) order by a;
+a
+7
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (11);
+Error 1526 (HY000): Table has no partition for value 11
+update t set a=a+10 where a = 2;
+Error 1526 (HY000): Table has no partition for value 12
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (5*b - 4*b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+a
+1
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+1	1
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+a
+2
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+select * from t where a = 2;
+a	b
+2	2
+delete from t where a>10;
+select count(1) from t;
+count(1)
+5
+delete from t where a=9;
+select a from t partition (p1) order by a;
+a
+7
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (11);
+Error 1526 (HY000): Table has no partition for value 11
+update t set a=a+10 where a = 2;
+Error 1526 (HY000): Table has no partition for value 12
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+a
+1
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+1	1
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+a
+2
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+select * from t where a = 2;
+a	b
+2	2
+delete from t where a>10;
+select count(1) from t;
+count(1)
+5
+delete from t where a=9;
+select a from t partition (p1) order by a;
+a
+7
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (11);
+Error 1526 (HY000): Table has no partition for value from column_list
+update t set a=a+10 where a = 2;
+Error 1526 (HY000): Table has no partition for value from column_list
+drop table if exists t;
+create table t (a bigint, b bigint GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list columns(b) (partition p0 values in (1,2,3,4,5), partition p1 values in (6,7,8,9,10));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+a
+1
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+1	1
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+a
+2
+3
+5
+select a from t partition (p1) order by a;
+a
+7
+9
+select * from t where a = 1;
+a	b
+select * from t where a = 2;
+a	b
+2	2
+delete from t where a>10;
+select count(1) from t;
+count(1)
+5
+delete from t where a=9;
+select a from t partition (p1) order by a;
+a
+7
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (11);
+Error 1526 (HY000): Table has no partition for value from column_list
+update t set a=a+10 where a = 2;
+Error 1526 (HY000): Table has no partition for value from column_list
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+a
+2001
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 1;
+a	b
+2001	2001
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+a
+2002
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 1;
+a	b
+select * from t where a = 2;
+a	b
+2002	2002
+delete from t where a>10;
+select count(1) from t;
+count(1)
+5
+delete from t where a=9;
+select a from t partition (p1) order by a;
+a
+2007
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (11);
+Error 1526 (HY000): Table has no partition for value 2011
+update t set a=a+10 where a = 2;
+Error 1526 (HY000): Table has no partition for value 2012
+delete from t;
+insert into t (a) values (2001),(2003),(2005),(2007),(2009);
+select a from t partition (p0) order by a;
+a
+2001
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 2001;
+a	b
+2001	2001
+update t set a=a+1 where a = 2001;
+select a from t partition (p0) order by a;
+a
+2002
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 2001;
+a	b
+select * from t where a = 2002;
+a	b
+2002	2002
+delete from t where a>2010;
+select count(1) from t;
+count(1)
+5
+delete from t where a=2009;
+select a from t partition (p1) order by a;
+a
+2007
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (2011);
+Error 1526 (HY000): Table has no partition for value 2011
+update t set a=a+10 where a = 2002;
+Error 1526 (HY000): Table has no partition for value 2012
+drop table if exists t;
+create table t (a year, b year GENERATED ALWAYS AS (3*a - 2*a) STORED, index idx(a)) partition by list (1 + b - 1) (partition p0 values in (2001,2002,2003,2004,2005), partition p1 values in (2006,2007,2008,2009));
+insert into t (a) values (1),(3),(5),(7),(9);
+select a from t partition (p0) order by a;
+a
+2001
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 1;
+a	b
+2001	2001
+update t set a=a+1 where a = 1;
+select a from t partition (p0) order by a;
+a
+2002
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 1;
+a	b
+select * from t where a = 2;
+a	b
+2002	2002
+delete from t where a>10;
+select count(1) from t;
+count(1)
+5
+delete from t where a=9;
+select a from t partition (p1) order by a;
+a
+2007
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (11);
+Error 1526 (HY000): Table has no partition for value 2011
+update t set a=a+10 where a = 2;
+Error 1526 (HY000): Table has no partition for value 2012
+delete from t;
+insert into t (a) values (2001),(2003),(2005),(2007),(2009);
+select a from t partition (p0) order by a;
+a
+2001
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 2001;
+a	b
+2001	2001
+update t set a=a+1 where a = 2001;
+select a from t partition (p0) order by a;
+a
+2002
+2003
+2005
+select a from t partition (p1) order by a;
+a
+2007
+2009
+select * from t where a = 2001;
+a	b
+select * from t where a = 2002;
+a	b
+2002	2002
+delete from t where a>2010;
+select count(1) from t;
+count(1)
+5
+delete from t where a=2009;
+select a from t partition (p1) order by a;
+a
+2007
+select count(1) from t;
+count(1)
+4
+insert into t (a) values (2011);
+Error 1526 (HY000): Table has no partition for value 2011
+update t set a=a+10 where a = 2002;
+Error 1526 (HY000): Table has no partition for value 2012
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
+partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+a
+2020-09-28 17:03:38
+select a from t where a = '2020-09-28 17:03:40';
+a
+2020-09-28 17:03:40
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+a
+select a from t partition (p1) order by a;
+a
+2020-09-28 17:03:40
+2020-09-28 17:03:41
+drop table if exists t;
+create table t (a datetime, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
+partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+a
+2020-09-28 17:03:38
+select a from t where a = '2020-09-28 17:03:40';
+a
+2020-09-28 17:03:40
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+a
+select a from t partition (p1) order by a;
+a
+2020-09-28 17:03:40
+2020-09-28 17:03:41
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list (1 + b - 1) (
+partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+a
+2020-09-28 17:03:38
+select a from t where a = '2020-09-28 17:03:40';
+a
+2020-09-28 17:03:40
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+a
+select a from t partition (p1) order by a;
+a
+2020-09-28 17:03:40
+2020-09-28 17:03:41
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list (1 + b - 1) (
+partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+a
+2020-09-28 17:03:38
+select a from t where a = '2020-09-28 17:03:40';
+a
+2020-09-28 17:03:40
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+a
+select a from t partition (p1) order by a;
+a
+2020-09-28 17:03:40
+2020-09-28 17:03:41
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) VIRTUAL, index idx(a)) partition by list columns(b) (
+partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+a
+2020-09-28 17:03:38
+select a from t where a = '2020-09-28 17:03:40';
+a
+2020-09-28 17:03:40
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+a
+select a from t partition (p1) order by a;
+a
+2020-09-28 17:03:40
+2020-09-28 17:03:41
+drop table if exists t;
+create table t (a timestamp, b bigint GENERATED ALWAYS AS (to_seconds(a)) STORED, index idx(a)) partition by list columns(b) (
+partition p0 values in (to_seconds('2020-09-28 17:03:38'),to_seconds('2020-09-28 17:03:39')),
+partition p1 values in (to_seconds('2020-09-28 17:03:40'),to_seconds('2020-09-28 17:03:41')));
+insert into t (a) values  ('2020-09-28 17:03:38'),('2020-09-28 17:03:40');
+select a from t partition (p0);
+a
+2020-09-28 17:03:38
+select a from t where a = '2020-09-28 17:03:40';
+a
+2020-09-28 17:03:40
+update t set a='2020-09-28 17:03:41' where a = '2020-09-28 17:03:38';
+select a from t partition (p0);
+a
+select a from t partition (p1) order by a;
+a
+2020-09-28 17:03:40
+2020-09-28 17:03:41
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+set @@session.tidb_enable_list_partition = ON;
+drop table if exists t;
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) VIRTUAL, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
+insert into t (a) values  ('aaa'),('abc'),('acd');
+select a from t partition (p0) order by a;
+a
+aaa
+abc
+acd
+select * from t where a = 'abc' order by a;
+a	b
+abc	a
+update t set a='bbb' where a = 'aaa';
+select a from t partition (p0) order by a;
+a
+abc
+acd
+select a from t partition (p1) order by a;
+a
+bbb
+select * from t where a = 'bbb' order by a;
+a	b
+bbb	b
+drop table if exists t;
+create table t (a varchar(10), b varchar(1) GENERATED ALWAYS AS (substr(a,1,1)) STORED, index idx(a)) partition by list columns(b) (partition p0 values in ('a','c'), partition p1 values in ('b','d'));
+insert into t (a) values  ('aaa'),('abc'),('acd');
+select a from t partition (p0) order by a;
+a
+aaa
+abc
+acd
+select * from t where a = 'abc' order by a;
+a	b
+abc	a
+update t set a='bbb' where a = 'aaa';
+select a from t partition (p0) order by a;
+a
+abc
+acd
+select a from t partition (p1) order by a;
+a
+bbb
+select * from t where a = 'bbb' order by a;
+a	b
+bbb	b
+drop table if exists t;
+set @@session.tidb_enable_list_partition = default;
+drop table if exists t12;
+create table t12(d decimal(15,2));
+insert into t12 values('1,9999.00');
+Error 1366 (HY000): Incorrect decimal value: '1,9999.00' for column 'd' at row 1
+set sql_mode='';
+insert into t12 values('1,999.00');
+SELECT * FROM t12;
+d
+1.00
+drop table t12;
+set sql_mode=default;
+drop table if exists t, t1;
+create table t(a varchar(1), index idx(a));
+create table t1(a varchar(5), index idx(a));
+insert into t values('a'), ('b');
+insert into t1 values('a'), ('bbbbb');
+update /*+ INL_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+select * from t;
+a
+a
+b
+update /*+ INL_HASH_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+select * from t;
+a
+a
+b
+update /*+ INL_MERGE_JOIN(t) */ t, t1 set t.a='a' where t.a=t1.a;
+select * from t;
+a
+a
+b
+drop table if exists t, t1;
+drop table if exists t1;
+create table t1(a varchar(10) collate utf8mb4_general_ci);
+insert into t1 values ('a');
+update t1 set a = 'A';
+select * from t1;
+a
+A
+drop table t1;
+drop table if exists t1;
+set @@tidb_enable_clustered_index = 'int_only';
+create table t1 (i varchar(20) unique key) collate=utf8mb4_general_ci;
+insert into t1 values ('a');
+replace into t1 values ('A');
+select * from t1;
+i
+A
+drop table t1;
+drop table if exists t1, t2, t3;
+create table t1 ( c_int int, c_str varchar(40) character set ascii collate ascii_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str));
+create table t2 ( c_int int, c_str varchar(40) character set latin1 collate latin1_bin, primary key(c_int, c_str(8)) clustered , unique key(c_str));
+insert into t1 values (3, 'fervent brattain');
+insert into t2 values (3, 'fervent brattain');
+admin check table t1;
+
+admin check table t2;
+
+create table t3 (x varchar(40) CHARACTER SET ascii COLLATE ascii_bin, UNIQUE KEY uk(x(4)));
+insert into t3 select 'abc ';
+insert into t3 select 'abc d';
+Error 1062 (23000): Duplicate entry 'abc ' for key 't3.uk'
+drop table if exists t1, t2, t3;
+drop table if exists t_int;
+create table t_int(column1 int, column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+insert into t_int(column1) values (99);
+Error 1264 (22003): Out of range value for column 'column2' at row 1
+set @@sql_mode = '';
+insert into t_int(column1) values (99);
+Level	Code	Message
+Warning	1264	Out of range value for column 'column2' at row 1
+select * from t_int;
+column1	column2
+99	0
+drop table if exists t_float;
+create table t_float(column1 float, column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+insert into t_float(column1) values (12.95);
+Error 1264 (22003): Out of range value for column 'column2' at row 1
+set @@sql_mode = '';
+insert into t_float(column1) values (12.95);
+Level	Code	Message
+Warning	1264	Out of range value for column 'column2' at row 1
+select * from t_float;
+column1	column2
+12.95	0
+drop table if exists t_decimal;
+create table t_decimal(column1 decimal(20,10), column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+insert into t_decimal(column1) values (123.456e-2);
+Error 1264 (22003): Out of range value for column 'column2' at row 1
+set @@sql_mode = '';
+insert into t_decimal(column1) values (123.456e-2);
+Level	Code	Message
+Warning	1264	Out of range value for column 'column2' at row 1
+select * from t_decimal;
+column1	column2
+1.2345600000	0
+drop table if exists t_varchar;
+create table t_varchar(column1 varchar(10), column2 int unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+insert into t_varchar(column1) values ('87.12');
+Error 1264 (22003): Out of range value for column 'column2' at row 1
+set @@sql_mode = '';
+insert into t_varchar(column1) values ('87.12');
+Level	Code	Message
+Warning	1264	Out of range value for column 'column2' at row 1
+select * from t_varchar;
+column1	column2
+87.12	0
+drop table if exists t_union;
+create table t_union(column1 float, column2 int unsigned generated always as(column1-100), column3 float unsigned generated always as(column1-100));
+set @@sql_mode = DEFAULT;
+insert into t_union(column1) values (12.95);
+Error 1264 (22003): Out of range value for column 'column2' at row 1
+set @@sql_mode = '';
+insert into t_union(column1) values (12.95);
+Level	Code	Message
+Warning	1264	Out of range value for column 'column2' at row 1
+Warning	1264	Out of range value for column 'column3' at row 1
+select * from t_union;
+column1	column2	column3
+12.95	0	0
+set @@sql_mode = default;
+drop table t_int, t_float, t_decimal, t_varchar, t_union;
+drop table if exists t;
+create table t (a timestamp on update current_timestamp(0), b int, primary key (a) clustered, key idx (a));
+insert into t values ('2023-06-11 10:00:00', 1);
+update t force index(primary) set b = 10 where a = '2023-06-11 10:00:00';
+admin check table t;
+
+drop table if exists t;

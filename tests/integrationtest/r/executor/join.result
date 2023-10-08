@@ -633,3 +633,40 @@ a1	a2	b1	b2	c1	c2
 1	2	1	3	NULL	NULL
 2	2	2	3	NULL	NULL
 3	2	NULL	NULL	3	4
+set sql_mode = 'ONLY_FULL_GROUP_BY';
+drop table if exists events;
+create table events (clock int, source int);
+SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock;
+clock	source	clock
+SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock;
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__join.e2.clock' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+drop table if exists tpj1,tpj2;
+create table tpj1 (id int, b int,  unique index (id));
+create table tpj2 (id int, b int,  unique index (id));
+insert into tpj1 values  (1,1);
+insert into tpj2 values  (1,1);
+select tpj1.b,tpj2.b from tpj1 left join tpj2 on tpj1.id=tpj2.id where tpj1.id=1;
+b	b
+1	1
+set sql_mode = default;
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (id int);
+create table t2 (id int);
+insert into t1 values (1);
+insert into t2 values (1);
+SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1));
+Error 1105 (HY000): ON condition doesn't support subqueries yet
+SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;
+NULL
+NULL
+drop table if exists t0;
+drop view if exists v0;
+CREATE TABLE t0(c0 TEXT);
+CREATE VIEW v0(c0) AS SELECT NULL;
+SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
+c0
+NULL
+SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
+c0
+NULL
