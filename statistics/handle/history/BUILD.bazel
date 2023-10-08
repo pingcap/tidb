@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//sessionctx",
         "//statistics/handle/cache",
+        "//statistics/handle/storage",
         "//statistics/handle/util",
         "@com_github_pingcap_errors//:errors",
     ],
