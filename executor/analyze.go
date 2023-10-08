@@ -355,6 +355,8 @@ func (e *AnalyzeExec) handleResultsError(
 	resultsCh <-chan *statistics.AnalyzeResults,
 ) error {
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
+	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
+	partitionStatsConcurrency = min(concurrency, partitionStatsConcurrency)
 	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	if partitionStatsConcurrency > 1 {
