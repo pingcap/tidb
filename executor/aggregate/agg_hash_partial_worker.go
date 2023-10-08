@@ -180,7 +180,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 			}
 			allMemDelta += memDelta
 		}
-		partialResultsIdxs[finalWorkerIdx] += 1
+		partialResultsIdxs[finalWorkerIdx]++
 	}
 	w.memTracker.Consume(allMemDelta)
 	return nil
