@@ -467,7 +467,6 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 	if d.Task.State == proto.TaskStatePending {
 		if d.Task.Concurrency == 0 {
 			d.Task.Concurrency = disttaskcfg.DefaultSubtaskConcurrency
-
 		}
 		if d.Task.Concurrency > disttaskcfg.MaxSubtaskConcurrency {
 			d.Task.Concurrency = disttaskcfg.MaxSubtaskConcurrency
