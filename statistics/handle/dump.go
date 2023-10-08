@@ -15,7 +15,10 @@
 package handle
 
 import (
+	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -25,8 +28,12 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
+
+// TestLoadStatsErr is only for test.
+type TestLoadStatsErr struct{}
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
@@ -198,7 +205,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 }
 
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
-func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *storage.JSONTable) error {
+func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *storage.JSONTable) error {
 	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
@@ -211,16 +218,52 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *storage.JS
 			return errors.Trace(err)
 		}
 	} else {
+		// load partition statistics concurrently
+		taskCh := make(chan model.PartitionDefinition, len(pi.Definitions))
 		for _, def := range pi.Definitions {
-			tbl := jsonTbl.Partitions[def.Name.L]
-			if tbl == nil {
-				continue
-			}
-			err := h.loadStatsFromJSON(tableInfo, def.ID, tbl)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			taskCh <- def
 		}
+		close(taskCh)
+		var wg sync.WaitGroup
+		e := new(atomic.Pointer[error])
+		for i := 0; i < 12; i++ { // TODO: make the concurrency configurable
+			wg.Add(1)
+			h.gpool.Go(func() {
+				defer func() {
+					if r := recover(); r != nil {
+						err := errors.New(fmt.Sprintf("%v", r))
+						e.CompareAndSwap(nil, &err)
+					}
+					wg.Done()
+				}()
+
+				for def := range taskCh {
+					tbl := jsonTbl.Partitions[def.Name.L]
+					if tbl == nil {
+						continue
+					}
+
+					loadFunc := h.loadStatsFromJSON
+					if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
+						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *storage.JSONTable) error)
+					}
+
+					err := loadFunc(tableInfo, def.ID, tbl)
+					if err != nil {
+						e.CompareAndSwap(nil, &err)
+						return
+					}
+					if e.Load() != nil {
+						return
+					}
+				}
+			})
+		}
+		wg.Wait()
+		if e.Load() != nil {
+			return *e.Load()
+		}
+
 		// load global-stats if existed
 		if globalStats, ok := jsonTbl.Partitions[globalstats.TiDBGlobalStats]; ok {
 			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
