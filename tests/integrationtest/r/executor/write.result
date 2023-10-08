@@ -918,7 +918,7 @@ id	name
 10	a
 20	a
 update t set id=id+17 where id in (3,10);
-Error 1526 (HY000): Table has no partition for value 27
+Error 1062 (23000): Duplicate entry '20' for key 't.idx'
 select * from t order by id;
 id	name
 3	a
