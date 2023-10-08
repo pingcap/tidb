@@ -122,7 +122,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opt)
 	require.NoError(t, err)
-	defer server.Stop()
+	t.Cleanup(server.Stop)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
