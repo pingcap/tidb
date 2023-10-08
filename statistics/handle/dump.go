@@ -231,7 +231,7 @@ func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema
 			h.gpool.Go(func() {
 				defer func() {
 					if r := recover(); r != nil {
-						err := errors.New(fmt.Sprintf("%v", r))
+						err := fmt.Errorf("%v", r)
 						e.CompareAndSwap(nil, &err)
 					}
 					wg.Done()
