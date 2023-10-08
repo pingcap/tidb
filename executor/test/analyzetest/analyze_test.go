@@ -2723,8 +2723,6 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -2736,11 +2734,9 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tbl = h.GetTableStats(tableInfo)
-	require.Equal(t, tbl.Version, lastVersion) // global stats not updated
+	require.Greater(t, tbl.Version, lastVersion) // global stats updated
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
@@ -2862,10 +2858,8 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-	))
+	rows := tk.MustQuery("show warnings").Rows()
+	require.Len(t, rows, 0)
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
@@ -3226,8 +3220,9 @@ func TestAnalyzeMVIndex(t *testing.T) {
 			"6 test t  analyze index ij_char 189 finished",
 		))
 
-	// 3. check stats loading status and async load
-	// 3.1. now, stats on all indexes should be allEvicted, but these queries should trigger async loading
+	// 3. test stats loading
+	// 3.1. turn off sync loading, stats on all indexes should be allEvicted, but these queries should trigger async loading
+	tk.MustExec("set session tidb_stats_load_sync_wait = 0")
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
 		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
@@ -3282,7 +3277,34 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
+	// 3.4. clean up the stats and re-analyze the table
+	tk.MustExec("drop stats t")
+	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
+	// 3.5. turn on the sync loading, stats on mv indexes should be loaded
+	tk.MustExec("set session tidb_stats_load_sync_wait = 1000")
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+
 	// 4. check stats content in the memory
+	require.NoError(t, h.LoadNeededHistograms())
 	tk.MustQuery("show stats_meta").CheckAt([]int{0, 1, 4, 5}, testkit.Rows("test t 0 27"))
 	tk.MustQuery("show stats_histograms").CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
 		// db_name, table_name, column_name, is_index, distinct_count, null_count, avg_col_size, correlation, load_status
@@ -3290,7 +3312,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t ia 1 1 0 0 0 allLoaded",
 		"test t ij_signed 1 11 0 0 0 allLoaded",
 		"test t ij_unsigned 1 6 0 0 0 allLoaded",
-		"test t ij_double 1 7 0 0 0 allEvicted",
+		"test t ij_double 1 7 0 0 0 allLoaded",
 		"test t ij_binary 1 15 0 0 0 allLoaded",
 		"test t ij_char 1 11 0 0 0 allLoaded",
 	))
@@ -3303,6 +3325,9 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t  ij_unsigned 1 0 27",
 		"test t  ij_unsigned 1 3 27",
 		"test t  ij_unsigned 1 4 27",
+		"test t  ij_double 1 -21.5 27",
+		"test t  ij_double 1 -12.000005 8",
+		"test t  ij_double 1 0 27",
 		"test t  ij_binary 1 0000 26",
 		"test t  ij_binary 1 1234 19",
 		"test t  ij_binary 1 3796 1",
@@ -3323,6 +3348,10 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t  ij_unsigned 1 0 16 16 12 12 0",
 		"test t  ij_unsigned 1 1 43 27 600 600 0",
 		"test t  ij_unsigned 1 2 54 11 3112 3112 0",
+		"test t  ij_double 1 0 19 19 0.000005 0.000005 0",
+		"test t  ij_double 1 1 46 27 2.15 2.15 0",
+		"test t  ij_double 1 2 73 27 10.555555 10.555555 0",
+		"test t  ij_double 1 3 92 19 10.9876 10.9876 0",
 		"test t  ij_binary 1 0 8 8 5678 5678 0",
 		"test t  ij_binary 1 1 35 27 aaaaaa aaaaaa 0",
 		"test t  ij_binary 1 2 59 24 asdf asdf 0",
@@ -3344,4 +3373,44 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		"test t  ij_char 1 6 135 24 qwer qwer 0",
 		"test t  ij_char 1 7 162 27 yuiop yuiop 0",
 	))
+}
+
+func TestAnalyzePartitionVerify(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	sql := "create table t(a int,b varchar(100),c int,INDEX idx_c(c)) PARTITION BY RANGE ( a ) ("
+	for n := 100; n < 1000; n = n + 100 {
+		sql += "PARTITION p" + fmt.Sprint(n) + " VALUES LESS THAN (" + fmt.Sprint(n) + "),"
+	}
+	sql += "PARTITION p" + fmt.Sprint(1000) + " VALUES LESS THAN MAXVALUE)"
+	tk.MustExec(sql)
+	// insert random data into table t
+	insertStr := "insert into t (a,b,c) values(0, 'abc', 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(" ,(%d, '%s', %d)", i, "abc", i)
+	}
+	insertStr += ";"
+	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t")
+
+	result := tk.MustQuery("show stats_histograms where Db_name='test'").Sort()
+	require.NotNil(t, result)
+	require.Len(t, result.Rows(), 4+4*10) // 4 columns * 10 partiion+ 4 global columns
+	for _, row := range result.Rows() {
+		if row[2] == "global" {
+			if row[3] == "b" {
+				// global column b has 1 distinct value
+				require.Equal(t, "1", row[6])
+			} else {
+				require.Equal(t, "1000", row[6])
+			}
+		} else {
+			if row[3] == "b" {
+				require.Equal(t, "1", row[6])
+			} else {
+				require.Equal(t, "100", row[6])
+			}
+		}
+	}
 }

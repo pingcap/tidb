@@ -293,8 +293,9 @@ connection default;
 
 # TestImportIntoPrivilegeNegativeCase
 CREATE USER 'test_import_into'@'localhost';
+GRANT SELECT ON privilege__privileges.* TO 'test_import_into'@'localhost';
 CREATE TABLE IF NOT EXISTS t(a int);
-connect (test_import_into,localhost,test_import_into,,);
+connect (test_import_into,localhost,test_import_into,,privilege__privileges);
 connection test_import_into;
 --error ErrTableaccessDenied
 IMPORT INTO t FROM '/file.csv';

@@ -1,0 +1,62 @@
+set @@tidb_analyze_version = 1;
+drop table if exists t, a, x, y, z;
+create table t(a int, b varchar(10), index idx_b (b));
+create table a(a int, b varchar(10), index idx_b (b));
+create table x(a int, b varchar(10), index idx_b (b));
+create table y(a int, b varchar(10), index idx_b (b));
+create table z(a int, b varchar(10), index idx_b (b));
+lock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z;
+lock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z;
+Level	Code	Message
+Warning	1105	skip locking locked tables: statistics__lock_table_stats.a, statistics__lock_table_stats.t, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z
+unlock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z;
+set @@tidb_analyze_version = default;
+set @@tidb_analyze_version = 1;
+drop table if exists t;
+create table t(a int, b varchar(10), index idx_b (b));
+analyze table t;
+lock stats t;
+show stats_locked;
+Db_name	Table_name	Partition_name	Status
+statistics__lock_table_stats	t		locked
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant insert on mysql.* to myuser@localhost;
+show stats_locked;
+Error 1142 (42000): SHOW command denied to user 'myuser'@'localhost' for table 'stats_table_locked'
+grant select on mysql.* to myuser@localhost;
+flush privileges;
+show stats_locked;
+Db_name	Table_name	Partition_name	Status
+statistics__lock_table_stats	t		locked
+unlock stats t;
+set @@tidb_analyze_version = 1;
+drop table if exists t;
+create table t(a int, b varchar(10), index idx_b (b));
+analyze table t;
+lock stats t;
+select count(*) from mysql.stats_table_locked;
+count(*)
+1
+unlock stats t;
+select count(*) from mysql.stats_table_locked;
+count(*)
+0
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant delete on statistics__lock_table_stats.* to myuser@localhost;
+lock stats t;
+Error 1142 (42000): INSERT command denied to user 'myuser'@'localhost' for table 't'
+unlock stats t;
+Error 1142 (42000): INSERT command denied to user 'myuser'@'localhost' for table 't'
+grant insert on statistics__lock_table_stats.* to myuser@localhost;
+flush privileges;
+lock stats t;
+Error 1142 (42000): SELECT command denied to user 'myuser'@'localhost' for table 't'
+unlock stats t;
+Error 1142 (42000): SELECT command denied to user 'myuser'@'localhost' for table 't'
+grant select on statistics__lock_table_stats.* to myuser@localhost;
+flush privileges;
+lock stats t;
+unlock stats t;
+set @@tidb_analyze_version = default;

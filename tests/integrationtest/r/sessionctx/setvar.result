@@ -166,7 +166,7 @@ SELECT * FROM t WHERE b < 5 AND a = 2;
 a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 SELECT /*+ SET_VAR(tidb_distsql_scan_concurrency=10) */ * FROM t WHERE b < 5 AND a = 2;
 a	b
 select @@last_plan_from_cache;
@@ -176,7 +176,7 @@ SELECT * FROM t WHERE b < 5 AND a = 2;
 a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select /*+ set_var(tidb_opt_agg_push_down=0) */ @@tidb_opt_agg_push_down;
 @@tidb_opt_agg_push_down
 0

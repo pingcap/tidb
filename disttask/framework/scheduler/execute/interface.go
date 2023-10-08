@@ -32,5 +32,6 @@ type SubtaskExecutor interface {
 	// The subtask meta can be updated in place.
 	OnFinished(ctx context.Context, subtask *proto.Subtask) error
 	// Rollback is used to roll back all subtasks.
+	// TODO: right now all impl of Rollback is empty, maybe we can remove it.
 	Rollback(context.Context) error
 }

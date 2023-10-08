@@ -30,27 +30,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestJoinPanic2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set sql_mode = 'ONLY_FULL_GROUP_BY'")
-	tk.MustExec("drop table if exists events")
-	tk.MustExec("create table events (clock int, source int)")
-	tk.MustQuery("SELECT * FROM events e JOIN (SELECT MAX(clock) AS clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
-	err := tk.ExecToErr("SELECT * FROM events e JOIN (SELECT clock FROM events e2 GROUP BY e2.source) e3 ON e3.clock=e.clock")
-	require.Error(t, err)
-
-	// Test for PR 18983, use to detect race.
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tpj1,tpj2;")
-	tk.MustExec("create table tpj1 (id int, b int,  unique index (id));")
-	tk.MustExec("create table tpj2 (id int, b int,  unique index (id));")
-	tk.MustExec("insert into tpj1 values  (1,1);")
-	tk.MustExec("insert into tpj2 values  (1,1);")
-	tk.MustQuery("select tpj1.b,tpj2.b from tpj1 left join tpj2 on tpj1.id=tpj2.id where tpj1.id=1;").Check(testkit.Rows("1 1"))
-}
-
 func TestJoinInDisk(t *testing.T) {
 	origin := config.RestoreFunc()
 	defer origin()
@@ -904,38 +883,6 @@ func TestJoinLeak(t *testing.T) {
 	require.NoError(t, result.Close())
 
 	tk.MustExec("set @@tidb_hash_join_concurrency=5")
-}
-
-func TestSubqueryInJoinOn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t1 (id int)")
-	tk.MustExec("create table t2 (id int)")
-	tk.MustExec("insert into t1 values (1)")
-	tk.MustExec("insert into t2 values (1)")
-
-	err := tk.ExecToErr("SELECT * FROM t1 JOIN t2 on (t2.id < all (SELECT 1))")
-	require.Error(t, err)
-}
-
-func TestIssue15850JoinNullValue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("SELECT * FROM (select null) v NATURAL LEFT JOIN (select null) v1;").Check(testkit.Rows("<nil>"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-
-	tk.MustExec("drop table if exists t0;")
-	tk.MustExec("drop view if exists v0;")
-	tk.MustExec("CREATE TABLE t0(c0 TEXT);")
-	tk.MustExec("CREATE VIEW v0(c0) AS SELECT NULL;")
-	tk.MustQuery("SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;").Check(testkit.Rows("<nil>"))
-	require.Equal(t, uint16(0), tk.Session().GetSessionVars().StmtCtx.WarningCount())
 }
 
 func TestNullEmptyAwareSemiJoin(t *testing.T) {
