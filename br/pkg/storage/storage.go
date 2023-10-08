@@ -215,6 +215,7 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
+		// TODO(lance6716): use backend.S3.Provider to switch to ks3
 		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
