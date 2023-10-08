@@ -134,14 +134,14 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	tk.MustExec("create table t_rowid (a int, b bigint, c varchar(255));")
 	tk.MustExec("create table t_int_handle (a bigint primary key, b varchar(255));")
 	tk.MustExec("create table t_common_handle (a int, b bigint, c varchar(255), primary key (a, c) clustered);")
-	// tk.MustExec(`create table t_partition (a bigint primary key, b int, c char(10)) partition by hash(a) partitions 4;`)
+	tk.MustExec(`create table t_partition (a bigint primary key, b int, c char(10)) partition by hash(a) partitions 2;`)
 	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t_rowid values (%d, %d, '%d');", i, i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_int_handle values (%d, '%d');", i, i))
 		tk.MustExec(fmt.Sprintf("insert into t_common_handle values (%d, %d, '%d');", i, i, i))
-		// tk.MustExec(fmt.Sprintf("insert into t_partition values (%d, %d, '%d');", i, i, i))
+		tk.MustExec(fmt.Sprintf("insert into t_partition values (%d, %d, '%d');", i, i, i))
 	}
-	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle" /*"t_partition"*/}
+	tableNames := []string{"t_rowid", "t_int_handle", "t_common_handle", "t_partition"}
 
 	testCases := []struct {
 		name            string
@@ -169,5 +169,5 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 	}
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	variable.CloudStorageURI.Store("")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
 }
