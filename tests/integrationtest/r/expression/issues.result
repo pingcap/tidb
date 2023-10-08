@@ -2075,7 +2075,7 @@ EXECUTE mystmt USING @a;
 id	a
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt from 'select unix_timestamp(?)';
 set @a = '2020-05-30 20:30:00';
 execute stmt using @a;

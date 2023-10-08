@@ -603,15 +603,10 @@ select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
 select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
 --sorted_result
 select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
 --sorted_result
 select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
@@ -619,7 +614,6 @@ select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
 --sorted_result
 select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
---sorted_result
 explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 --sorted_result
 select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow";

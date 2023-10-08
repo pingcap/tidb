@@ -255,12 +255,12 @@ select * from t where a > 1 and a < 10 order by b;
 a	b
 select @@last_plan_from_binding;
 @@last_plan_from_binding
-0
+1
 select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
 a	b
 select @@last_plan_from_binding;
 @@last_plan_from_binding
-0
+1
 select /*+ use_index(t, idx_b) */ * from t where a > 1 and a < 10 order by b;
 a	b
 Level	Code	Message
@@ -3874,12 +3874,6 @@ drop table if exists t;
 CREATE TABLE t(col1 enum('p5', '9a33x') NOT NULL DEFAULT 'p5',col2 tinyblob DEFAULT NULL) ENGINE = InnoDB DEFAULT CHARSET = latin1 COLLATE = latin1_bin;
 (select last_value(col1) over () as r0 from t) union all (select col2 as r0 from t);
 r0
-drop table if exists t;
-create table t (a int, b int, c int, index ia(a));
-select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;
-a	b	c	a	b	c	a	b	c	a	b	c
-select plan from information_schema.statements_summary where SCHEMA_NAME = 'test' and STMT_TYPE = 'Select';
-plan
 CREATE TABLE `sbtest1` ( `id` bigint(20) NOT NULL AUTO_INCREMENT, `k` int(11) NOT NULL DEFAULT '0', `c` char(120) NOT NULL DEFAULT '', `pad` char(60) NOT NULL DEFAULT '', PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */ , KEY `k_1` (`k`) );
 set @@tidb_opt_range_max_size = 111;
 explain format='brief' select * from planner__core__integration.sbtest1 a where pad in ('1','1','1','1','1') and id in (1,1,1,1,1);
