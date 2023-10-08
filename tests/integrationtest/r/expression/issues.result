@@ -2811,3 +2811,25 @@ select 1 as c0 from (t0 as ref_88) where (subq_0.c4) >= (subq_0.c4)
 );
 c4
 23.0000
+drop table if exists poi_clearing_time_topic;
+CREATE TABLE poi_clearing_time_topic (effective_date datetime DEFAULT NULL , clearing_time int(11) DEFAULT NULL);
+insert into poi_clearing_time_topic values ('2023:08:25', 1);
+SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;
+GROUP_CONCAT(effective_date order by stlmnt_hour DESC)
+2023-08-25 00:00:00
+SELECT @@information_schema_stats_expiry;
+@@information_schema_stats_expiry
+86400
+/*!80000 SET SESSION information_schema_stats_expiry=0 */;
+SELECT @@information_schema_stats_expiry;
+@@information_schema_stats_expiry
+0
+SELECT @@GLOBAL.information_schema_stats_expiry;
+@@GLOBAL.information_schema_stats_expiry
+86400
+/*!80000 SET GLOBAL information_schema_stats_expiry=0 */;
+SELECT @@GLOBAL.information_schema_stats_expiry;
+@@GLOBAL.information_schema_stats_expiry
+0
+set @@SESSION.information_schema_stats_expiry=default;
+set @@GLOBAL.information_schema_stats_expiry=default;
