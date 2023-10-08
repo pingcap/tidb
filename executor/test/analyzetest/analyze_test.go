@@ -2736,7 +2736,7 @@ PARTITION BY RANGE ( a ) (
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
 	))
 	tbl = h.GetTableStats(tableInfo)
-	require.Equal(t, tbl.Version, lastVersion) // global stats not updated
+	require.Greater(t, tbl.Version, lastVersion) // global stats updated
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
