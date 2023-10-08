@@ -80,6 +80,10 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 	}
 
 	allIndexIDs := make([]int64, 1)
+	// The job.Args is either `Multi-index: ([]int64, ...)`,
+	// or `Single-index: (int64, ...)`.
+	// TODO: it's better to use the public function to parse the
+	// job's Args.
 	if err := job.DecodeArgs(&allIndexIDs[0]); err != nil {
 		if err = job.DecodeArgs(&allIndexIDs); err != nil {
 			return errors.Trace(err)
