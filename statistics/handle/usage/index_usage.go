@@ -15,14 +15,13 @@
 package usage
 
 import (
-	"context"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -146,14 +145,8 @@ func sweepIdxUsageList(listHead *SessionIndexUsageCollector) indexUsageMap {
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 
-var (
-	// useCurrentSession to make sure the sql is executed in current session.
-	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
-)
-
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
-func DumpIndexUsageToKV(_ sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, listHead *SessionIndexUsageCollector) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+func DumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageCollector) error {
 	mapper := sweepIdxUsageList(listHead)
 	type FullIndexUsageInformation struct {
 		information IndexUsageInformation
@@ -179,7 +172,7 @@ func DumpIndexUsageToKV(_ sessionctx.Context, exec sqlexec.RestrictedSQLExecutor
 			}
 		}
 		sqlexec.MustFormatSQL(sql, "on duplicate key update query_count=query_count+values(query_count),rows_selected=rows_selected+values(rows_selected),last_used_at=greatest(last_used_at, values(last_used_at))")
-		if _, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, sql.String()); err != nil {
+		if _, _, err := util.ExecRows(sctx, sql.String()); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -187,12 +180,11 @@ func DumpIndexUsageToKV(_ sessionctx.Context, exec sqlexec.RestrictedSQLExecutor
 }
 
 // GCIndexUsageOnKV will delete the usage information of non-existent indexes.
-func GCIndexUsageOnKV(_ sessionctx.Context, exec sqlexec.RestrictedSQLExecutor) error {
+func GCIndexUsageOnKV(sctx sessionctx.Context) error {
 	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
 	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
 	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
 	sql := `delete from mysql.SCHEMA_INDEX_USAGE as stats where stats.index_id not in (select idx.index_id from information_schema.tidb_indexes as idx)`
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, sql)
+	_, _, err := util.ExecRows(sctx, sql)
 	return err
 }

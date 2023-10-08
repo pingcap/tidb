@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -55,6 +56,7 @@ func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte
 		if globalTask == nil {
 			return nil, errors.Errorf("cannot find global task with ID %d", taskID)
 		}
+		metrics.UpdateMetricsForAddTask(globalTask)
 	}
 	return globalTask, nil
 }
@@ -73,7 +75,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
+			found, err := globalTaskManager.GetTaskByIDWithHistory(globalTask.ID)
 			if err != nil {
 				return errors.Errorf("cannot get global task with ID %d, err %s", globalTask.ID, err.Error())
 			}

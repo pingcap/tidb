@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 var _ exec.Executor = &AnalyzeExec{}
@@ -115,6 +116,14 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
+	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
+	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
+	needGlobalStats := pruneMode == variable.Dynamic
+	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
+	g, _ := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	})
 
 	for _, task := range tasks {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
@@ -133,12 +142,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// Wait all workers done and close the results channel.
 	e.wg.Wait()
 	close(resultsCh)
-
-	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
-	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
-	needGlobalStats := pruneMode == variable.Dynamic
-	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	err = e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+	err = g.Wait()
 	for _, task := range tasks {
 		if task.colExec != nil && task.colExec.memTracker != nil {
 			task.colExec.memTracker.Detach()

@@ -50,6 +50,26 @@ func (mr *MockTaskTableMockRecorder) FinishSubtask(arg0, arg1 interface{}) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinishSubtask", reflect.TypeOf((*MockTaskTable)(nil).FinishSubtask), arg0, arg1)
 }
 
+// GetFirstSubtaskInStates mocks base method.
+func (m *MockTaskTable) GetFirstSubtaskInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) (*proto.Subtask, error) {
+	m.ctrl.T.Helper()
+	varargs := []interface{}{arg0, arg1, arg2}
+	for _, a := range arg3 {
+		varargs = append(varargs, a)
+	}
+	ret := m.ctrl.Call(m, "GetFirstSubtaskInStates", varargs...)
+	ret0, _ := ret[0].(*proto.Subtask)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetFirstSubtaskInStates indicates an expected call of GetFirstSubtaskInStates.
+func (mr *MockTaskTableMockRecorder) GetFirstSubtaskInStates(arg0, arg1, arg2 interface{}, arg3 ...interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	varargs := append([]interface{}{arg0, arg1, arg2}, arg3...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFirstSubtaskInStates", reflect.TypeOf((*MockTaskTable)(nil).GetFirstSubtaskInStates), varargs...)
+}
+
 // GetGlobalTaskByID mocks base method.
 func (m *MockTaskTable) GetGlobalTaskByID(arg0 int64) (*proto.Task, error) {
 	m.ctrl.T.Helper()
@@ -84,24 +104,24 @@ func (mr *MockTaskTableMockRecorder) GetGlobalTasksInStates(arg0 ...interface{})
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetGlobalTasksInStates", reflect.TypeOf((*MockTaskTable)(nil).GetGlobalTasksInStates), arg0...)
 }
 
-// GetSubtaskInStates mocks base method.
-func (m *MockTaskTable) GetSubtaskInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) (*proto.Subtask, error) {
+// GetSubtasksInStates mocks base method.
+func (m *MockTaskTable) GetSubtasksInStates(arg0 string, arg1, arg2 int64, arg3 ...interface{}) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	varargs := []interface{}{arg0, arg1, arg2}
 	for _, a := range arg3 {
 		varargs = append(varargs, a)
 	}
-	ret := m.ctrl.Call(m, "GetSubtaskInStates", varargs...)
-	ret0, _ := ret[0].(*proto.Subtask)
+	ret := m.ctrl.Call(m, "GetSubtasksInStates", varargs...)
+	ret0, _ := ret[0].([]*proto.Subtask)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSubtaskInStates indicates an expected call of GetSubtaskInStates.
-func (mr *MockTaskTableMockRecorder) GetSubtaskInStates(arg0, arg1, arg2 interface{}, arg3 ...interface{}) *gomock.Call {
+// GetSubtasksInStates indicates an expected call of GetSubtasksInStates.
+func (mr *MockTaskTableMockRecorder) GetSubtasksInStates(arg0, arg1, arg2 interface{}, arg3 ...interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]interface{}{arg0, arg1, arg2}, arg3...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskInStates", reflect.TypeOf((*MockTaskTable)(nil).GetSubtaskInStates), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksInStates", reflect.TypeOf((*MockTaskTable)(nil).GetSubtasksInStates), varargs...)
 }
 
 // HasSubtasksInStates mocks base method.
@@ -399,4 +419,18 @@ func (m *MockExtension) GetSubtaskExecutor(arg0 context.Context, arg1 *proto.Tas
 func (mr *MockExtensionMockRecorder) GetSubtaskExecutor(arg0, arg1, arg2 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskExecutor", reflect.TypeOf((*MockExtension)(nil).GetSubtaskExecutor), arg0, arg1, arg2)
+}
+
+// IsIdempotent mocks base method.
+func (m *MockExtension) IsIdempotent(arg0 *proto.Subtask) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsIdempotent", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsIdempotent indicates an expected call of IsIdempotent.
+func (mr *MockExtensionMockRecorder) IsIdempotent(arg0 interface{}) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsIdempotent", reflect.TypeOf((*MockExtension)(nil).IsIdempotent), arg0)
 }

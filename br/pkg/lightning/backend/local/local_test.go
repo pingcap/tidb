@@ -1209,6 +1209,8 @@ func (m mockIngestData) GetTS() uint64 { return 0 }
 
 func (m mockIngestData) IncRef() {}
 
+func (m mockIngestData) DecRef() {}
+
 func (m mockIngestData) Finish(_, _ int64) {}
 
 func TestCheckPeersBusy(t *testing.T) {

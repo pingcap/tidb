@@ -343,6 +343,11 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			if len(tasks) == taskCnt {
 				break
 			}
+			historyTasks, err := mgr.GetGlobalTasksFromHistoryInStates(expectedState)
+			require.NoError(t, err)
+			if len(tasks)+len(historyTasks) == taskCnt {
+				break
+			}
 			time.Sleep(time.Millisecond * 50)
 		}
 		require.Less(t, i, cnt)
@@ -423,7 +428,6 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	}
 	checkGetTaskState(proto.TaskStateReverted)
 	require.Len(t, tasks, taskCnt)
-	checkGetRunningTaskCnt(0)
 }
 
 func TestSimple(t *testing.T) {
@@ -486,4 +490,71 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 	for _, tc := range testCases {
 		require.Equal(t, tc.expect, dispatcher.VerifyTaskStateTransform(tc.oldState, tc.newState))
 	}
+}
+
+func TestCleanUpRoutine(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
+	}()
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	dsp, mgr := MockDispatcherManager(t, pool)
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			mockDispatcher := dsp.MockDispatcher(task)
+			mockDispatcher.Extension = &numberExampleDispatcherExt{}
+			return mockDispatcher
+		})
+	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
+		func() dispatcher.CleanUpRoutine {
+			return mockCleanupRountine
+		})
+	dsp.Start()
+	defer dsp.Stop()
+	require.NoError(t, mgr.StartManager(":4000", "background"))
+
+	taskID, err := mgr.AddNewGlobalTask("test", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+
+	checkTaskRunningCnt := func() []*proto.Task {
+		var tasks []*proto.Task
+		require.Eventually(t, func() bool {
+			var err error
+			tasks, err = mgr.GetGlobalTasksInStates(proto.TaskStateRunning)
+			require.NoError(t, err)
+			return len(tasks) == 1
+		}, time.Second, 50*time.Millisecond)
+		return tasks
+	}
+
+	checkSubtaskCnt := func(tasks []*proto.Task, taskID int64) {
+		require.Eventually(t, func() bool {
+			cnt, err := mgr.GetSubtaskInStatesCnt(taskID, proto.TaskStatePending)
+			require.NoError(t, err)
+			return int64(subtaskCnt) == cnt
+		}, time.Second, 50*time.Millisecond)
+	}
+
+	tasks := checkTaskRunningCnt()
+	checkSubtaskCnt(tasks, taskID)
+	for i := 1; i <= subtaskCnt; i++ {
+		err = mgr.UpdateSubtaskStateAndError(int64(i), proto.TaskStateSucceed, nil)
+		require.NoError(t, err)
+	}
+	dsp.DoCleanUpRoutine()
+	require.Eventually(t, func() bool {
+		tasks, err := mgr.GetGlobalTasksFromHistoryInStates(proto.TaskStateSucceed)
+		require.NoError(t, err)
+		return len(tasks) != 0
+	}, time.Second*10, time.Millisecond*300)
 }

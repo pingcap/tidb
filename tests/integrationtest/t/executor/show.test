@@ -1,0 +1,64 @@
+# TestShowCreateTableAutoRandom
+drop table if exists auto_random_tbl1;
+create table auto_random_tbl1 (a bigint primary key auto_random(3), b varchar(255));
+show create table `auto_random_tbl1`;
+drop table if exists auto_random_tbl2;
+create table auto_random_tbl2 (a bigint auto_random primary key, b char);
+show create table auto_random_tbl2;
+drop table if exists auto_random_tbl3;
+create table auto_random_tbl3 (a bigint /*T![auto_rand] auto_random */ primary key);
+show create table auto_random_tbl3;
+drop table if exists auto_random_tbl4;
+create table auto_random_tbl4 (a bigint primary key auto_random(5), b varchar(255)) auto_random_base = 100;
+show create table `auto_random_tbl4`;
+drop table if exists auto_random_tbl5;
+create table auto_random_tbl5 (a bigint auto_random primary key, b char) auto_random_base 50;
+show create table auto_random_tbl5;
+drop table if exists auto_random_tbl6;
+create table auto_random_tbl6 (a bigint /*T![auto_rand] auto_random */ primary key) auto_random_base 200;
+show create table auto_random_tbl6;
+drop table if exists auto_random_tbl7;
+create table auto_random_tbl7 (a bigint primary key auto_random(4, 32), b varchar(255));
+show create table auto_random_tbl7;
+
+# TestAutoIdCache
+drop table if exists t;
+create table t(a int auto_increment key) auto_id_cache = 10;
+show create table t;
+drop table if exists t;
+create table t(a int auto_increment unique, b int key) auto_id_cache 100;
+show create table t;
+drop table if exists t;
+create table t(a int key) auto_id_cache 5;
+show create table t;
+
+# TestIssue19507
+drop table if exists t2;
+CREATE TABLE t2(a int primary key, b int unique, c int not null, unique index (c));
+SHOW INDEX IN t2;
+CREATE INDEX t2_b_c_index ON t2 (b, c);
+CREATE INDEX t2_c_b_index ON t2 (c, b);
+SHOW INDEX IN t2;
+
+# TestShowViewWithWindowFunction
+drop table if exists test1;
+CREATE TABLE `test1` (`id` int(0) NOT NULL,`num` int(0) DEFAULT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
+create or replace view test1_v as(select id,row_number() over (partition by num) from test1);
+desc test1_v;
+
+# TestShowTTLOption
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR;
+show create table t;
+drop table if exists t;
+create table t(created_at datetime) ttl = `created_at` + INTERVAL 100 YEAR ttl_enable = 'OFF';
+show create table t;
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 3.14159 HOUR_MINUTE;
+show create table t;
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL "15:20" HOUR_MINUTE;
+show create table t;
+drop table if exists t;
+create table t (created_at datetime) TTL = created_at + INTERVAL 100 YEAR TTL_JOB_INTERVAL = '1d';
+show create table t;

@@ -83,7 +83,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	m := &Manager{
 		id:        id,
 		taskTable: taskTable,
-		logCtx:    logutil.WithKeyValue(context.Background(), "dist_task_manager", id),
+		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
@@ -192,7 +192,10 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending)
+		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRevertPending,
+			// for the case that the tidb is restarted when the subtask is running.
+			proto.TaskStateRunning, proto.TaskStateReverting)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.onError(err)
@@ -201,7 +204,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		if !exist {
 			continue
 		}
-		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Any("task_id", task.ID))
+		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.schedulerPool.Run(func() {
@@ -222,7 +225,7 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Any("task_id", task.ID))
+		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Int64("task-id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
 			cancel()
 		}
@@ -250,7 +253,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for id, cancel := range m.mu.handlingTasks {
-		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Any("task_id", id))
+		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Int64("task-id", id))
 		if cancel != nil {
 			cancel()
 		}
@@ -282,7 +285,7 @@ var testContexts sync.Map
 
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
-	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task_id", task.ID), zap.String("type", task.Type))
+	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.String("type", task.Type))
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := getSchedulerFactory(task.Type)
 	if factory == nil {
@@ -320,10 +323,13 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
 			logutil.Logger(m.logCtx).Info("onRunnableTask exit",
-				zap.Int64("task_id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
+				zap.Int64("task-id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
 			return
 		}
-		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step, proto.TaskStatePending, proto.TaskStateRevertPending); err != nil {
+		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
+			proto.TaskStatePending, proto.TaskStateRevertPending,
+			// for the case that the tidb is restarted when the subtask is running.
+			proto.TaskStateRunning, proto.TaskStateReverting); err != nil {
 			m.onError(err)
 			return
 		} else if !exist {

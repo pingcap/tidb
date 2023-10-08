@@ -108,29 +108,33 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		}
 		return len(physicalTableIDs), nil
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		var indexID int64
-		var ifExists bool
+		indexID := make([]int64, 1)
+		ifExists := make([]bool, 1)
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
-			var unique bool
-			if err := job.DecodeArgs(&unique); err == nil {
-				// The first argument is bool means nothing need to be added to delete-range table.
-				return 0, nil
+		if err := job.DecodeArgs(&indexID[0], &ifExists[0], &partitionIDs); err != nil {
+			if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
+				var unique bool
+				if err := job.DecodeArgs(&unique); err == nil {
+					// The first argument is bool means nothing need to be added to delete-range table.
+					return 0, nil
+				}
+				return 0, errors.Trace(err)
 			}
-			return 0, errors.Trace(err)
 		}
-		idxIDNumFactor := 1 // Add temporary index to del-range table.
+		idxIDNumFactor := len(indexID) // Add temporary index to del-range table.
 		if job.State == model.JobStateRollbackDone {
-			idxIDNumFactor = 2 // Add origin index to del-range table.
+			idxIDNumFactor = 2 * len(indexID) // Add origin index to del-range table.
 		}
 		return mathutil.Max(len(partitionIDs)*idxIDNumFactor, idxIDNumFactor), nil
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		var indexName interface{}
-		var ifNotExists bool
-		var indexID int64
+		ifNotExists := make([]bool, 1)
+		indexID := make([]int64, 1)
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
-			return 0, errors.Trace(err)
+		if err := job.DecodeArgs(&indexName, &ifNotExists[0], &indexID[0], &partitionIDs); err != nil {
+			if err := job.DecodeArgs(&indexName, &ifNotExists, &indexID, &partitionIDs); err != nil {
+				return 0, errors.Trace(err)
+			}
 		}
 		return mathutil.Max(len(partitionIDs), 1), nil
 	case model.ActionDropColumn:

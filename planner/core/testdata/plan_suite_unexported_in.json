@@ -464,48 +464,48 @@
     "name": "TestTablePartition",
     "cases": [
       {
-        "SQL":   "select * from t",
+        "SQL": "select * from t",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn < 31",
+        "SQL": "select * from t where t.ptn < 31",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn < 61",
+        "SQL": "select * from t where t.ptn < 61",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 17 and t.ptn < 61",
+        "SQL": "select * from t where t.ptn > 17 and t.ptn < 61",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 17 and t.ptn < 61 union all select * from t where t.ptn > 17 and t.ptn < 61 ",
+        "SQL": "select * from t where t.ptn > 17 and t.ptn < 61 union all select * from t where t.ptn > 17 and t.ptn < 61 ",
         "IsIdx": 0
       },
       {
-        "SQL":   "select ptn from t where t.ptn > 17 and t.ptn < 61 union all select ptn from t where t.ptn > 17 and t.ptn < 61 ",
+        "SQL": "select ptn from t where t.ptn > 17 and t.ptn < 61 union all select ptn from t where t.ptn > 17 and t.ptn < 61 ",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn < 8",
+        "SQL": "select * from t where t.ptn < 8",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 128",
+        "SQL": "select * from t where t.ptn > 128",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 128",
+        "SQL": "select * from t where t.ptn > 128",
         "IsIdx": 1
       },
       {
         // NULL will be located in the first partition.
-        "SQL":   "select * from t where t.ptn is null",
+        "SQL": "select * from t where t.ptn is null",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn is null or t.ptn > 70",
+        "SQL": "select * from t where t.ptn is null or t.ptn > 70",
         "IsIdx": 1
       }
     ]
