@@ -2723,8 +2723,6 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -2736,11 +2734,9 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tbl = h.GetTableStats(tableInfo)
-	require.Equal(t, tbl.Version, lastVersion) // global stats not updated
+	require.Greater(t, tbl.Version, lastVersion) // global stats updated
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
@@ -2862,10 +2858,8 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-	))
+	rows := tk.MustQuery("show warnings").Rows()
+	require.Len(t, rows, 0)
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
