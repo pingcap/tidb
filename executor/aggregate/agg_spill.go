@@ -15,11 +15,14 @@
 package aggregate
 
 import (
+	"math/rand"
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
@@ -66,12 +69,13 @@ type parallelHashAggSpillHelper struct {
 	// When spill is finished, action will send message to this channel to wake up all partial workers.
 	//
 	// Buffer size is equal to the number of partial workers.
-	spillActionAndPartialWorkerSyncer chan struct{}
+	spillActionAndPartialWorkerSyncer         chan struct{}
+	isSpillActionAndPartialWorkerSyncerClosed bool
 }
 
 func (p *parallelHashAggSpillHelper) close() {
 	close(p.waitForPartialWorkersSyncer)
-	close(p.spillActionAndPartialWorkerSyncer)
+	p.closeSpillActionAndPartialWorkerSyncerNoLock()
 	for _, ios := range p.spilledChunksIO {
 		for _, io := range ios {
 			io.Close()
@@ -113,15 +117,13 @@ func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.L
 }
 
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
-	return atomic.LoadInt32(&p.spillTriggered) == spillFlag
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return p.spillTriggered == spillFlag
 }
 
-func (p *parallelHashAggSpillHelper) triggerSpill() {
-	atomic.StoreInt32(&p.spillTriggered, spillFlag)
-}
-
-func (p *parallelHashAggSpillHelper) isInSpilling() bool {
-	return atomic.LoadInt32(&p.isSpilling) == isSpillingFlag
+func (p *parallelHashAggSpillHelper) triggerSpillWithNoLock() {
+	p.spillTriggered = spillFlag
 }
 
 func (p *parallelHashAggSpillHelper) leavePartialStage() {
@@ -132,20 +134,42 @@ func (p *parallelHashAggSpillHelper) isInPartialStage() bool {
 	return atomic.LoadInt32(&p.isPartialStage) == partialStageFlag
 }
 
-func (p *parallelHashAggSpillHelper) setIsSpilling() {
-	atomic.StoreInt32(&p.isSpilling, isSpillingFlag)
+func (p *parallelHashAggSpillHelper) isInSpilling() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return p.isSpilling == isSpillingFlag
 }
 
-func (p *parallelHashAggSpillHelper) resetIsSpilling() {
-	atomic.StoreInt32(&p.isSpilling, isSpillingFlag+1)
+func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
+	return p.isSpilling == isSpillingFlag
 }
 
-func (p *parallelHashAggSpillHelper) checkErrorAndCloseSpillSyncer() bool {
+func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
+	p.isSpilling = isSpillingFlag
+}
+
+func (p *parallelHashAggSpillHelper) resetIsSpillingNoLock() {
+	p.isSpilling = isSpillingFlag + 1
+}
+
+func (p *parallelHashAggSpillHelper) checkErrorAndCloseSpillSyncerNoLock() bool {
 	res := atomic.LoadInt32(&p.hasError) == hasErrorFlag
 	if res {
-		close(p.spillActionAndPartialWorkerSyncer)
+		p.closeSpillActionAndPartialWorkerSyncerNoLock()
 	}
 	return res
+}
+
+func (p *parallelHashAggSpillHelper) closeSpillActionAndPartialWorkerSyncerNoLock() {
+	if p.isSpillActionAndPartialWorkerSyncerClosed {
+		return
+	}
+	close(p.spillActionAndPartialWorkerSyncer)
+	p.isSpillActionAndPartialWorkerSyncerClosed = true
+}
+
+func (p *parallelHashAggSpillHelper) checkError() bool {
+	return atomic.LoadInt32(&p.hasError) == hasErrorFlag
 }
 
 func (p *parallelHashAggSpillHelper) setError() {
@@ -205,11 +229,11 @@ func (*AggSpillDiskAction) GetPriority() int64 {
 func (a *AggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
 	a.spillHelper.lock.Lock()
 	defer a.spillHelper.lock.Unlock()
-	if a.spillHelper.isInSpilling() {
+	if a.spillHelper.isInSpillingNoLock() {
 		return
 	}
 
-	if a.spillHelper.checkErrorAndCloseSpillSyncer() {
+	if a.spillHelper.checkErrorAndCloseSpillSyncerNoLock() {
 		return
 	}
 
@@ -221,8 +245,8 @@ func (a *AggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
 	}
 
 	runningPartialWorkerNum := a.spillHelper.runningPartialWorkerNum
-	a.spillHelper.setIsSpilling()
-	a.e.partialWorkers[0].spillHelper.triggerSpill()
+	a.spillHelper.setIsSpillingNoLock()
+	a.e.partialWorkers[0].spillHelper.triggerSpillWithNoLock()
 	go a.doActionForParallelHashAggImpl(runningPartialWorkerNum)
 }
 
@@ -230,10 +254,12 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorker
 	// Ensure that all partial workers are waiting for the finish of spill.
 	for {
 		<-a.spillHelper.waitForPartialWorkersSyncer
-		if a.spillHelper.checkErrorAndCloseSpillSyncer() {
+		a.spillHelper.lock.Lock()
+		if a.spillHelper.checkErrorAndCloseSpillSyncerNoLock() {
+			a.spillHelper.lock.Unlock()
 			return
 		}
-		a.spillHelper.lock.Lock()
+
 		if a.spillHelper.waitingWorkerNum == runningPartialWorkerNum {
 			a.spillHelper.lock.Unlock()
 			break
@@ -241,32 +267,46 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorker
 		a.spillHelper.lock.Unlock()
 	}
 
-	a.spill()
+	if !a.spillHelper.checkError() {
+		a.spill()
+	}
 
 	// Spill is done, wake up all partial workers
 	a.spillHelper.lock.Lock()
 	defer a.spillHelper.lock.Unlock()
-	a.spillHelper.resetIsSpilling()
+	a.spillHelper.resetIsSpillingNoLock()
 	for i := 0; i < int(a.spillHelper.runningPartialWorkerNum); i++ {
 		a.spillHelper.spillActionAndPartialWorkerSyncer <- struct{}{}
 	}
 }
 
 func (a *AggSpillDiskAction) spill() {
-	syncer := make(chan struct{}, a.spillHelper.runningPartialWorkerNum)
+	spilledPartialWorkerNum := len(a.e.partialWorkers)
+	syncer := make(chan struct{}, spilledPartialWorkerNum)
 	for i := range a.e.partialWorkers {
 		go func(worker *HashAggPartialWorker) {
-			worker.spillDataToDisk()
+			err := worker.spillDataToDisk()
+			if intest.InTest {
+				num := rand.Intn(1000)
+				if num < 3 {
+					logutil.BgLogger().Info("xzxdebug: Random fail is triggered in AggSpillDiskAction", zap.String("xzx", "xzx"))
+					err = errors.Errorf("Random fail is triggered in AggSpillDiskAction")
+				}
+			}
+			if err != nil {
+				a.e.finalOutputCh <- &AfFinalResult{err: err}
+				a.spillHelper.setError()
+			}
 			syncer <- struct{}{}
 		}(&a.e.partialWorkers[i])
 	}
 
 	// Wait for the finish of spill
-	finishedWorkerNum := int32(0)
+	finishedWorkerNum := 0
 	for {
 		<-syncer
 		finishedWorkerNum++
-		if finishedWorkerNum == a.spillHelper.runningPartialWorkerNum {
+		if finishedWorkerNum == spilledPartialWorkerNum {
 			break
 		}
 	}

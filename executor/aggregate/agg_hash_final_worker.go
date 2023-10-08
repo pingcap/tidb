@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor/aggfuncs"
 	"github.com/pingcap/tidb/sessionctx"
@@ -342,6 +343,11 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {
+		// Do not put `w.isSpilledTriggered` and `w.spillHelper.checkError()` judgement in one line.
+		if w.spillHelper.checkError() {
+			return
+		}
+
 		for {
 			hasData, err := w.restoreOnePartition(ctx)
 			if err != nil {
@@ -362,6 +368,9 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 				} else if num < 6 {
 					// Consume 1TB, and the query should be killed
 					w.memTracker.Consume(1099511627776)
+				} else if num < 8 {
+					w.outputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in final worker")}
+					return
 				}
 			}
 
