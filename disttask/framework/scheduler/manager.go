@@ -23,21 +23,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
+	disttaskcfg "github.com/pingcap/tidb/disttask/framework/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	schedulerPoolSize       int32 = 4
-	subtaskExecutorPoolSize int32 = 10
-	// same as dispatcher
-	checkTime        = 300 * time.Millisecond
-	retrySQLTimes    = 3
-	retrySQLInterval = 500 * time.Millisecond
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -89,7 +81,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
 
-	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DistTask)
+	schedulerPool, err := m.newPool("scheduler_pool", disttaskcfg.SchedulerPoolSize, util.DistTask)
 	if err != nil {
 		return nil, err
 	}
@@ -102,16 +94,16 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
 	var err error
-	for i := 0; i < retrySQLTimes; i++ {
+	for i := 0; i < disttaskcfg.RetrySQLTimes; i++ {
 		err = m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
 		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed", zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
-				zap.Int("retry times", retrySQLTimes), zap.Error(err))
+				zap.Int("retry times", disttaskcfg.RetrySQLTimes), zap.Error(err))
 		}
-		time.Sleep(retrySQLInterval)
+		time.Sleep(disttaskcfg.RetrySQLInterval)
 	}
 	if err != nil {
 		return err
@@ -140,7 +132,7 @@ func (m *Manager) Stop() {
 
 // fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
 func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
-	ticker := time.NewTicker(checkTime)
+	ticker := time.NewTicker(disttaskcfg.CheckTaskInterval)
 	for {
 		select {
 		case <-ctx.Done():
@@ -159,7 +151,7 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 
 // fetchAndFastCancelTasks fetches the reverting/pausing tasks from the global task table and fast cancels them.
 func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
-	ticker := time.NewTicker(checkTime)
+	ticker := time.NewTicker(disttaskcfg.CheckTaskInterval)
 	for {
 		select {
 		case <-ctx.Done():
@@ -190,6 +182,9 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 
 // onRunnableTasks handles runnable tasks.
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
+	if len(tasks) == 0 {
+		return
+	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
@@ -303,7 +298,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(checkTime):
+		case <-time.After(disttaskcfg.CheckTaskInterval):
 		}
 		failpoint.Inject("mockStopManager", func() {
 			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
@@ -317,6 +312,10 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 			}()
 		})
 		task, err := m.taskTable.GetGlobalTaskByID(task.ID)
+		// task with task.ID have been moved to history task table.
+		if task == nil {
+			return
+		}
 		if err != nil {
 			m.onError(err)
 			return

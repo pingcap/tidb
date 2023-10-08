@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	disttaskcfg "github.com/pingcap/tidb/disttask/framework/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -28,11 +29,6 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-const (
-	// DefaultCheckSubtaskCanceledInterval is the default check interval for cancel cancelled subtasks.
-	DefaultCheckSubtaskCanceledInterval = 2 * time.Second
 )
 
 // TestSyncChan is used to sync the test.
@@ -72,7 +68,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(DefaultCheckSubtaskCanceledInterval)
+		ticker := time.NewTicker(disttaskcfg.DefaultCheckSubtaskCanceledInterval)
 		defer ticker.Stop()
 		for {
 			select {

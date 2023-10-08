@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
+        "//disttask/framework/config",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler/execute",
         "//disttask/framework/storage",

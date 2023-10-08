@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	disttaskcfg "github.com/pingcap/tidb/disttask/framework/config"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/planner"
@@ -623,8 +624,8 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 	// we consider all errors as retryable errors, except context done.
 	// the errors include errors happened when communicate with PD and TiKV.
 	// we didn't consider system corrupt cases like system table dropped/altered.
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(disttaskcfg.RetrySQLInterval, 2, disttaskcfg.RetrySQLMaxInterval)
+	err := handle.RunWithRetry(ctx, disttaskcfg.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -646,8 +647,8 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 	// todo: use dispatcher.TaskHandle
 	// we might call this in scheduler later, there's no dispatcher.TaskHandle, so we use globalTaskManager here.
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(disttaskcfg.RetrySQLInterval, 2, disttaskcfg.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, disttaskcfg.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -662,8 +663,8 @@ func (dsp *ImportDispatcherExt) finishJob(ctx context.Context, logger *zap.Logge
 	dsp.unregisterTask(ctx, gTask)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(disttaskcfg.RetrySQLInterval, 2, disttaskcfg.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, disttaskcfg.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
@@ -678,8 +679,8 @@ func (dsp *ImportDispatcherExt) failJob(ctx context.Context, taskHandle dispatch
 	dsp.switchTiKV2NormalMode(ctx, gTask, logger)
 	dsp.unregisterTask(ctx, gTask)
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
-	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-	return handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+	backoffer := backoff.NewExponential(disttaskcfg.RetrySQLInterval, 2, disttaskcfg.RetrySQLMaxInterval)
+	return handle.RunWithRetry(ctx, disttaskcfg.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
 			return true, taskHandle.WithNewSession(func(se sessionctx.Context) error {
 				exec := se.(sqlexec.SQLExecutor)
