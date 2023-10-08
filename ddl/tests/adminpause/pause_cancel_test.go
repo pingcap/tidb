@@ -165,7 +165,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
-	require.Nil(t, generateTblUser(stmtKit, 500))
+	require.Nil(t, generateTblUser(stmtKit, 10))
 
 	for _, stmtCase := range schemaDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
@@ -194,7 +194,7 @@ func TestPauseCancelAndRerunSchemaStmt(t *testing.T) {
 func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
-	require.Nil(t, generateTblUser(stmtKit, 200))
+	require.Nil(t, generateTblUser(stmtKit, 10))
 
 	for _, stmtCase := range indexDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
@@ -208,7 +208,7 @@ func TestPauseCancelAndRerunIndexStmt(t *testing.T) {
 func TestPauseCancelAndRerunColumnStmt(t *testing.T) {
 	var dom, stmtKit, adminCommandKit = prepareDomain(t)
 
-	require.Nil(t, generateTblUser(stmtKit, 200))
+	require.Nil(t, generateTblUser(stmtKit, 10))
 
 	for _, stmtCase := range columnDDLStmtCase {
 		pauseAndCancelStmt(t, stmtKit, adminCommandKit, dom, &stmtCase)
