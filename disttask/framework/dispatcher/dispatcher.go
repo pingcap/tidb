@@ -251,6 +251,7 @@ func (d *BaseDispatcher) onPausing() error {
 	return nil
 }
 
+// MockDMLExecutionOnPausedState is used to mock DML execution when tasks paused.
 var MockDMLExecutionOnPausedState func(task *proto.Task)
 
 // handle task in paused state
