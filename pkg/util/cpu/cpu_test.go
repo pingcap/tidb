@@ -65,9 +65,9 @@ func TestCPUValue(t *testing.T) {
 }
 
 func TestFailpointCPUValue(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr", "return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr", "return(true)"))
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr"))
 	}()
 	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
