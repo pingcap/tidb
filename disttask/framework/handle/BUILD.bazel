@@ -6,6 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/disttask/framework/handle",
     visibility = ["//visibility:public"],
     deps = [
+        "//disttask/framework/config",
         "//disttask/framework/proto",
         "//disttask/framework/storage",
         "//metrics",

@@ -19,16 +19,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	disttaskcfg "github.com/pingcap/tidb/disttask/framework/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	checkTaskFinishInterval = 300 * time.Millisecond
 )
 
 // SubmitGlobalTask submits a global task.
@@ -67,7 +64,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 	if err != nil {
 		return err
 	}
-	ticker := time.NewTicker(checkTaskFinishInterval)
+	ticker := time.NewTicker(disttaskcfg.CheckTaskFinishedInterval)
 	defer ticker.Stop()
 
 	for {

@@ -24,6 +24,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	disttaskcfg "github.com/pingcap/tidb/disttask/framework/config"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/mock"
 	"github.com/pingcap/tidb/disttask/framework/proto"
@@ -254,8 +255,8 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// test parallelism control
 	var originalConcurrency int
 	if taskCnt == 1 {
-		originalConcurrency = dispatcher.DefaultDispatchConcurrency
-		dispatcher.DefaultDispatchConcurrency = 1
+		originalConcurrency = disttaskcfg.DefaultDispatchConcurrency
+		disttaskcfg.DefaultDispatchConcurrency = 1
 	}
 
 	store := testkit.CreateMockStore(t)
@@ -277,7 +278,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		dsp.Stop()
 		// make data race happy
 		if taskCnt == 1 {
-			dispatcher.DefaultDispatchConcurrency = originalConcurrency
+			disttaskcfg.DefaultDispatchConcurrency = originalConcurrency
 		}
 	}()
 

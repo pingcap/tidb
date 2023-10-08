@@ -21,35 +21,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	disttaskcfg "github.com/pingcap/tidb/disttask/framework/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/sessionctx"
 	disttaskutil "github.com/pingcap/tidb/util/disttask"
+
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
-)
-
-const (
-	// DefaultSubtaskConcurrency is the default concurrency for handling subtask.
-	DefaultSubtaskConcurrency = 16
-	// MaxSubtaskConcurrency is the maximum concurrency for handling subtask.
-	MaxSubtaskConcurrency = 256
-	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcd.
-	DefaultLiveNodesCheckInterval = 2
-)
-
-var (
-	checkTaskFinishedInterval = 500 * time.Millisecond
-	nonRetrySQLTime           = 1
-	// RetrySQLTimes is the max retry times when executing SQL.
-	RetrySQLTimes = 30
-	// RetrySQLInterval is the initial interval between two SQL retries.
-	RetrySQLInterval = 3 * time.Second
-	// RetrySQLMaxInterval is the max interval between two SQL retries.
-	RetrySQLMaxInterval = 30 * time.Second
 )
 
 // TaskHandle provides the interface for operations needed by Dispatcher.
@@ -113,7 +95,7 @@ func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, server
 		logCtx:                logCtx,
 		serverID:              serverID,
 		liveNodes:             nil,
-		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
+		liveNodeFetchInterval: disttaskcfg.DefaultLiveNodesCheckInterval,
 		liveNodeFetchTick:     0,
 		taskNodes:             nil,
 		rand:                  rand.New(rand.NewSource(time.Now().UnixNano())),
@@ -147,7 +129,7 @@ func (d *BaseDispatcher) refreshTask() (err error) {
 
 // scheduleTask schedule the task execution step by step.
 func (d *BaseDispatcher) scheduleTask() {
-	ticker := time.NewTicker(checkTaskFinishedInterval)
+	ticker := time.NewTicker(disttaskcfg.CheckTaskFinishedInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -245,7 +227,7 @@ func (d *BaseDispatcher) onPausing() error {
 	}
 	if cnt == 0 {
 		logutil.Logger(d.logCtx).Info("all running subtasks paused, update the task to paused state")
-		return d.updateTask(proto.TaskStatePaused, nil, RetrySQLTimes)
+		return d.updateTask(proto.TaskStatePaused, nil, disttaskcfg.RetrySQLTimes)
 	}
 	logutil.Logger(d.logCtx).Debug("on pausing state, this task keeps current state", zap.String("state", d.Task.State))
 	return nil
@@ -271,7 +253,7 @@ func (d *BaseDispatcher) onResuming() error {
 	if cnt == 0 {
 		// Finish the resuming process.
 		logutil.Logger(d.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
-		err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
+		err := d.updateTask(proto.TaskStateRunning, nil, disttaskcfg.RetrySQLTimes)
 		failpoint.Inject("syncAfterResume", func() {
 			TestSyncChan <- struct{}{}
 		})
@@ -292,7 +274,7 @@ func (d *BaseDispatcher) onReverting() error {
 	if cnt == 0 {
 		// Finish the rollback step.
 		logutil.Logger(d.logCtx).Info("all reverting tasks finished, update the task to reverted state")
-		return d.updateTask(proto.TaskStateReverted, nil, RetrySQLTimes)
+		return d.updateTask(proto.TaskStateReverted, nil, disttaskcfg.RetrySQLTimes)
 	}
 	// Wait all subtasks in this stage finished.
 	d.OnTick(d.ctx, d.Task)
@@ -428,9 +410,9 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 			logutil.Logger(d.logCtx).Warn("updateTask first failed", zap.String("from", prevState), zap.String("to", d.Task.State),
 				zap.Int("retry times", i), zap.Error(err))
 		}
-		time.Sleep(RetrySQLInterval)
+		time.Sleep(disttaskcfg.RetrySQLInterval)
 	}
-	if err != nil && retryTimes != nonRetrySQLTime {
+	if err != nil && retryTimes != 1 {
 		logutil.Logger(d.logCtx).Warn("updateTask failed",
 			zap.String("from", prevState), zap.String("to", d.Task.State), zap.Int("retry times", retryTimes), zap.Error(err))
 	}
@@ -462,7 +444,7 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
 		// reverting subtasks belong to the same step as current active step.
 		subTasks = append(subTasks, proto.NewSubtask(d.Task.Step, d.Task.ID, d.Task.Type, id, meta))
 	}
-	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
+	return d.updateTask(proto.TaskStateReverting, subTasks, disttaskcfg.RetrySQLTimes)
 }
 
 func (*BaseDispatcher) nextStepSubtaskDispatched(*proto.Task) bool {
@@ -485,10 +467,11 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 	// 1. Adjust the global task's concurrency.
 	if d.Task.State == proto.TaskStatePending {
 		if d.Task.Concurrency == 0 {
-			d.Task.Concurrency = DefaultSubtaskConcurrency
+			d.Task.Concurrency = disttaskcfg.DefaultSubtaskConcurrency
+
 		}
-		if d.Task.Concurrency > MaxSubtaskConcurrency {
-			d.Task.Concurrency = MaxSubtaskConcurrency
+		if d.Task.Concurrency > disttaskcfg.MaxSubtaskConcurrency {
+			d.Task.Concurrency = disttaskcfg.MaxSubtaskConcurrency
 		}
 	}
 	defer func() {
@@ -517,7 +500,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 					zap.Int64("from", currStep), zap.Int64("to", d.Task.Step))
 			}
 			d.Task.StateUpdateTime = time.Now().UTC()
-			err = d.updateTask(taskState, nil, RetrySQLTimes)
+			err = d.updateTask(taskState, nil, disttaskcfg.RetrySQLTimes)
 		}
 	}()
 
@@ -584,7 +567,7 @@ func (d *BaseDispatcher) dispatchSubTask(subtaskStep int64, metas [][]byte) erro
 		logutil.Logger(d.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, d.Task.ID, d.Task.Type, instanceID, meta))
 	}
-	return d.updateTask(d.Task.State, subTasks, RetrySQLTimes)
+	return d.updateTask(d.Task.State, subTasks, disttaskcfg.RetrySQLTimes)
 }
 
 func (d *BaseDispatcher) handlePlanErr(err error) error {
@@ -594,7 +577,7 @@ func (d *BaseDispatcher) handlePlanErr(err error) error {
 	}
 	d.Task.Error = err
 	// state transform: pending -> failed.
-	return d.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
+	return d.updateTask(proto.TaskStateFailed, nil, disttaskcfg.RetrySQLTimes)
 }
 
 // GenerateSchedulerNodes generate a eligible TiDB nodes.

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package dispatcher
+package framework_test
 
 import (
 	"testing"
@@ -22,34 +22,13 @@ import (
 	"go.uber.org/goleak"
 )
 
-// DispatcherForTest exports for testing.
-type DispatcherManagerForTest interface {
-	GetRunningTaskCnt() int
-	DelRunningTask(globalTaskID int64)
-	DoCleanUpRoutine()
-}
-
-// GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
-func (dm *Manager) GetRunningTaskCnt() int {
-	return dm.getRunningTaskCnt()
-}
-
-// DelRunningGTask implements Dispatcher.DelRunningGTask interface.
-func (dm *Manager) DelRunningTask(globalTaskID int64) {
-	dm.delRunningTask(globalTaskID)
-}
-
-// DoCleanUpRoutine implements Dispatcher.DoCleanUpRoutine interface.
-func (dm *Manager) DoCleanUpRoutine() {
-	dm.doCleanUpRoutine()
-}
-
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	// Make test more fast.
 	disttaskcfg.CheckTaskRunningInterval = disttaskcfg.CheckTaskRunningInterval / 10
 	disttaskcfg.CheckTaskFinishedInterval = disttaskcfg.CheckTaskFinishedInterval / 10
+	disttaskcfg.CheckTaskInterval = disttaskcfg.CheckTaskInterval / 10
 	disttaskcfg.RetrySQLInterval = disttaskcfg.RetrySQLInterval / 20
 
 	opts := []goleak.Option{

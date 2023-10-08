@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	disttaskcfg "github.com/pingcap/tidb/disttask/framework/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/metrics"
@@ -29,17 +30,6 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
-)
-
-var (
-	// DefaultDispatchConcurrency is the default concurrency for dispatching task.
-	DefaultDispatchConcurrency = 4
-	// checkTaskRunningInterval is the interval for loading tasks.
-	checkTaskRunningInterval = 3 * time.Second
-	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
-	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
-	// defaultCleanUpInterval is the interval of cleanUp routine.
-	defaultCleanUpInterval = 10 * time.Minute
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -112,7 +102,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 		taskMgr:  taskTable,
 		serverID: serverID,
 	}
-	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
+	gPool, err := spool.NewPool("dispatch_pool", int32(disttaskcfg.DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +110,7 @@ func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID st
 	dispatcherManager.ctx, dispatcherManager.cancel = context.WithCancel(ctx)
 	dispatcherManager.runningTasks.taskIDs = make(map[int64]struct{})
 	dispatcherManager.runningTasks.dispatchers = make(map[int64]Dispatcher)
-	dispatcherManager.finishCh = make(chan struct{}, DefaultDispatchConcurrency)
+	dispatcherManager.finishCh = make(chan struct{}, disttaskcfg.DefaultDispatchConcurrency)
 
 	return dispatcherManager, nil
 }
@@ -151,12 +141,14 @@ func (dm *Manager) Inited() bool {
 // dispatchTaskLoop dispatches the global tasks.
 func (dm *Manager) dispatchTaskLoop() {
 	logutil.BgLogger().Info("dispatch task loop start")
-	ticker := time.NewTicker(checkTaskRunningInterval)
+	ticker := time.NewTicker(disttaskcfg.CheckTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-dm.ctx.Done():
-			logutil.BgLogger().Info("dispatch task loop exits", zap.Error(dm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
+			logutil.BgLogger().Info("dispatch task loop exits",
+				zap.Error(dm.ctx.Err()),
+				zap.Int64("interval", int64(disttaskcfg.CheckTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
 			cnt := dm.getRunningTaskCnt()
@@ -164,7 +156,6 @@ func (dm *Manager) dispatchTaskLoop() {
 				break
 			}
 
-			// TODO: Consider getting these tasks, in addition to the task being worked on..
 			tasks, err := dm.taskMgr.GetGlobalTasksInStates(
 				proto.TaskStatePending,
 				proto.TaskStateRunning,
@@ -227,7 +218,7 @@ func (dm *Manager) failTask(task *proto.Task, err error) {
 }
 
 func (dm *Manager) gcSubtaskHistoryTableLoop() {
-	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
+	historySubtaskTableGcInterval := disttaskcfg.DefaultHistorySubtaskTableGcInterval
 	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
 		if seconds, ok := val.(int); ok {
 			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
@@ -256,9 +247,9 @@ func (dm *Manager) gcSubtaskHistoryTableLoop() {
 }
 
 func (*Manager) checkConcurrencyOverflow(cnt int) bool {
-	if cnt >= DefaultDispatchConcurrency {
+	if cnt >= disttaskcfg.DefaultDispatchConcurrency {
 		logutil.BgLogger().Info("dispatch task loop, running task cnt is more than concurrency limitation",
-			zap.Int("running cnt", cnt), zap.Int("concurrency", DefaultDispatchConcurrency))
+			zap.Int("running cnt", cnt), zap.Int("concurrency", disttaskcfg.DefaultDispatchConcurrency))
 		return true
 	}
 	return false
@@ -284,7 +275,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 
 func (dm *Manager) cleanUpLoop() {
 	logutil.Logger(dm.ctx).Info("cleanUp loop start")
-	ticker := time.NewTicker(defaultCleanUpInterval)
+	ticker := time.NewTicker(disttaskcfg.DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
 		select {
