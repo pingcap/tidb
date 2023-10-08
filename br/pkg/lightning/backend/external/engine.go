@@ -436,11 +436,16 @@ func (m *MemoryIngestData) IncRef() {
 	m.refCnt.Inc()
 }
 
+// DecRef implements IngestData.DecRef.
+func (m *MemoryIngestData) DecRef() {
+	if m.refCnt.Dec() == 0 {
+		m.memBuf.Destroy()
+	}
+}
+
 // Finish implements IngestData.Finish.
 func (m *MemoryIngestData) Finish(totalBytes, totalCount int64) {
 	m.importedKVSize.Add(totalBytes)
 	m.importedKVCount.Add(totalCount)
-	if m.refCnt.Dec() == 0 {
-		m.memBuf.Destroy()
-	}
+
 }

@@ -24,7 +24,8 @@ StreamAgg	1.00	root		funcs:count(planner__core__point_get_plan.t._tidb_rowid)->C
 explain format='brief' select *, date_format(b, "") from t where a =1 for update;
 id	estRows	task	access object	operator info
 Projection	1.00	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, date_format(cast(planner__core__point_get_plan.t.b, datetime BINARY), )->Column#4
-└─Point_Get	1.00	root	table:t, index:idx(a)	lock
+└─SelectLock	1.00	root		for update 0
+  └─Point_Get	1.00	root	table:t, index:idx(a)	
 create table t1 (pk int, a int, b int, primary key(pk), unique key(a));
 explain format='brief' select t1.*, _tidb_rowid from t1 where a = 1;
 Error 1054 (42S22): Unknown column '_tidb_rowid' in 'field list'
@@ -344,7 +345,7 @@ a	b
 explain format = 'brief' update t set b = b + 1 where a in (1, 2, 3, 4);
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3	handle:[1 2 3 4], keep order:false, desc:false, lock
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3	handle:[1 2 3 4], keep order:false, desc:false
 update t set b = b + 1 where a in (1, 2, 3, 4);
 select * from t where a in (1, 2, 3, 4);
 a	b
@@ -355,7 +356,7 @@ a	b
 explain format = 'brief' delete from t where a in (1, 2, 3, 4);
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3	handle:[1 2 3 4], keep order:false, desc:false, lock
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3	handle:[1 2 3 4], keep order:false, desc:false
 delete from t where a in (1, 2, 3, 4);
 select * from t where a in (1, 2, 3, 4);
 a	b
@@ -377,7 +378,7 @@ a	b	c
 explain format = 'brief' update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4));
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b)	keep order:false, desc:false, lock
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 update t set c = c + 1 where (a,b) in ((1,1),(2,2),(3,3),(4,4));
 select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4));
 a	b	c
@@ -388,7 +389,7 @@ a	b	c
 explain format = 'brief' delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4));
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b)	keep order:false, desc:false, lock
+└─Batch_Point_Get	4.00	root	table:t, partition:p0,p1,p2,p3, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 delete from t where (a,b) in ((1,1),(2,2),(3,3),(4,4));
 select * from t where (a, b) in ((1, 1), (2, 2), (3, 3), (4, 4));
 a	b	c

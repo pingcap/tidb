@@ -208,7 +208,7 @@ select group_concat(name order by name separator '.') from t use index(idx);
 group_concat(name order by name separator '.')
 aaa.bbb
 update t set name = 'aaaaa' where name = 'bbb';
-Error 1062 (23000): Duplicate entry 'aa' for key 't.PRIMARY'
+Error 1062 (23000): Duplicate entry 'aaaaa' for key 't.PRIMARY'
 update ignore t set name = 'aaaaa' where name = 'bbb';
 Level	Code	Message
 Warning	1062	Duplicate entry 'aaaaa' for key 't.PRIMARY'

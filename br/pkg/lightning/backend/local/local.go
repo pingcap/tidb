@@ -1215,12 +1215,11 @@ func (local *Backend) generateAndSendJob(
 				return err
 			}
 			for _, job := range jobs {
-				data.IncRef()
-				jobWg.Add(1)
+				job.ref(jobWg)
 				select {
 				case <-egCtx.Done():
 					// this job is not put into jobToWorkerCh
-					jobWg.Done()
+					job.done(jobWg)
 					// if the context is canceled, it means worker has error, the first error can be
 					// found by worker's error group LATER. if this function returns an error it will
 					// seize the "first error".
@@ -1345,14 +1344,13 @@ func (local *Backend) startWorker(
 					// Don't need to put the job back to retry, because generateJobForRange
 					// has done the retry internally. Here just done for the "needRescan"
 					// job and exit directly.
-					jobWg.Done()
+					job.done(jobWg)
 					return err2
 				}
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				newJobCnt := len(jobs) - 1
-				jobWg.Add(newJobCnt)
 				for newJobCnt > 0 {
-					job.ingestData.IncRef()
+					job.ref(jobWg)
 					newJobCnt--
 				}
 				for _, j := range jobs {
@@ -1635,7 +1633,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 				if job.retryCount > maxWriteAndIngestRetryTimes {
 					firstErr.Set(job.lastRetryableErr)
 					workerCancel()
-					jobWg.Done()
+					job.done(&jobWg)
 					continue
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
@@ -1652,10 +1650,10 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 					zap.Time("waitUntil", job.waitUntil))
 				if !retryer.push(job) {
 					// retryer is closed by worker error
-					jobWg.Done()
+					job.done(&jobWg)
 				}
 			case ingested:
-				jobWg.Done()
+				job.done(&jobWg)
 			case needRescan:
 				panic("should not reach here")
 			}
