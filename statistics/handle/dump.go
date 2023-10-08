@@ -17,6 +17,7 @@ package handle
 import (
 	"context"
 	"fmt"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -205,7 +206,16 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 }
 
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
-func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *storage.JSONTable) error {
+func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
+	jsonTbl *storage.JSONTable, concurrencyForPartition uint8) error {
+	nCPU := uint8(runtime.NumCPU())
+	if concurrencyForPartition == 0 {
+		concurrencyForPartition = nCPU / 2 // default
+	}
+	if concurrencyForPartition > nCPU {
+		concurrencyForPartition = nCPU // for safety
+	}
+
 	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
@@ -226,7 +236,7 @@ func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema
 		close(taskCh)
 		var wg sync.WaitGroup
 		e := new(atomic.Pointer[error])
-		for i := 0; i < 12; i++ { // TODO: make the concurrency configurable
+		for i := 0; i < int(concurrencyForPartition); i++ {
 			wg.Add(1)
 			h.gpool.Go(func() {
 				defer func() {
