@@ -559,3 +559,21 @@ func hasPseudoStats(rows [][]interface{}) bool {
 	}
 	return false
 }
+
+func TestIssue44369(t *testing.T) {
+	store, dom, clean := testkit.CreateMockStoreAndDomain(t)
+	defer clean()
+
+	h := dom.StatsHandle()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, index iab(a,b));")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	tk.MustExec("insert into t value(1,1);")
+	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	tk.MustExec("analyze table t;")
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	tk.MustExec("alter table t rename column b to bb;")
+	tk.MustExec("select * from t where a = 10 and bb > 20;")
+}
