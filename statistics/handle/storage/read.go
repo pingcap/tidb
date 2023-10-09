@@ -40,17 +40,17 @@ import (
 )
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
-func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, err error) {
+func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
 	rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, false, err
 	}
 	if len(rows) == 0 {
-		return
+		return 0, 0, true, nil
 	}
 	count = int64(rows[0].GetUint64(0))
 	modifyCount = rows[0].GetInt64(1)
-	return
+	return count, modifyCount, false, nil
 }
 
 // HistogramFromStorage reads histogram from storage.
@@ -384,14 +384,14 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	table.Pseudo = false
 
-	rows, _, err := util.ExecRows(sctx, "select modify_count, count from mysql.stats_meta where table_id = %?", physicalID)
-	if err != nil || len(rows) == 0 {
+	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, physicalID)
+	if err != nil || isNull {
 		return nil, err
 	}
-	table.ModifyCount = rows[0].GetInt64(0)
-	table.RealtimeCount = rows[0].GetInt64(1)
+	table.ModifyCount = modidyCount
+	table.RealtimeCount = realtimeCount
 
-	rows, _, err = util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
+	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
