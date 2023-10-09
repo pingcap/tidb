@@ -119,6 +119,9 @@ func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	return &newRC
 }
 
+func (c *RowContainer) workBeforeSpill() {
+}
+
 // SpillToDisk spills data to disk. This function may be called in parallel.
 func (c *RowContainer) SpillToDisk() {
 	c.m.Lock()
@@ -138,7 +141,6 @@ func (c *RowContainer) SpillToDisk() {
 	}
 	var err error
 	memory.QueryForceDisk.Add(1)
-	n := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
 	defer func() {
@@ -153,6 +155,8 @@ func (c *RowContainer) SpillToDisk() {
 			panic("out of disk quota when spilling")
 		}
 	})
+	c.workBeforeSpill()
+	n := c.m.records.inMemory.NumChunks()
 	for i := 0; i < n; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
@@ -397,13 +401,18 @@ func (a *SpillDiskAction) getStatus() spillStatus {
 	return a.cond.status
 }
 
+func (a *SpillDiskAction) hasEnoughDataToSpill(_ *memory.Tracker) bool {
+	// should check the memory consumed as SortAndSpillDiskAction?
+	return true
+}
+
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.m.Lock()
 	defer a.m.Unlock()
 
-	if a.getStatus() == notSpilled {
+	if a.getStatus() == notSpilled && a.hasEnoughDataToSpill(t) {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
@@ -543,6 +552,11 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 func (c *SortedRowContainer) Sort() {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
+	c.sort()
+}
+
+// sort inits pointers and sorts the records, for internal use and the caller should hold the lock of ptrM.
+func (c *SortedRowContainer) sort() {
 	if c.ptrM.rowPtrs != nil {
 		return
 	}
@@ -557,12 +571,22 @@ func (c *SortedRowContainer) Sort() {
 			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}
+	failpoint.Inject("errorDuringSortRowContainer", func(val failpoint.Value) {
+		if val.(bool) {
+			panic("sort meet error")
+		}
+	})
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
 }
 
-func (c *SortedRowContainer) sortAndSpillToDisk() {
-	c.Sort()
+func (c *SortedRowContainer) SpillToDisk() {
+	c.ptrM.Lock()
+	defer c.ptrM.Unlock()
 	c.RowContainer.SpillToDisk()
+}
+
+func (c *SortedRowContainer) workBeforeSpill() {
+	c.sort()
 }
 
 // Add appends a chunk into the SortedRowContainer.
@@ -626,42 +650,9 @@ type SortAndSpillDiskAction struct {
 	*SpillDiskAction
 }
 
-// Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
-// and if it is already triggered before, call its fallbackAction.
-func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
-	a.m.Lock()
-	defer a.m.Unlock()
+func (a *SortAndSpillDiskAction) hasEnoughDataToSpill(t *memory.Tracker) bool {
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	if a.getStatus() == notSpilled && a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10 {
-		a.once.Do(func() {
-			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-			if a.testSyncInputFunc != nil {
-				a.testSyncInputFunc()
-				c := a.c
-				go func() {
-					c.sortAndSpillToDisk()
-					a.testSyncOutputFunc()
-				}()
-				return
-			}
-			go a.c.sortAndSpillToDisk()
-		})
-		return
-	}
-
-	a.cond.L.Lock()
-	for a.cond.status == spilling {
-		a.cond.Wait()
-	}
-	a.cond.L.Unlock()
-
-	if !t.CheckExceed() {
-		return
-	}
-	if fallback := a.GetFallback(); fallback != nil {
-		fallback.Action(t)
-	}
+	return a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
 }
 
 // WaitForTest waits all goroutine have gone.
