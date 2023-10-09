@@ -1746,6 +1746,8 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		jobWg.Done()
 	}
 	jobWg.Wait()
+
+	// TODO(lance6716): test external engine
 }
 
 func getSuccessInjectedBehaviour() []injectedBehaviour {
