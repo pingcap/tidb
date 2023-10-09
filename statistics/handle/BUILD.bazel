@@ -47,7 +47,6 @@ go_library(
         "//util/logutil",
         "//util/mathutil",
         "//util/sqlexec",
-        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tiancaiamao_gp//:gp",

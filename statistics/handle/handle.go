@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tiancaiamao/gp"
-	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -163,11 +162,6 @@ func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
 }
 
-// DurationToTS converts duration to timestamp.
-func DurationToTS(d time.Duration) uint64 {
-	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
-}
-
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (h *Handle) UpdateStatsHealthyMetrics() {
 	v := h.statsCache.Load()
@@ -206,7 +200,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := DurationToTS(3 * h.Lease())
+	offset := util.DurationToTS(3 * h.Lease())
 	if oldCache.Version() >= offset {
 		lastVersion = lastVersion - offset
 	} else {

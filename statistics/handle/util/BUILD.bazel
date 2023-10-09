@@ -10,8 +10,10 @@ go_library(
         "//parser/ast",
         "//parser/terror",
         "//sessionctx",
+        "//sessionctx/variable",
         "//util/chunk",
         "//util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
     ],
 )

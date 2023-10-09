@@ -16,9 +16,10 @@ package util
 
 import (
 	"context"
-	"github.com/ngaut/pools"
 	"strconv"
+	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 // SessionPool is used to recycle sessionctx.
@@ -184,4 +186,9 @@ func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql s
 		return nil, nil, errors.Errorf("invalid sql executor")
 	}
 	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), opts, sql, args...)
+}
+
+// DurationToTS converts duration to timestamp.
+func DurationToTS(d time.Duration) uint64 {
+	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
