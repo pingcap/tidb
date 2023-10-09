@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eux
+set -x
 
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
@@ -24,18 +24,30 @@ run_lightning
 run_sql 'admin check table dup_resolve.a'
 
 run_sql 'select count(*) from dup_resolve.a'
-check_contains 'count(*): 4'
+check_contains 'count(*): 6'
 
 run_sql 'select * from dup_resolve.a'
 check_contains 'a: 1'
-check_contains 'b: 6'
-check_contains 'c: 1.csv'
+check_contains 'b: 1'
+check_contains 'c: 1'
+check_contains 'd: 1.csv'
+check_contains 'a: 1'
+check_contains 'b: 1'
+check_contains 'c: 2'
+check_contains 'd: 2.csv'
 check_contains 'a: 2'
-check_contains 'b: 6'
-check_contains 'c: 2.csv'
+check_contains 'b: 2'
+check_contains 'c: 3'
+check_contains 'd: 3.csv'
 check_contains 'a: 3'
 check_contains 'b: 3'
-check_contains 'c: 3.csv'
+check_contains 'c: 3'
+check_contains 'd: 3.csv'
+check_contains 'a: 4'
+check_contains 'b: 4'
+check_contains 'c: 4'
+check_contains 'd: 4.csv'
 check_contains 'a: 5'
 check_contains 'b: 4'
-check_contains 'c: 5.csv'
+check_contains 'c: 5'
+check_contains 'd: 5.csv'

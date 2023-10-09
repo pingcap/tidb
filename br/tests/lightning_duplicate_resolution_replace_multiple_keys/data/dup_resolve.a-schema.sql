@@ -1,6 +1,8 @@
 create table a (
-    a int primary key clustered,
+    a int primary key nonclustered,
     b int not null,
-    c text,
-    key key_b(b)
+    c int not null,
+    d text,
+    key key_b(b),
+    key key_c(b)
 );
