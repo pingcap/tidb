@@ -180,7 +180,9 @@ func GCTableStats(sctx sessionctx.Context,
 	tbl, ok := getTableByPhysicalID(is, physicalID)
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
-		return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
+		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
+			return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
+		})
 	}
 	tblInfo := tbl.Meta()
 	for _, row := range rows {
