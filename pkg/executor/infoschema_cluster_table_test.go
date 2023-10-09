@@ -236,7 +236,9 @@ func TestTiDBClusterInfo(t *testing.T) {
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo")) }()
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo"))
+	}()
 	tk.MustQuery("select type, instance, status_address, version, git_hash, server_id from information_schema.cluster_info").Check(testkit.Rows(
 		row("pd", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
 		row("tidb", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "1001"),

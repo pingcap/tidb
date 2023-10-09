@@ -152,7 +152,9 @@ func TestLoadSchemaFailed(t *testing.T) {
 
 	// Make sure loading information schema is failed and server is invalid.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed", `return(true)`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed")) }()
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/ErrorMockReloadFailed"))
+	}()
 	require.Error(t, domain.GetDomain(tk.Session()).Reload())
 
 	lease := domain.GetDomain(tk.Session()).DDL().GetLease()

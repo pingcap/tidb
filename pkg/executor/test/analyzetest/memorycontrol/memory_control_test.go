@@ -83,7 +83,7 @@ func TestGlobalMemoryControlForPrepareAnalyze(t *testing.T) {
 		tk0.MustExec("insert into t select * from t") // 256 Lines
 	}
 	sqlPrepare := "prepare stmt from 'analyze table t with 1.0 samplerate';"
-	sqlExecute := "execute stmt;"                                                                                 // Need about 100MB
+	sqlExecute := "execute stmt;"                                                                                     // Need about 100MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/memory/ReadMemStats", `return(536870912)`)) // 512MB
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume", `return(100)`))
 	runtime.GC()

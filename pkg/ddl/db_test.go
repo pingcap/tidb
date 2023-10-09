@@ -687,7 +687,9 @@ func TestComment(t *testing.T) {
 
 func TestRebaseAutoID(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange")) }()
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+	}()
 
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
@@ -938,7 +940,9 @@ func TestDDLJobErrorCount(t *testing.T) {
 // TestAddIndexFailOnCaseWhenCanExit is used to close #19325.
 func TestAddIndexFailOnCaseWhenCanExit(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCaseWhenParseFailure", `return(true)`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCaseWhenParseFailure")) }()
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCaseWhenParseFailure"))
+	}()
 	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
 	tk := testkit.NewTestKit(t, store)
 	originalVal := variable.GetDDLErrorCountLimit()
@@ -1059,7 +1063,9 @@ func TestCancelJobWriteConflict(t *testing.T) {
 	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization {
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn", `return("no_retry")`))
-			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn")) }()
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"))
+			}()
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockFailedCommandOnConcurencyDDL", `return(true)`))
 			defer func() {
 				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockFailedCommandOnConcurencyDDL"))
@@ -1079,7 +1085,9 @@ func TestCancelJobWriteConflict(t *testing.T) {
 			jobID = job.ID
 			stmt := fmt.Sprintf("admin cancel ddl jobs %d", job.ID)
 			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn", `return("retry_once")`))
-			defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn")) }()
+			defer func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/kv/mockCommitErrorInNewTxn"))
+			}()
 			rs, cancelErr = tk2.Session().Execute(context.Background(), stmt)
 		}
 	}
