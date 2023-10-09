@@ -13,6 +13,7 @@ go_library(
         "//parser/model",
         "//parser/mysql",
         "//parser/terror",
+        "//types/context",
         "//util/disk",
         "//util/execdetails",
         "//util/memory",

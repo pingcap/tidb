@@ -13,6 +13,7 @@ go_library(
     srcs = [
         "binary_literal.go",
         "compare.go",
+        "context.go",
         "convert.go",
         "core_time.go",
         "datum.go",
@@ -50,6 +51,7 @@ go_library(
         "//parser/terror",
         "//parser/types",
         "//sessionctx/stmtctx",
+        "//types/context",
         "//util/collate",
         "//util/dbterror",
         "//util/hack",
