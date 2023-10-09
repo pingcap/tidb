@@ -1,3 +1,4 @@
+drop table if exists alter_t;
 create table alter_t (c int);
 alter table alter_t attributes="merge_option=allow";
 alter table alter_t attributes="merge_option=allow,key=value";
@@ -6,6 +7,7 @@ alter table alter_t attributes=" merge_option = allow , key = value ";
 alter table alter_t attributes " merge_option=allow ";
 alter table alter_t attributes " merge_option=allow , key=value ";
 drop table alter_t;
+drop database if exists ddl__attributes_sql_test;
 create database ddl__attributes_sql_test;
 use ddl__attributes_sql_test;
 create table drop_s1 (c int)

@@ -60,7 +60,7 @@ show create table t;
 select b from t;
 alter table t modify c binary(10);
 show create table t;
-select c from t;
+select hex(c) from t;
 alter table t modify d varbinary(10);
 show create table t;
 select d from t;
@@ -103,7 +103,7 @@ show create table t;
 select b from t;
 alter table t modify c bit(10);
 show create table t;
-select c from t;
+select hex(c) from t;
 alter table t modify d json;
 show create table t;
 select d from t;
@@ -236,7 +236,7 @@ alter table t modify bb bit;
 alter table t modify txt bit;
 alter table t modify e bit;
 alter table t modify s bit;
-select * from t;
+select hex(c),hex(vc),hex(bny),hex(vbny),hex(bb),hex(txt),hex(e),hex(s) from t;
 
 drop table if exists t;
 create table t (
@@ -259,7 +259,7 @@ alter table t modify bb decimal(7, 4);
 alter table t modify txt decimal(7, 4);
 alter table t modify e decimal(7, 4);
 alter table t modify s decimal(7, 4);
-select * from t;
+select hex(c),hex(vc),hex(bny),hex(vbny),hex(bb),hex(txt),hex(e),hex(s) from t;
 
 drop table if exists t;
 create table t (
@@ -658,7 +658,7 @@ alter table t modify f32 binary(10);
 -- error 1265
 alter table t modify f64 binary(10);
 alter table t modify b binary(10);
-select * from t;
+select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 
 drop table if exists t;
 create table t (
@@ -799,7 +799,7 @@ alter table t modify f32 datetime;
 alter table t modify f64 datetime;
 -- error 8200
 alter table t modify b datetime;
-select * from t;
+select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 
 drop table if exists t;
 create table t (
@@ -821,7 +821,7 @@ alter table t modify f32 time;
 alter table t modify f64 time;
 -- error 8200
 alter table t modify b time;
-select * from t;
+select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 
 drop table if exists t;
 create table t (
@@ -848,7 +848,7 @@ alter table t modify f32 date;
 alter table t modify f64 date;
 -- error 8200
 alter table t modify b date;
-select * from t;
+select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 
 drop table if exists t;
 create table t (
@@ -875,7 +875,7 @@ alter table t modify f32 timestamp;
 alter table t modify f64 timestamp;
 -- error 8200
 alter table t modify b timestamp;
-select * from t;
+select hex(d),hex(n),hex(r),hex(db),hex(f32),hex(f64),hex(b) from t;
 
 drop table if exists t;
 create table t (
@@ -1077,7 +1077,7 @@ alter table t modify t binary(30);
 alter table t modify dt binary(30);
 alter table t modify tmp binary(30);
 alter table t modify y binary(30);
-select * from t;
+select hex(d), hex(t), hex(dt), hex(tmp), hex(y) from t;
 
 drop table if exists t;
 create table t (
@@ -1482,7 +1482,7 @@ alter table t modify ui binary(20);
 alter table t modify f64 binary(20);
 alter table t modify str binary(20);
 alter table t modify nul binary(20);
-select * from t;
+select hex(obj), hex(arr), hex(nil), hex(t), hex(f), hex(i), hex(ui), hex(f64), hex(str), hex(nul) from t;
 
 drop table if exists t;
 create table t (
@@ -1868,7 +1868,8 @@ CREATE TABLE `t` (  `a` int(11) DEFAULT NULL,  `b` varchar(10) DEFAULT NULL,  `c
 insert into t values(19,1,1),(17,2,2);
 alter table t modify a bit(5) not null;
 show create table t;
-select * from t;
+--sorted_result
+select hex(a), hex(b), hex(c) from t;
 
 # TestCTCShouldCastTheDefaultValue
 # issue #24971, #24973, #24974
@@ -1890,10 +1891,10 @@ drop table if exists t;
 create table tbl(col_214 decimal(30,8));
 replace into tbl values (89687.448);
 alter table tbl add column col_279 binary(197) collate binary default 'RAWTdm' not null;
-select col_279 from tbl;
+select hex(col_279) from tbl;
 -- error 1292
 alter table tbl change column col_279 col_287 int;
-select col_279 from tbl;
+select hex(col_279) from tbl;
 
 # TestCTCCastBitToBinary
 # Close issue #25037
@@ -1907,7 +1908,7 @@ create table t(a bit(13) not null) collate utf8mb4_general_ci;
 insert into t values ( 4047 );
 alter table t change column a a binary(248) collate binary default 't';
 show create table t;
-select * from t;
+select hex(a) from t;
 drop table if exists t;
 create table t(a bit(13) not null) collate utf8mb4_general_ci;
 insert into t values ( 4047 );

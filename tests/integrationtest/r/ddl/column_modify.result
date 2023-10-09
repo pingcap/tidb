@@ -1,3 +1,4 @@
+drop table if exists test_gv_ddl, table_with_gen_col_blanks, table_with_gen_col_latin1, table_with_gen_col_string;
 CREATE TABLE test_gv_ddl(a int, b int as (a+8) virtual, c int as (b + 2) stored);
 DESC test_gv_ddl;
 Field	Type	Null	Key	Default	Extra
@@ -249,6 +250,7 @@ alter table ddl__column_modify2.test add index idx1 (a, b);
 admin check table test;
 
 use ddl__column_modify;
+drop table if exists test_rename_column;
 create table test_rename_column (id int not null primary key auto_increment, col1 int);
 alter table test_rename_column rename column col1 to col1;
 show create table test_rename_column;
