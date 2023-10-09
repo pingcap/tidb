@@ -17,7 +17,10 @@ package globalstats
 import (
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
@@ -985,4 +988,180 @@ func TestGlobalStatsIndexNDV(t *testing.T) {
 	checkNDV("tdatetime", 6, 3, 6)
 	tk.MustExec("insert into tdatetime values (1, '2004-01-01'), (1, '2005-01-01'), (1, '2006-01-01'), (1, '2007-01-01'), (1, '2008-01-01')") // p0.b: [1, 2, 3, 4, 5, 6, 7, 8], p1.b: [1, 2, 3, 4, 5, 6]
 	checkNDV("tdatetime", 8, 8, 6)
+}
+
+func TestGlobalStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30)
+	);`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("insert into t values (1), (5), (null), (11), (15), (21), (25);")
+	tk.MustExec("analyze table t;")
+	// On the table with global-stats, we use explain to query a multi-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"IndexReader 4.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 4.00 cop[tikv] table:t, index:a(a) range:(5,+inf], keep order:false"))
+	// On the table with global-stats, we use explain to query a single-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select * from t partition(p1) where a > 15;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(15,+inf], keep order:false"))
+
+	// Even if we have global-stats, we will not use it when the switch is set to `static`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─IndexReader 0.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
+		"├─IndexReader 2.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
+		"└─IndexReader 2.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p2, index:a(a) range:(5,+inf], keep order:false"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a int, b int, key(a)) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into t values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	// When we set the mode to `static`, using analyze will not report an error and will not generate global-stats.
+	// In addition, when using explain to view the plan of the related query, it was found that `Union` was used.
+	tk.MustExec("analyze table t;")
+	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "2", result.Rows()[0][5])
+	require.Equal(t, "3", result.Rows()[1][5])
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+
+	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 3333.33 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 3333.33 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
+
+	// Execute analyze again without error and can generate global-stats.
+	// And when executing related queries, neither Union nor pseudo-stats are used.
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 3)
+	require.Equal(t, "5", result.Rows()[0][5])
+	require.Equal(t, "2", result.Rows()[1][5])
+	require.Equal(t, "3", result.Rows()[2][5])
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c int)  PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("create index idx_ab on t(a, b);")
+	tk.MustExec("insert into t values (1, 1, 1), (5, 5, 5), (11, 11, 11), (15, 15, 15), (21, 21, 21), (25, 25, 25);")
+	tk.MustExec("analyze table t;")
+	// test the indexScan
+	tk.MustQuery("explain format = 'brief' select b from t where a > 5 and b > 10;").Check(testkit.Rows(
+		"Projection 2.67 root  test.t.b",
+		"└─IndexReader 2.67 root partition:all index:Selection",
+		"  └─Selection 2.67 cop[tikv]  gt(test.t.b, 10)",
+		"    └─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_ab(a, b) range:(5,+inf], keep order:false"))
+	// test the indexLookUp
+	tk.MustQuery("explain format = 'brief' select * from t use index(idx_ab) where a > 1;").Check(testkit.Rows(
+		"IndexLookUp 5.00 root partition:all ",
+		"├─IndexRangeScan(Build) 5.00 cop[tikv] table:t, index:idx_ab(a, b) range:(1,+inf], keep order:false",
+		"└─TableRowIDScan(Probe) 5.00 cop[tikv] table:t keep order:false"))
+	// test the tableScan
+	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(
+		"TableReader 6.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+}
+
+func TestGlobalIndexStatistics(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	originLease := h.Lease()
+	defer h.SetLease(originLease)
+	h.SetLease(time.Millisecond)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for i, version := range []string{"1", "2"} {
+		tk.MustExec("set @@session.tidb_analyze_version = " + version)
+
+		// analyze table t
+		tk.MustExec("drop table if exists t")
+		if i != 0 {
+			require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		}
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40))")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		tk.MustExec("analyze table t")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+			Check(testkit.Rows("1", "2", "3", "15"))
+		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+
+		// analyze table t index idx
+		tk.MustExec("drop table if exists t")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40));")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		tk.MustExec("analyze table t index idx")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
+		require.Equal(t, "4.00", rows[0][1])
+
+		// analyze table t index
+		tk.MustExec("drop table if exists t")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40));")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		tk.MustExec("analyze table t index")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
+			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+	}
 }
