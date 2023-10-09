@@ -478,7 +478,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		count, modifyCount, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
+		count, modifyCount, _, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
 		return err
 	}, flagWrapTxn)
 	return
