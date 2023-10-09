@@ -256,11 +256,7 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 func (p *PacketIO) WritePacket(data []byte) error {
 	length := len(data) - 4
 	server_metrics.WritePacketBytes.Add(float64(len(data)))
-
 	maxPayloadLen := mysql.MaxPayloadLen
-	if p.compressionAlgorithm != mysql.CompressionNone {
-		maxPayloadLen -= 4
-	}
 
 	for length >= maxPayloadLen {
 		data[3] = p.sequence
