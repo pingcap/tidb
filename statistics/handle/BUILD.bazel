@@ -43,6 +43,7 @@ go_library(
         "//types",
         "//util",
         "//util/chunk",
+        "//util/intest",
         "//util/logutil",
         "//util/mathutil",
         "//util/sqlexec",
@@ -70,7 +71,7 @@ go_test(
     embed = [":handle"],
     flaky = True,
     race = "on",
-    shard_count = 26,
+    shard_count = 28,
     deps = [
         "//config",
         "//domain",
