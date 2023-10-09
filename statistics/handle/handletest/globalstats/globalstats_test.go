@@ -17,8 +17,10 @@ package globalstats
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
