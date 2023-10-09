@@ -507,12 +507,12 @@ bazel_build:
 		//... --//build:with_nogo_flag=true
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --//build:with_nogo_flag=true
-	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server ./bin
 	cp bazel-out/k8-fastbuild/bin/cmd/importer/importer_/importer      ./bin
-	cp bazel-out/k8-fastbuild/bin/tidb-server/tidb-server-check_/tidb-server-check ./bin
+	cp bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server-check_/tidb-server-check ./bin
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-enterprise-workspace-status.sh --define gotags=enterprise
-	./bazel-out/k8-fastbuild/bin/tidb-server/tidb-server_/tidb-server -V
+	./bazel-out/k8-fastbuild/bin/cmd/tidb-server/tidb-server_/tidb-server -V
 
 bazel_fail_build:  failpoint-enable bazel_ci_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
