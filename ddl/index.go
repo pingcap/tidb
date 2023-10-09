@@ -2047,6 +2047,13 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(context.Background())
 	done := make(chan struct{})
+	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
+		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
+	}
+	elemIDs := make([]int64, 0, len(reorgInfo.elements))
+	for _, elem := range reorgInfo.elements {
+		elemIDs = append(elemIDs, elem.ID)
+	}
 
 	// for resuming add index task.
 	taskManager, err := storage.GetTaskManager()

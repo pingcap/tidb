@@ -1373,3 +1373,184 @@ select translate(str, 'AAa', '') from t;
 select translate(str, '', 'Zzz') from t;
 select translate(i, '0123456', 'abcdefg') from t;
 set tidb_enable_vectorized_expression=default;
+
+# TestEncryptionBuiltin
+drop table if exists t;
+create table t(a char(41), b char(41), c char(41));
+insert into t values(NULL, '', 'abc');
+select password(a) from t;
+select password(b) from t;
+select password(c) from t;
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select md5(a), md5(b), md5(c), md5(d), md5(e), md5(f), md5(g), md5(h), md5(i) from t;
+select md5('123'), md5(123), md5(''), md5('你好'), md5(NULL), md5('👍');
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sha1(a), sha1(b), sha1(c), sha1(d), sha1(e), sha1(f), sha1(g), sha1(h), sha1(i) from t;
+select sha1('123'), sha1(123), sha1(''), sha1('你好'), sha1(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sha(a), sha(b), sha(c), sha(d), sha(e), sha(f), sha(g), sha(h), sha(i) from t;
+select sha('123'), sha(123), sha(''), sha('你好'), sha(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sha2(a, 224), sha2(b, 0), sha2(c, 512), sha2(d, 256), sha2(e, 384), sha2(f, 0), sha2(g, 512), sha2(h, 256), sha2(i, 224) from t;
+select sha2('123', 512), sha2(123, 512), sha2('', 512), sha2('你好', 224), sha2(NULL, 256), sha2('foo', 123);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sm3(a), sm3(b), sm3(c), sm3(d), sm3(e), sm3(f), sm3(g), sm3(h), sm3(i) from t;
+select sm3('123'), sm3(123), sm3(''), sm3('你好'), sm3(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+select sm3(a), sm3(b), sm3(c), sm3(d), sm3(e), sm3(f), sm3(g), sm3(h), sm3(i) from t;
+select sm3('123'), sm3(123), sm3(''), sm3('你好'), sm3(NULL);
+drop table if exists t;
+create table t(a char(10), b int, c double, d datetime, e time, f bit(4), g binary(20), h blob(10), i text(30));
+insert into t values('2', 2, 2.3, "2017-01-01 12:01:01", "12:01:01", 0b1010, "512", "48", "tidb");
+SET block_encryption_mode='aes-128-ecb';
+select HEX(AES_ENCRYPT(a, 'key')), HEX(AES_ENCRYPT(b, 'key')), HEX(AES_ENCRYPT(c, 'key')), HEX(AES_ENCRYPT(d, 'key')), HEX(AES_ENCRYPT(e, 'key')), HEX(AES_ENCRYPT(f, 'key')), HEX(AES_ENCRYPT(g, 'key')), HEX(AES_ENCRYPT(h, 'key')), HEX(AES_ENCRYPT(i, 'key')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar')), HEX(AES_ENCRYPT(123, 'foobar')), HEX(AES_ENCRYPT('', 'foobar')), HEX(AES_ENCRYPT('你好', 'foobar')), AES_ENCRYPT(NULL, 'foobar');
+select HEX(AES_ENCRYPT(a, 'key', 'iv')), HEX(AES_ENCRYPT(b, 'key', 'iv')) from t;
+show warnings;
+SET block_encryption_mode='aes-128-cbc';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-128-ofb';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-192-ofb';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-256-ofb';
+select HEX(AES_ENCRYPT(a, 'key', '1234567890123456')), HEX(AES_ENCRYPT(b, 'key', '1234567890123456')), HEX(AES_ENCRYPT(c, 'key', '1234567890123456')), HEX(AES_ENCRYPT(d, 'key', '1234567890123456')), HEX(AES_ENCRYPT(e, 'key', '1234567890123456')), HEX(AES_ENCRYPT(f, 'key', '1234567890123456')), HEX(AES_ENCRYPT(g, 'key', '1234567890123456')), HEX(AES_ENCRYPT(h, 'key', '1234567890123456')), HEX(AES_ENCRYPT(i, 'key', '1234567890123456')) from t;
+select HEX(AES_ENCRYPT('123', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT(123, 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('', 'foobar', '1234567890123456')), HEX(AES_ENCRYPT('你好', 'foobar', '1234567890123456')), AES_ENCRYPT(NULL, 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-128-ecb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar'), 'bar');
+select AES_DECRYPT(UNHEX('45ABDD5C4802EFA6771A94C43F805208'), 'foobar'), AES_DECRYPT(UNHEX('791F1AEB6A6B796E6352BF381895CA0E'), 'foobar'), AES_DECRYPT(UNHEX('D0147E2EB856186F146D9F6DE33F9546'), 'foobar'), AES_DECRYPT(NULL, 'foobar'), AES_DECRYPT('SOME_THING_STRANGE', 'foobar');
+SET block_encryption_mode='aes-128-cbc';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('80D5646F07B4654B05A02D9085759770'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('B3C14BA15030D2D7E99376DBE011E752'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('0CD2936EE4FEC7A8CDF6208438B2BC05'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456');
+SET block_encryption_mode='aes-128-ofb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('48E38A'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX(''), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('9D6C199101C3'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), HEX(AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456'));
+SET block_encryption_mode='aes-192-ofb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('3A76B0'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX(''), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('EFF92304268E'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), HEX(AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456'));
+SET block_encryption_mode='aes-256-ofb';
+select AES_DECRYPT(AES_ENCRYPT('foo', 'bar', '1234567890123456'), 'bar', '1234567890123456');
+select AES_DECRYPT(UNHEX('E842C5'), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX(''), 'foobar', '1234567890123456'), AES_DECRYPT(UNHEX('3DCD5646767D'), 'foobar', '1234567890123456'), AES_DECRYPT(NULL, 'foobar', '1234567890123456'), HEX(AES_DECRYPT('SOME_THING_STRANGE', 'foobar', '1234567890123456'));
+DROP TABLE IF EXISTS t1;
+CREATE TABLE t1(a VARCHAR(1000));
+INSERT INTO t1 VALUES('12345'), ('23456');
+SELECT HEX(COMPRESS(a)) FROM t1;
+DROP TABLE IF EXISTS t2;
+CREATE TABLE t2(a VARCHAR(1000), b VARBINARY(1000));
+INSERT INTO t2 (a, b) SELECT a, COMPRESS(a) from t1;
+SELECT a, HEX(b) FROM t2;
+SELECT UNCOMPRESS(COMPRESS('123'));
+SELECT UNCOMPRESS(UNHEX('03000000789C3334320600012D0097'));
+SELECT UNCOMPRESS(UNHEX('03000000789C32343206040000FFFF012D0097'));
+INSERT INTO t2 VALUES ('12345', UNHEX('05000000789C3334323631050002F80100'));
+SELECT UNCOMPRESS(a), UNCOMPRESS(b) FROM t2;
+SELECT UNCOMPRESSED_LENGTH(COMPRESS('123'));
+SELECT UNCOMPRESSED_LENGTH(UNHEX('03000000789C3334320600012D0097'));
+SELECT UNCOMPRESSED_LENGTH(UNHEX('03000000789C32343206040000FFFF012D0097'));
+SELECT UNCOMPRESSED_LENGTH('');
+SELECT UNCOMPRESSED_LENGTH(UNHEX('0100'));
+SELECT UNCOMPRESSED_LENGTH(a), UNCOMPRESSED_LENGTH(b) FROM t2;
+-- error 1690
+SELECT RANDOM_BYTES(0);
+-- error 1690
+SELECT RANDOM_BYTES(-5);
+-- error 1690
+SELECT RANDOM_BYTES(1025);
+-- error 1690
+SELECT RANDOM_BYTES(4000);
+SELECT length(RANDOM_BYTES('1'));
+SELECT length(RANDOM_BYTES(1024));
+SELECT RANDOM_BYTES(NULL);
+SET GLOBAL validate_password.dictionary='password';
+SET GLOBAL validate_password.enable = 1;
+SELECT validate_password_strength('root');
+SELECT validate_password_strength('toor');
+SELECT validate_password_strength('ROOT');
+SELECT validate_password_strength('TOOR');
+SELECT validate_password_strength('fooHoHo%1');
+SELECT validate_password_strength('pass');
+SELECT validate_password_strength('password');
+SELECT validate_password_strength('password0000');
+SELECT validate_password_strength('password1A#');
+SELECT validate_password_strength('PA12wrd!#');
+SELECT VALIDATE_PASSWORD_STRENGTH(REPEAT("aA1#", 26));
+SELECT validate_password_strength(null);
+SELECT validate_password_strength('null');
+SELECT VALIDATE_PASSWORD_STRENGTH( 0x6E616E646F73617135234552 );
+SELECT VALIDATE_PASSWORD_STRENGTH(CAST(0xd2 AS BINARY(10)));
+SET GLOBAL validate_password.dictionary=default;
+SET GLOBAL validate_password.enable = default;
+SET block_encryption_mode=default;
+
+# TestMiscellaneousBuiltin
+select uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}',
+    uuid() REGEXP '[[:alnum:]]{8}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{4}-[[:alnum:]]{12}';
+select sleep(1);
+select sleep(0);
+select sleep('a');
+show warnings;
+-- error 1510
+select sleep(-1);
+SELECT INET_ATON('10.0.5.9');
+SELECT INET_NTOA(167773449);
+SELECT HEX(INET6_ATON('fdfe::5a55:caff:fefa:9089'));
+SELECT HEX(INET6_ATON('10.0.5.9'));
+SELECT INET6_NTOA(INET6_ATON('fdfe::5a55:caff:fefa:9089'));
+SELECT INET6_NTOA(INET6_ATON('10.0.5.9'));
+SELECT INET6_NTOA(UNHEX('FDFE0000000000005A55CAFFFEFA9089'));
+SELECT INET6_NTOA(UNHEX('0A000509'));
+SELECT IS_IPV4('10.0.5.9'), IS_IPV4('10.0.5.256');
+SELECT IS_IPV4_COMPAT(INET6_ATON('::10.0.5.9'));
+SELECT IS_IPV4_COMPAT(INET6_ATON('::ffff:10.0.5.9'));
+SELECT
+	  IS_IPV4_COMPAT(INET6_ATON('::192.168.0.1')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:0001')),
+	  IS_IPV4_COMPAT(INET6_ATON('::c0a8:1'));
+SELECT IS_IPV4_MAPPED(INET6_ATON('::10.0.5.9'));
+SELECT IS_IPV4_MAPPED(INET6_ATON('::ffff:10.0.5.9'));
+SELECT
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:192.168.0.1')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:0001')),
+	  IS_IPV4_MAPPED(INET6_ATON('::ffff:c0a8:1'));
+SELECT IS_IPV6('10.0.5.9'), IS_IPV6('::1');
+drop table if exists t1;
+create table t1(
+        a int,
+        b int not null,
+        c int not null default 0,
+        d int default 0,
+        unique key(b,c),
+        unique key(b,d)
+);
+insert into t1 (a,b) values(1,10),(1,20),(2,30),(2,40);
+select any_value(a), sum(b) from t1;
+select a,any_value(b),sum(c) from t1 group by a order by a;
+SELECT GET_LOCK('test_lock1', 10);
+SELECT GET_LOCK('test_lock2', 10);
+SELECT IS_USED_LOCK('test_lock1') = CONNECTION_ID();
+SELECT IS_USED_LOCK('foobar');
+SELECT IS_FREE_LOCK('test_lock1');
+SELECT IS_FREE_LOCK('foobar');
+SELECT RELEASE_LOCK('test_lock2');
+SELECT RELEASE_LOCK('test_lock1');
+SELECT RELEASE_LOCK('test_lock3');
+SELECT RELEASE_ALL_LOCKS();
+
