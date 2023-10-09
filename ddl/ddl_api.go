@@ -1344,7 +1344,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if tp == mysql.TypeBit || tp == mysql.TypeString || tp == mysql.TypeVarchar ||
 			tp == mysql.TypeVarString || tp == mysql.TypeEnum || tp == mysql.TypeSet {
 			// For BinaryLiteral or bit fields, we decode the default value to utf8 string.
-			str, err := v.GetBinaryStringDecoded(nil, col.GetCharset())
+			str, err := v.GetBinaryStringDecoded(types.StrictFlags, col.GetCharset())
 			if err != nil {
 				// Overwrite the decoding error with invalid default value error.
 				err = dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
