@@ -236,6 +236,7 @@ func initflag() *flag.FlagSet {
 	keyspaceName = fset.String(nmKeyspaceName, "", "keyspace name.")
 	serviceScope = fset.String(nmTiDBServiceScope, "", "tidb service scope")
 	help = fset.Bool("help", false, "show the usage")
+	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
 	// nolint:errcheck
 	fset.Parse(os.Args[1:])

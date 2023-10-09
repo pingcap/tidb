@@ -28,7 +28,12 @@ import (
 )
 
 // WithMockUpgrade is a flag identify whether tests run with mock upgrading.
-var WithMockUpgrade = flag.Bool("with-mock-upgrade", false, "whether tests run with mock upgrade")
+var WithMockUpgrade *bool
+
+// RegisterMockUpgradeFlag registers the mock upgrade flag.
+func RegisterMockUpgradeFlag(fSet *flag.FlagSet) {
+	WithMockUpgrade = fSet.Bool("with-mock-upgrade", false, "whether tests run with mock upgrade")
+}
 
 var allDDLs = []string{
 	"create unique index c3_index on mock_sys_partition (c1)",
