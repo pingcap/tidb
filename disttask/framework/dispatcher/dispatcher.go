@@ -407,7 +407,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.Task.State
 	d.Task.State = taskState
-	if !d.VerifyTaskStateTransform(prevState, taskState) {
+	if !VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 
@@ -697,7 +697,7 @@ func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.C
 }
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
-func (d *BaseDispatcher) VerifyTaskStateTransform(from, to string) bool {
+func VerifyTaskStateTransform(from, to string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {
 			proto.TaskStateRunning,
@@ -739,7 +739,7 @@ func (d *BaseDispatcher) VerifyTaskStateTransform(from, to string) bool {
 		proto.TaskStateRevertPending: {},
 		proto.TaskStateReverted:      {},
 	}
-	logutil.Logger(d.logCtx).Info("task state transform", zap.String("from", from), zap.String("to", to))
+	logutil.BgLogger().Info("task state transform", zap.String("from", from), zap.String("to", to))
 
 	if from == to {
 		return true
