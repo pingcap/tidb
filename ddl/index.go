@@ -2038,6 +2038,12 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 	return nil
 }
 
+// MockDMLExecutionOnTaskFinished is used to mock DML execution when tasks finished.
+var MockDMLExecutionOnTaskFinished func()
+
+// MockDMLExecutionOnDDLPaused is used to mock DML execution when ddl job paused.
+var MockDMLExecutionOnDDLPaused func()
+
 func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
@@ -2047,12 +2053,10 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(context.Background())
 	done := make(chan struct{})
+
+	// generate taskKey for multi schema change.
 	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
 		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
-	}
-	elemIDs := make([]int64, 0, len(reorgInfo.elements))
-	for _, elem := range reorgInfo.elements {
-		elemIDs = append(elemIDs, elem.ID)
 	}
 
 	// for resuming add index task.
@@ -2065,6 +2069,11 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		return err
 	}
 	if task != nil {
+		// It's possible that the task state is succeed but the ddl job is paused.
+		// When task in succeed state, we can skip the dist task execution/scheduing process.
+		if task.State == proto.TaskStateSucceed {
+			return nil
+		}
 		g.Go(func() error {
 			defer close(done)
 			backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
@@ -2104,6 +2113,9 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		g.Go(func() error {
 			defer close(done)
 			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+			failpoint.Inject("pauseAfterDistTaskSuccess", func() {
+				MockDMLExecutionOnTaskFinished()
+			})
 			if w.isReorgPaused(reorgInfo.Job.ID) {
 				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
 				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
