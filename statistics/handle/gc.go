@@ -156,6 +156,7 @@ func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error 
 			}
 		}
 	}
+
 	// Mark records in mysql.stats_extended as `deleted`.
 	rows, _, err = h.execRows("select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
 	if err != nil {

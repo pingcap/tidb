@@ -896,7 +896,7 @@ Projection_3	10000.00	root		Column#2, Column#4, Column#5, Column#6, Column#7, Co
 └─MemTableScan_4	10000.00	root	table:PROCESSLIST	
 select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist;
 USER	DB	COMMAND	TIME	STATE	INFO	DIGEST
-root	planner__cascades__integration	Query	0	in transaction; autocommit	select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist	78f1c0b2fcd082b6504b8ba48706391f13aad730a9efb7ec295688010bfec477
+root	planner__cascades__integration	Query	0	autocommit	select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist	78f1c0b2fcd082b6504b8ba48706391f13aad730a9efb7ec295688010bfec477
 drop table if exists t;
 create table t(a int primary key, b int);
 insert into t values (1, 11), (4, 44), (2, 22), (3, 33);

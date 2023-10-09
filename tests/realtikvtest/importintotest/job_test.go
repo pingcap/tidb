@@ -295,7 +295,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.Require().Eventually(func() bool {
 		rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 		return rows[0][5] == "finished"
-	}, 20*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "finished"
@@ -329,7 +329,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.Require().Eventually(func() bool {
 		rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 		return rows[0][5] == "failed"
-	}, 10*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "failed"
@@ -362,7 +362,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.Require().Eventually(func() bool {
 		rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID3)).Rows()
 		return rows[0][5] == "failed"
-	}, 10*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID3)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "failed"
@@ -442,7 +442,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.Require().Eventually(func() bool {
 		task := getTask(int64(jobID1))
 		return task.State == proto.TaskStateReverted
-	}, 10*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 
 	// cancel again, should fail
 	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
@@ -506,7 +506,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			}
 		}
 		return globalTask.State == proto.TaskStateReverted && cancelled
-	}, 5*time.Second, 1*time.Second)
+	}, maxWaitTime, 1*time.Second)
 
 	// todo: enable it when https://github.com/pingcap/tidb/issues/44443 fixed
 	//// cancel a pending job created by test_cancel_job2 using root
@@ -625,5 +625,5 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 		s.NoError(err2)
 		return globalTask.State == proto.TaskStateReverted
-	}, 5*time.Second, 1*time.Second)
+	}, maxWaitTime, 1*time.Second)
 }

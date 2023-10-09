@@ -113,27 +113,23 @@ Insert	N/A	root		N/A
 explain FORMAT='brief' delete from t;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─SelectLock	10000.00	root		for update 0
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain FORMAT='brief' delete from t where a>1;
 id	estRows	task	access object	operator info
 Delete	N/A	root		N/A
-└─SelectLock	3333.33	root		for update 0
-  └─TableReader	3333.33	root		data:TableRangeScan
-    └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
+└─TableReader	3333.33	root		data:TableRangeScan
+  └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
 explain FORMAT='brief' update t set a=a+1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─SelectLock	10000.00	root		for update 0
-  └─TableReader	10000.00	root		data:TableFullScan
-    └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain FORMAT='brief' update t set a=a+1 where a>1;
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
-└─SelectLock	3333.33	root		for update 0
-  └─TableReader	3333.33	root		data:TableRangeScan
-    └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
+└─TableReader	3333.33	root		data:TableRangeScan
+  └─TableRangeScan	3333.33	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
 set tidb_cost_model_version=2;
 set tidb_enable_ordered_result_mode=1;
 drop table if exists t1;

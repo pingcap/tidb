@@ -398,6 +398,7 @@ PARTITION BY LIST COLUMNS(col1) (
   PARTITION P8 VALUES IN (126,30,48,68)
 );
 insert into PK_LP9326 values(30),(48),(56);
+--sorted_result
 SELECT COL1 FROM PK_LP9326 WHERE COL1 NOT IN (621579514938,-17333745845828,2777039147338);
 
 
@@ -603,15 +604,10 @@ select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
 select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
 --sorted_result
 select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c <= "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c < "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c > "Wow";
---sorted_result
 explain format = 'brief' select * from t where a = 10 and b = "2022-01-01" and c >= "Wow";
 --sorted_result
 select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
@@ -619,7 +615,6 @@ select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 select * from t where a = 10 and b = "2022-01-01" and c = "Wow";
 --sorted_result
 select * from t where a <= 10 and b <= '2022-01-01' and c <= "Wow";
---sorted_result
 explain format = 'brief' select * from t where a <= 10 and b <= '2022-01-01' and c < "Wow";
 --sorted_result
 select * from t where a <= 11 and b <= '2022-01-01' and c < "Wow";
