@@ -3271,3 +3271,15 @@ func TestTiDBRowChecksumBuiltin(t *testing.T) {
 	tk.MustGetDBError("select tidb_row_checksum() from t", expression.ErrNotSupportedYet)
 	tk.MustGetDBError("select tidb_row_checksum() from t where id > 0", expression.ErrNotSupportedYet)
 }
+
+func TestIssue40488(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t (a FLOAT(5, 2))")
+	tk.MustExec("INSERT INTO t VALUES (13.33)")
+	rs, err := tk.Exec("SELECT * FROM t WHERE a = 13.33")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "13.33")
+}
