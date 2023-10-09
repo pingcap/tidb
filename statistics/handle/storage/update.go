@@ -17,18 +17,18 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"slices"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	statsutil "github.com/pingcap/tidb/statistics/handle/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // UpdateStatsVersion will set statistics version to the newest TS,
