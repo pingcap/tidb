@@ -79,9 +79,15 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 		return nil
 	}
 
-	var indexID int64 = 0
-	if err := job.DecodeArgs(&indexID); err != nil {
-		return errors.Trace(err)
+	allIndexIDs := make([]int64, 1)
+	// The job.Args is either `Multi-index: ([]int64, ...)`,
+	// or `Single-index: (int64, ...)`.
+	// TODO: it's better to use the public function to parse the
+	// job's Args.
+	if err := job.DecodeArgs(&allIndexIDs[0]); err != nil {
+		if err = job.DecodeArgs(&allIndexIDs); err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	tableindexes, exists := i.items[job.TableID]
@@ -92,9 +98,11 @@ func (i *IngestRecorder) AddJob(job *model.Job) error {
 
 	// the current information of table/index might be modified by other ddl jobs,
 	// therefore update the index information at last
-	tableindexes[indexID] = &IngestIndexInfo{
-		IsPrimary: job.Type == model.ActionAddPrimaryKey,
-		Updated:   false,
+	for _, indexID := range allIndexIDs {
+		tableindexes[indexID] = &IngestIndexInfo{
+			IsPrimary: job.Type == model.ActionAddPrimaryKey,
+			Updated:   false,
+		}
 	}
 
 	return nil
