@@ -10,9 +10,9 @@ go_library(
     importpath = "github.com/pingcap/tidb/statistics/handle/lockstats",
     visibility = ["//visibility:public"],
     deps = [
-        "//kv",
         "//parser/terror",
         "//statistics/handle/cache",
+        "//statistics/handle/util",
         "//util/logutil",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
@@ -30,7 +30,7 @@ go_test(
     ],
     embed = [":lockstats"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 13,
     deps = [
         "//kv",
         "//parser/mysql",

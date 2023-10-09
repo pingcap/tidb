@@ -420,7 +420,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return false
 	})
 
-	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.currentSeq)
+	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return err
 	}

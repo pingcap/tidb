@@ -386,37 +386,35 @@ create table t1(c1 int, c2 int, c3 int, key(c1), key(c2));
 insert into t1 values(1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4), (5, 5, 5);
 explain delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
 id	estRows	task	access object	operator info
-Delete_11	N/A	root		N/A
-└─Sort_15	4056.68	root		index_merge.t1.c1
-  └─SelectLock_17	4056.68	root		for update 0
-    └─HashJoin_33	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
-      ├─HashAgg_35(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
-      │ └─IndexMerge_41	2248.30	root		type: union
-      │   ├─IndexRangeScan_37(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-      │   ├─IndexRangeScan_38(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-      │   └─Selection_40(Probe)	2248.30	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-      │     └─TableRowIDScan_39	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-      └─TableReader_49(Probe)	9990.00	root		data:Selection_48
-        └─Selection_48	9990.00	cop[tikv]		not(isnull(index_merge.t1.c1))
-          └─TableFullScan_47	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Delete_10	N/A	root		N/A
+└─Sort_14	4056.68	root		index_merge.t1.c1
+  └─HashJoin_31	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
+    ├─HashAgg_33(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
+    │ └─IndexMerge_39	2248.30	root		type: union
+    │   ├─IndexRangeScan_35(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+    │   ├─IndexRangeScan_36(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+    │   └─Selection_38(Probe)	2248.30	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+    │     └─TableRowIDScan_37	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+    └─TableReader_47(Probe)	9990.00	root		data:Selection_46
+      └─Selection_46	9990.00	cop[tikv]		not(isnull(index_merge.t1.c1))
+        └─TableFullScan_45	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 delete from t1 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10) order by 1;
 select * from t1;
 c1	c2	c3
 ///// UPDATE
 explain update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
 id	estRows	task	access object	operator info
-Update_10	N/A	root		N/A
-└─SelectLock_14	4056.68	root		for update 0
-  └─HashJoin_30	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
-    ├─HashAgg_32(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
-    │ └─IndexMerge_38	2248.30	root		type: union
-    │   ├─IndexRangeScan_34(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
-    │   ├─IndexRangeScan_35(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
-    │   └─Selection_37(Probe)	2248.30	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
-    │     └─TableRowIDScan_36	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader_46(Probe)	9990.00	root		data:Selection_45
-      └─Selection_45	9990.00	cop[tikv]		not(isnull(index_merge.t1.c1))
-        └─TableFullScan_44	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+Update_9	N/A	root		N/A
+└─HashJoin_28	4056.68	root		inner join, equal:[eq(index_merge.t1.c1, index_merge.t1.c1)]
+  ├─HashAgg_30(Build)	3245.34	root		group by:index_merge.t1.c1, funcs:firstrow(index_merge.t1.c1)->index_merge.t1.c1
+  │ └─IndexMerge_36	2248.30	root		type: union
+  │   ├─IndexRangeScan_32(Build)	3323.33	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
+  │   ├─IndexRangeScan_33(Build)	3323.33	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
+  │   └─Selection_35(Probe)	2248.30	cop[tikv]		not(isnull(index_merge.t1.c1)), or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), lt(index_merge.t1.c3, 10)))
+  │     └─TableRowIDScan_34	5542.21	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader_44(Probe)	9990.00	root		data:Selection_43
+    └─Selection_43	9990.00	cop[tikv]		not(isnull(index_merge.t1.c1))
+      └─TableFullScan_42	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 update t1 set c1 = 100, c2 = 100, c3 = 100 where c1 in (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 10 or c2 < 10 and c3 < 10);
 select * from t1;
 c1	c2	c3
@@ -460,6 +458,7 @@ StreamAgg_9	1.00	root		funcs:count(Column#96)->Column#97
   └─MemTableScan_15	10000.00	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message
+Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
 select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 count(c1)
 1
@@ -618,6 +617,7 @@ Sort_5	2978.47	root		index_merge.t1.c1
     └─TableFullScan_8	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
+Warning	1105	IndexMerge is inapplicable
 select /*+ use_index_merge(t1) */ * from t1 where (((c1 < 10 or c3 < 10) and (c1 < 10 or c4 < 10)) or c2 < 10) and (c3 < 10 or c5 < 10) order by 1;
 c1	c2	c3	c4	c5
 1	1	1	1	1
@@ -850,6 +850,9 @@ CTE_0	1.80	root		Recursive CTE
     └─CTETable_16	1.00	root		Scan on CTE_0
 show warnings;
 Level	Code	Message
+Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
+Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
+Warning	1815	use_index_merge(index_merge.t_alias) is inapplicable, check whether the table(index_merge.t_alias) exists
 with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 c1	c2	c3
 1	1	1

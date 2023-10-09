@@ -22,6 +22,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/bits"
 	"reflect"
 	"slices"
 	"strconv"
@@ -529,6 +530,28 @@ func (bj *BinaryJSON) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+func getInt64FractionLength(i int64) int {
+	absInt := uint64(0)
+	if i < 0 {
+		absInt = uint64(-i)
+	} else {
+		absInt = uint64(i)
+	}
+	return getUint64FractionLength(absInt)
+}
+
+func getUint64FractionLength(i uint64) int {
+	lz := bits.LeadingZeros64(i)
+	tz := bits.TrailingZeros64(i)
+	// 64 bit removes the leading zero, removes the trailing zero and also removes the first "1".
+	fraction := 64 - lz - tz - 1
+	if lz == 64 && tz == 64 {
+		fraction = 0
+	}
+
+	return fraction
+}
+
 // HashValue converts certain JSON values for aggregate comparisons.
 // For example int64(3) == float64(3.0)
 // Other than the numeric condition, this function has to construct a bidirectional map between hash value
@@ -539,7 +562,9 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 		// Convert to a FLOAT if no precision is lost.
 		// In the future, it will be better to convert to a DECIMAL value instead
 		// See: https://github.com/pingcap/tidb/issues/9988
-		if bj.GetInt64() == int64(float64(bj.GetInt64())) {
+
+		// A double precision float can have 52-bit in fraction part.
+		if getInt64FractionLength(bj.GetInt64()) <= 52 {
 			buf = append(buf, JSONTypeCodeFloat64)
 			buf = appendBinaryFloat64(buf, float64(bj.GetInt64()))
 		} else {
@@ -547,7 +572,8 @@ func (bj BinaryJSON) HashValue(buf []byte) []byte {
 			buf = append(buf, bj.Value...)
 		}
 	case JSONTypeCodeUint64:
-		if bj.GetUint64() == uint64(float64(bj.GetUint64())) {
+		// A double precision float can have 52-bit in fraction part.
+		if getUint64FractionLength(bj.GetUint64()) <= 52 {
 			buf = append(buf, JSONTypeCodeFloat64)
 			buf = appendBinaryFloat64(buf, float64(bj.GetUint64()))
 		} else {

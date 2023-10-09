@@ -16,7 +16,6 @@ package handle
 
 import (
 	"cmp"
-	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -25,13 +24,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/usage"
+	utilstats "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -115,9 +114,6 @@ func (h *Handle) NewSessionIndexUsageCollector() *usage.SessionIndexUsageCollect
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 
-// maxInsertLength is the length limit for internal insert SQL.
-const maxInsertLength = 1024 * 1024
-
 // DumpIndexUsageToKV will dump in-memory index usage information to KV.
 func (h *Handle) DumpIndexUsageToKV() error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
@@ -125,7 +121,12 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	})
 }
 
-func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error) (err error) {
+var (
+	// flagWrapTxn indicates whether to wrap a transaction.
+	flagWrapTxn = 0
+)
+
+func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	se, err := h.pool.Get()
 	if err != nil {
 		return err
@@ -139,6 +140,23 @@ func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error) (err error)
 	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 		return err
 	}
+
+	wrapTxn := false
+	for _, flag := range flags {
+		if flag == flagWrapTxn {
+			wrapTxn = true
+		}
+	}
+	if wrapTxn {
+		// use a transaction here can let different SQLs in this operation have the same data visibility.
+		if _, err := utilstats.Exec(sctx, "begin"); err != nil {
+			return err
+		}
+		defer func() {
+			err = utilstats.FinishTransaction(sctx, err)
+		}()
+	}
+
 	return f(sctx)
 }
 
@@ -233,41 +251,38 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 		h.tableDelta.Merge(deltaMap)
 	}()
 
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	currentTime := time.Now()
-	for id, item := range deltaMap {
-		if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
-			continue
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+		currentTime := time.Now()
+		for id, item := range deltaMap {
+			if !h.needDumpStatsDelta(is, mode, id, item, currentTime) {
+				continue
+			}
+			updated, err := h.dumpTableStatCountToKV(is, id, item)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if updated {
+				usage.UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
+			}
+			if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+				delete(deltaMap, id)
+				return errors.Trace(err)
+			}
+			if updated {
+				delete(deltaMap, id)
+			} else {
+				m := deltaMap[id]
+				m.ColSize = nil
+				deltaMap[id] = m
+			}
 		}
-		updated, err := h.dumpTableStatCountToKV(is, id, item)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if updated {
-			usage.UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
-		}
-		if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
-			delete(deltaMap, id)
-			return errors.Trace(err)
-		}
-		if updated {
-			delete(deltaMap, id)
-		} else {
-			m := deltaMap[id]
-			m.ColSize = nil
-			deltaMap[id] = m
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 // dumpTableStatDeltaToKV dumps a single delta with some table to KV and updates the version.
+// For a partitioned table, we will update its global-stats as well.
 func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableID int64, delta variable.TableDelta) (updated bool, err error) {
 	statsVersion := uint64(0)
 	defer func() {
@@ -279,111 +294,104 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 		return true, nil
 	}
 
-	se, err := h.pool.Get()
-	if err != nil {
-		return false, err
-	}
-	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	sctx := se.(sessionctx.Context)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err = exec.ExecuteInternal(ctx, "begin")
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-
-	statsVersion, err = getSessionTxnStartTS(se)
-	if err != nil {
-		return false, errors.Trace(err)
-	}
-
-	tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
-	// Check if the table and its partitions are locked.
-	tidAndPid := make([]int64, 0, 2)
-	if tbl != nil {
-		tidAndPid = append(tidAndPid, tbl.Meta().ID)
-	}
-	tidAndPid = append(tidAndPid, physicalTableID)
-	lockedTables, err := h.GetLockedTables(tidAndPid...)
-	if err != nil {
-		return
-	}
-
-	var affectedRows uint64
-	// If it's a partitioned table and its global-stats exists,
-	// update its count and modify_count as well.
-	if tbl != nil {
-		// We need to check if the table and the partition are locked.
-		isTableLocked := false
-		isPartitionLocked := false
-		tableID := tbl.Meta().ID
-		if _, ok := lockedTables[tableID]; ok {
-			isTableLocked = true
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		statsVersion, err = utilstats.GetStartTS(sctx)
+		if err != nil {
+			return errors.Trace(err)
 		}
-		if _, ok := lockedTables[physicalTableID]; ok {
-			isPartitionLocked = true
+
+		tbl, _, _ := is.FindTableByPartitionID(physicalTableID)
+		// Check if the table and its partitions are locked.
+		tidAndPid := make([]int64, 0, 2)
+		if tbl != nil {
+			tidAndPid = append(tidAndPid, tbl.Meta().ID)
 		}
-		tableOrPartitionLocked := isTableLocked || isPartitionLocked
-		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
-			physicalTableID, tableOrPartitionLocked); err != nil {
-			return
+		tidAndPid = append(tidAndPid, physicalTableID)
+		lockedTables, err := h.GetLockedTables(tidAndPid...)
+		if err != nil {
+			return err
 		}
-		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-		// If only the partition is locked, we don't need to update the global-stats.
-		// We will update its global-stats when the partition is unlocked.
-		if isTableLocked || !isPartitionLocked {
-			// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-			if err = updateStatsMeta(ctx, exec, statsVersion, delta, tableID, isTableLocked); err != nil {
-				return
+
+		var affectedRows uint64
+		// If it's a partitioned table and its global-stats exists,
+		// update its count and modify_count as well.
+		if tbl != nil {
+			// We need to check if the table and the partition are locked.
+			isTableLocked := false
+			isPartitionLocked := false
+			tableID := tbl.Meta().ID
+			if _, ok := lockedTables[tableID]; ok {
+				isTableLocked = true
+			}
+			if _, ok := lockedTables[physicalTableID]; ok {
+				isPartitionLocked = true
+			}
+			tableOrPartitionLocked := isTableLocked || isPartitionLocked
+			if err = updateStatsMeta(sctx, statsVersion, delta,
+				physicalTableID, tableOrPartitionLocked); err != nil {
+				return err
+			}
+			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			// If the partition is locked, we don't need to update the global-stats.
+			// We will update its global-stats when the partition is unlocked.
+			// 1. If table is locked and partition is locked, we only stash the delta in the partition's lock info.
+			//    we will update its global-stats when the partition is unlocked.
+			// 2. If table is locked and partition is not locked(new partition after lock), we only stash the delta in the table's lock info.
+			//    we will update its global-stats when the table is unlocked. We don't need to specially handle this case.
+			//    Because updateStatsMeta will insert a new record if the record doesn't exist.
+			// 3. If table is not locked and partition is locked, we only stash the delta in the partition's lock info.
+			//    we will update its global-stats when the partition is unlocked.
+			// 4. If table is not locked and partition is not locked, we update the global-stats.
+			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
+			if !isTableLocked && !isPartitionLocked {
+				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
+				if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
+					return err
+				}
+				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
+			}
+		} else {
+			// This is a non-partitioned table.
+			// Check if it's locked.
+			isTableLocked := false
+			if _, ok := lockedTables[physicalTableID]; ok {
+				isTableLocked = true
+			}
+			if err = updateStatsMeta(sctx, statsVersion, delta,
+				physicalTableID, isTableLocked); err != nil {
+				return err
 			}
 			affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
 		}
-	} else {
-		// This is a non-partitioned table.
-		// Check if it's locked.
-		isTableLocked := false
-		if _, ok := lockedTables[physicalTableID]; ok {
-			isTableLocked = true
-		}
-		if err = updateStatsMeta(ctx, exec, statsVersion, delta,
-			physicalTableID, isTableLocked); err != nil {
-			return
-		}
-		affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
-	}
 
-	updated = affectedRows > 0
+		updated = affectedRows > 0
+		return nil
+	}, flagWrapTxn)
 	return
 }
 
 func updateStatsMeta(
-	ctx context.Context,
-	exec sqlexec.SQLExecutor,
+	sctx sessionctx.Context,
 	startTS uint64,
 	delta variable.TableDelta,
 	id int64,
 	isLocked bool,
 ) (err error) {
 	if isLocked {
-		if delta.Delta < 0 {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count - %?, modify_count = modify_count + %? where table_id = %? and count >= %?",
-				startTS, -delta.Delta, delta.Count, id, -delta.Delta)
-		} else {
-			_, err = exec.ExecuteInternal(ctx, "update mysql.stats_table_locked set version = %?, count = count + %?, modify_count = modify_count + %? where table_id = %?",
-				startTS, delta.Delta, delta.Count, id)
-		}
+		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
+		// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
+		_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
+			startTS, id, delta.Count, delta.Delta)
 	} else {
 		if delta.Delta < 0 {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
+			_, err = utilstats.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
 				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
 				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
 		} else {
 			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = exec.ExecuteInternal(ctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
+			_, err = utilstats.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
 				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
 				id, delta.Count, delta.Delta)
 		}
@@ -406,10 +414,9 @@ func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) e
 	if len(values) == 0 {
 		return nil
 	}
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
 		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.execRestrictedSQL(ctx, sql)
+	_, _, err := h.execRows(sql)
 	return errors.Trace(err)
 }
 
@@ -454,7 +461,7 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 			}
 		}
 		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
-		if _, _, err := h.execRestrictedSQL(context.Background(), sql.String()); err != nil {
+		if _, _, err := h.execRows(sql.String()); err != nil {
 			return errors.Trace(err)
 		}
 		for j := i; j < end; j++ {
@@ -488,15 +495,10 @@ func (h *Handle) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 }
 
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
-func (h *Handle) GetCurrentPruneMode() (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", err
-	}
-	defer h.pool.Put(se)
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil {
-		return "", err
-	}
-	return sctx.GetSessionVars().PartitionPruneMode.Load(), nil
+func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
+		return nil
+	})
+	return
 }
