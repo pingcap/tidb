@@ -131,6 +131,9 @@ func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	if s.mu.handled {
 		return err
 	}
+	if err == nil {
+		return nil
+	}
 	return s.updateErrorToSubtask(ctx, task.ID, err)
 }
 
@@ -255,6 +258,13 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 			err = ErrCancelSubtask
 		}
 	})
+
+	failpoint.Inject("MockRunSubtaskContextCanceled", func(val failpoint.Value) {
+		if val.(bool) {
+			err = context.Canceled
+		}
+	})
+
 	if err != nil {
 		s.onError(err)
 	}
@@ -266,7 +276,10 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 
 	if ctx.Err() != nil {
 		s.onError(ctx.Err())
-		return
+		finished := s.markTaskCancelOrFailed(ctx, subtask)
+		if finished {
+			return
+		}
 	}
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
@@ -572,6 +585,7 @@ var (
 	}
 )
 
+// IsRetryableError checks if error can retry.
 func IsRetryableError(err error) bool {
 	err = errors.Cause(err) // check the original error
 	mysqlErr, ok := err.(*mysql.MySQLError)
@@ -606,12 +620,15 @@ func IsRetryableError(err error) bool {
 func (s *BaseScheduler) markTaskCancelOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
 		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
+			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else if IsRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if errors.Cause(err) != context.Canceled {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
+		} else {
+			logutil.Logger(s.logCtx).Warn("met context canceled for gracefully shutdown", zap.Error(err))
 		}
 		s.markErrorHandled()
 		return true

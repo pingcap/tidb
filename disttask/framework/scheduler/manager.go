@@ -66,7 +66,7 @@ type Manager struct {
 		sync.RWMutex
 		// taskID -> cancelFunc.
 		// cancelFunc is used to fast cancel the scheduler.Run.
-		handlingTasks map[int64]context.CancelFunc
+		handlingTasks map[int64]context.CancelCauseFunc
 	}
 	// id, it's the same as server id now, i.e. host:port.
 	id      string
@@ -86,7 +86,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		newPool:   b.newPool,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
+	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
 
 	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DistTask)
 	if err != nil {
@@ -226,7 +226,7 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	for _, task := range tasks {
 		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Int64("task-id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-			cancel()
+			cancel(ErrCancelSubtask)
 		}
 	}
 }
@@ -238,7 +238,7 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 	for _, task := range tasks {
 		logutil.Logger(m.logCtx).Info("onPausingTasks", zap.Any("task_id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-			cancel()
+			cancel(ErrCancelSubtask)
 		}
 		if err := m.taskTable.PauseSubtasks(m.id, task.ID); err != nil {
 			return err
@@ -254,7 +254,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	for id, cancel := range m.mu.handlingTasks {
 		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Int64("task-id", id))
 		if cancel != nil {
-			cancel()
+			cancel(ErrCancelSubtask)
 		}
 	}
 }
@@ -336,10 +336,10 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		}
 		switch task.State {
 		case proto.TaskStateRunning:
-			runCtx, runCancel := context.WithCancel(ctx)
+			runCtx, runCancel := context.WithCancelCause(ctx)
 			m.registerCancelFunc(task.ID, runCancel)
 			err = scheduler.Run(runCtx, task)
-			runCancel()
+			runCancel(ErrCancelSubtask)
 		case proto.TaskStatePausing:
 			err = scheduler.Pause(ctx, task)
 		case proto.TaskStateReverting:
@@ -359,7 +359,7 @@ func (m *Manager) addHandlingTask(id int64) {
 }
 
 // registerCancelFunc registers a cancel function for a task.
-func (m *Manager) registerCancelFunc(id int64, cancel context.CancelFunc) {
+func (m *Manager) registerCancelFunc(id int64, cancel context.CancelCauseFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mu.handlingTasks[id] = cancel
