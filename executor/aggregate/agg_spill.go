@@ -15,6 +15,7 @@
 package aggregate
 
 import (
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -48,10 +49,7 @@ type parallelHashAggSpillHelper struct {
 	isPartialStage   int32
 	hasError         int32
 
-	runningPartialWorkerNum int32
-
-	// This records how many partial workers are waiting for the finish of spill.
-	waitingWorkerNum int32
+	runningPartialWorkerNum int
 
 	// Final worker will decrease this var after reading it.
 	partitionNeedRestore int
@@ -152,8 +150,18 @@ func (p *parallelHashAggSpillHelper) resetIsSpillingNoLock() {
 	p.isSpilling = isSpillingFlag + 1
 }
 
+func (p *parallelHashAggSpillHelper) checkErrorAndCloseSpillSyncer() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	res := p.checkError()
+	if res {
+		p.closeSpillActionAndPartialWorkerSyncerNoLock()
+	}
+	return res
+}
+
 func (p *parallelHashAggSpillHelper) checkErrorAndCloseSpillSyncerNoLock() bool {
-	res := atomic.LoadInt32(&p.hasError) == hasErrorFlag
+	res := p.checkError()
 	if res {
 		p.closeSpillActionAndPartialWorkerSyncerNoLock()
 	}
@@ -250,24 +258,25 @@ func (a *AggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
 	go a.doActionForParallelHashAggImpl(runningPartialWorkerNum)
 }
 
-func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorkerNum int32) {
+func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorkerNum int) {
 	// Ensure that all partial workers are waiting for the finish of spill.
+	waitingWorkerNum := 0
+	hasError := false
 	for {
 		<-a.spillHelper.waitForPartialWorkersSyncer
-		a.spillHelper.lock.Lock()
-		if a.spillHelper.checkErrorAndCloseSpillSyncerNoLock() {
-			a.spillHelper.lock.Unlock()
-			return
+		waitingWorkerNum++
+		if a.spillHelper.checkErrorAndCloseSpillSyncer() {
+			hasError = true
 		}
 
-		if a.spillHelper.waitingWorkerNum == runningPartialWorkerNum {
-			a.spillHelper.lock.Unlock()
+		msg := fmt.Sprintf("xzxdebug: doActionForParallelHashAggImplCmp %d %d", waitingWorkerNum, runningPartialWorkerNum)
+		logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
+		if waitingWorkerNum == runningPartialWorkerNum {
 			break
 		}
-		a.spillHelper.lock.Unlock()
 	}
 
-	if !a.spillHelper.checkError() {
+	if !a.spillHelper.checkError() && !hasError {
 		a.spill()
 	}
 
@@ -275,9 +284,15 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorker
 	a.spillHelper.lock.Lock()
 	defer a.spillHelper.lock.Unlock()
 	a.spillHelper.resetIsSpillingNoLock()
-	for i := 0; i < int(a.spillHelper.runningPartialWorkerNum); i++ {
+	msg := fmt.Sprintf("xzxdebug: doActionForParallelHashAggImpl1 running: %d", runningPartialWorkerNum)
+	logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
+	for i := 0; i < runningPartialWorkerNum; i++ {
+		logutil.BgLogger().Info("xzxdebug: doActionForParallelHashAggImpl3", zap.String("xzx", "xzx"))
 		a.spillHelper.spillActionAndPartialWorkerSyncer <- struct{}{}
+		logutil.BgLogger().Info("xzxdebug: doActionForParallelHashAggImpl4", zap.String("xzx", "xzx"))
 	}
+	msg = fmt.Sprintf("xzxdebug: doActionForParallelHashAggImpl2 running: %d", runningPartialWorkerNum)
+	logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
 }
 
 func (a *AggSpillDiskAction) spill() {

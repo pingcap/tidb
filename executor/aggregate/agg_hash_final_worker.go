@@ -289,7 +289,6 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 			return false, err
 		}
 
-		// TODO What it will do when out of memory quota? As the spill has been triggered.
 		w.memTracker.Consume(memDelta)
 	}
 	logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition>", zap.String("xzx", "xzx"))

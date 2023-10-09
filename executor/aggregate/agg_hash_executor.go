@@ -264,11 +264,10 @@ func (e *HashAggExec) initSpillHelper(partialConcurrency int) *parallelHashAggSp
 		isSpilling:                                0,
 		isPartialStage:                            partialStageFlag,
 		hasError:                                  0,
-		runningPartialWorkerNum:                   int32(partialConcurrency),
-		waitingWorkerNum:                          0,
+		runningPartialWorkerNum:                   partialConcurrency,
 		partitionNeedRestore:                      spilledPartitionNum - 1,
 		waitForPartialWorkersSyncer:               make(chan struct{}),
-		spillActionAndPartialWorkerSyncer:         make(chan struct{}),
+		spillActionAndPartialWorkerSyncer:         make(chan struct{}, partialConcurrency),
 		isSpillActionAndPartialWorkerSyncerClosed: false,
 	}
 }

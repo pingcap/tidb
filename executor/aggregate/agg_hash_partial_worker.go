@@ -28,7 +28,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
@@ -98,38 +100,40 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-func (w *HashAggPartialWorker) waitForTheFinishOfSpill() {
+func (w *HashAggPartialWorker) waitForTheFinishOfSpill(isLeaving bool) {
 	// Notify the action that I'm in waiting status
 	w.spillHelper.lock.Lock()
-	w.spillHelper.waitingWorkerNum++
-	w.spillHelper.lock.Unlock()
-	w.spillHelper.waitForPartialWorkersSyncer <- struct{}{}
-
-	// Wait for the finish of spill
-	<-w.spillHelper.spillActionAndPartialWorkerSyncer
-	w.spillHelper.lock.Lock()
-	w.spillHelper.waitingWorkerNum--
-	w.spillHelper.lock.Unlock()
-}
-
-func (w *HashAggPartialWorker) waitForSpillDoneBeforeWorkerExit() {
-	for {
-		w.spillHelper.lock.Lock()
-		if w.spillHelper.isInSpillingNoLock() {
-			w.spillHelper.lock.Unlock()
-			w.waitForTheFinishOfSpill()
-
-			// spillHelper.runningPartialWorkerNum must be protected by lock and no spill is in execution
-			// when it's decreased, so we should execut the `continue` and check the spill again.
-			continue
-		}
+	if isLeaving {
 		w.spillHelper.runningPartialWorkerNum--
 		if w.spillHelper.runningPartialWorkerNum == 0 {
 			w.spillHelper.leavePartialStage()
 		}
+	}
+	w.spillHelper.lock.Unlock()
+	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill1", zap.String("xzx", "xzx"))
+	w.spillHelper.waitForPartialWorkersSyncer <- struct{}{}
+	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill2", zap.String("xzx", "xzx"))
+
+	// Wait for the finish of spill
+	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill3", zap.String("xzx", "xzx"))
+	<-w.spillHelper.spillActionAndPartialWorkerSyncer
+	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill4", zap.String("xzx", "xzx"))
+}
+
+func (w *HashAggPartialWorker) waitForSpillDoneBeforeWorkerExit() {
+	w.spillHelper.lock.Lock()
+	if w.spillHelper.isInSpillingNoLock() {
 		w.spillHelper.lock.Unlock()
+		logutil.BgLogger().Info("xzxdebug: waitForSpillDoneBeforeWorkerExit1", zap.String("xzx", "xzx"))
+		w.waitForTheFinishOfSpill(true)
 		return
 	}
+	logutil.BgLogger().Info("xzxdebug: waitForSpillDoneBeforeWorkerExit2", zap.String("xzx", "xzx"))
+	w.spillHelper.runningPartialWorkerNum--
+	if w.spillHelper.runningPartialWorkerNum == 0 {
+		w.spillHelper.leavePartialStage()
+	}
+	w.spillHelper.lock.Unlock()
 }
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
@@ -141,11 +145,11 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 
-		// logutil.BgLogger().Info("xzxdebug: partial worker defer_run1", zap.String("xzx", "xzx"))
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run1", zap.String("xzx", "xzx"))
 		w.waitForSpillDoneBeforeWorkerExit()
-		// logutil.BgLogger().Info("xzxdebug: partial worker defer_run2", zap.String("xzx", "xzx"))
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run2", zap.String("xzx", "xzx"))
 		w.workerSync.waitForRunningWorkers()
-		// logutil.BgLogger().Info("xzxdebug: partial worker defer_run3", zap.String("xzx", "xzx"))
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run3", zap.String("xzx", "xzx"))
 
 		if !hasError {
 			isSpilled := w.spillHelper.isSpillTriggered()
@@ -159,7 +163,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 						hasError = true
 					}
 				}
-				if !hasError {
+				if !hasError && len(w.spilledChunksIO) == spilledPartitionNum {
 					w.spillHelper.addListInDisks(w.spilledChunksIO)
 				}
 			} else if needShuffle {
@@ -167,11 +171,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			}
 		}
 
-		// TODO Do we need to handle something when error happens?
-
-		// logutil.BgLogger().Info("xzxdebug: partial worker defer_run4", zap.String("xzx", "xzx"))
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run4", zap.String("xzx", "xzx"))
 		w.workerSync.waitForExitOfAliveWorkers()
-		// logutil.BgLogger().Info("xzxdebug: partial worker defer_run5", zap.String("xzx", "xzx"))
+		logutil.BgLogger().Info("xzxdebug: partial worker defer_run5", zap.String("xzx", "xzx"))
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -227,13 +229,15 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 				w.globalOutputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in partial worker")}
 				w.spillHelper.setError()
 				return
+			} else if num < 8 {
+				w.memTracker.Consume(1073741824) // Consume 1GiB
 			}
 		}
 
 		if w.spillHelper.isInSpilling() {
-			// logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill1", zap.String("xzx", "xzx"))
-			w.waitForTheFinishOfSpill()
-			// logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill2", zap.String("xzx", "xzx"))
+			logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpillInRun1", zap.String("xzx", "xzx"))
+			w.waitForTheFinishOfSpill(false)
+			logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpillInRun2", zap.String("xzx", "xzx"))
 			if w.spillHelper.checkError() {
 				hasError = true
 				return
