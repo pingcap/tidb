@@ -70,7 +70,7 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 		}
 	}()
 	sctx := se.(sessionctx.Context)
-	if err := updateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
+	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
 		return err
 	}
 
@@ -88,8 +88,8 @@ func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags
 	return err
 }
 
-// updateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
-func updateSCtxVarsForStats(sctx sessionctx.Context) error {
+// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
+func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	// analyzer version
 	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
 	if err != nil {
