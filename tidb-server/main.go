@@ -185,7 +185,7 @@ var (
 	help                        *bool
 )
 
-func initflag() *flag.FlagSet {
+func initFlagSet() *flag.FlagSet {
 	fset := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	version = flagBoolean(fset, nmVersion, false, "print version information and exit")
 	configPath = fset.String(nmConfig, "", "config file path")
@@ -248,7 +248,7 @@ func initflag() *flag.FlagSet {
 }
 
 func main() {
-	fset := initflag()
+	fset := initFlagSet()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
 		setVersions()
