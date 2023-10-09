@@ -42,6 +42,19 @@ func FinishTransaction(sctx sessionctx.Context, err error) error {
 	return errors.Trace(err)
 }
 
+// WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
+func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
+	// TODO: check whether this sctx is already in a txn
+	if _, err := Exec(sctx, "begin"); err != nil {
+		return err
+	}
+	defer func() {
+		err = FinishTransaction(sctx, err)
+	}()
+	err = f(sctx)
+	return
+}
+
 // GetStartTS gets the start ts from current transaction.
 func GetStartTS(sctx sessionctx.Context) (uint64, error) {
 	txn, err := sctx.Txn(true)
