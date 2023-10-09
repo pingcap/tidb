@@ -162,7 +162,7 @@ func RemoveDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err er
 // GCTableStats GC this table's stats.
 func GCTableStats(sctx sessionctx.Context,
 	getTableByPhysicalID func(is infoschema.InfoSchema, physicalID int64) (table.Table, bool),
-	MarkExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
+	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
 	is infoschema.InfoSchema, physicalID int64) error {
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
@@ -234,7 +234,7 @@ func GCTableStats(sctx sessionctx.Context,
 			}
 			if !found {
 				logutil.BgLogger().Info("mark mysql.stats_extended record as 'deleted' in GC due to dropped columns", zap.String("table_name", tblInfo.Name.L), zap.Int64("table_id", physicalID), zap.String("stats_name", statsName), zap.Int64("dropped_column_id", colID))
-				err = MarkExtendedStatsDeleted(statsName, physicalID, true)
+				err = markExtendedStatsDeleted(statsName, physicalID, true)
 				if err != nil {
 					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
 					return errors.Trace(err)
