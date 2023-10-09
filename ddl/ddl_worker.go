@@ -40,7 +40,6 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -835,16 +834,13 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 	w.registerSync(job)
 
-	if runJobErr != nil && !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
-		// Omit the ErrPausedDDLJob
+	// If error is non-retryable, we can ignore the sleep.
+	if runJobErr != nil && errorIsRetryable(runJobErr, job) {
 		w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
 			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
-		// In test and job is cancelling we can ignore the sleep.
-		if !(intest.InTest && job.IsCancelling()) {
-			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
-			// which may act like a deadlock.
-			time.Sleep(GetWaitTimeWhenErrorOccurred())
-		}
+		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
+		// which may act like a deadlock.
+		time.Sleep(GetWaitTimeWhenErrorOccurred())
 	}
 
 	return schemaVer, nil
