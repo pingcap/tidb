@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -753,7 +754,7 @@ func TestStatsVariables(t *testing.T) {
 	pruneMode, err := h.GetCurrentPruneMode()
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Dynamic), pruneMode)
-	err = handle.UpdateSCtxVarsForStats(sctx)
+	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 2, sctx.GetSessionVars().AnalyzeVersion)
 	require.Equal(t, true, sctx.GetSessionVars().EnableHistoricalStats)
@@ -770,7 +771,7 @@ func TestStatsVariables(t *testing.T) {
 	pruneMode, err = h.GetCurrentPruneMode()
 	require.NoError(t, err)
 	require.Equal(t, string(variable.Static), pruneMode)
-	err = handle.UpdateSCtxVarsForStats(sctx)
+	err = util.UpdateSCtxVarsForStats(sctx)
 	require.NoError(t, err)
 	require.Equal(t, 1, sctx.GetSessionVars().AnalyzeVersion)
 	require.Equal(t, false, sctx.GetSessionVars().EnableHistoricalStats)
