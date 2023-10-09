@@ -52,7 +52,7 @@ type KS3Storage struct {
 
 // NewKS3Storage initialize a new s3 storage for metadata.
 func NewKS3Storage(
-	ctx context.Context,
+	_ context.Context,
 	backend *backuppb.S3,
 	opts *ExternalStorageOptions,
 ) (obj *KS3Storage, errRet error) {
