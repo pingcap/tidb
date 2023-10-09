@@ -97,7 +97,7 @@ func (h *Handle) writeGCTimestampToKV(newTS uint64) error {
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.GCTableStats(sctx, h.getTableByPhysicalID, h.MarkExtendedStatsDeleted, is, physicalID)
-	})
+	}, flagWrapTxn)
 }
 
 // ClearOutdatedHistoryStats clear outdated historical stats
