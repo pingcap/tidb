@@ -333,7 +333,7 @@ func mergeAddIndex(info *model.MultiSchemaInfo) {
 			// Foreign key requires the order of adding indexes is unchanged.
 			return
 		}
-		if subJob.Type == model.ActionAddIndex {
+		if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
 			if i == 0 {
 				consistentUnique = subJob.Args[0].(bool)
 			} else {
