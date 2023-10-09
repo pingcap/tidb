@@ -100,7 +100,7 @@ func ProcessChunkWith(
 	// TODO: right now we use this chunk processor for global sort too, will
 	// impl another one for it later.
 	cp := NewLocalSortChunkProcessor(
-		parser, encoder, tableImporter.kvStore.GetCodec(), progress, chunk, logger,
+		parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
 		tableImporter.diskQuotaLock, dataWriter, indexWriter,
 	)
 	err = cp.Process(ctx)

@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/executor/asyncloaddata"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/syncutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -109,7 +109,6 @@ type chunkEncoder struct {
 	logger    *zap.Logger
 	encoder   KVEncoder
 	kvCodec   tikv.Codec
-	progress  *asyncloaddata.Progress
 	sendFn    func(ctx context.Context, kvs []deliveredRow) error
 
 	// startOffset is the offset of current source file reader. it might be
@@ -128,7 +127,6 @@ func (p *chunkEncoder) initProgress() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	p.progress.EncodeFileSize.Add(offset)
 	p.startOffset = offset
 	return nil
 }
@@ -137,6 +135,14 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 	var err error
 	reachEOF := false
 	prevOffset, currOffset := p.startOffset, p.startOffset
+
+	var encodedBytesCounter, encodedRowsCounter prometheus.Counter
+	if p.metrics != nil {
+		encodedBytesCounter = p.metrics.BytesCounter.WithLabelValues(metric.StateRestored)
+		// table name doesn't matter here, all those metrics will have task-id label.
+		encodedRowsCounter = p.metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")
+	}
+
 	for !reachEOF {
 		readPos, _ := p.parser.Pos()
 		if readPos >= p.chunkInfo.Chunk.EndOffset {
@@ -179,7 +185,6 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 				return err
 			}
 
-			p.progress.ReadRowCnt.Inc()
 			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: currOffset})
 			kvSize += kvs.Size()
 			rowCount++
@@ -192,7 +197,6 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 
 		delta := currOffset - prevOffset
-		p.progress.EncodeFileSize.Add(delta)
 		prevOffset = currOffset
 
 		p.encodeTotalDur += encodeDur
@@ -203,9 +207,8 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			// if we're using split_file, this metric might larger than total
 			// source file size, as the offset we're using is the reader offset,
 			// not parser offset, and we'll buffer data.
-			p.metrics.BytesCounter.WithLabelValues(metric.StateRestored).Add(float64(delta))
-			// table name doesn't matter here, all those metrics will have task-id label.
-			p.metrics.RowsCounter.WithLabelValues(metric.StateRestored, "").Add(float64(rowCount))
+			encodedBytesCounter.Add(float64(delta))
+			encodedRowsCounter.Add(float64(rowCount))
 		}
 
 		if len(rowBatch) > 0 {
@@ -292,7 +295,6 @@ func NewLocalSortChunkProcessor(
 	parser mydump.Parser,
 	encoder KVEncoder,
 	kvCodec tikv.Codec,
-	progress *asyncloaddata.Progress,
 	chunk *checkpoints.ChunkCheckpoint,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
@@ -313,7 +315,6 @@ func NewLocalSortChunkProcessor(
 			logger:    chunkLogger,
 			encoder:   encoder,
 			kvCodec:   kvCodec,
-			progress:  progress,
 			sendFn:    cp.sendEncodedData,
 		},
 		logger:      chunkLogger,
@@ -339,6 +340,19 @@ func (p *localSortChunkProcessor) sendEncodedData(ctx context.Context, kvs []del
 
 func (p *localSortChunkProcessor) deliverLoop(ctx context.Context) error {
 	kvBatch := newDeliverKVBatch(p.kvCodec)
+
+	var (
+		dataKVBytesHist, indexKVBytesHist prometheus.Observer
+		dataKVPairsHist, indexKVPairsHist prometheus.Observer
+		deliverBytesCounter               prometheus.Counter
+	)
+	if p.metrics != nil {
+		dataKVBytesHist = p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData)
+		indexKVBytesHist = p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex)
+		dataKVPairsHist = p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData)
+		indexKVPairsHist = p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex)
+		deliverBytesCounter = p.metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten)
+	}
 
 	for {
 	outer:
@@ -382,14 +396,10 @@ func (p *localSortChunkProcessor) deliverLoop(ctx context.Context) error {
 			p.deliverTotalDur += deliverDur
 			if p.metrics != nil {
 				p.metrics.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
-				p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindData).
-					Observe(float64(kvBatch.dataChecksum.SumSize()))
-				p.metrics.BlockDeliverBytesHistogram.WithLabelValues(metric.BlockDeliverKindIndex).
-					Observe(float64(kvBatch.indexChecksum.SumSize()))
-				p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindData).
-					Observe(float64(kvBatch.dataChecksum.SumKVS()))
-				p.metrics.BlockDeliverKVPairsHistogram.WithLabelValues(metric.BlockDeliverKindIndex).
-					Observe(float64(kvBatch.indexChecksum.SumKVS()))
+				dataKVBytesHist.Observe(float64(kvBatch.dataChecksum.SumSize()))
+				indexKVBytesHist.Observe(float64(kvBatch.indexChecksum.SumSize()))
+				dataKVPairsHist.Observe(float64(kvBatch.dataChecksum.SumKVS()))
+				indexKVPairsHist.Observe(float64(kvBatch.indexChecksum.SumKVS()))
 			}
 			return nil
 		}()
@@ -398,7 +408,7 @@ func (p *localSortChunkProcessor) deliverLoop(ctx context.Context) error {
 		}
 
 		if p.metrics != nil {
-			p.metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten).Add(float64(kvBatch.size()))
+			deliverBytesCounter.Add(float64(kvBatch.size()))
 		}
 
 		p.checksum.Add(kvBatch.dataChecksum)

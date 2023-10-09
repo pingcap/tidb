@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/session"
@@ -94,9 +93,6 @@ func TestLocalSortChunkProcess(t *testing.T) {
 		},
 	)
 	require.NoError(t, err)
-	//tidbCfg := tidb.GetGlobalConfig()
-	//kvStore, err := importer.GetCachedKVStoreFrom(tidbCfg.Path, &common.TLS{})
-	//require.NoError(t, err)
 	chunkInfo := &checkpoints.ChunkCheckpoint{
 		FileMeta: mydump.SourceFileMeta{
 			Path:     fileName,
@@ -116,7 +112,7 @@ func TestLocalSortChunkProcess(t *testing.T) {
 	diskQuotaLock := &syncutil.RWMutex{}
 	codec := tikv.NewCodecV1(tikv.ModeRaw)
 	processor := importer.NewLocalSortChunkProcessor(
-		csvParser, encoder, codec, asyncloaddata.NewProgress(false),
+		csvParser, encoder, codec,
 		chunkInfo, logger.Logger, diskQuotaLock, engineWriter, engineWriter,
 	)
 	require.NoError(t, processor.Process(ctx))
