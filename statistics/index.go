@@ -127,6 +127,7 @@ func (idx *Index) TotalRowCount() float64 {
 	return idx.Histogram.TotalRowCount()
 }
 
+// IndexStatsIsInvalid checks whether the index has valid stats or not.
 func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistColl, cid int64) (res bool) {
 	// When we are using stats from PseudoTable(), all column/index ID will be -1.
 	if ((idxStats != nil && idxStats.IsFullLoad()) || coll.PhysicalID <= 0) && !coll.CanNotTriggerLoad {

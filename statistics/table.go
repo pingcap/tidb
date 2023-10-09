@@ -84,6 +84,8 @@ type ColAndIndexExistenceMap struct {
 	someAnalyzed  bool
 }
 
+// SomeAnalyzed checks whether some part of the table is analyzed.
+// The newly added column/index might not be has its stats.
 func (m *ColAndIndexExistenceMap) SomeAnalyzed() bool {
 	if m == nil {
 		return false
@@ -616,6 +618,7 @@ func (t *Table) IsInitialized() bool {
 	return false
 }
 
+// HasStatsItemInKV checks whether this table has some stats in storage.(In other words, ANALYZE is triggered for it before.)
 func (t *Table) HasStatsItemInKV() bool {
 	if t.ColAndIndexExistenceMap.SomeAnalyzed() {
 		return true

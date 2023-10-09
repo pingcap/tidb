@@ -1766,6 +1766,7 @@ type TableItemID struct {
 	IsIndex bool
 }
 
+// StatsLoadItem represents the load unit for statistics's memory loading.
 type StatsLoadItem struct {
 	TableItemID
 	FullLoad bool
