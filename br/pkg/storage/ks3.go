@@ -28,7 +28,7 @@ import (
 
 const (
 	// ks3 sdk does not expose context, we use hardcoded timeout for network request
-	ks3HTTPDeadline = 5 * time.Minute
+	ks3HTTPDeadline = 10 * time.Second
 	ks3SDKProvider  = "ks3-sdk"
 )
 
