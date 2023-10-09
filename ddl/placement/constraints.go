@@ -50,6 +50,29 @@ func NewConstraints(labels []string) (Constraints, error) {
 	return constraints, nil
 }
 
+// preCheckDictConstraintStr will check the label string, and return the new labels and role.
+// role maybe be override by the label string, eg `#evict-leader`.
+func preCheckDictConstraintStr(labelStr string, role PeerRoleType) ([]string, PeerRoleType, error) {
+	innerLabels := strings.Split(labelStr, ",")
+	overrideRole := role
+	newLabels := make([]string, 0, len(innerLabels))
+	for _, str := range innerLabels {
+		if strings.HasPrefix(str, attributePrefix) {
+			switch str[1:] {
+			case attributeEvictLeader:
+				if role == Voter {
+					overrideRole = Follower
+				}
+			default:
+				return newLabels, overrideRole, fmt.Errorf("%w: unsupported attribute '%s'", ErrUnsupportedConstraint, str)
+			}
+			continue
+		}
+		newLabels = append(newLabels, str)
+	}
+	return newLabels, overrideRole, nil
+}
+
 // NewConstraintsFromYaml will transform parse the raw 'array' constraints and call NewConstraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
 func NewConstraintsFromYaml(c []byte) (Constraints, error) {

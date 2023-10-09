@@ -39,6 +39,12 @@ const (
 	Learner PeerRoleType = "learner"
 )
 
+const (
+	attributePrefix = "#"
+	// AttributeEvictLeader is used to evict leader from a store.
+	attributeEvictLeader = "evict-leader"
+)
+
 // RuleGroupConfig defines basic config of rule group
 type RuleGroupConfig struct {
 	ID       string `json:"id"`
@@ -200,12 +206,16 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 		}
 
 		for labels, cnt := range constraints2 {
-			labelConstraints, err := NewConstraints(strings.Split(labels, ","))
+			lbs, overrideRole, err := preCheckDictConstraintStr(labels, role)
+			if err != nil {
+				return rules, err
+			}
+			labelConstraints, err := NewConstraints(lbs)
 			if err != nil {
 				return rules, err
 			}
 
-			rules = append(rules, NewRule(role, uint64(cnt), labelConstraints))
+			rules = append(rules, NewRule(overrideRole, uint64(cnt), labelConstraints))
 		}
 		return rules, nil
 	}
