@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -48,7 +47,7 @@ func GCStats(sctx sessionctx.Context,
 	is infoschema.InfoSchema, statsLease, ddlLease time.Duration) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
-	lease := mathutil.Max(statsLease, ddlLease)
+	lease := max(statsLease, ddlLease)
 	offset := util.DurationToTS(10 * lease)
 	now := oracle.GoTimeToTS(time.Now())
 	if now < offset {
