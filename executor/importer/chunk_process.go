@@ -43,8 +43,8 @@ import (
 
 // constants, make it a variable for test
 var (
-	maxKVQueueSize         = 32        // Cache at most this number of rows before blocking the encode loop
-	MinDeliverBytes uint64 = units.MiB // data + index. batch at least this amount of bytes to reduce number of messages
+	maxKVQueueSize         = 32             // Cache at most this number of rows before blocking the encode loop
+	MinDeliverBytes uint64 = 96 * units.KiB // 96 KB (data + index). batch at least this amount of bytes to reduce number of messages
 	// MinDeliverRowCnt see default for tikv-importer.max-kv-pairs
 	MinDeliverRowCnt = 4096
 )
