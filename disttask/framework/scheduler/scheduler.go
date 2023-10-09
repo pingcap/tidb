@@ -608,8 +608,10 @@ func (s *BaseScheduler) markTaskCancelOrFailed(ctx context.Context, subtask *pro
 		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else if IsRetryableError(err) {
+			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if errors.Cause(err) != context.Canceled {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
+			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
 		}
 		s.markErrorHandled()
 		return true
