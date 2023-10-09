@@ -261,17 +261,28 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	assertLastNDDLUseIngest(4)
 }
 
-<<<<<<< HEAD
-func TestAddIndexIngestRestoredData(t *testing.T) {
-=======
 func TestAddIndexIngestEmptyTable(t *testing.T) {
->>>>>>> b6098ef6925 (ddl: assign table record prefix to start/end key if it is empty (#39683))
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
-<<<<<<< HEAD
+	tk.MustExec("create table t (a int);")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("alter table t add index idx(a);")
+
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobTp := rows[0][3].(string)
+	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
+}
+
+func TestAddIndexIngestRestoredData(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 
 	tk.MustExec(`
@@ -288,18 +299,11 @@ func TestAddIndexIngestEmptyTable(t *testing.T) {
 	tk.MustExec("INSERT INTO tbl_5 VALUES ('15:33:15','&U+x1',2007,'','Bob');")
 	tk.MustExec("alter table tbl_5 add unique key idx_13 ( col_23 );")
 	tk.MustExec("admin check table tbl_5;")
-=======
-	tk.MustExec("create table t (a int);")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-	tk.MustExec("alter table t add index idx(a);")
-
->>>>>>> b6098ef6925 (ddl: assign table record prefix to start/end key if it is empty (#39683))
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
 	require.Len(t, rows, 1)
 	jobTp := rows[0][3].(string)
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
-<<<<<<< HEAD
 
 func TestAddIndexIngestPanicOnCopRead(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -400,5 +404,3 @@ func TestAddIndexIngestTimezone(t *testing.T) {
 	tk.MustExec("alter table t add index idx(t);")
 	tk.MustExec("admin check table t;")
 }
-=======
->>>>>>> b6098ef6925 (ddl: assign table record prefix to start/end key if it is empty (#39683))
