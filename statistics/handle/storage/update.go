@@ -16,12 +16,13 @@ package storage
 
 import (
 	"fmt"
+	"strings"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	statsutil "github.com/pingcap/tidb/statistics/handle/util"
-	"strings"
 )
 
 // UpdateStatsVersion will set statistics version to the newest TS,
