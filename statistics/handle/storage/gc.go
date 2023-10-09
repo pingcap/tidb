@@ -84,7 +84,7 @@ func GCStats(sctx sessionctx.Context,
 		}
 	}
 
-	if err := clearOutdatedHistoryStats(sctx); err != nil {
+	if err := ClearOutdatedHistoryStats(sctx); err != nil {
 		logutil.BgLogger().Warn("failed to gc outdated historical stats",
 			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
 			zap.Error(err))
@@ -93,9 +93,9 @@ func GCStats(sctx sessionctx.Context,
 	return removeDeletedExtendedStats(sctx, gcVer)
 }
 
-// deleteTableStatsFromKV deletes table statistics from kv.
+// DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
-func deleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err error) {
+func DeleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err error) {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -133,8 +133,8 @@ func deleteTableStatsFromKV(sctx sessionctx.Context, statsIDs []int64) (err erro
 	return nil
 }
 
-// clearOutdatedHistoryStats clear outdated historical stats
-func clearOutdatedHistoryStats(sctx sessionctx.Context) error {
+// ClearOutdatedHistoryStats clear outdated historical stats
+func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
 	rs, err := util.Exec(sctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
 	if err != nil {
@@ -239,7 +239,7 @@ func gcTableStats(sctx sessionctx.Context,
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
-			return errors.Trace(deleteTableStatsFromKV(sctx, []int64{physicalID}))
+			return errors.Trace(DeleteTableStatsFromKV(sctx, []int64{physicalID}))
 		})
 	}
 	tblInfo := tbl.Meta()
