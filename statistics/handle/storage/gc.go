@@ -204,7 +204,10 @@ func GCTableStats(sctx sessionctx.Context,
 			}
 		}
 		if !find {
-			if err := DeleteHistStatsFromKV(sctx, physicalID, histID, int(isIndex)); err != nil {
+			err := util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
+				return errors.Trace(DeleteHistStatsFromKV(sctx, physicalID, histID, int(isIndex)))
+			})
+			if err != nil {
 				return errors.Trace(err)
 			}
 		}

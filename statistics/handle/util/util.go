@@ -44,6 +44,7 @@ func FinishTransaction(sctx sessionctx.Context, err error) error {
 
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
 func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
+	// TODO: check whether this sctx is already in a txn
 	if _, err := Exec(sctx, "begin"); err != nil {
 		return err
 	}
