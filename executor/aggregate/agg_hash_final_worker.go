@@ -327,7 +327,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	}()
 
 	if intest.InTest {
-		num := rand.Intn(100)
+		num := rand.Intn(80)
 		if num == 0 {
 			panic("Intest panic: final worker is panicked before start")
 		} else if num == 1 {
@@ -360,14 +360,14 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 			if intest.InTest {
 				num := rand.Intn(100000)
-				if num < 2 {
+				if num < 7 {
 					panic("Intest panic: final worker is panicked when running")
-				} else if num < 4 {
+				} else if num < 14 {
 					time.Sleep(1 * time.Second)
-				} else if num < 6 {
+				} else if num < 21 {
 					// Consume 1TB, and the query should be killed
 					w.memTracker.Consume(1099511627776)
-				} else if num < 8 {
+				} else if num < 28 {
 					w.outputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in final worker")}
 					return
 				}

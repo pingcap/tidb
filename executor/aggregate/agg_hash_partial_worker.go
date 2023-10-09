@@ -220,16 +220,16 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		if intest.InTest {
 			num := rand.Intn(10000)
-			if num < 2 {
+			if num < 7 {
 				panic("Intest panic: partial worker is panicked when running")
-			} else if num < 4 {
+			} else if num < 14 {
 				time.Sleep(1 * time.Second)
-			} else if num < 6 {
+			} else if num < 21 {
 				hasError = true
 				w.globalOutputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in partial worker")}
 				w.spillHelper.setError()
 				return
-			} else if num < 10 {
+			} else if num < 28 {
 				w.memTracker.Consume(104857600) // Consume 100MiB
 			}
 		}
