@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 
 	"github.com/pingcap/errors"
@@ -279,4 +280,48 @@ func WriteGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 		newTS,
 	)
 	return err
+}
+
+// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+func MarkExtendedStatsDeleted(sctx sessionctx.Context,
+	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
+	currentCache *cache.StatsCache,
+	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
+	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		if ifExists {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("extended statistics '%s' for the specified table does not exist", statsName)
+	}
+	if len(rows) > 1 {
+		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
+	}
+
+	_, err = util.Exec(sctx, "begin pessimistic")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer func() {
+		err1 := util.FinishTransaction(sctx, err)
+		if err == nil && err1 == nil {
+			removeExtendedStatsItem(currentCache, updateStatsCache, tableID, statsName)
+		}
+		err = err1
+	}()
+	version, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+		return 0, err
+	}
+	statsVer = version
+	if _, err = util.Exec(sctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, statistics.ExtendedStatsDeleted, statsName, tableID); err != nil {
+		return 0, err
+	}
+	return
 }

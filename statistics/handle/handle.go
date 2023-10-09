@@ -17,11 +17,9 @@ package handle
 import (
 	"fmt"
 	"math"
-	"strconv"
 	"sync"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
@@ -30,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/statistics/handle/cache"
@@ -55,7 +52,7 @@ import (
 type Handle struct {
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
-	pool  sessionPool
+	pool  util.SessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
@@ -126,13 +123,8 @@ func (h *Handle) Clear() {
 	h.statsUsage.Reset()
 }
 
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
-}
-
 // NewHandle creates a Handle for update stats.
-func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
+func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool util.SessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 
 	handle := &Handle{
@@ -259,56 +251,6 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tables = append(tables, tbl)
 	}
 	h.updateStatsCache(oldCache, tables, deletedTableIDs)
-	return nil
-}
-
-// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
-func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
-	// analyzer version
-	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
-	if err != nil {
-		return err
-	}
-	ver, err := strconv.ParseInt(verInString, 10, 64)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzeVersion = int(ver)
-
-	// enable historical stats
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
-
-	// partition mode
-	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
-
-	// enable analyze snapshot
-	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
-
-	// enable skip column types
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
-
-	// skip missing partition stats
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
 	return nil
 }
 
@@ -439,7 +381,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 		return storage.LoadNeededHistograms(sctx, h.statsCache, loadFMSketch)
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return err
 }
 
@@ -471,7 +413,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		}
 		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, h.Lease(), statsTbl)
 		return err
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return
 }
 
@@ -480,7 +422,7 @@ func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		count, modifyCount, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
 		return err
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return
 }
 
@@ -542,7 +484,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = extstats.InsertExtendedStats(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, colIDs, tp, tableID, ifNotExists)
+		statsVer, err = storage.InsertExtendedStats(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, colIDs, tp, tableID, ifNotExists)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -555,7 +497,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = extstats.MarkExtendedStatsDeleted(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, tableID, ifExists)
+		statsVer, err = storage.MarkExtendedStatsDeleted(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, tableID, ifExists)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -585,7 +527,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 		}
 		return fmt.Errorf("update stats cache failed for %d attempts", updateStatsCacheRetryCnt)
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 }
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
@@ -601,7 +543,7 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = extstats.SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
+		statsVer, err = storage.SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -670,7 +612,7 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		version, err = history.RecordHistoricalStatsToStorage(sctx, physicalID, js)
 		return err
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return version, err
 }
 

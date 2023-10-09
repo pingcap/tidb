@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle/storage"
+	statsutil "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
@@ -110,14 +111,14 @@ func (h *Handle) ClearOutdatedHistoryStats() error {
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.GCHistoryStatsFromKV(sctx, physicalID)
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.DeleteHistStatsFromKV(sctx, physicalID, histID, isIndex)
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
@@ -125,11 +126,11 @@ func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex i
 func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.DeleteTableStatsFromKV(sctx, statsIDs)
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
 
 func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.RemoveDeletedExtendedStats(sctx, version)
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
