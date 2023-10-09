@@ -229,8 +229,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 				w.globalOutputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in partial worker")}
 				w.spillHelper.setError()
 				return
-			} else if num < 8 {
-				w.memTracker.Consume(1073741824) // Consume 1GiB
+			} else if num < 10 {
+				w.memTracker.Consume(104857600) // Consume 100MiB
 			}
 		}
 
