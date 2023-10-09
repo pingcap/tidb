@@ -461,6 +461,8 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		// Since the cluster-index feature also has similar problem, we chose to prevent DDL execution during the upgrade process to avoid this issue.
 		oldTableID = diff.OldTableID
 		newTableID = diff.TableID
+	case model.ActionDropTable, model.ActionDropView, model.ActionDropSequence:
+		oldTableID = diff.TableID
 	case model.ActionTruncateTable, model.ActionCreateView,
 		model.ActionExchangeTablePartition:
 		oldTableID = diff.OldTableID
