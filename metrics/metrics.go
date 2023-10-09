@@ -93,6 +93,7 @@ func InitMetrics() {
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
+	InitGlobalSortMetrics()
 	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -269,6 +270,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistTaskStarttimeGauge)
 	prometheus.MustRegister(DistTaskSubTaskCntGauge)
 	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
+
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
+	prometheus.MustRegister(AddIndexScanRate)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()
