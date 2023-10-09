@@ -478,16 +478,8 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
-		if err != nil {
-			return err
-		}
-		if len(rows) == 0 {
-			return nil
-		}
-		count = int64(rows[0].GetUint64(0))
-		modifyCount = rows[0].GetInt64(1)
-		return nil
+		count, modifyCount, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
+		return err
 	}, flagWrapTxn)
 	return
 }
