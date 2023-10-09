@@ -26,8 +26,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// ks3 sdk does not expose context
-const ks3HTTPDeadline = 5 * time.Minute
+const (
+	// ks3 sdk does not expose context, we use hardcoded timeout for network request
+	ks3HTTPDeadline = 5 * time.Minute
+	ks3SDKProvider  = "ks3-sdk"
+)
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
 type KS3Storage struct {
