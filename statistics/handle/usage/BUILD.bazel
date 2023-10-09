@@ -4,6 +4,7 @@ go_library(
     name = "usage",
     srcs = [
         "index_usage.go",
+        "predicate_column.go",
         "stats_usage.go",
         "table_delta.go",
     ],
@@ -11,11 +12,15 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/model",
+        "//parser/mysql",
         "//sessionctx",
         "//sessionctx/variable",
+        "//statistics",
         "//statistics/handle/util",
         "//types",
+        "//util/logutil",
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
