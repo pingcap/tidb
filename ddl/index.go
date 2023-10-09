@@ -2071,7 +2071,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			}
 			err = handle.WaitGlobalTask(ctx, task)
 			if w.isReorgPaused(reorgInfo.Job.ID) {
-				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"))
+				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
 				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
 			}
 			return err
@@ -2098,7 +2098,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			defer close(done)
 			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
 			if w.isReorgPaused(reorgInfo.Job.ID) {
-				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"))
+				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
 				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
 			}
 			return err
