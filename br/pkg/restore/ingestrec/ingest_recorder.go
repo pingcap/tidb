@@ -69,13 +69,13 @@ func notAddIndexJob(job *model.Job) bool {
 		job.Type != model.ActionAddPrimaryKey
 }
 
-func notSynced(job *model.Job) bool {
-	return job.State != model.JobStateSynced
+func notSynced(job *model.Job, isSubJob bool) bool {
+	return (job.State != model.JobStateSynced) && !(isSubJob && job.State == model.JobStateDone)
 }
 
 // AddJob firstly filters the ingest index add operation job, and records it into IngestRecorder.
-func (i *IngestRecorder) AddJob(job *model.Job) error {
-	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job) {
+func (i *IngestRecorder) AddJob(job *model.Job, isSubJob bool) error {
+	if job == nil || notIngestJob(job) || notAddIndexJob(job) || notSynced(job, isSubJob) {
 		return nil
 	}
 
