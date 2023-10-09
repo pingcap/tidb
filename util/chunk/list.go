@@ -22,15 +22,14 @@ import (
 
 // List holds a slice of chunks, use to append rows with max chunk size properly handled.
 type List struct {
+	memTracker    *memory.Tracker
 	fieldTypes    []*types.FieldType
+	chunks        []*Chunk
+	freelist      []*Chunk
 	initChunkSize int
 	maxChunkSize  int
 	length        int
-	chunks        []*Chunk
-	freelist      []*Chunk
-
-	memTracker  *memory.Tracker // track memory usage.
-	consumedIdx int             // chunk index in "chunks", has been consumed.
+	consumedIdx   int
 }
 
 // RowPtr is used to get a row from a list.
