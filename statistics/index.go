@@ -145,6 +145,7 @@ func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistCol
 		}()
 	}
 	if idxStats == nil {
+		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
 		return true
 	}
 	totalCount = idxStats.TotalRowCount()

@@ -73,12 +73,10 @@ func TestConcurrentLoadHist(t *testing.T) {
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
+	col, ok := stat.Columns[tableInfo.Columns[0].ID]
+	require.True(t, !ok || col.Histogram.Len()+col.TopN.Num() == 0)
+	col, ok = stat.Columns[tableInfo.Columns[2].ID]
+	require.True(t, !ok || col.Histogram.Len()+col.TopN.Num() == 0)
 	stmtCtx := &stmtctx.StatementContext{}
 	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
@@ -89,8 +87,8 @@ func TestConcurrentLoadHist(t *testing.T) {
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Nil(t, rs)
 	stat = h.GetTableStats(tableInfo)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+	hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
+	topn := stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Greater(t, hg.Len()+topn.Num(), 0)
 }
 
@@ -185,9 +183,8 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 		// no stats at beginning
 		stat := h.GetTableStats(tableInfo)
-		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
-		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
-		require.Equal(t, 0, hg.Len()+topn.Num())
+		c, ok := stat.Columns[tableInfo.Columns[2].ID]
+		require.True(t, !ok || (c.Histogram.Len()+c.TopN.Num() == 0))
 
 		stmtCtx1 := &stmtctx.StatementContext{}
 		h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
@@ -223,14 +220,14 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
 		require.True(t, ok1)
-		require.Equal(t, neededColumns[0], rs1.Item)
+		require.Equal(t, neededColumns[0].TableItemID, rs1.Item)
 		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
 		require.True(t, ok2)
-		require.Equal(t, neededColumns[0], rs2.Item)
+		require.Equal(t, neededColumns[0].TableItemID, rs2.Item)
 
 		stat = h.GetTableStats(tableInfo)
-		hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-		topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
+		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
 		require.Greater(t, hg.Len()+topn.Num(), 0)
 	}
 }

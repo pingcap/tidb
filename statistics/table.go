@@ -77,8 +77,13 @@ type Table struct {
 // ColAndIndexExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIndexExistenceMap struct {
-	m1 map[int64]*model.ColumnInfo
-	m2 map[int64]*model.IndexInfo
+	m1           map[int64]*model.ColumnInfo
+	m2           map[int64]*model.IndexInfo
+	someAnalyzed bool
+}
+
+func (m *ColAndIndexExistenceMap) SomeAnalyzed() bool {
+	return m != nil && m.someAnalyzed
 }
 
 // Has checks whether a column/index stats exists.
@@ -92,8 +97,9 @@ func (m *ColAndIndexExistenceMap) Has(id int64, isIndex bool) bool {
 }
 
 // InsertCol inserts a column with its meta into the map.
-func (m *ColAndIndexExistenceMap) InsertCol(id int64, info *model.ColumnInfo) {
+func (m *ColAndIndexExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
 	m.m1[id] = info
+	m.someAnalyzed = m.someAnalyzed || analyzed
 }
 
 // GetCol gets the meta data of the given column.
@@ -102,8 +108,9 @@ func (m *ColAndIndexExistenceMap) GetCol(id int64) *model.ColumnInfo {
 }
 
 // InsertIndex inserts an index with its meta into the map.
-func (m *ColAndIndexExistenceMap) InsertIndex(id int64, info *model.IndexInfo) {
+func (m *ColAndIndexExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
 	m.m2[id] = info
+	m.someAnalyzed = m.someAnalyzed || analyzed
 }
 
 // GetIndex gets the meta data of the given index.
@@ -575,6 +582,13 @@ func (t *Table) IsInitialized() bool {
 	return false
 }
 
+func (t *Table) HasStatsItemInKV() bool {
+	if t.ColAndIndexExistenceMap.SomeAnalyzed() {
+		return true
+	}
+	return t.IsInitialized()
+}
+
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
 	rowcount := t.GetAnalyzeRowCount()
@@ -701,7 +715,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
 		// Thus we don't create pseudo stats for it.
 		if col.State == model.StatePublic && !col.Hidden {
-			t.ColAndIndexExistenceMap.InsertCol(col.ID, col)
+			t.ColAndIndexExistenceMap.InsertCol(col.ID, col, false)
 		}
 		if allowFillHistMeta {
 			t.Columns[col.ID] = &Column{
@@ -714,7 +728,7 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.ColAndIndexExistenceMap.InsertIndex(idx.ID, idx)
+			t.ColAndIndexExistenceMap.InsertIndex(idx.ID, idx, false)
 		}
 		if allowFillHistMeta {
 			t.Indices[idx.ID] = &Index{

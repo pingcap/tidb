@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/funcdep"
 )
 
@@ -166,7 +167,7 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		c.visitedtbls[tblID] = struct{}{}
 	}
 	stats := domain.GetDomain(ds.SCtx()).StatsHandle()
-	tblStats := stats.GetTableStats(ds.tableInfo)
+	tblStats := stats.GetPartitionStats(ds.tableInfo, ds.physicalTableID)
 	// Since we can not get the stats tbl, this table is not analyzed. So we don't need to consider load stats.
 	if tblStats.Pseudo {
 		return
@@ -186,7 +187,7 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		}
 	}
 	for _, col := range ds.Columns {
-		if tblStats.ColAndIndexExistenceMap.Has(col.ID, false) && !colIDSet.Has(int(col.ID)) {
+		if tblStats.ColAndIndexExistenceMap.Has(col.ID, false) && !colIDSet.Has(int(col.ID)) && col.FieldType.EvalType() != types.ETJson {
 			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; ok {
 				continue

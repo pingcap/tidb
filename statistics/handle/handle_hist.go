@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
-	utilstats "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/logutil"
@@ -301,9 +300,14 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
-	hg, lastAnalyzePos, flag, err := storage.HistMetaFromStorage(sctx, &item, w.colInfo)
+	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorage(sctx, &item, w.colInfo)
 	if err != nil {
 		return nil, err
+	}
+	if hg == nil {
+		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
+		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
 	if item.IsIndex {
 		isIndexFlag = 1
@@ -334,16 +338,6 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 			}
 		}
 	}
-	rows, _, err := utilstats.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
-			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
-	}
-	statsVer := rows[0].GetInt64(0)
 	if item.IsIndex {
 		idxHist := &statistics.Index{
 			Histogram:  *hg,

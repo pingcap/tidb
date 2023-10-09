@@ -13,8 +13,6 @@ go_test(
     deps = [
         "//config",
         "//parser/model",
-        "//planner/cardinality",
-        "//statistics",
         "//statistics/handle/internal",
         "//testkit",
         "//testkit/testsetup",

@@ -270,6 +270,9 @@ func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio f
 // TableAnalyzed checks if the table is analyzed.
 // Exposed for test.
 func TableAnalyzed(tbl *statistics.Table) bool {
+	if tbl.ColAndIndexExistenceMap.SomeAnalyzed() {
+		return true
+	}
 	for _, col := range tbl.Columns {
 		if col.IsAnalyzed() {
 			return true
@@ -340,7 +343,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 		}
 		for _, def := range partitionDefs {
 			partitionStatsTbl := opt.GetPartitionStats(tblInfo, def.ID)
-			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
+			if !partitionStatsTbl.ColAndIndexExistenceMap.Has(idx.ID, true) {
 				partitionNames = append(partitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 			}

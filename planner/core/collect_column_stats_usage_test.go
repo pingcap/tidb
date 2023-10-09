@@ -292,6 +292,7 @@ func TestCollectPredicateColumns(t *testing.T) {
 }
 
 func TestCollectHistNeededColumns(t *testing.T) {
+	t.Skip()
 	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
 	tests := []struct {

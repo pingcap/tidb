@@ -101,6 +101,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
+		statsVer := row.GetInt64(7)
 		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
 		if isIndex > 0 {
 			var idxInfo *model.IndexInfo
@@ -113,7 +114,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 			if idxInfo == nil {
 				continue
 			}
-			table.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo)
+			table.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -122,7 +123,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 					break
 				}
 			}
-			table.ColAndIndexExistenceMap.InsertCol(colInfo.ID, colInfo)
+			table.ColAndIndexExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0)
 		}
 		cache.Put(tblID, table) // put this table again since it is updated
 	}

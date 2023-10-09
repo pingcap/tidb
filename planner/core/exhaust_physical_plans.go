@@ -753,6 +753,12 @@ func (p *LogicalJoin) getIndexJoinByOuterIdx(prop *property.PhysicalProperty, ou
 	var avgInnerRowCnt float64
 	if outerChild.StatsInfo().RowCount > 0 {
 		avgInnerRowCnt = p.equalCondOutCnt / outerChild.StatsInfo().RowCount
+		if !p.SCtx().GetSessionVars().InRestrictedSQL {
+			logutil.BgLogger().Warn("est index join avg inner count", zap.Float64("equal cond out count", p.equalCondOutCnt), zap.Float64("outer child row count", outerChild.StatsInfo().RowCount))
+			if ds, ok := outerChild.(*DataSource); ok {
+				logutil.BgLogger().Warn("est index join avg inner count", zap.String("pushed cond", fmt.Sprintf("%v", ds.pushedDownConds)))
+			}
+		}
 	}
 	joins = p.buildIndexJoinInner2TableScan(prop, innerChildWrapper, innerJoinKeys, outerJoinKeys, outerIdx, avgInnerRowCnt)
 	if joins != nil {

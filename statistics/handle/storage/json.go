@@ -190,7 +190,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
 			tbl.Indices[idx.ID] = idx
-			tbl.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo)
+			tbl.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo, true)
 		}
 	}
 
@@ -239,7 +239,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
 			tbl.Columns[col.ID] = col
-			tbl.ColAndIndexExistenceMap.InsertCol(colInfo.ID, colInfo)
+			tbl.ColAndIndexExistenceMap.InsertCol(colInfo.ID, colInfo, true)
 		}
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)

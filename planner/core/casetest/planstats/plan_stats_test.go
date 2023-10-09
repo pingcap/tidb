@@ -291,8 +291,8 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	switch pp := plan.(type) {
 	case *plannercore.PhysicalTableReader:
 		stats := pp.StatsInfo().HistColl
-		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[0].ID))
-		require.Equal(t, 0, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
+		require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[0].ID))
+		require.Equal(t, -1, countFullStats(stats, tableInfo.Columns[2].ID)) // pseudo stats
 	default:
 		t.Error("unexpected plan:", pp)
 	}
@@ -374,11 +374,11 @@ func TestCollectDependingVirtualCols(t *testing.T) {
 		// prepare the input
 		tbl := tblID2Tbl[tblName2TblID[testCase.TableName]]
 		require.NotNil(t, tbl)
-		neededItems := make([]model.TableItemID, 0, len(testCase.InputColNames))
+		neededItems := make([]model.StatsLoadItem, 0, len(testCase.InputColNames))
 		for _, colName := range testCase.InputColNames {
 			col := tbl.Meta().FindPublicColumnByName(colName)
 			require.NotNil(t, col)
-			neededItems = append(neededItems, model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID})
+			neededItems = append(neededItems, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tbl.Meta().ID, ID: col.ID}, FullLoad: true})
 		}
 
 		// call the function
