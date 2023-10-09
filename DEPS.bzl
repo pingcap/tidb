@@ -567,13 +567,13 @@ def go_deps():
         name = "com_github_bazelbuild_buildtools",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/bazelbuild/buildtools",
-        sha256 = "7492d11e4458e1ed0675f34d9a6d236330e6d6657c549836ac342d997ae1f62b",
-        strip_prefix = "github.com/bazelbuild/buildtools@v0.0.0-20230317132445-9c3c1fc0106e",
+        sha256 = "5ec0befc70edf16728838d94b240dfd01ba576f8a3901de84c0861c0ce2b8db6",
+        strip_prefix = "github.com/bazelbuild/buildtools@v0.0.0-20230926111657-7d855c59baeb",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
-            "http://ats.apps.svc/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230317132445-9c3c1fc0106e.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
+            "http://ats.apps.svc/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bazelbuild/buildtools/com_github_bazelbuild_buildtools-v0.0.0-20230926111657-7d855c59baeb.zip",
         ],
     )
     go_repository(
@@ -1640,6 +1640,32 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/docker/go-units/com_github_docker_go_units-v0.4.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/docker/go-units/com_github_docker_go_units-v0.4.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/docker/go-units/com_github_docker_go_units-v0.4.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_dolthub_maphash",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/dolthub/maphash",
+        sha256 = "ba69ef526a9613cb059c8490c1a4f032649879c316a1c4305e2355815eb32e41",
+        strip_prefix = "github.com/dolthub/maphash@v0.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/dolthub/maphash/com_github_dolthub_maphash-v0.1.0.zip",
+            "http://ats.apps.svc/gomod/github.com/dolthub/maphash/com_github_dolthub_maphash-v0.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/dolthub/maphash/com_github_dolthub_maphash-v0.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/dolthub/maphash/com_github_dolthub_maphash-v0.1.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_dolthub_swiss",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/dolthub/swiss",
+        sha256 = "e911b7cea9aaed1255544fb8b53c19780f91b713e6d0fc71fb310232e4800dcc",
+        strip_prefix = "github.com/dolthub/swiss@v0.2.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/dolthub/swiss/com_github_dolthub_swiss-v0.2.1.zip",
         ],
     )
     go_repository(
@@ -3979,6 +4005,58 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_jfcg_opt",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/opt",
+        sha256 = "d774e375f6827f16be051e177407bb3217e051cf4285449788abff3ebf01a468",
+        strip_prefix = "github.com/jfcg/opt@v0.3.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/opt/com_github_jfcg_opt-v0.3.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_jfcg_rng",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/rng",
+        sha256 = "8c450d237ea8ba22b6bc6337dcd11519fd6d04c2b31b9b38e5c26ae04ed7cae8",
+        strip_prefix = "github.com/jfcg/rng@v1.0.4",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/rng/com_github_jfcg_rng-v1.0.4.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_jfcg_sixb",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/sixb",
+        sha256 = "5eda29ec69dff767e5353325eab7b2edac5911fcbbaf84f42c0513ab50b76952",
+        strip_prefix = "github.com/jfcg/sixb@v1.3.8",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/sixb/com_github_jfcg_sixb-v1.3.8.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_jfcg_sorty_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/jfcg/sorty/v2",
+        sha256 = "4a126a66ee9237c696a038eff39710b55d92a846f807a5005dde35f4a0b869e3",
+        strip_prefix = "github.com/jfcg/sorty/v2@v2.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+            "http://ats.apps.svc/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jfcg/sorty/v2/com_github_jfcg_sorty_v2-v2.1.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_jgautheron_goconst",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/jgautheron/goconst",
@@ -5754,13 +5832,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "543243cdee14bbbe601a9201aff9a27c05f13233f8a4f0e4f35b01c32a164520",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20230904082117-ecdbf1f8c130",
+        sha256 = "f4b1d302bbbb5075222ff4ed7d5f7f8807d920aad1a5a7d4c31fdf2233d8568c",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20230925123611-87bebcc0d071",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230904082117-ecdbf1f8c130.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230904082117-ecdbf1f8c130.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230904082117-ecdbf1f8c130.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230904082117-ecdbf1f8c130.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20230925123611-87bebcc0d071.zip",
         ],
     )
     go_repository(
@@ -5793,13 +5871,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "d6e086c68505edca6fba1a6264dadbab29abc85722d520355c485da901dfdb41",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20230822064221-711da6fede03",
+        sha256 = "95f1bd8447c012c516789e30c09f72149f14e9df53d58bc3f74d54b7473119a0",
+        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20230919054518-dfd7d194838f",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230822064221-711da6fede03.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230822064221-711da6fede03.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230822064221-711da6fede03.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230822064221-711da6fede03.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20230919054518-dfd7d194838f.zip",
         ],
     )
     go_repository(
@@ -6976,13 +7054,13 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "e3e864f9d839dbbaf45fbdaf63e89fe15f8d668d0b6dd9dcf4acaa52d99af75f",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20230919031511-be2b4c78a910",
+        sha256 = "2a345685fc8d9c23349ebc5c7f6aba495a286df5ab57a35575597edfccdba7eb",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20230925032502-44b0cf7aba2b",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230919031511-be2b4c78a910.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230919031511-be2b4c78a910.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230919031511-be2b4c78a910.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230919031511-be2b4c78a910.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230925032502-44b0cf7aba2b.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230925032502-44b0cf7aba2b.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230925032502-44b0cf7aba2b.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20230925032502-44b0cf7aba2b.zip",
         ],
     )
     go_repository(

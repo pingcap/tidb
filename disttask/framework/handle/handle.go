@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
+	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
@@ -55,6 +56,7 @@ func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte
 		if globalTask == nil {
 			return nil, errors.Errorf("cannot find global task with ID %d", taskID)
 		}
+		metrics.UpdateMetricsForAddTask(globalTask)
 	}
 	return globalTask, nil
 }
@@ -73,7 +75,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			found, err := globalTaskManager.GetGlobalTaskByID(globalTask.ID)
+			found, err := globalTaskManager.GetTaskByIDWithHistory(globalTask.ID)
 			if err != nil {
 				return errors.Errorf("cannot get global task with ID %d, err %s", globalTask.ID, err.Error())
 			}
@@ -106,18 +108,48 @@ func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concu
 
 // CancelGlobalTask cancels a global task.
 func CancelGlobalTask(taskKey string) error {
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
 	}
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := taskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
 		return err
 	}
-	if globalTask == nil {
+	if task == nil {
+		logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
+
 		return nil
 	}
-	return globalTaskManager.CancelGlobalTask(globalTask.ID)
+	return taskManager.CancelGlobalTask(task.ID)
+}
+
+// PauseTask pauses a task.
+func PauseTask(taskKey string) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	found, err := taskManager.PauseTask(taskKey)
+	if !found {
+		logutil.BgLogger().Info("task not pausable", zap.String("taskKey", taskKey))
+		return nil
+	}
+	return err
+}
+
+// ResumeTask resumes a task.
+func ResumeTask(taskKey string) error {
+	taskManager, err := storage.GetTaskManager()
+	if err != nil {
+		return err
+	}
+	found, err := taskManager.ResumeTask(taskKey)
+	if !found {
+		logutil.BgLogger().Info("task not resumable", zap.String("taskKey", taskKey))
+		return nil
+	}
+	return err
 }
 
 // RunWithRetry runs a function with retry, when retry exceed max retry time, it

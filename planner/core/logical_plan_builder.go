@@ -6741,7 +6741,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // For type `Range`, the bound expr must be temporal or numeric types.
 func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
-	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
+	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded, IsExplicitRange: false}
 	if bound.UnBounded {
 		return bound, nil
 	}
@@ -6789,7 +6789,9 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		}
 	}
 
+	bound.IsExplicitRange = true
 	desc := orderByItems[0].Desc
+	var funcName string
 	if boundClause.Unit != ast.TimeUnitInvalid {
 		// TODO: Perhaps we don't need to transcode this back to generic string
 		unitVal := boundClause.Unit.String()
@@ -6801,30 +6803,32 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		// When the order is asc:
 		//   `+` for following, and `-` for the preceding
 		// When the order is desc, `+` becomes `-` and vice-versa.
-		funcName := ast.DateAdd
+		funcName = ast.DateAdd
 		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
+
 		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
-		bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
-		return bound, nil
-	}
-	// When the order is asc:
-	//   `+` for following, and `-` for the preceding
-	// When the order is desc, `+` becomes `-` and vice-versa.
-	funcName := ast.Plus
-	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
-		funcName = ast.Minus
-	}
-	bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
-	if err != nil {
-		return nil, err
+	} else {
+		// When the order is asc:
+		//   `+` for following, and `-` for the preceding
+		// When the order is desc, `+` becomes `-` and vice-versa.
+		funcName = ast.Plus
+		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
+			funcName = ast.Minus
+		}
+
+		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
+	cmpDataType := expression.GetAccurateCmpType(col, bound.CalcFuncs[0])
+	bound.updateCmpFuncsAndCmpDataType(cmpDataType)
 	return bound, nil
 }
 

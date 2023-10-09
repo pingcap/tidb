@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "importinto",
     srcs = [
+        "clean_s3.go",
         "dispatcher.go",
         "encode_and_sort_operator.go",
         "job.go",
@@ -71,6 +72,7 @@ go_library(
         "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
     ],
 )
 
@@ -90,7 +92,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 11,
+    shard_count = 13,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/external",

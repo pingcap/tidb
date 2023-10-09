@@ -2025,7 +2025,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		goCtx := context.Background()
 		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
-			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
+			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {

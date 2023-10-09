@@ -42,7 +42,7 @@ import (
 	atomicutil "go.uber.org/atomic"
 )
 
-func TestUpgradeVersion83(t *testing.T) {
+func TestUpgradeVersion83AndVersion84(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 
@@ -71,18 +71,8 @@ func TestUpgradeVersion83(t *testing.T) {
 		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
 		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
 	}
-}
 
-func TestUpgradeVersion84(t *testing.T) {
-	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	ver, err := session.GetBootstrapVersion(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-	statsHistoryTblFields := []struct {
+	statsMetaHistoryTblFields := []struct {
 		field string
 		tp    string
 	}{
@@ -93,15 +83,15 @@ func TestUpgradeVersion84(t *testing.T) {
 		{"source", "varchar(40)"},
 		{"create_time", "datetime(6)"},
 	}
-	rStatsHistoryTbl, err := tk.Exec(`desc mysql.stats_meta_history`)
+	rStatsMetaHistoryTbl, err := tk.Exec(`desc mysql.stats_meta_history`)
 	require.NoError(t, err)
-	req := rStatsHistoryTbl.NewChunk(nil)
-	require.NoError(t, rStatsHistoryTbl.Next(ctx, req))
+	req = rStatsMetaHistoryTbl.NewChunk(nil)
+	require.NoError(t, rStatsMetaHistoryTbl.Next(ctx, req))
 	require.Equal(t, 6, req.NumRows())
 	for i := 0; i < 6; i++ {
 		row := req.GetRow(i)
-		require.Equal(t, statsHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
-		require.Equal(t, statsHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
+		require.Equal(t, statsMetaHistoryTblFields[i].field, strings.ToLower(row.GetString(0)))
+		require.Equal(t, statsMetaHistoryTblFields[i].tp, strings.ToLower(row.GetString(1)))
 	}
 }
 
@@ -851,60 +841,4 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 			" PARTITION `p2` VALUES LESS THAN (3072),\n" +
 			" PARTITION `p3` VALUES LESS THAN (4096),\n" +
 			" PARTITION `p4` VALUES LESS THAN (7096))"))
-}
-
-func TestDDLBackgroundSubtaskTableSummary(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	ver, err := session.GetBootstrapVersion(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-	tk.MustExec("use mysql")
-	for i := 1; i <= 10; i++ {
-		tk.MustExec(`insert into tidb_background_subtask(id, state, checkpoint, summary) values (?, 0, "", "{}");`, i)
-	}
-	for i := 2; i <= 10; i++ {
-		tk.MustExec(`update tidb_background_subtask set summary = json_set(summary, "$.row_count", ?) where id = ?;`, i, i)
-	}
-	r := tk.MustQuery("select sum(json_extract(summary, '$.row_count')) from tidb_background_subtask;")
-	r.Check(testkit.Rows("54"))
-}
-
-func TestDDLBackgroundSubtaskHistoryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	ver, err := session.GetBootstrapVersion(tk.Session())
-	require.NoError(t, err)
-	require.Equal(t, session.CurrentBootstrapVersion, ver)
-
-	tk.MustExec("use mysql")
-	tk.MustQuery("show create table mysql.tidb_background_subtask_history").Check(testkit.Rows(
-		"tidb_background_subtask_history CREATE TABLE `tidb_background_subtask_history` (\n" +
-			"  `id` bigint(20) NOT NULL AUTO_INCREMENT,\n" +
-			"  `step` int(11) DEFAULT NULL,\n" +
-			"  `namespace` varchar(256) DEFAULT NULL,\n" +
-			"  `task_key` varchar(256) DEFAULT NULL,\n" +
-			"  `ddl_physical_tid` bigint(20) DEFAULT NULL,\n" +
-			"  `type` int(11) DEFAULT NULL,\n" +
-			"  `exec_id` varchar(256) DEFAULT NULL,\n" +
-			"  `exec_expired` timestamp NULL DEFAULT NULL,\n" +
-			"  `state` varchar(64) NOT NULL,\n" +
-			"  `checkpoint` longblob NOT NULL,\n" +
-			"  `start_time` bigint(20) DEFAULT NULL,\n" +
-			"  `state_update_time` bigint(20) DEFAULT NULL,\n" +
-			"  `meta` longblob DEFAULT NULL,\n" +
-			"  `error` blob DEFAULT NULL,\n" +
-			"  `summary` json DEFAULT NULL,\n" +
-			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n" +
-			"  KEY `idx_task_key` (`task_key`),\n" +
-			"  KEY `idx_state_update_time` (`state_update_time`)\n" +
-			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
-	tk.MustExec(`insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");`)
-	tk.MustExec(`insert into tidb_background_subtask_history select * from tidb_background_subtask;`)
-	r := tk.MustQuery("select * from tidb_background_subtask_history;")
-	r.Check(testkit.Rows("1 <nil> <nil> <nil> <nil> <nil> <nil> <nil> 0  <nil> <nil> <nil> <nil> <nil>"))
 }

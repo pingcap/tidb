@@ -21,11 +21,13 @@ import (
 	"io"
 	"path"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -81,6 +83,7 @@ func TestWriter(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
 	require.NoError(t, err)
@@ -95,6 +98,7 @@ func TestWriter(t *testing.T) {
 		keyCnt += p.keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
+	require.NoError(t, statReader.Close())
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
@@ -201,6 +205,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
@@ -413,4 +418,41 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.Equal(t, expected, summary.MultipleFilesStats[2])
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
+}
+
+func TestWriterSort(t *testing.T) {
+	t.Skip("it only tests the performance of sorty")
+	commonPrefix := "abcabcabcabcabcabcabcabc"
+
+	kvs := make([]common.KvPair, 1000000)
+	for i := 0; i < 1000000; i++ {
+		kvs[i].Key = []byte(commonPrefix + strconv.Itoa(int(rand.Int31())))
+		kvs[i].Val = []byte(commonPrefix)
+	}
+
+	kvs2 := make([]common.KvPair, 1000000)
+	copy(kvs2, kvs)
+
+	ts := time.Now()
+	sorty.MaxGor = 8
+	sorty.Sort(len(kvs), func(i, j, r, s int) bool {
+		if bytes.Compare(kvs[i].Key, kvs[j].Key) < 0 { // strict comparator like < or >
+			if r != s {
+				kvs[r], kvs[s] = kvs[s], kvs[r]
+			}
+			return true
+		}
+		return false
+	})
+	println("thread quick sort", time.Since(ts).String())
+
+	ts = time.Now()
+	slices.SortFunc(kvs2, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	println("quick sort", time.Since(ts).String())
+
+	for i := 0; i < 1000000; i++ {
+		require.True(t, bytes.Compare(kvs[i].Key, kvs2[i].Key) == 0)
+	}
 }

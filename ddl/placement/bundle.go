@@ -288,25 +288,11 @@ func (b *Bundle) String() string {
 
 // Tidy will post optimize Rules, trying to generate rules that suits PD.
 func (b *Bundle) Tidy() error {
-	extraCnt := map[PeerRoleType]int{}
-	newRules := b.Rules[:0]
-
-	// One Bundle is from one PlacementSettings, rule share same location labels, so we can use the first rule's location labels.
-	var locationLabels []string
+	tempRules := b.Rules[:0]
+	id := 0
 	for _, rule := range b.Rules {
-		if len(rule.LocationLabels) > 0 {
-			locationLabels = rule.LocationLabels
-			break
-		}
-	}
-	for i, rule := range b.Rules {
 		// useless Rule
 		if rule.Count <= 0 {
-			continue
-		}
-		// merge all empty constraints
-		if len(rule.Constraints) == 0 {
-			extraCnt[rule.Role] += rule.Count
 			continue
 		}
 		// refer to tidb#22065.
@@ -320,34 +306,137 @@ func (b *Bundle) Tidy() error {
 		if err != nil {
 			return err
 		}
-		// Constraints.Add() will automatically avoid duplication
-		// if -engine=tiflash is added and there is only one constraint
-		// then it must be -engine=tiflash
-		// it is seen as an empty constraint, so merge it
-		if len(rule.Constraints) == 1 {
-			extraCnt[rule.Role] += rule.Count
+		rule.ID = strconv.Itoa(id)
+		tempRules = append(tempRules, rule)
+		id++
+	}
+
+	groups := make(map[string]*constraintsGroup)
+	finalRules := tempRules[:0]
+	for _, rule := range tempRules {
+		key := rule.Constraints.FingerPrint()
+		existing, ok := groups[key]
+		if !ok {
+			groups[key] = &constraintsGroup{rules: []*Rule{rule}}
 			continue
 		}
-		rule.ID = strconv.Itoa(i)
-		newRules = append(newRules, rule)
+		existing.rules = append(existing.rules, rule)
 	}
-	for role, cnt := range extraCnt {
-		// add -engine=tiflash, refer to tidb#22065.
-		newRules = append(newRules, &Rule{
-			ID:    string(role),
-			Role:  role,
-			Count: cnt,
-			Constraints: []Constraint{{
-				Op:     NotIn,
-				Key:    EngineLabelKey,
-				Values: []string{EngineLabelTiFlash},
-			}},
-			// the merged rule should have the same location labels with the original rules.
-			LocationLabels: locationLabels,
-		})
+	for _, group := range groups {
+		group.MergeRulesByRole()
 	}
-	b.Rules = newRules
+	if err := transformableLeaderConstraint(groups); err != nil {
+		return err
+	}
+	for _, group := range groups {
+		finalRules = append(finalRules, group.rules...)
+	}
+	// sort by id
+	sort.SliceStable(finalRules, func(i, j int) bool {
+		return finalRules[i].ID < finalRules[j].ID
+	})
+	b.Rules = finalRules
 	return nil
+}
+
+// constraintsGroup is a group of rules with the same constraints.
+type constraintsGroup struct {
+	rules []*Rule
+	// canBecameLeader means the group has leader/voter role,
+	// it's valid if it has leader.
+	canBecameLeader bool
+	// isLeaderGroup means it has specified leader role in this group.
+	isLeaderGroup bool
+}
+
+func transformableLeaderConstraint(groups map[string]*constraintsGroup) error {
+	var leaderGroup *constraintsGroup
+	canBecameLeaderNum := 0
+	for _, group := range groups {
+		if group.isLeaderGroup {
+			if leaderGroup != nil {
+				return ErrInvalidPlacementOptions
+			}
+			leaderGroup = group
+		}
+		if group.canBecameLeader {
+			canBecameLeaderNum++
+		}
+	}
+	// If there is a specified group should have leader, and only this group can be a leader, that means
+	// the leader's priority is certain, so we can merge the transformable rules into one.
+	// eg:
+	//  - [ group1 (L F), group2 (F) ], after merging is [group1 (2*V), group2 (F)], we still know the leader prefers group1.
+	//  - [ group1 (L F), group2 (V) ], after merging is [group1 (2*V), group2 (V)], we can't know leader priority after merge.
+	if leaderGroup != nil && canBecameLeaderNum == 1 {
+		leaderGroup.MergeTransformableRoles()
+	}
+	return nil
+}
+
+// MergeRulesByRole merges the rules with the same role.
+func (c *constraintsGroup) MergeRulesByRole() {
+	// Create a map to store rules by role
+	rulesByRole := make(map[PeerRoleType][]*Rule)
+
+	// Iterate through each rule
+	for _, rule := range c.rules {
+		// Add the rule to the map based on its role
+		rulesByRole[rule.Role] = append(rulesByRole[rule.Role], rule)
+		if rule.Role == Leader || rule.Role == Voter {
+			c.canBecameLeader = true
+		}
+		if rule.Role == Leader {
+			c.isLeaderGroup = true
+		}
+	}
+
+	// Clear existing rules
+	c.rules = nil
+
+	// Iterate through each role and merge the rules
+	for _, rules := range rulesByRole {
+		mergedRule := rules[0]
+		for i, rule := range rules {
+			if i == 0 {
+				continue
+			}
+			mergedRule.Count += rule.Count
+			if mergedRule.ID > rule.ID {
+				mergedRule.ID = rule.ID
+			}
+		}
+		c.rules = append(c.rules, mergedRule)
+	}
+}
+
+// MergeTransformableRoles merges all the rules to one that can be transformed to other roles.
+func (c *constraintsGroup) MergeTransformableRoles() {
+	if len(c.rules) == 0 || len(c.rules) == 1 {
+		return
+	}
+	var mergedRule *Rule
+	newRules := make([]*Rule, 0, len(c.rules))
+	for _, rule := range c.rules {
+		// Learner is not transformable, it should be promote by PD.
+		if rule.Role == Learner {
+			newRules = append(newRules, rule)
+			continue
+		}
+		if mergedRule == nil {
+			mergedRule = rule
+			continue
+		}
+		mergedRule.Count += rule.Count
+		if mergedRule.ID > rule.ID {
+			mergedRule.ID = rule.ID
+		}
+	}
+	if mergedRule != nil {
+		mergedRule.Role = Voter
+		newRules = append(newRules, mergedRule)
+	}
+	c.rules = newRules
 }
 
 // Reset resets the bundle ID and keyrange of all rules.

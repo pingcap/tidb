@@ -2099,7 +2099,7 @@ func getColsInfo(tn *ast.TableName) (indicesInfo []*model.IndexInfo, colsInfo []
 	tbl := tn.TableInfo
 	for _, col := range tbl.Columns {
 		// The virtual column will not store any data in TiKV, so it should be ignored when collect statistics
-		if col.IsGenerated() && !col.GeneratedStored {
+		if col.IsVirtualGenerated() {
 			continue
 		}
 		if mysql.HasPriKeyFlag(col.GetFlag()) && tbl.HasClusteredIndex() {
@@ -4596,7 +4596,7 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) 
 func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	tblInfo := node.Table.TableInfo
 	indexInfo := tblInfo.FindIndexByName(node.IndexName.L)
-	if indexInfo == nil {
+	if indexInfo == nil || indexInfo.Primary && tblInfo.IsCommonHandle {
 		return nil, ErrKeyDoesNotExist.GenWithStackByArgs(node.IndexName, tblInfo.Name)
 	}
 	mockTablePlan := LogicalTableDual{}.Init(b.ctx, b.getSelectOffset())

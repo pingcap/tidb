@@ -15,34 +15,23 @@
 package handle
 
 import (
-	"context"
-	"encoding/json"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/terror"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
-	"github.com/pingcap/tidb/statistics/handle/lockstats"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
-
-const gcLastTSVarName = "tidb_stats_gc_last_ts"
 
 // GCStats will garbage collect the useless stats' info.
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
-	ctx := context.Background()
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
 	lease := mathutil.Max(h.Lease(), ddlLease)
@@ -54,7 +43,7 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 
 	// Get the last gc time.
 	gcVer := now - offset
-	lastGC, err := h.GetLastGCTimestamp(ctx)
+	lastGC, err := h.GetLastGCTimestamp()
 	if err != nil {
 		return err
 	}
@@ -62,10 +51,10 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 		if err != nil {
 			return
 		}
-		err = h.writeGCTimestampToKV(ctx, gcVer)
+		err = h.writeGCTimestampToKV(gcVer)
 	}()
 
-	rows, _, err := h.execRestrictedSQL(ctx, "select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
+	rows, _, err := h.execRows("select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -91,298 +80,56 @@ func (h *Handle) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err 
 }
 
 // GetLastGCTimestamp loads the last gc time from mysql.tidb.
-func (h *Handle) GetLastGCTimestamp(ctx context.Context) (uint64, error) {
-	rows, _, err := h.execRestrictedSQL(ctx, "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?", gcLastTSVarName)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	lastGcTSString := rows[0].GetString(0)
-	lastGcTS, err := strconv.ParseUint(lastGcTSString, 10, 64)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return lastGcTS, nil
+func (h *Handle) GetLastGCTimestamp() (lastGCTS uint64, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		lastGCTS, err = storage.GetLastGCTimestamp(sctx)
+		return err
+	})
+	return
 }
 
-func (h *Handle) writeGCTimestampToKV(ctx context.Context, newTS uint64) error {
-	_, _, err := h.execRestrictedSQL(ctx,
-		"insert into mysql.tidb (variable_name, variable_value) values (%?, %?) on duplicate key update variable_value = %?",
-		gcLastTSVarName,
-		newTS,
-		newTS,
-	)
-	return err
+func (h *Handle) writeGCTimestampToKV(newTS uint64) error {
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.WriteGCTimestampToKV(sctx, newTS)
+	})
 }
 
 func (h *Handle) gcTableStats(is infoschema.InfoSchema, physicalID int64) error {
-	ctx := context.Background()
-	rows, _, err := h.execRestrictedSQL(ctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// The table has already been deleted in stats and acknowledged to all tidb,
-	// we can safely remove the meta info now.
-	if len(rows) == 0 {
-		_, _, err = h.execRestrictedSQL(ctx, "delete from mysql.stats_meta where table_id = %?", physicalID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cache.TableRowStatsCache.Invalidate(physicalID)
-	}
-	tbl, ok := h.getTableByPhysicalID(is, physicalID)
-	if !ok {
-		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
-		return errors.Trace(h.DeleteTableStatsFromKV([]int64{physicalID}))
-	}
-	tblInfo := tbl.Meta()
-	for _, row := range rows {
-		isIndex, histID := row.GetInt64(0), row.GetInt64(1)
-		find := false
-		if isIndex == 1 {
-			for _, idx := range tblInfo.Indices {
-				if idx.ID == histID {
-					find = true
-					break
-				}
-			}
-		} else {
-			for _, col := range tblInfo.Columns {
-				if col.ID == histID {
-					find = true
-					break
-				}
-			}
-		}
-		if !find {
-			if err := h.deleteHistStatsFromKV(physicalID, histID, int(isIndex)); err != nil {
-				return errors.Trace(err)
-			}
-		}
-	}
-	// Mark records in mysql.stats_extended as `deleted`.
-	rows, _, err = h.execRestrictedSQL(ctx, "select name, column_ids from mysql.stats_extended where table_id = %? and status in (%?, %?)", physicalID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return nil
-	}
-	for _, row := range rows {
-		statsName, strColIDs := row.GetString(0), row.GetString(1)
-		var colIDs []int64
-		err = json.Unmarshal([]byte(strColIDs), &colIDs)
-		if err != nil {
-			logutil.BgLogger().Debug("decode column IDs failed", zap.String("column_ids", strColIDs), zap.Error(err))
-			return errors.Trace(err)
-		}
-		for _, colID := range colIDs {
-			found := false
-			for _, col := range tblInfo.Columns {
-				if colID == col.ID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				logutil.BgLogger().Info("mark mysql.stats_extended record as 'deleted' in GC due to dropped columns", zap.String("table_name", tblInfo.Name.L), zap.Int64("table_id", physicalID), zap.String("stats_name", statsName), zap.Int64("dropped_column_id", colID))
-				err = h.MarkExtendedStatsDeleted(statsName, physicalID, true)
-				if err != nil {
-					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
-					return errors.Trace(err)
-				}
-				break
-			}
-		}
-	}
-	return nil
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.GCTableStats(sctx, h.getTableByPhysicalID, h.MarkExtendedStatsDeleted, is, physicalID)
+	})
 }
 
 // ClearOutdatedHistoryStats clear outdated historical stats
 func (h *Handle) ClearOutdatedHistoryStats() error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	sql := "select count(*) from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-	rs, err := exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-	if err != nil {
-		return err
-	}
-	if rs == nil {
-		return nil
-	}
-	var rows []chunk.Row
-	defer terror.Call(rs.Close)
-	if rows, err = sqlexec.DrainRecordSet(ctx, rs, 8); err != nil {
-		return errors.Trace(err)
-	}
-	count := rows[0].GetInt64(0)
-	if count > 0 {
-		sql = "delete from mysql.stats_meta_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		if err != nil {
-			return err
-		}
-		sql = "delete from mysql.stats_history use index (idx_create_time) where create_time <= NOW() - INTERVAL %? SECOND"
-		_, err = exec.ExecuteInternal(ctx, sql, variable.HistoricalStatsDuration.Load().Seconds())
-		logutil.BgLogger().Info("clear outdated historical stats")
-		return err
-	}
-	return nil
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.ClearOutdatedHistoryStats(sctx)
+	})
 }
 
 func (h *Handle) gcHistoryStatsFromKV(physicalID int64) error {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	sql := "delete from mysql.stats_history where table_id = %?"
-	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	sql = "delete from mysql.stats_meta_history where table_id = %?"
-	_, err = exec.ExecuteInternal(ctx, sql, physicalID)
-	return err
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.GCHistoryStatsFromKV(sctx, physicalID)
+	}, flagWrapTxn)
 }
 
 // deleteHistStatsFromKV deletes all records about a column or an index and updates version.
 func (h *Handle) deleteHistStatsFromKV(physicalID int64, histID int64, isIndex int) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-
-	_, err = exec.ExecuteInternal(ctx, "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	startTS, err := getSessionTxnStartTS(se)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	// First of all, we update the version. If this table doesn't exist, it won't have any problem. Because we cannot delete anything.
-	if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, physicalID); err != nil {
-		return err
-	}
-	// delete histogram meta
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	// delete top n data
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	// delete all buckets
-	if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	// delete all fm sketch
-	if _, err := exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %? and hist_id = %? and is_index = %?", physicalID, histID, isIndex); err != nil {
-		return err
-	}
-	if isIndex == 0 {
-		// delete the record in mysql.column_stats_usage
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.column_stats_usage where table_id = %? and column_id = %?", physicalID, histID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.DeleteHistStatsFromKV(sctx, physicalID, histID, isIndex)
+	}, flagWrapTxn)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (h *Handle) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err = exec.ExecuteInternal(ctx, "begin")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	startTS, err := getSessionTxnStartTS(se)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, statsID := range statsIDs {
-		// We only update the version so that other tidb will know that this table is deleted.
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_meta set version = %? where table_id = %? ", startTS, statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_histograms where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_buckets where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_top_n where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "update mysql.stats_extended set version = %?, status = %? where table_id = %? and status in (%?, %?)", startTS, statistics.ExtendedStatsDeleted, statsID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.stats_fm_sketch where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.column_stats_usage where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, "delete from mysql.analyze_options where table_id = %?", statsID); err != nil {
-			return err
-		}
-		if _, err = exec.ExecuteInternal(ctx, lockstats.DeleteLockSQL, statsID); err != nil {
-			return err
-		}
-	}
-	return nil
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.DeleteTableStatsFromKV(sctx, statsIDs)
+	}, flagWrapTxn)
 }
 
 func (h *Handle) removeDeletedExtendedStats(version uint64) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer h.pool.Put(se)
-	exec := se.(sqlexec.SQLExecutor)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = finishTransaction(ctx, exec, err)
-	}()
-	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
-	_, err = exec.ExecuteInternal(ctx, sql, statistics.ExtendedStatsDeleted, version)
-	return
+	return h.callWithSCtx(func(sctx sessionctx.Context) error {
+		return storage.RemoveDeletedExtendedStats(sctx, version)
+	}, flagWrapTxn)
 }

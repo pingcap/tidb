@@ -25,7 +25,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
         "EnablePseudoForOutdatedStats": true,
-        "RatioOfPseudoEstimate": 10.0
+        "RatioOfPseudoEstimate": 10
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
@@ -35,7 +35,7 @@
       {
         "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",
         "EnablePseudoForOutdatedStats": false,
-        "RatioOfPseudoEstimate": 10.0
+        "RatioOfPseudoEstimate": 10
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 5 and b <= 5",

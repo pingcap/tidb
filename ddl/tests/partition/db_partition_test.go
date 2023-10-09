@@ -3447,6 +3447,118 @@ func TestExchangePartitionValidation(t *testing.T) {
 	tk.MustExec(`insert into t1 values ("2023-08-06","0001")`)
 }
 
+func TestExchangePartitionCheckConstraint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`create database db_one`)
+	tk.MustExec(`create database db_two`)
+
+	ntSQL := "create table db_one.nt (a int check (a > 75) not ENFORCED, b int check (b > 50) ENFORCED)"
+	ptSQL := "create table db_two.pt (a int check (a < 75) ENFORCED, b int check (b < 75 or b > 100) ENFORCED) partition by range (a) (partition p0 values less than (50), partition p1 values less than (100) )"
+	alterSQL := "alter table db_two.pt exchange partition p1 with table db_one.nt"
+	dropSQL := "drop table db_one.nt, db_two.pt"
+	errMsg := "[ddl:1737]Found a row that does not match the partition"
+
+	type record struct {
+		a int
+		b int
+	}
+	inputs := []struct {
+		t  []record
+		pt []record
+		ok bool
+	}{
+		{
+			t:  []record{{60, 60}},
+			ok: true,
+		},
+		{
+			t:  []record{{80, 60}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 80}},
+			ok: false,
+		},
+		{
+			t:  []record{{80, 80}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 120}},
+			ok: true,
+		},
+		{
+			t:  []record{{80, 120}},
+			ok: false,
+		},
+		{
+			pt: []record{{60, 60}},
+			ok: true,
+		},
+		{
+			pt: []record{{60, 50}},
+			ok: false,
+		},
+		// Record in partition p0(less than (50)).
+		{
+			pt: []record{{30, 50}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}},
+			pt: []record{{70, 70}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}, {60, 120}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: true,
+		},
+		{
+			t:  []record{{60, 60}, {80, 120}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 60}},
+			pt: []record{{70, 70}, {30, 50}, {60, 50}},
+			ok: false,
+		},
+		{
+			t:  []record{{60, 60}, {60, 80}},
+			pt: []record{{70, 70}, {30, 50}},
+			ok: false,
+		},
+	}
+	for _, input := range inputs {
+		tk.MustExec(`set @@global.tidb_enable_check_constraint = 1`)
+		tk.MustExec(ntSQL)
+		for _, r := range input.t {
+			tk.MustExec(fmt.Sprintf("insert into db_one.nt values (%d, %d)", r.a, r.b))
+		}
+		tk.MustExec(ptSQL)
+		for _, r := range input.pt {
+			tk.MustExec(fmt.Sprintf("insert into db_two.pt values (%d, %d)", r.a, r.b))
+		}
+		if input.ok {
+			tk.MustExec(alterSQL)
+			tk.MustExec(dropSQL)
+			continue
+		}
+		tk.MustContainErrMsg(alterSQL, errMsg)
+		tk.MustExec(`set @@global.tidb_enable_check_constraint = 0`)
+		tk.MustExec(alterSQL)
+		tk.MustExec(dropSQL)
+	}
+}
+
 func TestExchangePartitionPlacementPolicy(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
