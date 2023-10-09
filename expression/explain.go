@@ -65,49 +65,30 @@ func (expr *ScalarFunction) ExplainNormalizedInfo() string {
 	return expr.explainInfo(true)
 }
 
-// ExplainInfo implements the Expression interface for plan digest.
-func (expr *ScalarFunction) ExplainInfo4InList() string {
-	return expr.explainInfo4InList(false)
-}
-
-func (expr *ScalarFunction) explainInfo4InList(normalized bool) string {
+func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
 	switch expr.FuncName.L {
 	case ast.Cast:
 		for _, arg := range expr.GetArgs() {
-			if normalized {
-				buffer.WriteString(arg.ExplainNormalizedInfo())
-			} else {
-				buffer.WriteString(arg.ExplainInfo())
-			}
+			buffer.WriteString(arg.ExplainNormalizedInfo())
+
 			buffer.WriteString(", ")
 			buffer.WriteString(expr.RetType.String())
 		}
+	case ast.In:
+		buffer.WriteString("...")
 	default:
-		if expr.FuncName.L == ast.In {
-			buffer.WriteString("...")
-		} else {
-			for i, arg := range expr.GetArgs() {
-				if normalized {
-					buffer.WriteString(arg.ExplainNormalizedInfo())
-				} else {
-					buffer.WriteString(arg.ExplainInfo())
-				}
-				if i+1 < len(expr.GetArgs()) {
-					buffer.WriteString(", ")
-				}
+		for i, arg := range expr.GetArgs() {
+			buffer.WriteString(arg.ExplainNormalizedInfo())
+			if i+1 < len(expr.GetArgs()) {
+				buffer.WriteString(", ")
 			}
 		}
 
 	}
 	buffer.WriteString(")")
 	return buffer.String()
-}
-
-// ExplainNormalizedInfo4InList implements the Expression interface for plan digest.
-func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
-	return expr.explainInfo4InList(true)
 }
 
 // ExplainInfo implements the Expression interface.
@@ -121,11 +102,6 @@ func (col *Column) ExplainNormalizedInfo() string {
 		return col.OrigName
 	}
 	return "?"
-}
-
-// ExplainInfo implements the Expression interface.
-func (col *Column) ExplainInfo4InList() string {
-	return col.String()
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
@@ -148,15 +124,6 @@ func (expr *Constant) ExplainInfo() string {
 // ExplainNormalizedInfo implements the Expression interface.
 func (expr *Constant) ExplainNormalizedInfo() string {
 	return "?"
-}
-
-// ExplainInfo implements the Expression interface.
-func (expr *Constant) ExplainInfo4InList() string {
-	dt, err := expr.Eval(chunk.Row{})
-	if err != nil {
-		return "not recognized const vanue"
-	}
-	return expr.format(dt)
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
@@ -242,29 +209,15 @@ func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
 	return sortedExplainExpressionList(exprs, true)
 }
 
-// SortedExplainExpressionList generates explain information for a list of expressions in order.
-// In some scenarios, the expr's order may not be stable when executing multiple times.
-// So we add a sort to make its explain result stable.
-func SortedExplainExpressionList4InList(exprs []Expression) []byte {
-	return sortedExplainExpressionList4InList(exprs, false)
-}
-
-func sortedExplainExpressionList4InList(exprs []Expression, normalized bool) []byte {
+// SortedExplainNormalizedExpressionList4InList generates explain information for a list of expressions in order.
+func SortedExplainNormalizedExpressionList4InList(exprs []Expression) []byte {
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
 	for _, expr := range exprs {
 		if _, ok := expr.(*ScalarFunction); ok {
-			if normalized {
-				exprInfos = append(exprInfos, expr.ExplainNormalizedInfo4InList())
-			} else {
-				exprInfos = append(exprInfos, expr.ExplainInfo4InList())
-			}
+			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo4InList())
 		} else {
-			if normalized {
-				exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
-			} else {
-				exprInfos = append(exprInfos, expr.ExplainInfo())
-			}
+			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
 		}
 	}
 	slices.Sort(exprInfos)
@@ -275,11 +228,6 @@ func sortedExplainExpressionList4InList(exprs []Expression, normalized bool) []b
 		}
 	}
 	return buffer.Bytes()
-}
-
-// SortedExplainNormalizedExpressionList is same like SortedExplainExpressionList, but use for generating normalized information.
-func SortedExplainNormalizedExpressionList4InList(exprs []Expression) []byte {
-	return sortedExplainExpressionList4InList(exprs, true)
 }
 
 // SortedExplainNormalizedScalarFuncList is same like SortedExplainExpressionList, but use for generating normalized information.

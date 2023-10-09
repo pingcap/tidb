@@ -183,9 +183,6 @@ type Expression interface {
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
 
-	// ExplainInfo4InList returns operator information to be explained for plan digest.
-	ExplainInfo4InList() string
-
 	// ExplainNormalizedInfo4InList returns operator normalized information for plan digest.
 	ExplainNormalizedInfo4InList() string
 
