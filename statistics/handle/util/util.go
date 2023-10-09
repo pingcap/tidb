@@ -16,15 +16,26 @@ package util
 
 import (
 	"context"
+	"strconv"
+	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 )
+
+// SessionPool is used to recycle sessionctx.
+type SessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
 
 // StatsCtx is used to mark the request is from stats module.
 func StatsCtx(ctx context.Context) context.Context {
@@ -40,6 +51,91 @@ func FinishTransaction(sctx sessionctx.Context, err error) error {
 		terror.Log(errors.Trace(err1))
 	}
 	return errors.Trace(err)
+}
+
+var (
+	// FlagWrapTxn indicates whether to wrap a transaction.
+	FlagWrapTxn = 0
+)
+
+// CallWithSCtx allocates a sctx from the pool and call the f().
+func CallWithSCtx(pool SessionPool, f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	se, err := pool.Get()
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil { // only recycle when no error
+			pool.Put(se)
+		}
+	}()
+	sctx := se.(sessionctx.Context)
+	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
+		return err
+	}
+
+	wrapTxn := false
+	for _, flag := range flags {
+		if flag == FlagWrapTxn {
+			wrapTxn = true
+		}
+	}
+	if wrapTxn {
+		err = WrapTxn(sctx, f)
+	} else {
+		err = f(sctx)
+	}
+	return err
+}
+
+// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
+func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
+	// analyzer version
+	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
+	if err != nil {
+		return err
+	}
+	ver, err := strconv.ParseInt(verInString, 10, 64)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzeVersion = int(ver)
+
+	// enable historical stats
+	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
+
+	// partition mode
+	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
+
+	// enable analyze snapshot
+	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
+
+	// enable skip column types
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
+
+	// skip missing partition stats
+	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+	if err != nil {
+		return err
+	}
+	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
+	return nil
 }
 
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
@@ -90,4 +186,9 @@ func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql s
 		return nil, nil, errors.Errorf("invalid sql executor")
 	}
 	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), opts, sql, args...)
+}
+
+// DurationToTS converts duration to timestamp.
+func DurationToTS(d time.Duration) uint64 {
+	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
+	utilstats "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
@@ -182,7 +183,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		jt, exist, err = storage.TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
 		return err
-	}, flagWrapTxn)
+	}, utilstats.FlagWrapTxn)
 	return
 }
 

@@ -18,6 +18,7 @@ go_test(
         "//statistics",
         "//statistics/handle",
         "//statistics/handle/autoanalyze",
+        "//statistics/handle/util",
         "//testkit",
         "//testkit/testsetup",
         "//types",
