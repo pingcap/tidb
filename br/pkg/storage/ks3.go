@@ -109,7 +109,7 @@ func NewKS3Storage(
 	}
 
 	for _, p := range opts.CheckPermissions {
-		err := permissionCheckFnKS3[p](ctx, c, &qs)
+		err := permissionCheckFnKS3[p](c, &qs)
 		if err != nil {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
 		}
@@ -121,15 +121,14 @@ func NewKS3Storage(
 	}, nil
 }
 
-var permissionCheckFnKS3 = map[Permission]func(context.Context, *s3.S3, *backuppb.S3) error{
+var permissionCheckFnKS3 = map[Permission]func(*s3.S3, *backuppb.S3) error{
 	AccessBuckets:      s3BucketExistenceCheckKS3,
 	ListObjects:        listObjectsCheckKS3,
 	GetObject:          getObjectCheckKS3,
 	PutAndDeleteObject: putAndDeleteObjectCheckKS3,
 }
 
-// checkBucket checks if a bucket exists.
-func s3BucketExistenceCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
+func s3BucketExistenceCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
 	}
@@ -137,8 +136,7 @@ func s3BucketExistenceCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) e
 	return errors.Trace(err)
 }
 
-// listObjectsCheck checks the permission of listObjects
-func listObjectsCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
+func listObjectsCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
 	input := &s3.ListObjectsInput{
 		Bucket:  aws.String(qs.Bucket),
 		Prefix:  aws.String(qs.Prefix),
@@ -151,8 +149,7 @@ func listObjectsCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-// getObjectCheck checks the permission of getObject
-func getObjectCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
+func getObjectCheckKS3(svc *s3.S3, qs *backuppb.S3) error {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(qs.Bucket),
 		Key:    aws.String("not-exists"),
@@ -170,7 +167,7 @@ func getObjectCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
 	return nil
 }
 
-func putAndDeleteObjectCheckKS3(_ context.Context, svc *s3.S3, options *backuppb.S3) (err error) {
+func putAndDeleteObjectCheckKS3(svc *s3.S3, options *backuppb.S3) (err error) {
 	file := fmt.Sprintf("access-check/%s", uuid.New().String())
 	defer func() {
 		// we always delete the object used for permission check,
@@ -388,23 +385,11 @@ func (rs *KS3Storage) WalkDir(_ context.Context, opt *WalkOption, fn func(string
 	}
 
 	for {
-		// FIXME: We can't use ListObjectsV2, it is not universally supported.
-		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
-		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
 		res, err := rs.svc.ListObjects(req)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, r := range res.Contents {
-			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
-			//
-			// `res.NextMarker` is populated only if we specify req.Delimiter.
-			// Aliyun OSS and minio will populate NextMarker no matter what,
-			// but this documented behavior does apply to AWS S3:
-			//
-			// "If response does not include the NextMarker and it is truncated,
-			// you can use the value of the last Key in the response as the marker
-			// in the subsequent request to get the next set of object keys."
 			req.Marker = r.Key
 
 			// when walk on specify directory, the result include storage.Prefix,
@@ -415,7 +400,7 @@ func (rs *KS3Storage) WalkDir(_ context.Context, opt *WalkOption, fn func(string
 			path = strings.TrimPrefix(path, "/")
 			itemSize := *r.Size
 
-			// filter out s3's empty directory items
+			// filter out ks3's empty directory items
 			if itemSize <= 0 && strings.HasSuffix(path, "/") {
 				log.Info("this path is an empty directory and cannot be opened in S3.  Skip it", zap.String("path", path))
 				continue
@@ -432,9 +417,9 @@ func (rs *KS3Storage) WalkDir(_ context.Context, opt *WalkOption, fn func(string
 	return nil
 }
 
-// URI returns s3://<base>/<prefix>.
+// URI returns ks3://<base>/<prefix>.
 func (rs *KS3Storage) URI() string {
-	return "s3://" + rs.options.Bucket + "/" + rs.options.Prefix
+	return "ks3://" + rs.options.Bucket + "/" + rs.options.Prefix
 }
 
 // Open a Reader by file path.
@@ -636,7 +621,7 @@ func (r *ks3ObjectReader) GetFileSize() (int64, error) {
 }
 
 // createUploader create multi upload request.
-func (rs *KS3Storage) createUploader(ctx context.Context, name string) (ExternalFileWriter, error) {
+func (rs *KS3Storage) createUploader(_ context.Context, name string) (ExternalFileWriter, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -663,27 +648,6 @@ func (rs *KS3Storage) createUploader(ctx context.Context, name string) (External
 		createOutput:  resp,
 		completeParts: make([]*s3.CompletedPart, 0, 128),
 	}, nil
-}
-
-type ks3ObjectWriter struct {
-	wd  *io.PipeWriter
-	wg  *sync.WaitGroup
-	err error
-}
-
-// Write implement the io.Writer interface.
-func (s *ks3ObjectWriter) Write(_ context.Context, p []byte) (int, error) {
-	return s.wd.Write(p)
-}
-
-// Close implement the io.Closer interface.
-func (s *ks3ObjectWriter) Close(_ context.Context) error {
-	err := s.wd.Close()
-	if err != nil {
-		return err
-	}
-	s.wg.Wait()
-	return s.err
 }
 
 // Create creates multi upload request.

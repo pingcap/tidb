@@ -426,7 +426,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	return s3Storage, nil
 }
 
-// checkBucket checks if a bucket exists.
+// s3BucketExistenceCheck checks if a bucket exists.
 func s3BucketExistenceCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
