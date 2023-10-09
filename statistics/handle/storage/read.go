@@ -384,7 +384,7 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	table.Pseudo = false
 
-	modidyCount, realtimeCount, isNull, err := StatsMetaCountAndModifyCount(sctx, physicalID)
+	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, physicalID)
 	if err != nil || isNull {
 		return nil, err
 	}
