@@ -48,7 +48,7 @@ func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count
 	if len(rows) == 0 {
 		return 0, 0, true, nil
 	}
-	count = rows[0].GetInt64(0)
+	count = int64(rows[0].GetUint64(0))
 	modifyCount = rows[0].GetInt64(1)
 	return count, modifyCount, false, nil
 }
