@@ -840,15 +840,16 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				zap.Int64("oldTableID", job.TableID))
 			return nil
 		}
-		var indexID int64
-		var ifExists bool
+		indexIDs := make([]int64, 1)
+		ifExists := make([]bool, 1)
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
-			return errors.Trace(err)
+		if err := job.DecodeArgs(&indexIDs[0], &ifExists[0], &partitionIDs); err != nil {
+			if err = job.DecodeArgs(&indexIDs, &ifExists, &partitionIDs); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		var elementID int64 = 1
-		indexIDs := []int64{indexID}
 
 		if len(partitionIDs) > 0 {
 			for _, oldPid := range partitionIDs {
