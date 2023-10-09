@@ -77,13 +77,28 @@ type Table struct {
 // ColAndIndexExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
 type ColAndIndexExistenceMap struct {
-	m1           map[int64]*model.ColumnInfo
-	m2           map[int64]*model.IndexInfo
-	someAnalyzed bool
+	m1            map[int64]*model.ColumnInfo
+	colAnalyzed   map[int64]bool
+	m2            map[int64]*model.IndexInfo
+	indexAnalyzed map[int64]bool
+	someAnalyzed  bool
 }
 
 func (m *ColAndIndexExistenceMap) SomeAnalyzed() bool {
-	return m != nil && m.someAnalyzed
+	if m == nil {
+		return false
+	}
+	for _, v := range m.colAnalyzed {
+		if v {
+			return true
+		}
+	}
+	for _, v := range m.indexAnalyzed {
+		if v {
+			return true
+		}
+	}
+	return false
 }
 
 // Has checks whether a column/index stats exists.
@@ -96,10 +111,21 @@ func (m *ColAndIndexExistenceMap) Has(id int64, isIndex bool) bool {
 	return ok
 }
 
+// HasAnalyzed checks whether a column/index stats exists and it has stats.
+// TODO: the map should only keep the analyzed cols.
+func (m *ColAndIndexExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
+	if isIndex {
+		analyzed, ok := m.indexAnalyzed[id]
+		return ok && analyzed
+	}
+	analyzed, ok := m.colAnalyzed[id]
+	return ok && analyzed
+}
+
 // InsertCol inserts a column with its meta into the map.
 func (m *ColAndIndexExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
 	m.m1[id] = info
-	m.someAnalyzed = m.someAnalyzed || analyzed
+	m.colAnalyzed[id] = analyzed
 }
 
 // GetCol gets the meta data of the given column.
@@ -110,7 +136,7 @@ func (m *ColAndIndexExistenceMap) GetCol(id int64) *model.ColumnInfo {
 // InsertIndex inserts an index with its meta into the map.
 func (m *ColAndIndexExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
 	m.m2[id] = info
-	m.someAnalyzed = m.someAnalyzed || analyzed
+	m.indexAnalyzed[id] = analyzed
 }
 
 // GetIndex gets the meta data of the given index.
@@ -129,8 +155,14 @@ func (m *ColAndIndexExistenceMap) Clone() *ColAndIndexExistenceMap {
 	for k, v := range m.m1 {
 		mm.m1[k] = v
 	}
+	for k, v := range m.colAnalyzed {
+		mm.colAnalyzed[k] = v
+	}
 	for k, v := range m.m2 {
 		mm.m2[k] = v
+	}
+	for k, v := range m.indexAnalyzed {
+		mm.indexAnalyzed[k] = v
 	}
 	return mm
 }
@@ -138,8 +170,10 @@ func (m *ColAndIndexExistenceMap) Clone() *ColAndIndexExistenceMap {
 // NewColAndIndexExistenceMap return a new object with the given capcity.
 func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIndexExistenceMap {
 	return &ColAndIndexExistenceMap{
-		m1: make(map[int64]*model.ColumnInfo, colCap),
-		m2: make(map[int64]*model.IndexInfo, idxCap),
+		m1:            make(map[int64]*model.ColumnInfo, colCap),
+		colAnalyzed:   make(map[int64]bool, colCap),
+		m2:            make(map[int64]*model.IndexInfo, idxCap),
+		indexAnalyzed: make(map[int64]bool, idxCap),
 	}
 }
 

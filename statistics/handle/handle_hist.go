@@ -155,10 +155,9 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []mo
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && colHist.IsFullLoad()) {
-			continue
+		if (!ok && tbl.ColAndIndexExistenceMap.HasAnalyzed(item.ID, false)) || (ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad()) {
+			remainedItems = append(remainedItems, item)
 		}
-		remainedItems = append(remainedItems, item)
 	}
 	return remainedItems
 }
