@@ -414,7 +414,7 @@
       "pkg/planner/cardinality/": "ignore cardinality code",
       "pkg/planner/funcdep/extract_fd_test.go": "ignore extract_fd code",
       "pkg/planner/funcdep/only_full_group_by_test.go": "ignore only_full_group_by code",
-      "pkg/dumpling/export": "ignore export code",
+      "dumpling/export": "ignore export code",
       "pkg/ddl/placement/": "ignore placement code"
     },
     "only_files": {
