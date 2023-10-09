@@ -759,7 +759,5 @@ func TestExplainValuesStatement(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 
-	_, err := tk.Exec("EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1)")
-	require.Error(t, err)
-	require.Regexp(t, ".*Unknown table ''.*", err.Error())
+	tk.MustMatchErrMsg("EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1)", ".*Unknown table ''.*")
 }
