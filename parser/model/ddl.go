@@ -254,6 +254,7 @@ func (tz *TimeZoneLocation) GetLocation() (*time.Location, error) {
 type MultiSchemaInfo struct {
 	SubJobs    []*SubJob `json:"sub_jobs"`
 	Revertible bool      `json:"revertible"`
+	Seq        int32     `json:"seq"`
 
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
@@ -321,7 +322,7 @@ func (sub *SubJob) IsFinished() bool {
 }
 
 // ToProxyJob converts a sub-job to a proxy job.
-func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
+func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 	return Job{
 		ID:              parentJob.ID,
 		Type:            sub.Type,
@@ -346,7 +347,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job) Job {
 		BinlogInfo:      parentJob.BinlogInfo,
 		Version:         parentJob.Version,
 		ReorgMeta:       parentJob.ReorgMeta,
-		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible},
+		MultiSchemaInfo: &MultiSchemaInfo{Revertible: sub.Revertible, Seq: int32(seq)},
 		Priority:        parentJob.Priority,
 		SeqNum:          parentJob.SeqNum,
 		Charset:         parentJob.Charset,

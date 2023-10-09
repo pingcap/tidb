@@ -157,8 +157,8 @@ func expectedDeleteRangeCnt(ctx delRangeCntCtx, job *model.Job) (int, error) {
 		return physicalCnt * ctx.deduplicateIdxCnt(indexIDs), nil
 	case model.ActionMultiSchemaChange:
 		totalExpectedCnt := 0
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
-			p := sub.ToProxyJob(job)
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
+			p := sub.ToProxyJob(job, i)
 			cnt, err := expectedDeleteRangeCnt(ctx, &p)
 			if err != nil {
 				return 0, err
