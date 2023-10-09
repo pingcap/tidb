@@ -122,7 +122,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
 	g, _ := errgroup.WithContext(ctx)
 	g.Go(func() error {
-		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh)
+		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
 
 	for _, task := range tasks {
@@ -353,8 +353,11 @@ func (e *AnalyzeExec) handleResultsError(
 	needGlobalStats bool,
 	globalStatsMap globalStatsMap,
 	resultsCh <-chan *statistics.AnalyzeResults,
+	taskNum int,
 ) error {
 	partitionStatsConcurrency := e.Ctx().GetSessionVars().AnalyzePartitionConcurrency
+	// the concurrency of handleResultsError cannot be more than partitionStatsConcurrency
+	partitionStatsConcurrency = min(taskNum, partitionStatsConcurrency)
 	// If partitionStatsConcurrency > 1, we will try to demand extra session from Domain to save Analyze results in concurrency.
 	// If there is no extra session we can use, we will save analyze results in single-thread.
 	if partitionStatsConcurrency > 1 {
