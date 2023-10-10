@@ -117,6 +117,13 @@ var optRuleList = []logicalOptRule{
 	&resolveExpand{},
 }
 
+// Interaction Rule List
+/* The interaction rule will be trigger when it satisfies following conditions:
+1. The related rule has been trigger and changed the plan
+2. The interaction rule is enabled
+*/
+var optInteractionRuleList = map[logicalOptRule]logicalOptRule{}
+
 type logicalOptimizeOp struct {
 	// tracer is goring to track optimize steps during rule optimizing
 	tracer *tracing.LogicalOptimizeTracer
@@ -1125,6 +1132,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}()
 	}
 	var err error
+	var againRuleList []logicalOptRule
 	for i, rule := range optRuleList {
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
@@ -1137,7 +1145,24 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		if err != nil {
 			return nil, err
 		}
+		// Compute rules that should be optimized again
+		// Mock the plan changed is false
+		planChanged := false
+		interactionRule, ok := optInteractionRuleList[rule]
+		if planChanged && ok && isLogicalRuleDisabled(interactionRule) {
+			againRuleList = append(againRuleList, interactionRule)
+		}
 	}
+
+	// Trigger the interaction rule
+	for i, rule := range againRuleList {
+		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
+		logic, err = rule.optimize(ctx, logic, opt)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	opt.recordFinalLogicalPlan(logic)
 	return logic, err
 }
