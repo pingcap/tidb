@@ -15,6 +15,7 @@ go_library(
         "//parser/ast",
         "//parser/model",
         "//sessionctx",
+        "//sessionctx/stmtctx",
         "//statistics",
         "//statistics/handle/storage",
         "//statistics/handle/util",
