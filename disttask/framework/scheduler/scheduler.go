@@ -581,7 +581,7 @@ func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask
 
 func (s *BaseScheduler) markTaskCancelOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
-		if ctx.Err() != nil && context.Cause(ctx).Error() == "cancel subtasks" {
+		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
 		} else if common.IsRetryableError(err) {
@@ -590,7 +590,7 @@ func (s *BaseScheduler) markTaskCancelOrFailed(ctx context.Context, subtask *pro
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
 		} else {
-			logutil.Logger(s.logCtx).Warn("met context canceled for gracefully shutdown", zap.Error(err))
+			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
 		}
 		s.markErrorHandled()
 		return true
