@@ -399,6 +399,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 						TotalKVSize: uint64(config.DefaultBatchSize),
 					},
 					RangeSplitKeys: rangeSplitKeys,
+					RangeSplitSize: splitter.GetRangeSplitSize(),
 				}
 				specs = append(specs, &WriteIngestSpec{m})
 

@@ -964,6 +964,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			externalCfg.MinKey,
 			externalCfg.MaxKey,
 			externalCfg.SplitKeys,
+			externalCfg.RegionSplitSize,
 			local.keyAdapter,
 			local.DupeDetectEnabled,
 			local.duplicateDB,
