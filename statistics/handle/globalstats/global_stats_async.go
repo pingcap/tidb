@@ -18,12 +18,14 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/util"
@@ -58,8 +60,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	pool                util.SessionPool
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
-	topn                chan mergeItem[*statistics.TopN]
-	histogram           chan mergeItem[*statistics.Histogram]
+	histogramAndTopn    chan mergeItem[*StatsWrapper]
 	gpool               *gp.Pool
 	allPartitionStats   map[int64]*statistics.Table
 	PartitionDefinition map[int64]model.PartitionDefinition
@@ -92,8 +93,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		pool:                      pool,
 		cmsketch:                  make(chan mergeItem[*statistics.CMSketch]),
 		fmsketch:                  make(chan mergeItem[*statistics.FMSketch]),
-		topn:                      make(chan mergeItem[*statistics.TopN]),
-		histogram:                 make(chan mergeItem[*statistics.Histogram]),
+		histogramAndTopn:          make(chan mergeItem[*StatsWrapper]),
 		PartitionDefinition:       make(map[int64]model.PartitionDefinition),
 		tableInfo:                 make(map[int64]*model.TableInfo),
 		partitionIDs:              make([]int64, 0, partitionNum),
@@ -215,22 +215,16 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 		return err
 	}
 	close(a.cmsketch)
-	err = a.loadTopN(sctx, isIndex)
+	err = a.loadHistogramAndTopN(sctx, a.globalTableInfo, isIndex)
 	if err != nil {
 		close(a.exitChan)
 		return err
 	}
-	close(a.topn)
-	err = a.loadHistogram(sctx, a.globalTableInfo, isIndex)
-	if err != nil {
-		close(a.exitChan)
-		return err
-	}
-	close(a.histogram)
+	close(a.histogramAndTopn)
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) error {
 	func() {
 		for {
 			select {
@@ -280,69 +274,42 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(sctx sessionctx.Context
 	if err != nil {
 		return err
 	}
-	allHg := make([][]*statistics.Histogram, a.globalStats.Num)
-	allTopN := make([][]*statistics.TopN, a.globalStats.Num)
-	for i := 0; i < a.globalStats.Num; i++ {
-		allHg[i] = make([]*statistics.Histogram, 0, a.partitionNum)
-		allTopN[i] = make([]*statistics.TopN, 0, a.partitionNum)
-	}
-	func() {
+	err = func() error {
 		for {
 			select {
-			case topn, ok := <-a.topn:
+			case item, ok := <-a.histogramAndTopn:
 				if !ok {
-					return
+					return nil
 				}
-				allTopN[topn.idx] = append(allTopN[topn.idx], topn.item)
+				var err error
+				var poppedTopN []statistics.TopNMeta
+				var allhg []*statistics.Histogram
+				wrapper := item.item
+				a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.gpool, sctx, wrapper,
+					tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+				if err != nil {
+					return err
+				}
+
+				// Merge histogram.
+				a.globalStats.Hg[item.idx], err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
+					int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+				if err != nil {
+					return err
+				}
+
+				// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+				for j := range a.globalStats.Hg[item.idx].Buckets {
+					a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
+				}
+				a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
 			case <-a.exitChan:
-				return
+				return nil
 			}
 		}
 	}()
-	func() {
-		for {
-			select {
-			case hists, ok := <-a.histogram:
-				if !ok {
-					return
-				}
-				allHg[hists.idx] = append(allHg[hists.idx], hists.item)
-			case <-a.exitChan:
-				return
-			}
-		}
-	}()
-	for i := 0; i < a.globalStats.Num; i++ {
-		if len(allHg[i]) == 0 {
-			// If all partitions have no stats, we skip merging global stats because it may not handle the case `len(allHg[i]) == 0`
-			// correctly. It can avoid unexpected behaviors such as nil pointer panic.
-			continue
-		}
-		// Merge topN.
-		// Note: We need to merge TopN before merging the histogram.
-		// Because after merging TopN, some numbers will be left.
-		// These remaining topN numbers will be used as a separate bucket for later histogram merging.
-		var err error
-		var poppedTopN []statistics.TopNMeta
-		wrapper := NewStatsWrapper(allHg[i], allTopN[i])
-		a.globalStats.TopN[i], poppedTopN, allHg[i], err = mergeGlobalStatsTopN(a.gpool, sctx, wrapper,
-			sctx.GetSessionVars().StmtCtx.TimeZone, sctx.GetSessionVars().AnalyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
-		if err != nil {
-			return err
-		}
-
-		// Merge histogram.
-		a.globalStats.Hg[i], err = statistics.MergePartitionHist2GlobalHist(sctx.GetSessionVars().StmtCtx, allHg[i], poppedTopN,
-			int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
-		if err != nil {
-			return err
-		}
-
-		// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-		for j := range a.globalStats.Hg[i].Buckets {
-			a.globalStats.Hg[i].Buckets[j].NDV = 0
-		}
-		a.globalStats.Hg[i].NDV = a.globalStatsNDV[i]
+	if err != nil {
+		return err
 	}
 	return nil
 }
@@ -370,6 +337,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 		}
 	}()
 	sc := se.(sessionctx.Context)
+	tz := sctx.GetSessionVars().StmtCtx.TimeZone
+	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
+	stmtCtx := sctx.GetSessionVars().StmtCtx
 	err = a.prepare(sc, isIndex)
 	if err != nil {
 		return err
@@ -381,7 +351,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 		return a.ioWorker(sc, isIndex)
 	})
 	mergeWg.Go(func() error {
-		return a.cpuWorker(sc, opts, isIndex)
+		return a.cpuWorker(stmtCtx, sc, opts, isIndex, tz, analyzeVersion)
 	})
 	err = metawg.Wait()
 	if err != nil {
@@ -438,8 +408,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) loadTopN(sctx sessionctx.Context, isIndex bool) error {
+func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
 	for i := 0; i < a.globalStats.Num; i++ {
+		hists := make([]*statistics.Histogram, 0, a.partitionNum)
+		topn := make([]*statistics.TopN, 0, a.partitionNum)
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
 				histID:      a.histIDs[i],
@@ -448,35 +420,19 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadTopN(sctx sessionctx.Context,
 			if ok {
 				continue
 			}
-			topn, err := storage.TopNFromStorage(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i])
+			h, err := storage.LoadHistogram(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i], tableInfo)
 			if err != nil {
 				return err
 			}
-			a.topn <- mergeItem[*statistics.TopN]{
-				topn, i,
+			t, err := storage.TopNFromStorage(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i])
+			if err != nil {
+				return err
 			}
+			hists = append(hists, h)
+			topn = append(topn, t)
 		}
-	}
-	return nil
-}
-
-func (a *AsyncMergePartitionStats2GlobalStats) loadHistogram(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
-	for i := 0; i < a.globalStats.Num; i++ {
-		for _, partitionID := range a.partitionIDs {
-			_, ok := a.skipPartition[skipItem{
-				histID:      a.histIDs[i],
-				partitionID: partitionID,
-			}]
-			if ok {
-				continue
-			}
-			histogram, err := storage.LoadHistogram(sctx, partitionID, toSQLIndex(isIndex), a.histIDs[i], tableInfo)
-			if err != nil {
-				return err
-			}
-			a.histogram <- mergeItem[*statistics.Histogram]{
-				histogram, i,
-			}
+		a.histogramAndTopn <- mergeItem[*StatsWrapper]{
+			NewStatsWrapper(hists, topn), i,
 		}
 	}
 	return nil
