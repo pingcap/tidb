@@ -28,9 +28,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/twmb/murmur3"
-	"go.uber.org/zap"
 )
 
 // HashAggIntermData indicates the intermediate data of aggregation execution.
@@ -110,25 +108,19 @@ func (w *HashAggPartialWorker) waitForTheFinishOfSpill(isLeaving bool) {
 		}
 	}
 	w.spillHelper.lock.Unlock()
-	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill1", zap.String("xzx", "xzx"))
 	w.spillHelper.waitForPartialWorkersSyncer <- struct{}{}
-	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill2", zap.String("xzx", "xzx"))
 
 	// Wait for the finish of spill
-	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill3", zap.String("xzx", "xzx"))
 	<-w.spillHelper.spillActionAndPartialWorkerSyncer
-	logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpill4", zap.String("xzx", "xzx"))
 }
 
 func (w *HashAggPartialWorker) waitForSpillDoneBeforeWorkerExit() {
 	w.spillHelper.lock.Lock()
 	if w.spillHelper.isInSpillingNoLock() {
 		w.spillHelper.lock.Unlock()
-		logutil.BgLogger().Info("xzxdebug: waitForSpillDoneBeforeWorkerExit1", zap.String("xzx", "xzx"))
 		w.waitForTheFinishOfSpill(true)
 		return
 	}
-	logutil.BgLogger().Info("xzxdebug: waitForSpillDoneBeforeWorkerExit2", zap.String("xzx", "xzx"))
 	w.spillHelper.runningPartialWorkerNum--
 	if w.spillHelper.runningPartialWorkerNum == 0 {
 		w.spillHelper.leavePartialStage()
@@ -145,11 +137,8 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 
-		logutil.BgLogger().Info("xzxdebug: partial worker defer_run1", zap.String("xzx", "xzx"))
 		w.waitForSpillDoneBeforeWorkerExit()
-		logutil.BgLogger().Info("xzxdebug: partial worker defer_run2", zap.String("xzx", "xzx"))
 		w.workerSync.waitForRunningWorkers()
-		logutil.BgLogger().Info("xzxdebug: partial worker defer_run3", zap.String("xzx", "xzx"))
 
 		if !hasError {
 			isSpilled := w.spillHelper.isSpillTriggered()
@@ -171,9 +160,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			}
 		}
 
-		logutil.BgLogger().Info("xzxdebug: partial worker defer_run4", zap.String("xzx", "xzx"))
 		w.workerSync.waitForExitOfAliveWorkers()
-		logutil.BgLogger().Info("xzxdebug: partial worker defer_run5", zap.String("xzx", "xzx"))
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {
@@ -182,7 +169,20 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		waitGroup.Done()
 	}()
 
-	if intest.InTest {
+	enableIntest := false
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			enableIntest = true
+		}
+	})
+
+	failpoint.Inject("triggerSpill", func(val failpoint.Value) {
+		// 0.9 ensure that it will exceed the soft limit, soft limit factor is 0.8.
+		consumeNum := float32(val.(int)) * 0.9
+		w.memTracker.Consume(int64(consumeNum))
+	})
+
+	if intest.InTest && enableIntest {
 		num := rand.Intn(100)
 		if num < 2 {
 			panic("Intest panic: partial worker is panicked before start")
@@ -218,7 +218,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		// so we set needShuffle to be true.
 		needShuffle = true
 
-		if intest.InTest {
+		if intest.InTest && enableIntest {
 			num := rand.Intn(10000)
 			if num < 7 {
 				panic("Intest panic: partial worker is panicked when running")
@@ -235,9 +235,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		}
 
 		if w.spillHelper.isInSpilling() {
-			logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpillInRun1", zap.String("xzx", "xzx"))
 			w.waitForTheFinishOfSpill(false)
-			logutil.BgLogger().Info("xzxdebug: waitForTheFinishOfSpillInRun2", zap.String("xzx", "xzx"))
 			if w.spillHelper.checkError() {
 				hasError = true
 				return

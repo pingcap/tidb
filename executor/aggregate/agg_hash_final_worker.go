@@ -69,7 +69,6 @@ type HashAggFinalWorker struct {
 func (w *HashAggFinalWorker) getInputFromDisk() (input *HashAggIntermData, ok bool, spillContinue bool) {
 	select {
 	case <-w.finishCh:
-		logutil.BgLogger().Info("xzxdebug: final worker getPartialInput_finish", zap.String("xzx", "xzx"))
 		return nil, false, false
 	case input, ok = <-w.spilledDataChan:
 		if !ok {
@@ -291,23 +290,18 @@ func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, 
 
 		w.memTracker.Consume(memDelta)
 	}
-	logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition>", zap.String("xzx", "xzx"))
 	w.spilledDataChan <- &restoredData
-	logutil.BgLogger().Info("xzxdebug: final worker restoreOnePartition<", zap.String("xzx", "xzx"))
 	return true, nil
 }
 
 func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (error, bool) {
-	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData1", zap.String("xzx", "xzx"))
 	err, spillContinue := w.consumeIntermData(ctx)
 	if err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
 		return err, false
 	}
 
-	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData2", zap.String("xzx", "xzx"))
 	w.loadFinalResult(ctx)
-	logutil.BgLogger().Info("xzxdebug: final worker mergeResultsAndSend_consumeIntermData3", zap.String("xzx", "xzx"))
 	return nil, spillContinue
 }
 
@@ -315,7 +309,6 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 	w.spilledDataChan = make(chan *HashAggIntermData, 1)
 	start := time.Now()
 	defer func() {
-		logutil.BgLogger().Info("xzxdebug: final worker defer", zap.String("xzx", "xzx"))
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.outputCh, r)
 		}
@@ -326,7 +319,14 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		waitGroup.Done()
 	}()
 
-	if intest.InTest {
+	enableIntest := false
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			enableIntest = true
+		}
+	})
+
+	if intest.InTest && enableIntest {
 		num := rand.Intn(80)
 		if num == 0 {
 			panic("Intest panic: final worker is panicked before start")
@@ -335,10 +335,8 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		}
 	}
 
-	logutil.BgLogger().Info("xzxdebug: final worker partialAndFinalNotifier>", zap.String("xzx", "xzx"))
 	// Wait for the finish of all partial workers
 	<-w.partialAndFinalNotifier
-	logutil.BgLogger().Info("xzxdebug: final worker partialAndFinalNotifier<", zap.String("xzx", "xzx"))
 
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {
@@ -358,7 +356,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 				return
 			}
 
-			if intest.InTest {
+			if intest.InTest && enableIntest {
 				num := rand.Intn(100000)
 				if num < 7 {
 					panic("Intest panic: final worker is panicked when running")

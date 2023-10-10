@@ -15,12 +15,12 @@
 package aggregate
 
 import (
-	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/intest"
@@ -269,8 +269,6 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorker
 			hasError = true
 		}
 
-		msg := fmt.Sprintf("xzxdebug: doActionForParallelHashAggImplCmp %d %d", waitingWorkerNum, runningPartialWorkerNum)
-		logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
 		if waitingWorkerNum == runningPartialWorkerNum {
 			break
 		}
@@ -284,27 +282,27 @@ func (a *AggSpillDiskAction) doActionForParallelHashAggImpl(runningPartialWorker
 	a.spillHelper.lock.Lock()
 	defer a.spillHelper.lock.Unlock()
 	a.spillHelper.resetIsSpillingNoLock()
-	msg := fmt.Sprintf("xzxdebug: doActionForParallelHashAggImpl1 running: %d", runningPartialWorkerNum)
-	logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
 	for i := 0; i < runningPartialWorkerNum; i++ {
-		logutil.BgLogger().Info("xzxdebug: doActionForParallelHashAggImpl3", zap.String("xzx", "xzx"))
 		a.spillHelper.spillActionAndPartialWorkerSyncer <- struct{}{}
-		logutil.BgLogger().Info("xzxdebug: doActionForParallelHashAggImpl4", zap.String("xzx", "xzx"))
 	}
-	msg = fmt.Sprintf("xzxdebug: doActionForParallelHashAggImpl2 running: %d", runningPartialWorkerNum)
-	logutil.BgLogger().Info(msg, zap.String("xzx", "xzx"))
 }
 
 func (a *AggSpillDiskAction) spill() {
+	enableIntest := false
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			enableIntest = true
+		}
+	})
+
 	spilledPartialWorkerNum := len(a.e.partialWorkers)
 	syncer := make(chan struct{}, spilledPartialWorkerNum)
 	for i := range a.e.partialWorkers {
 		go func(worker *HashAggPartialWorker) {
 			err := worker.spillDataToDisk()
-			if intest.InTest {
+			if intest.InTest && enableIntest {
 				num := rand.Intn(1000)
 				if num < 3 {
-					logutil.BgLogger().Info("xzxdebug: Random fail is triggered in AggSpillDiskAction", zap.String("xzx", "xzx"))
 					err = errors.Errorf("Random fail is triggered in AggSpillDiskAction")
 				}
 			}
