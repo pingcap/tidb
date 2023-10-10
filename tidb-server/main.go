@@ -185,7 +185,7 @@ var (
 	help                        *bool
 )
 
-func initflag() *flag.FlagSet {
+func initFlagSet() *flag.FlagSet {
 	fset := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
 	version = flagBoolean(fset, nmVersion, false, "print version information and exit")
 	configPath = fset.String(nmConfig, "", "config file path")
@@ -236,6 +236,7 @@ func initflag() *flag.FlagSet {
 	keyspaceName = fset.String(nmKeyspaceName, "", "keyspace name.")
 	serviceScope = fset.String(nmTiDBServiceScope, "", "tidb service scope")
 	help = fset.Bool("help", false, "show the usage")
+	session.RegisterMockUpgradeFlag(fset)
 	// Ignore errors; CommandLine is set for ExitOnError.
 	// nolint:errcheck
 	fset.Parse(os.Args[1:])
@@ -247,7 +248,7 @@ func initflag() *flag.FlagSet {
 }
 
 func main() {
-	fset := initflag()
+	fset := initFlagSet()
 	config.InitializeConfig(*configPath, *configCheck, *configStrict, overrideConfig, fset)
 	if *version {
 		setVersions()
