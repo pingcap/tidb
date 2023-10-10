@@ -146,8 +146,8 @@ func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID i
 }
 
 // CheckSkipPartition checks if we can skip loading the partition.
-func CheckSkipPartition(sctx sessionctx.Context, tblID int64) error {
-	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id =%?", tblID)
+func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex int) error {
+	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id =%? and is_index = %?", tblID, isIndex)
 	if err != nil {
 		return err
 	}
