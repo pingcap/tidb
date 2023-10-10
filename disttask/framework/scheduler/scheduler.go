@@ -100,7 +100,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				if canceled {
 					logutil.Logger(s.logCtx).Info("scheduler canceled")
 					if cancelFn != nil {
-						cancelFn(ErrCancelSubtask)
+						cancelFn(nil)
 					}
 				}
 			}
