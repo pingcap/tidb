@@ -5271,8 +5271,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// processColumnOptions is only used in getModifiableColumnJob.
-func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// ProcessColumnOptions process column options.
+func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -5402,6 +5402,39 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 	return nil
 }
 
+// ProcessColumnCharsetAndCollation process column charset and collation
+func ProcessColumnCharsetAndCollation(sctx sessionctx.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef, schema *model.DBInfo) error {
+	var chs, coll string
+	var err error
+	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
+	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
+	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
+	if len(newCol.FieldType.GetCharset()) == 0 && meta.Version < model.TableInfoVersion1 {
+		chs = col.FieldType.GetCharset()
+		coll = col.FieldType.GetCollate()
+	} else {
+		chs, coll, err = getCharsetAndCollateInColumnDef(sctx.GetSessionVars(), specNewColumn)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		chs, coll, err = ResolveCharsetCollation(sctx.GetSessionVars(),
+			ast.CharsetOpt{Chs: chs, Col: coll},
+			ast.CharsetOpt{Chs: meta.Charset, Col: meta.Collate},
+			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
+		)
+		chs, coll = OverwriteCollationWithBinaryFlag(sctx.GetSessionVars(), specNewColumn, chs, coll)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
+		return errors.Trace(err)
+	}
+	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
+	return nil
+}
+
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
 func GetModifiableColumnJob(
 	ctx context.Context,
@@ -5469,36 +5502,12 @@ func GetModifiableColumnJob(
 		Version:               col.Version,
 	})
 
-	var chs, coll string
-	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
-	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
-	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
-	if len(newCol.FieldType.GetCharset()) == 0 && t.Meta().Version < model.TableInfoVersion1 {
-		chs = col.FieldType.GetCharset()
-		coll = col.FieldType.GetCollate()
-	} else {
-		chs, coll, err = getCharsetAndCollateInColumnDef(sctx.GetSessionVars(), specNewColumn)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		chs, coll, err = ResolveCharsetCollation(sctx.GetSessionVars(),
-			ast.CharsetOpt{Chs: chs, Col: coll},
-			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
-			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
-		)
-		chs, coll = OverwriteCollationWithBinaryFlag(sctx.GetSessionVars(), specNewColumn, chs, coll)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if err = ProcessColumnCharsetAndCollation(sctx, col, newCol, t.Meta(), specNewColumn, schema); err != nil {
+		return nil, err
 	}
-
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
-		return nil, errors.Trace(err)
-	}
-	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name.L, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	// Copy index related options to the new spec.
@@ -5509,7 +5518,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = processColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = ProcessColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 

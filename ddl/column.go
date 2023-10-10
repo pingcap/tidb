@@ -385,7 +385,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 			// cut to eliminate data reorg change for column type change between decimal.
 			return oldCol.GetFlen() != newCol.GetFlen() || oldCol.GetDecimal() != newCol.GetDecimal() || toUnsigned != originUnsigned
 		case mysql.TypeEnum, mysql.TypeSet:
-			return isElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
+			return IsElemsChangedToModifyColumn(oldCol.GetElems(), newCol.GetElems())
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 			return toUnsigned != originUnsigned
 		case mysql.TypeString:
@@ -398,7 +398,7 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 		return needTruncationOrToggleSign()
 	}
 
-	if convertBetweenCharAndVarchar(oldCol.GetType(), newCol.GetType()) {
+	if ConvertBetweenCharAndVarchar(oldCol.GetType(), newCol.GetType()) {
 		return true
 	}
 
@@ -420,12 +420,14 @@ func needChangeColumnData(oldCol, newCol *model.ColumnInfo) bool {
 	return true
 }
 
+// ConvertBetweenCharAndVarchar check whether column converted between char and varchar
 // TODO: it is used for plugins. so change plugin's using and remove it.
-func convertBetweenCharAndVarchar(oldCol, newCol byte) bool {
+func ConvertBetweenCharAndVarchar(oldCol, newCol byte) bool {
 	return types.ConvertBetweenCharAndVarchar(oldCol, newCol)
 }
 
-func isElemsChangedToModifyColumn(oldElems, newElems []string) bool {
+// IsElemsChangedToModifyColumn check elems changed
+func IsElemsChangedToModifyColumn(oldElems, newElems []string) bool {
 	if len(newElems) < len(oldElems) {
 		return true
 	}
