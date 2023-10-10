@@ -5,8 +5,7 @@ go_library(
     srcs = [
         "index_usage.go",
         "predicate_column.go",
-        "stats_usage.go",
-        "table_delta.go",
+        "session_stats_collect.go",
     ],
     importpath = "github.com/pingcap/tidb/statistics/handle/usage",
     visibility = ["//visibility:public"],
