@@ -1,4 +1,4 @@
-// Copyright 2017 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,35 +12,32 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle
+package usage
 
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInsertAndDelete(t *testing.T) {
-	h := Handle{
-		listHead: &SessionStatsCollector{mapper: usage.NewTableDelta()},
-	}
-	var items []*SessionStatsCollector
+	sl := NewSessionStatsList()
+	var items []*SessionStatsItem
 	for i := 0; i < 5; i++ {
-		items = append(items, h.NewSessionStatsCollector())
+		items = append(items, sl.NewSessionStatsItem())
 	}
 	items[0].Delete() // delete tail
 	items[2].Delete() // delete middle
 	items[4].Delete() // delete head
-	h.sweepList()
+	sl.SweepSessionStatsList()
 
-	require.Equal(t, items[3], h.listHead.next)
+	require.Equal(t, items[3], sl.listHead.next)
 	require.Equal(t, items[1], items[3].next)
 	require.Nil(t, items[1].next)
 
 	// delete rest
 	items[1].Delete()
 	items[3].Delete()
-	h.sweepList()
-	require.Nil(t, h.listHead.next)
+	sl.SweepSessionStatsList()
+	require.Nil(t, sl.listHead.next)
 }

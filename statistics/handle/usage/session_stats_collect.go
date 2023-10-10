@@ -102,6 +102,10 @@ func NewSessionStatsList() *SessionStatsList {
 	return &SessionStatsList{
 		tableDelta: NewTableDelta(),
 		statsUsage: NewStatsUsage(),
+		listHead: &SessionStatsItem{
+			mapper:     NewTableDelta(),
+			statsUsage: NewStatsUsage(),
+		},
 	}
 }
 
