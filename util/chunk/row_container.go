@@ -79,7 +79,7 @@ func (m *mutexForRowContainer) RUnlock() {
 }
 
 type SpillHelper interface {
-	preSpill()
+	preSpillAction()
 	hasEnoughDataToSpill(t *memory.Tracker) bool
 }
 
@@ -124,11 +124,11 @@ func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	return &newRC
 }
 
-func (c *RowContainer) preSpill() {
+func (c *RowContainer) preSpillAction() {
 }
 
 // SpillToDisk spills data to disk. This function may be called in parallel.
-func (c *RowContainer) SpillToDisk(preSpill func()) {
+func (c *RowContainer) SpillToDisk(preSpillAction func()) {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.alreadySpilled() {
@@ -160,7 +160,7 @@ func (c *RowContainer) SpillToDisk(preSpill func()) {
 			panic("out of disk quota when spilling")
 		}
 	})
-	preSpill()
+	preSpillAction()
 	n := c.m.records.inMemory.NumChunks()
 	for i := 0; i < n; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
@@ -423,12 +423,12 @@ func (a *SpillDiskAction) getStatus() spillStatus {
 	return a.cond.status
 }
 
+// Action sends a signal to trigger spillToDisk method of RowContainer
+// and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.action(t, a.c)
 }
 
-// Action sends a signal to trigger spillToDisk method of RowContainer
-// and if it is already triggered before, call its fallbackAction.
 func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper SpillHelper) {
 	a.m.Lock()
 	defer a.m.Unlock()
@@ -440,12 +440,12 @@ func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper SpillHelper) {
 			if a.testSyncInputFunc != nil {
 				a.testSyncInputFunc()
 				go func() {
-					a.c.SpillToDisk(spillHelper.preSpill)
+					a.c.SpillToDisk(spillHelper.preSpillAction)
 					a.testSyncOutputFunc()
 				}()
 				return
 			}
-			go a.c.SpillToDisk(spillHelper.preSpill)
+			go a.c.SpillToDisk(spillHelper.preSpillAction)
 		})
 		return
 	}
@@ -607,7 +607,7 @@ func (c *SortedRowContainer) SpillToDisk(preSpill func()) {
 	c.RowContainer.SpillToDisk(preSpill)
 }
 
-func (c *SortedRowContainer) preSpill() {
+func (c *SortedRowContainer) preSpillAction() {
 	c.sort()
 }
 
@@ -682,6 +682,8 @@ func (a *SortAndSpillDiskAction) WaitForTest() {
 	a.testWg.Wait()
 }
 
+// Action sends a signal to trigger spillToDisk method of RowContainer
+// and if it is already triggered before, call its fallbackAction.
 func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
 	a.action(t, a.c)
 }
