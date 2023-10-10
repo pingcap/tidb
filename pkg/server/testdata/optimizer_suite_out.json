@@ -20,14 +20,14 @@
           }
         },
         {
-          "github.com/pingcap/tidb/planner.Optimize": [
+          "github.com/pingcap/tidb/pkg/planner.Optimize": [
             {
               "Parameter datums for EXECUTE": [
                 "KindInt64 127"
               ]
             },
             {
-              "github.com/pingcap/tidb/planner.Optimize": [
+              "github.com/pingcap/tidb/pkg/planner.Optimize": [
                 {
                   "Enable binding": true,
                   "IsStmtNode": true,
@@ -37,15 +37,15 @@
                   "Used binding": false
                 },
                 {
-                  "github.com/pingcap/tidb/planner.optimize": {
-                    "github.com/pingcap/tidb/planner/core.DoOptimize": [
+                  "github.com/pingcap/tidb/pkg/planner.optimize": {
+                    "github.com/pingcap/tidb/pkg/planner/core.DoOptimize": [
                       {
-                        "github.com/pingcap/tidb/planner/core.logicalOptimize": null
+                        "github.com/pingcap/tidb/pkg/planner/core.logicalOptimize": null
                       },
                       {
-                        "github.com/pingcap/tidb/planner/core.physicalOptimize": [
+                        "github.com/pingcap/tidb/pkg/planner/core.physicalOptimize": [
                           {
-                            "github.com/pingcap/tidb/planner/core.getStatsTable": {
+                            "github.com/pingcap/tidb/pkg/planner/core.getStatsTable": {
                               "CountIsZero": false,
                               "HandleIsNil": false,
                               "InputPhysicalID": 100,
@@ -95,10 +95,10 @@
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
+                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).DeriveStats": [
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).fillIndexPath": {
-                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).fillIndexPath": {
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -106,7 +106,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
                                         "TotalCount": 0
@@ -120,8 +120,8 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveStatsByFilter": {
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
                                         "lt(test.t.col1, 127)",
@@ -129,7 +129,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
+                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -137,7 +137,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
                                             "EssentialLoaded": false,
                                             "InValidForCollPseudo": true,
                                             "IsInvalid": true,
@@ -152,7 +152,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
+                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -160,7 +160,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
                                             "TotalCount": 0
@@ -187,17 +187,17 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": [
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": [
                                   {
-                                    "github.com/pingcap/tidb/planner/core.(*DataSource).deriveTablePathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveTablePathStats": null
                                   },
                                   {
-                                    "github.com/pingcap/tidb/planner/core.(*DataSource).deriveIndexPathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveIndexPathStats": null
                                   }
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).generateIndexMergePath": null
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).generateIndexMergePath": null
                               },
                               {
                                 "Access paths": [
@@ -246,7 +246,7 @@
           }
         },
         {
-          "github.com/pingcap/tidb/planner.Optimize": [
+          "github.com/pingcap/tidb/pkg/planner.Optimize": [
             {
               "Enable binding": true,
               "IsStmtNode": true,
@@ -275,15 +275,15 @@
               "Trying Hint": "use index ()"
             },
             {
-              "github.com/pingcap/tidb/planner.optimize": {
-                "github.com/pingcap/tidb/planner/core.DoOptimize": [
+              "github.com/pingcap/tidb/pkg/planner.optimize": {
+                "github.com/pingcap/tidb/pkg/planner/core.DoOptimize": [
                   {
-                    "github.com/pingcap/tidb/planner/core.logicalOptimize": null
+                    "github.com/pingcap/tidb/pkg/planner/core.logicalOptimize": null
                   },
                   {
-                    "github.com/pingcap/tidb/planner/core.physicalOptimize": [
+                    "github.com/pingcap/tidb/pkg/planner/core.physicalOptimize": [
                       {
-                        "github.com/pingcap/tidb/planner/core.getStatsTable": {
+                        "github.com/pingcap/tidb/pkg/planner/core.getStatsTable": {
                           "CountIsZero": false,
                           "HandleIsNil": false,
                           "InputPhysicalID": 100,
@@ -333,17 +333,17 @@
                         }
                       },
                       {
-                        "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
+                        "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).DeriveStats": [
                           {
-                            "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                              "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
+                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveStatsByFilter": {
+                              "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
                                 {
                                   "Input Expressions": [
                                     "eq(test.t.col1, 100)"
                                   ]
                                 },
                                 {
-                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -351,7 +351,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
                                         "EssentialLoaded": false,
                                         "InValidForCollPseudo": true,
                                         "IsInvalid": true,
@@ -366,7 +366,7 @@
                                   ]
                                 },
                                 {
-                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -374,7 +374,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
                                         "TotalCount": 0
@@ -400,12 +400,12 @@
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": {
-                              "github.com/pingcap/tidb/planner/core.(*DataSource).deriveTablePathStats": null
+                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": {
+                              "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveTablePathStats": null
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/planner/core.(*DataSource).generateIndexMergePath": null
+                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).generateIndexMergePath": null
                           },
                           {
                             "Access paths": [
@@ -446,14 +446,14 @@
           }
         },
         {
-          "github.com/pingcap/tidb/planner.Optimize": [
+          "github.com/pingcap/tidb/pkg/planner.Optimize": [
             {
               "Parameter datums for EXECUTE": [
                 "KindInt64 1"
               ]
             },
             {
-              "github.com/pingcap/tidb/planner.Optimize": [
+              "github.com/pingcap/tidb/pkg/planner.Optimize": [
                 {
                   "Enable binding": true,
                   "IsStmtNode": true,
@@ -463,15 +463,15 @@
                   "Used binding": false
                 },
                 {
-                  "github.com/pingcap/tidb/planner.optimize": {
-                    "github.com/pingcap/tidb/planner/core.DoOptimize": [
+                  "github.com/pingcap/tidb/pkg/planner.optimize": {
+                    "github.com/pingcap/tidb/pkg/planner/core.DoOptimize": [
                       {
-                        "github.com/pingcap/tidb/planner/core.logicalOptimize": null
+                        "github.com/pingcap/tidb/pkg/planner/core.logicalOptimize": null
                       },
                       {
-                        "github.com/pingcap/tidb/planner/core.physicalOptimize": [
+                        "github.com/pingcap/tidb/pkg/planner/core.physicalOptimize": [
                           {
-                            "github.com/pingcap/tidb/planner/core.getStatsTable": {
+                            "github.com/pingcap/tidb/pkg/planner/core.getStatsTable": {
                               "CountIsZero": false,
                               "HandleIsNil": false,
                               "InputPhysicalID": 100,
@@ -521,10 +521,10 @@
                             }
                           },
                           {
-                            "github.com/pingcap/tidb/planner/core.(*DataSource).DeriveStats": [
+                            "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).DeriveStats": [
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).fillIndexPath": {
-                                  "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).fillIndexPath": {
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                     {
                                       "ID": 1,
                                       "Ranges": [
@@ -534,7 +534,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
+                                      "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
                                         "CollPseudo": true,
                                         "IsInvalid": true,
                                         "TotalCount": 0
@@ -548,15 +548,15 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).deriveStatsByFilter": {
-                                  "github.com/pingcap/tidb/planner/cardinality.Selectivity": [
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveStatsByFilter": {
+                                  "github.com/pingcap/tidb/pkg/planner/cardinality.Selectivity": [
                                     {
                                       "Input Expressions": [
                                         "in(test.t.col1, 1, 2, 3)"
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByColumnRanges": [
+                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByColumnRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -566,7 +566,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/statistics.(*Column).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.(*Column).IsInvalid": {
                                             "EssentialLoaded": false,
                                             "InValidForCollPseudo": true,
                                             "IsInvalid": true,
@@ -581,7 +581,7 @@
                                       ]
                                     },
                                     {
-                                      "github.com/pingcap/tidb/planner/cardinality.GetRowCountByIndexRanges": [
+                                      "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                                         {
                                           "ID": 1,
                                           "Ranges": [
@@ -591,7 +591,7 @@
                                           ]
                                         },
                                         {
-                                          "github.com/pingcap/tidb/statistics.(*Index).IsInvalid": {
+                                          "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
                                             "CollPseudo": true,
                                             "IsInvalid": true,
                                             "TotalCount": 0
@@ -617,17 +617,17 @@
                                 }
                               },
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": [
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).derivePathStatsAndTryHeuristics": [
                                   {
-                                    "github.com/pingcap/tidb/planner/core.(*DataSource).deriveTablePathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveTablePathStats": null
                                   },
                                   {
-                                    "github.com/pingcap/tidb/planner/core.(*DataSource).deriveIndexPathStats": null
+                                    "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).deriveIndexPathStats": null
                                   }
                                 ]
                               },
                               {
-                                "github.com/pingcap/tidb/planner/core.(*DataSource).generateIndexMergePath": null
+                                "github.com/pingcap/tidb/pkg/planner/core.(*DataSource).generateIndexMergePath": null
                               },
                               {
                                 "Access paths": [
