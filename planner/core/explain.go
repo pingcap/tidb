@@ -366,7 +366,7 @@ func (p *PhysicalSelection) ExplainInfo() string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 	if variable.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainNormalizedExpressionList4InList(p.Conditions))
+		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Conditions))
 	} else {
 		return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
 	}
@@ -408,7 +408,7 @@ func (p *PhysicalExpand) explainInfoV2() string {
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainNormalizedInfo() string {
 	if variable.IgnoreInlistPlanDigest.Load() {
-		return string(expression.SortedExplainNormalizedExpressionList4InList(p.Exprs))
+		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Exprs))
 	} else {
 		return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
 	}
