@@ -200,8 +200,14 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissin
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) error {
-	err := a.loadFmsketch(sctx, isIndex)
+func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			close(a.exitChan)
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
+	err = a.loadFmsketch(sctx, isIndex)
 	if err != nil {
 		close(a.exitChan)
 		return err
@@ -222,7 +228,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 	return nil
 }
 
-func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) error {
+func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			close(a.exitChan)
+			err = errors.New(fmt.Sprint(r))
+		}
+	}()
 	func() {
 		for {
 			select {
