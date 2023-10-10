@@ -2,6 +2,8 @@
 // of this source code is governed by a BSD-style license that can be found in
 // the LICENSE file.
 
+//go:build !cgo
+
 package manual
 
 // Provides versions of New and Free when cgo is not available (e.g. cross
