@@ -1247,6 +1247,7 @@ func upgrade(s Session) {
 		if err != nil {
 			logutil.BgLogger().Fatal("[upgrade] upgrade failed", zap.Error(err))
 		}
+		logutil.BgLogger().Warn("xxx------------------------------------[upgrade]", zap.Bool("use concurrent ddl", useConcurrentDDL))
 		if !useConcurrentDDL {
 			// Use another variable DDLForce2Queue but not EnableConcurrentDDL since in upgrade it may set global variable, the initial step will
 			// overwrite variable EnableConcurrentDDL.
@@ -1313,10 +1314,12 @@ func checkOwnerVersion(ctx context.Context, dom *domain.Domain) (bool, error) {
 				continue
 			}
 			info, err := infosync.GetAllServerInfo(ctx)
+			logutil.BgLogger().Warn("xxx------------------------------------[upgrade]", zap.String("owner", ownerID))
 			if err != nil {
 				return false, err
 			}
 			if s, ok := info[ownerID]; ok {
+				logutil.BgLogger().Warn("xxx------------------------------------[upgrade]", zap.String("owner", ownerID), zap.String("version", s.Version))
 				return s.Version == mysql.ServerVersion, nil
 			}
 		}
@@ -2377,7 +2380,9 @@ func upgradeToVer94(s Session, ver int64) {
 	if ver >= version94 {
 		return
 	}
+	logutil.BgLogger().Warn("xxx------------------------------------ 000")
 	mustExecute(s, CreateMDLView)
+	logutil.BgLogger().Warn("xxx------------------------------------ 111")
 }
 
 func upgradeToVer95(s Session, ver int64) {
