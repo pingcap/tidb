@@ -18,7 +18,7 @@ COL1	COL2	COL3	COL4
 OÛ ›BÙ™¬0¶©ÀÇ‡û „F	Êt	-836:46:08	735655453
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 select * from UK_MU15569 where col2 >= -27225 and col1 is not null and col3 = '-836:46:08';
 COL1	COL2	COL3	COL4
 OÛ ›BÙ™¬0¶©ÀÇ‡û „F	Êt	-836:46:08	735655453
@@ -42,7 +42,7 @@ COL1	COL2	COL3
 bb	-16994	1987
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists PK_MULTI_COL_360;
 CREATE TABLE PK_MULTI_COL_360 (
@@ -189,7 +189,7 @@ execute stmt using @a;
 a	b	c	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt from 'select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.a=t2.a and t1.c=?';
 set @a=1;
 execute stmt using @a;
@@ -198,7 +198,7 @@ execute stmt using @a;
 a	b	c	a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists PK_SIGNED_10094;
 CREATE TABLE PK_SIGNED_10094 (COL1 decimal(55,0) NOT NULL, PRIMARY KEY (COL1));
@@ -219,7 +219,7 @@ execute stmt using @a,@b;
 COL1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set tidb_enable_prepared_plan_cache=1;
 drop table if exists PK_S_MULTI_37;
 CREATE TABLE PK_S_MULTI_37 (COL1 decimal(55,0) NOT NULL, COL2 decimal(55,0) NOT NULL,PRIMARY KEY (COL1, COL2) /*T![clustered_index] NONCLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
@@ -302,7 +302,7 @@ count(distinct col1)
 0
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt from 'select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > ?;';
 execute stmt using @b;
 count(distinct col1)
@@ -325,7 +325,7 @@ col1
 b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @z;
 col1
 select @@last_plan_from_cache;
@@ -345,7 +345,7 @@ execute stmt using @b;
 col1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @z;
 col1
 select @@last_plan_from_cache;
@@ -367,7 +367,7 @@ col1
 b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @z;
 col1
 select @@last_plan_from_cache;
@@ -387,7 +387,7 @@ execute stmt using @b;
 col1
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 execute stmt using @z;
 col1
 select @@last_plan_from_cache;
@@ -406,7 +406,7 @@ execute stmt;
 col1	col2	col1	col2
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 prepare stmt from 'SELECT * FROM t t1 JOIN t t2 ON t1.col1 = t2.col1 WHERE t1.col1 <=> NULL and t2.col2 > ?';
 set @a=0;
 execute stmt using @a;
@@ -415,7 +415,7 @@ execute stmt using @a;
 col1	col2	col1	col2
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 drop table if exists t4;
 create table t4 (a date);
 prepare st1 from "insert into t4(a) select dt from (select ? as dt from dual union all select sysdate() ) a";

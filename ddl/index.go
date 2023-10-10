@@ -2043,6 +2043,9 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 
 	taskType := BackfillTaskType
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
+	if mInfo := reorgInfo.Job.MultiSchemaInfo; mInfo != nil {
+		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
+	}
 	elemIDs := make([]int64, 0, len(reorgInfo.elements))
 	for _, elem := range reorgInfo.elements {
 		elemIDs = append(elemIDs, elem.ID)

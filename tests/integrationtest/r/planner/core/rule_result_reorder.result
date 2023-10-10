@@ -13,7 +13,7 @@ execute s1 using @a;
 a	b	c	d
 select @@last_plan_from_cache;
 @@last_plan_from_cache
-0
+1
 set tidb_enable_prepared_plan_cache=DEFAULT;
 set tidb_enable_ordered_result_mode=DEFAULT;
 set tidb_enable_ordered_result_mode=1;
