@@ -326,6 +326,9 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 			m.logErr(err)
 			return
 		}
+		if task == nil {
+			return
+		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
 			logutil.Logger(m.logCtx).Info("onRunnableTask exit",
 				zap.Int64("task-id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
