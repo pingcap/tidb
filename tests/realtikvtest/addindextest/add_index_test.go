@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -245,7 +244,6 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 		require.Equal(t, 1, len(row))
 		jobID := row[0][0].(string)
-		logutil.BgLogger().Info("ywq test pause")
 		tk1.MustExec("admin pause ddl jobs " + jobID)
 	}
 
@@ -266,7 +264,6 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 			row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 			require.Equal(t, 1, len(row))
 			jobID := row[0][0].(string)
-			logutil.BgLogger().Info("ywq test resume")
 			tk1.MustExec("admin resume ddl jobs " + jobID)
 		}
 	}
