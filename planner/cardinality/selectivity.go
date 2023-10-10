@@ -102,7 +102,7 @@ func Selectivity(
 
 		colHist := coll.Columns[c.UniqueID]
 		var sel float64
-		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.UniqueID) {
+		if statistics.ColumnStatsIsInvalid(colHist, ctx, coll, c.ID) {
 			sel = 1.0 / pseudoEqualRate
 		} else if colHist.Histogram.NDV > 0 {
 			sel = 1 / float64(colHist.Histogram.NDV)
@@ -117,12 +117,16 @@ func Selectivity(
 
 	extractedCols := make([]*expression.Column, 0, len(coll.Columns))
 	extractedCols = expression.ExtractColumnsFromExpressions(extractedCols, remainedExprs, nil)
-	colIDs := maps.Keys(coll.Columns)
-	slices.Sort(colIDs)
-	for _, id := range colIDs {
-		colStats := coll.Columns[id]
-		col := expression.ColInfo2Col(extractedCols, colStats.Info)
-		if col != nil {
+	slices.SortFunc(extractedCols, func(a *expression.Column, b *expression.Column) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	for i, col := range extractedCols {
+		if i != 0 && extractedCols[i].ID == extractedCols[i-1].ID {
+			continue
+		}
+		id := col.UniqueID
+		colStats := coll.Columns[col.UniqueID]
+		if colStats != nil {
 			maskCovered, ranges, _, err := getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
 				return 0, nil, errors.Trace(err)
@@ -143,6 +147,9 @@ func Selectivity(
 				return 0, nil, errors.Trace(err)
 			}
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
+		} else {
+			// TODO: We are able to remove this path if we remove the async stats load.
+			statistics.ColumnStatsIsInvalid(nil, ctx, coll, col.ID)
 		}
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
