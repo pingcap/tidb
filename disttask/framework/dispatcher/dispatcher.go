@@ -143,6 +143,7 @@ func (d *BaseDispatcher) refreshTask() error {
 		logutil.Logger(d.logCtx).Error("refresh task failed", zap.Error(err))
 		return err
 	}
+	// newTask might be nil when GC routine move the task into history table.
 	if newTask != nil {
 		d.Task = newTask
 	}
