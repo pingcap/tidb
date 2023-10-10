@@ -198,7 +198,7 @@ func (b *WriterBuilder) Build(
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
 		kvBuffer:       bp.NewBuffer(),
-		writeBatch:     make([]common.KvPair, 0, b.writeBatchCount),
+		writeBatch:     make([]common.KvPair, b.writeBatchCount),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
@@ -279,6 +279,7 @@ type Writer struct {
 
 	kvBuffer   *membuf.Buffer
 	writeBatch []common.KvPair
+	writeCnt   int
 
 	onClose OnCloseFunc
 	closed  bool
@@ -312,8 +313,15 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
 	val := w.kvBuffer.AddBytes(idxVal)
 
-	w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
+	if w.writeCnt < len(w.writeBatch) {
+		w.writeBatch[w.writeCnt].Key = key
+		w.writeBatch[w.writeCnt].Val = val
+		w.writeCnt++
+	} else {
+		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
+	}
 	if w.batchSize >= w.memSizeLimit {
+		w.writeBatch = w.writeBatch[:w.writeCnt]
 		if err := w.flushKVs(ctx, false); err != nil {
 			return err
 		}
@@ -471,10 +479,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
-	w.writeBatch = w.writeBatch[:0]
 	w.rc.reset()
 	w.kvBuffer.Reset()
 	w.batchSize = 0
+	w.writeCnt = 0
 	return nil
 }
 
