@@ -584,6 +584,602 @@
     ]
   },
   {
+    "Name": "TestNoHashJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ no_hash_join() */ * from t1, t2",
+        "Plan": [
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Hint no_hash_join() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t1), hash_join(t1) */ * from t1, t2",
+        "Plan": [
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
+        ]
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t1), hash_join(t2) */ * from t1, t2",
+        "Plan": [
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
+        ]
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t1) */ * from t1, t2",
+        "Plan": [
+          "MergeJoin 100000000.00 root  inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t1, t2) */ * from t1, t2",
+        "Plan": [
+          "MergeJoin 100000000.00 root  inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12487.50 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t1, t2) */ * from t1, t2 where t1.b=t2.b",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "├─Sort(Build) 9990.00 root  test.t2.b",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) 9990.00 root  test.t1.b",
+          "  └─TableReader 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t1) */ * from t1, t2 where t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexHashJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12475.01 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 12475.01 cop[tikv]  not(isnull(test.t2.b))",
+          "    └─TableRowIDScan 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t2) */ * from t1 left join t2 on t1.b=t2.b",
+        "Plan": [
+          "MergeJoin 12487.50 root  left outer join, left key:test.t1.b, right key:test.t2.b",
+          "├─Sort(Build) 9990.00 root  test.t2.b",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) 10000.00 root  test.t1.b",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t2) */ * from t1 left join t2 on t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  left outer join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12487.50 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t2) */ * from t1 right join t2 on t1.b=t2.b",
+        "Plan": [
+          "MergeJoin 12487.50 root  right outer join, left key:test.t1.b, right key:test.t2.b",
+          "├─Sort(Build) 9990.00 root  test.t1.b",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Sort(Probe) 10000.00 root  test.t2.b",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_hash_join(t2) */ * from t1 right join t2 on t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  right outer join, inner:IndexLookUp, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12487.50 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4, t3, t2, t1), no_hash_join(t2, t3) */ * from t1, t2, t3, t4",
+        "Plan": [
+          "Projection 10000000000000000.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─HashJoin 10000000000000000.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─MergeJoin(Probe) 1000000000000.00 root  inner join",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─MergeJoin(Probe) 100000000.00 root  inner join",
+          "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "      │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2, t3, t4), hash_join(t1, t2), no_hash_join(t3), hash_join(t4) */ * from t1, t2, t3, t4",
+        "Plan": [
+          "HashJoin 10000000000000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "└─MergeJoin(Probe) 1000000000000.00 root  inner join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestOptEnableHashJoin",
+    "Cases": [
+      {
+        "SQL": "select * from t1, t2",
+        "Plan": [
+          "MergeJoin 100000000.00 root  inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12487.50 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t1, t2 where t1.b=t2.b",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.b, right key:test.t2.b",
+          "├─Sort(Build) 9990.00 root  test.t2.b",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) 9990.00 root  test.t1.b",
+          "  └─TableReader 9990.00 root  data:Selection",
+          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t1, t2 where t1.a=t2.a and t1.b=t2.b",
+        "Plan": [
+          "IndexHashJoin 12475.01 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t1.b, test.t2.b)",
+          "├─TableReader(Build) 9980.01 root  data:Selection",
+          "│ └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12475.01 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─Selection(Probe) 12475.01 cop[tikv]  not(isnull(test.t2.b))",
+          "    └─TableRowIDScan 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t1 left join t2 on t1.b=t2.b",
+        "Plan": [
+          "MergeJoin 12487.50 root  left outer join, left key:test.t1.b, right key:test.t2.b",
+          "├─Sort(Build) 9990.00 root  test.t2.b",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─Sort(Probe) 10000.00 root  test.t1.b",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t1 left join t2 on t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  left outer join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12487.50 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t1 right join t2 on t1.b=t2.b",
+        "Plan": [
+          "MergeJoin 12487.50 root  right outer join, left key:test.t1.b, right key:test.t2.b",
+          "├─Sort(Build) 9990.00 root  test.t1.b",
+          "│ └─TableReader 9990.00 root  data:Selection",
+          "│   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.b))",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─Sort(Probe) 10000.00 root  test.t2.b",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t1 right join t2 on t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  right outer join, inner:IndexLookUp, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 12487.50 root  ",
+          "  ├─Selection(Build) 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "  │ └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 12487.50 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ hash_join(t1) */ * from t1, t2",
+        "Plan": [
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
+        ]
+      },
+      {
+        "SQL": "select /*+ hash_join(t2) */ * from t1, t2",
+        "Plan": [
+          "HashJoin 100000000.00 root  CARTESIAN inner join",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."
+        ]
+      }
+    ]
+  },
+
+  {
+    "Name": "TestNoIndexJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ no_merge_join(t1), no_hash_join(t1), no_index_hash_join(t1), no_index_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), no_hash_join(t1), no_index_hash_join(t1), no_index_merge_join(t2) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), no_hash_join(t1), no_index_hash_join(t1, t2), no_index_merge_join(t2, t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), no_hash_join(t1), no_index_join(t1), no_index_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), no_hash_join(t1), no_index_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexMergeJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t1.a, inner key:test.t2.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t2.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:true, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), no_hash_join(t1), inl_join(t1), no_index_merge_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ inl_join(t1), no_index_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN may be ignored"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_hash_join(t1), no_index_hash_join(t2) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexHashJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_merge_join(t1), no_index_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexMergeJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored"
+        ]
+      },
+      {
+        "SQL": "select /*+ inl_join(t1), no_index_hash_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ inl_join(t1), no_index_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "IndexJoin 12487.50 root  inner join, inner:IndexReader, outer key:test.t2.a, inner key:test.t1.a, equal cond:eq(test.t2.a, test.t1.a)",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 12487.50 root  index:Selection",
+          "  └─Selection 12487.50 cop[tikv]  not(isnull(test.t1.a))",
+          "    └─IndexRangeScan 12500.00 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t2.a)], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestNoMergeJoinHint",
+    "Cases": [
+      {
+        "SQL": "select /*+ no_merge_join() */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Hint no_merge_join() is inapplicable. Please specify the table names in the arguments."
+        ]
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"
+        ]
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1), merge_join(t2) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "MergeJoin 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"
+        ]
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t1, t2) */ * from t1, t2 where t1.a=t2.a",
+        "Plan": [
+          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ no_merge_join(t2) */ * from t1 right join t2 on t1.a=t2.a",
+        "Plan": [
+          "HashJoin 12487.50 root  right outer join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "└─IndexReader(Probe) 10000.00 root  index:IndexFullScan",
+          "  └─IndexFullScan 10000.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t4, t3, t2, t1), no_merge_join(t2, t3) */ * from t1, t2, t3, t4 where t1.a=t2.a and t2.a=t3.a and t3.a=t4.a",
+        "Plan": [
+          "Projection 19511.72 root  test.t1.a, test.t2.a, test.t3.a, test.t4.a",
+          "└─HashJoin 19511.72 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "  ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t3.a, test.t2.a)]",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t4.a, test.t3.a)]",
+          "      ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "      └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "        └─IndexFullScan 9990.00 cop[tikv] table:t4, index:a(a) keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select /*+ leading(t1, t2, t3, t4), merge_join(t1, t2), no_merge_join(t3), merge_join(t4) */ * from t1, t2, t3, t4 where t1.a=t2.a and t2.a=t3.a and t3.a=t4.a",
+        "Plan": [
+          "MergeJoin 19511.72 root  inner join, left key:test.t3.a, right key:test.t4.a",
+          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "│ └─IndexFullScan 9990.00 cop[tikv] table:t4, index:a(a) keep order:true, stats:pseudo",
+          "└─Sort(Probe) 15609.38 root  test.t3.a",
+          "  └─HashJoin 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 9990.00 cop[tikv] table:t3, index:a(a) keep order:false, stats:pseudo",
+          "    └─MergeJoin(Probe) 12487.50 root  inner join, left key:test.t1.a, right key:test.t2.a",
+          "      ├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
+          "      │ └─IndexFullScan 9990.00 cop[tikv] table:t2, index:a(a) keep order:true, stats:pseudo",
+          "      └─IndexReader(Probe) 9990.00 root  index:IndexFullScan",
+          "        └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
     "Name": "TestLeadingJoinHint",
     "Cases": [
       {

@@ -61,6 +61,53 @@ func TestStraightJoinHint(t *testing.T) {
 	runJoinReorderTestData(t, tk, "TestStraightJoinHint")
 }
 
+func TestNoHashJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoHashJoinHint")
+}
+
+// test the global/session variable tidb_opt_enable_hash_join being set to no
+func TestOptEnableHashJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_opt_enable_hash_join=off")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+	tk.MustExec("create table t4(a int, b int, key(a));")
+	runJoinReorderTestData(t, tk, "TestOptEnableHashJoin")
+}
+
+func TestNoMergeJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key(a));")
+	tk.MustExec("create table t2(a int, key(a));")
+	tk.MustExec("create table t3(a int, key(a));")
+	tk.MustExec("create table t4(a int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoMergeJoinHint")
+}
+
+func TestNoIndexJoinHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_index_merge_join=true`)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int, key(a));")
+	tk.MustExec("create table t2(a int, key(a));")
+	tk.MustExec("create table t3(a int, key(a));")
+	tk.MustExec("create table t4(a int, key(a));")
+	runJoinReorderTestData(t, tk, "TestNoIndexJoinHint")
+}
+
 func TestLeadingJoinHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

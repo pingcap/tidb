@@ -45,6 +45,7 @@ go_library(
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//br/pkg/utils/iter",
+        "//br/pkg/utils/storewatch",
         "//br/pkg/version",
         "//config",
         "//ddl",

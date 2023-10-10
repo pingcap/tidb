@@ -139,12 +139,12 @@ func TestGetTimeZone(t *testing.T) {
 		offset int
 		err    string
 	}{
-		{"set time_zone = '+00:00'", "", "UTC", 0, ""},
-		{"set time_zone = '-00:00'", "", "UTC", 0, ""},
+		{"set time_zone = '+00:00'", "", "", 0, ""},
+		{"set time_zone = '-00:00'", "", "", 0, ""},
 		{"set time_zone = 'UTC'", "UTC", "UTC", 0, ""},
-		{"set time_zone = '+05:00'", "", "UTC", 18000, ""},
-		{"set time_zone = '-08:00'", "", "UTC", -28800, ""},
-		{"set time_zone = '+08:00'", "", "UTC", 28800, ""},
+		{"set time_zone = '+05:00'", "", "", 18000, ""},
+		{"set time_zone = '-08:00'", "", "", -28800, ""},
+		{"set time_zone = '+08:00'", "", "", 28800, ""},
 		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
 		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
 		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},

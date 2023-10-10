@@ -1396,3 +1396,28 @@ func TestStalePrepare(t *testing.T) {
 		tk.MustQuery("execute stmt").Check(expected)
 	}
 }
+
+func TestStaleTSO(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int)")
+
+	tk.MustExec("insert into t values(1)")
+
+	asOfExprs := []string{
+		"now(3) - interval 1 second",
+		"current_time() - interval 1 second",
+		"curtime() - interval 1 second",
+	}
+
+	nextTSO := oracle.GoTimeToTS(time.Now().Add(2 * time.Second))
+	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO", fmt.Sprintf("return(%d)", nextTSO)))
+	defer failpoint.Disable("github.com/pingcap/tidb/sessiontxn/staleread/mockStaleReadTSO")
+	for _, expr := range asOfExprs {
+		// Make sure the now() expr is evaluated from the stale ts provider.
+		tk.MustQuery("select * from t as of timestamp " + expr + " order by id asc").Check(testkit.Rows("1"))
+	}
+}

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/spf13/cobra"
@@ -92,12 +93,21 @@ const (
 	flagCipherKey     = "crypter.key"
 	flagCipherKeyFile = "crypter.key-file"
 
+	flagMetadataDownloadBatchSize    = "metadata-download-batch-size"
+	defaultMetadataDownloadBatchSize = 128
+
 	unlimited           = 0
 	crypterAES128KeyLen = 16
 	crypterAES192KeyLen = 24
 	crypterAES256KeyLen = 32
 
 	flagFullBackupType = "type"
+)
+
+const (
+	// Once TableInfoVersion updated. BR need to check compatibility with
+	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
+	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
 )
 
 // FullBackupType type when doing full backup or restore
@@ -245,6 +255,9 @@ type Config struct {
 
 	// KeyspaceName is the name of the keyspace of the task
 	KeyspaceName string `json:"keyspace-name" toml:"keyspace-name"`
+
+	// Metadata download batch size, such as metadata for log restore
+	MetadataDownloadBatchSize uint `json:"metadata-download-batch-size" toml:"metadata-download-batch-size"`
 }
 
 // DefineCommonFlags defines the flags common to all BRIE commands.
@@ -293,6 +306,11 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 		"aes-crypter key, used to encrypt/decrypt the data "+
 			"by the hexadecimal string, eg: \"0123456789abcdef0123456789abcdef\"")
 	flags.String(flagCipherKeyFile, "", "FilePath, its content is used as the cipher-key")
+
+	flags.Uint(flagMetadataDownloadBatchSize, defaultMetadataDownloadBatchSize,
+		"the batch size of downloading metadata, such as log restore metadata for truncate or restore")
+
+	_ = flags.MarkHidden(flagMetadataDownloadBatchSize)
 
 	storage.DefineFlags(flags)
 }
@@ -582,6 +600,10 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 
+	if cfg.MetadataDownloadBatchSize, err = flags.GetUint(flagMetadataDownloadBatchSize); err != nil {
+		return errors.Trace(err)
+	}
+
 	return cfg.normalizePDURLs()
 }
 
@@ -742,6 +764,9 @@ func (cfg *Config) adjust() {
 	}
 	if cfg.ChecksumConcurrency == 0 {
 		cfg.ChecksumConcurrency = variable.DefChecksumTableConcurrency
+	}
+	if cfg.MetadataDownloadBatchSize == 0 {
+		cfg.MetadataDownloadBatchSize = defaultMetadataDownloadBatchSize
 	}
 }
 

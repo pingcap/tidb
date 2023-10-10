@@ -1104,6 +1104,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrPartitionColumnStatsMissing: mysql.Message("Build global-level stats failed due to missing partition-level column stats: %s, please run analyze table to refresh columns of all partitions", nil),
 	ErrDDLSetting:                  mysql.Message("Error happened when %s DDL: %s", nil),
 	ErrIngestFailed:                mysql.Message("Ingest failed: %s", nil),
+	ErrIngestCheckEnvFailed:        mysql.Message("Check ingest environment failed: %s", nil),
 	ErrNotSupportedWithSem:         mysql.Message("Feature '%s' is not supported when security enhanced mode is enabled", nil),
 
 	ErrPlacementPolicyCheck:            mysql.Message("Placement policy didn't meet the constraint, reason: %s", nil),

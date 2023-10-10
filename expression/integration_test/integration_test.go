@@ -7946,3 +7946,17 @@ func TestIfFunctionWithNull(t *testing.T) {
 	tk.MustQuery("select min(if(apply_to_now_days <= 30,loan,null)) as min, max(if(apply_to_now_days <= 720,loan,null)) as max from (select loan, datediff(from_unixtime(unix_timestamp('2023-05-18 18:43:43') + 18000), from_unixtime(apply_time/1000 + 18000)) as apply_to_now_days from orders) t1;").Sort().Check(
 		testkit.Rows("20000 35100"))
 }
+
+func TestIssue45410(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	// Issue 45410
+	tk.MustExec("create database testIssue45410")
+	defer tk.MustExec("drop database testIssue45410")
+	tk.MustExec("use testIssue45410")
+
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1 (c1 TINYINT(1) UNSIGNED NOT NULL );")
+	tk.MustExec("INSERT INTO t1 VALUES (0);")
+	tk.MustQuery("SELECT c1>=CAST('-787360724' AS TIME) FROM t1;").Check(testkit.Rows("1"))
+}

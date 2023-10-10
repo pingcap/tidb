@@ -71,9 +71,11 @@ go_test(
     name = "statistics_test",
     timeout = "short",
     srcs = [
+        "cmsketch_bench_test.go",
         "cmsketch_test.go",
         "feedback_test.go",
         "fmsketch_test.go",
+        "histogram_bench_test.go",
         "histogram_test.go",
         "integration_test.go",
         "main_test.go",
