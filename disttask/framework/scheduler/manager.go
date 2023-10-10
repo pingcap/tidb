@@ -226,6 +226,7 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	for _, task := range tasks {
 		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Int64("task-id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
+			// subtask needs to change its state to canceled.
 			cancel(ErrCancelSubtask)
 		}
 	}
@@ -238,7 +239,9 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 	for _, task := range tasks {
 		logutil.Logger(m.logCtx).Info("onPausingTasks", zap.Any("task_id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-			cancel(ErrCancelSubtask)
+			// Pause all running subtasks, don't mark subtasks as canceled.
+			// Should not change the subtask's state.
+			cancel(nil)
 		}
 		if err := m.taskTable.PauseSubtasks(m.id, task.ID); err != nil {
 			return err
@@ -254,7 +257,9 @@ func (m *Manager) cancelAllRunningTasks() {
 	for id, cancel := range m.mu.handlingTasks {
 		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Int64("task-id", id))
 		if cancel != nil {
-			cancel(ErrCancelSubtask)
+			// tidb shutdown, don't mark subtask as canceled.
+			// Should not change the subtask's state.
+			cancel(nil)
 		}
 	}
 }
@@ -340,7 +345,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 			runCtx, runCancel := context.WithCancelCause(ctx)
 			m.registerCancelFunc(task.ID, runCancel)
 			err = scheduler.Run(runCtx, task)
-			runCancel(ErrCancelSubtask)
+			runCancel(nil)
 		case proto.TaskStatePausing:
 			err = scheduler.Pause(ctx, task)
 		case proto.TaskStateReverting:

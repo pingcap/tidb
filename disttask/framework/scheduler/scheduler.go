@@ -100,6 +100,8 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				if canceled {
 					logutil.Logger(s.logCtx).Info("scheduler canceled")
 					if cancelFn != nil {
+						// subtask transfered to other tidb, don't mark subtask as canceled.
+						// Should not change the subtask's state.
 						cancelFn(nil)
 					}
 				}
@@ -276,13 +278,6 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 		return
 	}
 
-	if ctx.Err() != nil {
-		s.onError(ctx.Err())
-		finished := s.markTaskCancelOrFailed(ctx, subtask)
-		if finished {
-			return
-		}
-	}
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
