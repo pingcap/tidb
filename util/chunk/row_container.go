@@ -79,9 +79,8 @@ func (m *mutexForRowContainer) RUnlock() {
 }
 
 type SpillHelper interface {
-	workBeforeSpill()
+	preSpill()
 	hasEnoughDataToSpill(t *memory.Tracker) bool
-	SpillToDisk(spillHelper SpillHelper)
 }
 
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
@@ -125,11 +124,11 @@ func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	return &newRC
 }
 
-func (c *RowContainer) workBeforeSpill() {
+func (c *RowContainer) preSpill() {
 }
 
 // SpillToDisk spills data to disk. This function may be called in parallel.
-func (c *RowContainer) SpillToDisk(spillHelper SpillHelper) {
+func (c *RowContainer) SpillToDisk(preSpill func()) {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.alreadySpilled() {
@@ -161,7 +160,7 @@ func (c *RowContainer) SpillToDisk(spillHelper SpillHelper) {
 			panic("out of disk quota when spilling")
 		}
 	})
-	spillHelper.workBeforeSpill()
+	preSpill()
 	n := c.m.records.inMemory.NumChunks()
 	for i := 0; i < n; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
@@ -441,12 +440,12 @@ func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper SpillHelper) {
 			if a.testSyncInputFunc != nil {
 				a.testSyncInputFunc()
 				go func() {
-					spillHelper.SpillToDisk(spillHelper)
+					a.c.SpillToDisk(spillHelper.preSpill)
 					a.testSyncOutputFunc()
 				}()
 				return
 			}
-			go spillHelper.SpillToDisk(spillHelper)
+			go a.c.SpillToDisk(spillHelper.preSpill)
 		})
 		return
 	}
@@ -602,13 +601,13 @@ func (c *SortedRowContainer) sort() {
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
 }
 
-func (c *SortedRowContainer) SpillToDisk(spillHelper SpillHelper) {
+func (c *SortedRowContainer) SpillToDisk(preSpill func()) {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
-	c.RowContainer.SpillToDisk(spillHelper)
+	c.RowContainer.SpillToDisk(preSpill)
 }
 
-func (c *SortedRowContainer) workBeforeSpill() {
+func (c *SortedRowContainer) preSpill() {
 	c.sort()
 }
 
