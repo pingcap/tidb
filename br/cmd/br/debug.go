@@ -119,13 +119,17 @@ origin sha256 is %s`,
 								file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
 						}
 					}
-					log.Info("table info", zap.Stringer("table", tbl.Info.Name),
-						zap.Uint64("CRC64", calCRC64),
-						zap.Uint64("totalKvs", totalKVs),
-						zap.Uint64("totalBytes", totalBytes),
-						zap.Uint64("schemaTotalKvs", tbl.TotalKvs),
-						zap.Uint64("schemaTotalBytes", tbl.TotalBytes),
-						zap.Uint64("schemaCRC64", tbl.Crc64Xor))
+					if tbl.Info == nil {
+						log.Info("table info(empty)", zap.Stringer("db", db.Info.Name))
+					} else {
+						log.Info("table info", zap.Stringer("table", tbl.Info.Name),
+							zap.Uint64("CRC64", calCRC64),
+							zap.Uint64("totalKvs", totalKVs),
+							zap.Uint64("totalBytes", totalBytes),
+							zap.Uint64("schemaTotalKvs", tbl.TotalKvs),
+							zap.Uint64("schemaTotalBytes", tbl.TotalBytes),
+							zap.Uint64("schemaCRC64", tbl.Crc64Xor))
+					}
 				}
 			}
 			cmd.Println("backup data checksum succeed!")
