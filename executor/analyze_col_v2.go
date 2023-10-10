@@ -272,7 +272,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
 	mergeTaskCh := make(chan []byte, statsConcurrency)
-	taskEg, _ := errgroup.WithContext(context.Background())
+	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() error {
 		return readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
