@@ -274,10 +274,12 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 			dm.failTask(task, err)
 			return
 		}
-		defer dispatcher.Close()
+		defer func() {
+			dispatcher.Close()
+			dm.delRunningTask(task.ID)
+		}()
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
-		dm.delRunningTask(task.ID)
 		dm.finishCh <- struct{}{}
 	})
 }
