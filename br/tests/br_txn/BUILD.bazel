@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "br_txn_lib",
+    srcs = ["client.go"],
+    importpath = "github.com/pingcap/tidb/br/tests/br_txn",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@com_github_tikv_client_go_v2//config",
+        "@com_github_tikv_client_go_v2//txnkv",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_binary(
+    name = "br_txn",
+    embed = [":br_txn_lib"],
+    visibility = ["//visibility:public"],
+)
