@@ -1223,6 +1223,21 @@ func TestMultiSchemaChangeAddIndexChangeColumn(t *testing.T) {
 	tk.MustExec("admin check table t;")
 }
 
+func TestMultiSchemaChangeAddIndexOrder(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (123);")
+	tk.MustExec("alter table t add index i(a), add primary key (a);")
+	result := "t CREATE TABLE `t` (\n" +
+		"  `a` int(11) NOT NULL,\n" +
+		"  KEY `i` (`a`),\n" +
+		"  PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
+	tk.MustQuery("show create table t;").Check(testkit.Rows(result))
+}
+
 func TestMultiSchemaChangeMixedWithUpdate(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
