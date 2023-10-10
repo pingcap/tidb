@@ -134,8 +134,19 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
+		err1 := skipPartiton(sctx, partitionID)
+		if err1 != nil {
+			// no idx so idx = 0
+			err := a.dealWithSkipPartition(isIndex, partitionID, 0, err1)
+			if err != nil {
+				return err
+			}
+			if types.ErrPartitionStatsMissing.Equal(err1) {
+				continue
+			}
+		}
 		for idx, hist := range a.histIDs {
-			err1 := skipPartiton(sctx, partitionID, isIndex, hist)
+			err1 := skipColumnPartition(sctx, partitionID, isIndex, hist)
 			if err1 != nil {
 				err := a.dealWithSkipPartition(isIndex, partitionID, idx, err1)
 				if err != nil {
@@ -448,6 +459,10 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 	return nil
 }
 
-func skipPartiton(sctx sessionctx.Context, partitionID int64, isIndex bool, histsID int64) error {
-	return storage.CheckSkipPartition(sctx, partitionID, toSQLIndex(isIndex), histsID)
+func skipPartiton(sctx sessionctx.Context, partitionID int64) error {
+	return storage.CheckSkipPartition(sctx, partitionID)
+}
+
+func skipColumnPartition(sctx sessionctx.Context, partitionID int64, isIndex bool, histsID int64) error {
+	return storage.CheckSkipColumnPartiion(sctx, partitionID, toSQLIndex(isIndex), histsID)
 }
