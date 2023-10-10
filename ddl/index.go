@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
@@ -624,6 +625,7 @@ func (w *worker) onCreateIndex(d *ddlCtx, t *meta.Meta, job *model.Job, isPK boo
 				return ver, err
 			}
 			logutil.BgLogger().Info("run add index job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.Reflect("indexInfo", indexInfo))
+			ddlutil.InitializeTrace(job.ID)
 		}
 		allIndexInfos = append(allIndexInfos, indexInfo)
 	}
@@ -730,6 +732,10 @@ SwitchIndexState:
 			ifExists = append(ifExists, false)
 		}
 		job.Args = []interface{}{allIndexIDs, ifExists, getPartitionIDs(tbl.Meta())}
+		details := ddlutil.CollectTrace(job.ID)
+		logutil.BgLogger().Info("[ddl] finish add index job",
+			zap.String("job", job.String()),
+			zap.String("time details", details))
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
@@ -2040,6 +2046,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
+	defer ddlutil.InjectSpan(reorgInfo.ID, "exec-dist-global-task")()
 
 	taskType := BackfillTaskType
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)

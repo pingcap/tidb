@@ -104,7 +104,7 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			})
 		}
 
-		copCtx, err := NewCopContextSingleIndex(mockTableInfo, mockIdxInfo, mock.NewContext(), "")
+		copCtx, err := NewCopContextSingleIndex(0, mockTableInfo, mockIdxInfo, mock.NewContext(), "")
 		require.NoError(t, err)
 		base := copCtx.GetBase()
 		require.Equal(t, "t", base.TableInfo.Name.L)

@@ -54,23 +54,23 @@ func CollectTrace(jobID int64) string {
 
 const batchSize = 512
 
-// func reportTrace(rootTrace minitrace.Trace) {
-// 	buf := bytes.NewBuffer(make([]uint8, 0, 4096))
-// 	for _, subTrace := range splitTraces(rootTrace) {
-// 		buf.Reset()
-// 		trace := jaeger.MiniSpansToJaegerTrace("add-index", subTrace)
-// 		err := jaeger.ThriftCompactEncode(buf, trace)
-// 		if err != nil {
-// 			logutil.BgLogger().Warn("cannot collectTrace", zap.Error(err))
-// 			return
-// 		}
-// 		err = jaeger.Send(buf.Bytes(), "127.0.0.1:6831")
-// 		if err != nil {
-// 			logutil.BgLogger().Warn("cannot collectTrace", zap.Error(err))
-// 			return
-// 		}
-// 	}
-// }
+//func reportTrace(rootTrace minitrace.Trace) {
+//	buf := bytes.NewBuffer(make([]uint8, 0, 4096))
+//	for _, subTrace := range splitTraces(rootTrace) {
+//		buf.Reset()
+//		trace := jaeger.MiniSpansToJaegerTrace("add-index", subTrace)
+//		err := jaeger.ThriftCompactEncode(buf, trace)
+//		if err != nil {
+//			logutil.BgLogger().Warn("cannot collectTrace", zap.Error(err))
+//			return
+//		}
+//		err = jaeger.Send(buf.Bytes(), "127.0.0.1:6831")
+//		if err != nil {
+//			logutil.BgLogger().Warn("cannot collectTrace", zap.Error(err))
+//			return
+//		}
+//	}
+//}
 
 func splitTraces(trace minitrace.Trace) []minitrace.Trace {
 	var traces []minitrace.Trace

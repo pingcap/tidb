@@ -175,6 +175,7 @@ func TestBackfillOperatorPipeline(t *testing.T) {
 	totalRowCount := &atomic.Int64{}
 
 	pipeline, err := ddl.NewAddIndexIngestPipeline(
+		0,
 		opCtx, store,
 		sessPool,
 		mockBackendCtx,
@@ -248,6 +249,7 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 		}
 		opCtx := ddl.NewOperatorCtx(ctx)
 		pipeline, err := ddl.NewAddIndexIngestPipeline(
+			0,
 			opCtx, store,
 			sessPool,
 			mockBackendCtx,
@@ -303,7 +305,7 @@ func prepare(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, regionCnt in
 
 	tblInfo := tbl.Meta()
 	idxInfo = tblInfo.FindIndexByName("idx")
-	copCtx, err = copr.NewCopContextSingleIndex(tblInfo, idxInfo, tk.Session(), "")
+	copCtx, err = copr.NewCopContextSingleIndex(0, tblInfo, idxInfo, tk.Session(), "")
 	require.NoError(t, err)
 	return tbl, idxInfo, start, end, copCtx
 }

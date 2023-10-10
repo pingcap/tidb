@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	util2 "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -148,7 +149,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 		var done bool
 		for !done {
 			srcChk := p.getChunk()
-			done, err = fetchTableScanResult(p.ctx, p.copCtx.GetBase(), rs, srcChk)
+			done, err = fetchTableScanResult(0, p.ctx, p.copCtx.GetBase(), rs, srcChk)
 			if err != nil {
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
@@ -283,11 +284,15 @@ func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64,
 }
 
 func fetchTableScanResult(
+	seq int,
 	ctx context.Context,
 	copCtx *copr.CopContextBase,
 	result distsql.SelectResult,
 	chk *chunk.Chunk,
 ) (bool, error) {
+	if seq == 1 {
+		defer util2.InjectSpan(copCtx.JobID, "read-into-chunk")()
+	}
 	err := result.Next(ctx, chk)
 	if err != nil {
 		return false, errors.Trace(err)
