@@ -40,11 +40,11 @@ import (
 // statsGCImpl implements StatsGC interface.
 type statsGCImpl struct {
 	pool          util.SessionPool // used to recycle sessionctx.
-	statsLease    time.Duration    // statistics lease
 	tblInfoGetter util.TableInfoGetter
 
 	// TODO: it's ugly to use a raw function, solve it later on.
 	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)
+	statsLease               time.Duration // statistics lease
 }
 
 // NewStatsGC creates a new StatsGC.
