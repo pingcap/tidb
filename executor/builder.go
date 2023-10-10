@@ -2980,101 +2980,6 @@ func (b *executorBuilder) buildAnalyzePKIncremental(task plannercore.AnalyzeColu
 	return analyzeTask
 }
 
-func (b *executorBuilder) buildAnalyzeFastColumn(e *AnalyzeExec, task plannercore.AnalyzeColumnsTask, opts map[ast.AnalyzeOptionType]uint64) {
-	findTask := false
-	for _, eTask := range e.tasks {
-		if eTask.fastExec != nil && eTask.fastExec.tableID.Equals(&task.TableID) {
-			eTask.fastExec.colsInfo = append(eTask.fastExec.colsInfo, task.ColsInfo...)
-			findTask = true
-			break
-		}
-	}
-	if !findTask {
-		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: task.PartitionName, JobInfo: "fast analyze columns"}
-		var concurrency int
-		concurrency, b.err = getBuildStatsConcurrency(e.Ctx())
-		if b.err != nil {
-			return
-		}
-		startTS, err := b.getSnapshotTS()
-		if err != nil {
-			b.err = err
-			return
-		}
-		base := baseAnalyzeExec{
-			ctx:         b.ctx,
-			tableID:     task.TableID,
-			opts:        opts,
-			concurrency: concurrency,
-			job:         job,
-			snapshot:    startTS,
-		}
-		fastExec := &AnalyzeFastExec{
-			baseAnalyzeExec: base,
-			colsInfo:        task.ColsInfo,
-			handleCols:      task.HandleCols,
-			tblInfo:         task.TblInfo,
-			wg:              &sync.WaitGroup{},
-		}
-		b.err = fastExec.calculateEstimateSampleStep()
-		if b.err != nil {
-			return
-		}
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType: fastTask,
-			fastExec: fastExec,
-			job:      job,
-		})
-	}
-}
-
-func (b *executorBuilder) buildAnalyzeFastIndex(e *AnalyzeExec, task plannercore.AnalyzeIndexTask, opts map[ast.AnalyzeOptionType]uint64) {
-	findTask := false
-	for _, eTask := range e.tasks {
-		if eTask.fastExec != nil && eTask.fastExec.tableID.Equals(&task.TableID) {
-			eTask.fastExec.idxsInfo = append(eTask.fastExec.idxsInfo, task.IndexInfo)
-			findTask = true
-			break
-		}
-	}
-	if !findTask {
-		job := &statistics.AnalyzeJob{DBName: task.DBName, TableName: task.TableName, PartitionName: "fast analyze index " + task.IndexInfo.Name.O}
-		var concurrency int
-		concurrency, b.err = getBuildStatsConcurrency(e.Ctx())
-		if b.err != nil {
-			return
-		}
-		startTS, err := b.getSnapshotTS()
-		if err != nil {
-			b.err = err
-			return
-		}
-		base := baseAnalyzeExec{
-			ctx:         b.ctx,
-			tableID:     task.TableID,
-			opts:        opts,
-			concurrency: concurrency,
-			job:         job,
-			snapshot:    startTS,
-		}
-		fastExec := &AnalyzeFastExec{
-			baseAnalyzeExec: base,
-			idxsInfo:        []*model.IndexInfo{task.IndexInfo},
-			tblInfo:         task.TblInfo,
-			wg:              &sync.WaitGroup{},
-		}
-		b.err = fastExec.calculateEstimateSampleStep()
-		if b.err != nil {
-			return
-		}
-		e.tasks = append(e.tasks, &analyzeTask{
-			taskType: fastTask,
-			fastExec: fastExec,
-			job:      job,
-		})
-	}
-}
-
 func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 	e := &AnalyzeExec{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -3082,7 +2987,6 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		opts:         v.Opts,
 		OptionsMap:   v.OptionsMap,
 	}
-	enableFastAnalyze := b.ctx.GetSessionVars().EnableFastAnalyze
 	autoAnalyze := ""
 	if b.ctx.GetSessionVars().InRestrictedSQL {
 		autoAnalyze = "auto "
@@ -3091,23 +2995,19 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		if task.Incremental {
 			e.tasks = append(e.tasks, b.buildAnalyzePKIncremental(task, v.Opts))
 		} else {
-			if enableFastAnalyze {
-				b.buildAnalyzeFastColumn(e, task, v.Opts)
-			} else {
-				columns, _, err := expression.ColumnInfos2ColumnsAndNames(
-					b.ctx,
-					model.NewCIStr(task.AnalyzeInfo.DBName),
-					task.TblInfo.Name,
-					task.ColsInfo,
-					task.TblInfo,
-				)
-				if err != nil {
-					b.err = err
-					return nil
-				}
-				schema := expression.NewSchema(columns...)
-				e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
+			columns, _, err := expression.ColumnInfos2ColumnsAndNames(
+				b.ctx,
+				model.NewCIStr(task.AnalyzeInfo.DBName),
+				task.TblInfo.Name,
+				task.ColsInfo,
+				task.TblInfo,
+			)
+			if err != nil {
+				b.err = err
+				return nil
 			}
+			schema := expression.NewSchema(columns...)
+			e.tasks = append(e.tasks, b.buildAnalyzeColumnsPushdown(task, v.Opts, autoAnalyze, schema))
 		}
 		// Other functions may set b.err, so we need to check it here.
 		if b.err != nil {
@@ -3118,11 +3018,7 @@ func (b *executorBuilder) buildAnalyze(v *plannercore.Analyze) exec.Executor {
 		if task.Incremental {
 			e.tasks = append(e.tasks, b.buildAnalyzeIndexIncremental(task, v.Opts))
 		} else {
-			if enableFastAnalyze {
-				b.buildAnalyzeFastIndex(e, task, v.Opts)
-			} else {
-				e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
-			}
+			e.tasks = append(e.tasks, b.buildAnalyzeIndexPushdown(task, v.Opts, autoAnalyze))
 		}
 		if b.err != nil {
 			return nil
