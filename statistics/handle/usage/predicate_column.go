@@ -30,14 +30,45 @@ import (
 	"go.uber.org/zap"
 )
 
-// ColStatsTimeInfo records usage information of this column stats.
-type ColStatsTimeInfo struct {
-	LastUsedAt     *types.Time
-	LastAnalyzedAt *types.Time
+// statsUsageImpl implements utilstats.StatsUsage.
+type statsUsageImpl struct {
+	pool utilstats.SessionPool
+}
+
+// NewStatsUsageImpl creates a utilstats.StatsUsage.
+func NewStatsUsageImpl(pool utilstats.SessionPool) utilstats.StatsUsage {
+	return &statsUsageImpl{pool: pool}
+}
+
+// LoadColumnStatsUsage returns all columns' usage information.
+func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]utilstats.ColStatsTimeInfo, err error) {
+	err = utilstats.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+		colStatsMap, err = LoadColumnStatsUsage(sctx, loc)
+		return err
+	})
+	return
+}
+
+// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
+func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
+	err = utilstats.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+		columnIDs, err = GetPredicateColumns(sctx, tableID)
+		return err
+	})
+	return
+}
+
+// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
+func (u *statsUsageImpl) CollectColumnsInExtendedStats(tableID int64) (columnIDs []int64, err error) {
+	err = utilstats.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+		columnIDs, err = CollectColumnsInExtendedStats(sctx, tableID)
+		return err
+	})
+	return
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]ColStatsTimeInfo, error) {
+func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]utilstats.ColStatsTimeInfo, error) {
 	disableTime, err := getDisableColumnTrackingTime(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -47,13 +78,13 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colStatsMap := make(map[model.TableItemID]ColStatsTimeInfo, len(rows))
+	colStatsMap := make(map[model.TableItemID]utilstats.ColStatsTimeInfo, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
 		tblColID := model.TableItemID{TableID: row.GetInt64(0), ID: row.GetInt64(1), IsIndex: false}
-		var statsUsage ColStatsTimeInfo
+		var statsUsage utilstats.ColStatsTimeInfo
 		if !row.IsNull(2) {
 			gt, err := row.GetTime(2).GoTime(time.UTC)
 			if err != nil {

@@ -25,7 +25,6 @@ go_library(
         "//statistics/handle/cache",
         "//statistics/handle/lockstats",
         "//statistics/handle/util",
-        "//table",
         "//types",
         "//util/chunk",
         "//util/compress",

@@ -17,7 +17,6 @@ package handle
 import (
 	"fmt"
 	"math"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -38,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -49,15 +47,25 @@ import (
 
 // Handle can update stats info periodically.
 type Handle struct {
-	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
-	gpool *gp.Pool
-	pool  util.SessionPool
+	pool util.SessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
 
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
+
+	// TableInfoGetter is used to fetch table meta info.
+	util.TableInfoGetter
+
+	// StatsGC is used to GC stats.
+	util.StatsGC
+
+	// StatsUsage is used to track the usage of column / index statistics.
+	util.StatsUsage
+
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
 
 	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
 	autoAnalyzeProcIDGetter func() uint64
@@ -86,14 +94,6 @@ type Handle struct {
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
-
-	schemaMu struct {
-		// pid2tid is the map from partition ID to table ID.
-		pid2tid map[int64]int64
-		// schemaVersion is the version of information schema when `pid2tid` is built.
-		schemaVersion int64
-		sync.RWMutex
-	}
 
 	lease atomic2.Duration
 }
@@ -135,7 +135,11 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
 		InitStatsDone:           make(chan struct{}),
+		TableInfoGetter:         util.NewTableInfoGetter(),
+		StatsUsage:              usage.NewStatsUsageImpl(pool),
 	}
+	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
+
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	statsCache, err := cache.NewStatsCachePointer()
@@ -217,7 +221,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
-		table, ok := h.getTableByPhysicalID(is, physicalID)
+		table, ok := h.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -257,7 +261,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
 	histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table,
 ) (globalStats *globalstats.GlobalStats, err error) {
-	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, allPartitionStats, h.TableInfoByID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -285,40 +289,10 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	allPartitionStats map[int64]*statistics.Table,
 ) (gstats *globalstats.GlobalStats, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.TableInfoByID, h.loadTablePartitionStats)
 		return err
 	})
 	return
-}
-
-func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	h.schemaMu.Lock()
-	defer h.schemaMu.Unlock()
-	if is.SchemaMetaVersion() != h.schemaMu.schemaVersion {
-		h.schemaMu.schemaVersion = is.SchemaMetaVersion()
-		h.schemaMu.pid2tid = buildPartitionID2TableID(is)
-	}
-	if id, ok := h.schemaMu.pid2tid[physicalID]; ok {
-		return is.TableByID(id)
-	}
-	return is.TableByID(physicalID)
-}
-
-func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
-	mapper := make(map[int64]int64)
-	for _, db := range is.AllSchemas() {
-		tbls := db.Tables
-		for _, tbl := range tbls {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, def := range pi.Definitions {
-				mapper[def.ID] = tbl.ID
-			}
-		}
-	}
-	return mapper
 }
 
 // GetMemConsumed returns the mem size of statscache consumed
@@ -560,33 +534,6 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 		return true
 	}
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
-}
-
-// LoadColumnStatsUsage loads column stats usage information from disk.
-func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]usage.ColStatsTimeInfo, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		colStatsMap, err = usage.LoadColumnStatsUsage(sctx, loc)
-		return err
-	})
-	return
-}
-
-// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-func (h *Handle) CollectColumnsInExtendedStats(tableID int64) (columnIDs []int64, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		columnIDs, err = usage.CollectColumnsInExtendedStats(sctx, tableID)
-		return err
-	})
-	return
-}
-
-// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-func (h *Handle) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		columnIDs, err = usage.GetPredicateColumns(sctx, tableID)
-		return err
-	})
-	return
 }
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
