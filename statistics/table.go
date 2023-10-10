@@ -753,25 +753,25 @@ func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHi
 		// Thus we don't create pseudo stats for it.
 		if col.State == model.StatePublic && !col.Hidden {
 			t.ColAndIndexExistenceMap.InsertCol(col.ID, col, false)
-		}
-		if allowFillHistMeta {
-			t.Columns[col.ID] = &Column{
-				PhysicalID: tblInfo.ID,
-				Info:       col,
-				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+			if allowFillHistMeta {
+				t.Columns[col.ID] = &Column{
+					PhysicalID: tblInfo.ID,
+					Info:       col,
+					IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
+					Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+				}
 			}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
 			t.ColAndIndexExistenceMap.InsertIndex(idx.ID, idx, false)
-		}
-		if allowFillHistMeta {
-			t.Indices[idx.ID] = &Index{
-				PhysicalID: tblInfo.ID,
-				Info:       idx,
-				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+			if allowFillHistMeta {
+				t.Indices[idx.ID] = &Index{
+					PhysicalID: tblInfo.ID,
+					Info:       idx,
+					Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				}
 			}
 		}
 	}

@@ -19,8 +19,8 @@ Projection	10.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a
   └─TableRowIDScan(Probe)	10.00	cop[tikv]	table:test3	keep order:false, stats:pseudo
 explain format=brief select * from test3 where a=100 or b = 200;
 id	estRows	task	access object	operator info
-Projection	11.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
-└─Selection	10.01	root		or(and(eq(tidb_shard(explain_shard_index.test3.a), 8), eq(explain_shard_index.test3.a, 100)), eq(explain_shard_index.test3.b, 200))
+Projection	8000.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
+└─Selection	8000.00	root		or(and(eq(tidb_shard(explain_shard_index.test3.a), 8), eq(explain_shard_index.test3.a, 100)), eq(explain_shard_index.test3.b, 200))
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:test3	keep order:false, stats:pseudo
 explain format=brief select * from test3 where a=100 or a = 300;
@@ -29,8 +29,8 @@ Projection	2.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a,
 └─Batch_Point_Get	2.00	root	table:test3, index:uk_expr(tidb_shard(`a`), a)	keep order:false, desc:false
 explain format=brief select * from test3 where a=100 or a = 300 or a > 997;
 id	estRows	task	access object	operator info
-Projection	3334.67	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
-└─Selection	3333.35	root		or(and(eq(tidb_shard(explain_shard_index.test3.a), 8), eq(explain_shard_index.test3.a, 100)), or(and(eq(tidb_shard(explain_shard_index.test3.a), 227), eq(explain_shard_index.test3.a, 300)), gt(explain_shard_index.test3.a, 997)))
+Projection	8000.00	root		explain_shard_index.test3.id, explain_shard_index.test3.a, explain_shard_index.test3.b
+└─Selection	8000.00	root		or(and(eq(tidb_shard(explain_shard_index.test3.a), 8), eq(explain_shard_index.test3.a, 100)), or(and(eq(tidb_shard(explain_shard_index.test3.a), 227), eq(explain_shard_index.test3.a, 300)), gt(explain_shard_index.test3.a, 997)))
   └─TableReader	10000.00	root		data:TableFullScan
     └─TableFullScan	10000.00	cop[tikv]	table:test3	keep order:false, stats:pseudo
 explain format=brief select * from test3 where ((a=100 and b = 100) or a = 200) and b = 300;
