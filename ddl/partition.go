@@ -2116,6 +2116,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
+	if job.IsRollingback() {
+		return rollbackExchangeTablePartition(d, t, job, nt)
+	}
 	pt, err := getTableInfo(t, ptID, ptSchemaID)
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
@@ -2179,12 +2182,21 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 			}
 		}
 		nt.ExchangePartitionInfo = &model.ExchangePartitionInfo{
-			ExchangePartitionFlag:  true,
 			ExchangePartitionID:    ptID,
 			ExchangePartitionDefID: defID,
 		}
+		// We need an interim schema version,
+		// so there are no non-matching rows inserted
+		// into the table using the schema version
+		// before the exchange is made.
+		job.SchemaState = model.StateWriteOnly
 		return updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	}
+	// From now on, nt (the non-partitioned table) has
+	// ExchangePartitionInfo set, meaning it is restricted
+	// to only allow writes that would match the
+	// partition to be exchange with.
+	// So we need to rollback that change, instead of just cancelling.
 
 	if d.lease > 0 {
 		delayForAsyncCommit()
@@ -2205,7 +2217,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	if withValidation {
 		err = checkExchangePartitionRecordValidation(w, pt, index, ntDbInfo.Name, nt.Name)
 		if err != nil {
-			job.State = model.JobStateCancelled
+			job.State = model.JobStateRollingback
 			return ver, errors.Trace(err)
 		}
 	}
@@ -2213,13 +2225,11 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	// partition table auto IDs.
 	ptAutoIDs, err := t.GetAutoIDAccessors(ptSchemaID, ptID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	// non-partition table auto IDs.
 	ntAutoIDs, err := t.GetAutoIDAccessors(job.SchemaID, nt.ID).Get()
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -2232,34 +2242,31 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	}
 
+	// Recreate non-partition table meta info,
+	// by first delete it with the old table id
+	err = t.DropTableOrView(job.SchemaID, nt.ID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
 	// exchange table meta id
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
 	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
-	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
-		if val.(bool) {
-			job.State = model.JobStateCancelled
-			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
-		}
-	})
-
-	// recreate non-partition table meta info
-	err = t.DropTableOrView(job.SchemaID, partDef.ID)
-	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	err = t.CreateTableOrView(job.SchemaID, nt)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+
+	failpoint.Inject("exchangePartitionErr", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(ver, errors.New("occur an error after updating partition id"))
+		}
+	})
 
 	// Set both tables to the maximum auto IDs between normal table and partitioned table.
 	newAutoIDs := meta.AutoIDGroup{
@@ -2269,12 +2276,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 	err = t.GetAutoIDAccessors(ptSchemaID, pt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 	err = t.GetAutoIDAccessors(job.SchemaID, nt.ID).Put(newAutoIDs)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
@@ -2293,23 +2298,15 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		}
 	})
 
-	err = checkExchangePartitionPlacementPolicy(t, nt.PlacementPolicyRef, pt.PlacementPolicyRef, partDef.PlacementPolicyRef)
-	if err != nil {
-		job.State = model.JobStateCancelled
-		return ver, errors.Trace(err)
-	}
-
 	// the follow code is a swap function for rules of two partitions
 	// though partitions has exchanged their ID, swap still take effect
 
-	bundles, err := bundlesForExchangeTablePartition(t, job, pt, partDef, nt)
+	bundles, err := bundlesForExchangeTablePartition(t, pt, partDef, nt)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
 	if err = infosync.PutRuleBundlesWithDefaultRetry(context.TODO(), bundles); err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
@@ -2318,7 +2315,6 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	rules, err := infosync.GetLabelRules(context.TODO(), []string{ntrID, ptrID})
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return 0, errors.Wrapf(err, "failed to get PD the label rules")
 	}
 
@@ -2346,10 +2342,10 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	patch := label.NewRulePatch(setRules, deleteRules)
 	err = infosync.UpdateLabelRules(context.TODO(), patch)
 	if err != nil {
-		job.State = model.JobStateCancelled
 		return ver, errors.Wrapf(err, "failed to notify PD the label rules")
 	}
 
+	job.SchemaState = model.StatePublic
 	nt.ExchangePartitionInfo = nil
 	ver, err = updateVersionAndTableInfoWithCheck(d, t, job, nt, true)
 	if err != nil {
@@ -2998,7 +2994,7 @@ func (w *worker) reorgPartitionDataAndIndex(t table.Table, reorgInfo *reorgInfo)
 	return nil
 }
 
-func bundlesForExchangeTablePartition(t *meta.Meta, job *model.Job, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
+func bundlesForExchangeTablePartition(t *meta.Meta, pt *model.TableInfo, newPar *model.PartitionDefinition, nt *model.TableInfo) ([]*placement.Bundle, error) {
 	bundles := make([]*placement.Bundle, 0, 3)
 
 	ptBundle, err := placement.NewTableBundle(t, pt)
@@ -3101,6 +3097,7 @@ func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPPRef, ptPPRef, partP
 	if partitionPPRef == nil {
 		partitionPPRef = ptPPRef
 	}
+
 	if ntPPRef == nil && partitionPPRef == nil {
 		return nil
 	}

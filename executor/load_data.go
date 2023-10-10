@@ -399,10 +399,16 @@ func (ji *logicalJobImporter) initEncodeCommitWorkers(e *LoadDataWorker) (err er
 			return err2
 		}
 		createdSessions = append(createdSessions, commitCore.ctx)
+		colAssignExprs, exprWarnings, err2 := e.controller.CreateColAssignExprs(encodeCore.ctx)
+		if err2 != nil {
+			return err2
+		}
 		encode := &encodeWorker{
-			InsertValues: encodeCore,
-			controller:   e.controller,
-			killed:       &e.UserSctx.GetSessionVars().Killed,
+			InsertValues:   encodeCore,
+			controller:     e.controller,
+			colAssignExprs: colAssignExprs,
+			exprWarnings:   exprWarnings,
+			killed:         &e.UserSctx.GetSessionVars().Killed,
 		}
 		encode.resetBatch()
 		encodeWorkers = append(encodeWorkers, encode)
@@ -627,9 +633,13 @@ func (ji *logicalJobImporter) Close() error {
 // encodeWorker is a sub-worker of LoadDataWorker that dedicated to encode data.
 type encodeWorker struct {
 	*InsertValues
-	controller *importer.LoadDataController
-	killed     *uint32
-	rows       [][]types.Datum
+	controller     *importer.LoadDataController
+	colAssignExprs []expression.Expression
+	// sessionCtx generate warnings when rewrite AST node into expression.
+	// we should generate such warnings for each row encoded.
+	exprWarnings []stmtctx.SQLWarn
+	killed       *uint32
+	rows         [][]types.Datum
 }
 
 // processStream always trys to build a parser from channel and process it. When
@@ -818,9 +828,9 @@ func (w *encodeWorker) parserData2TableData(
 
 		row = append(row, parserData[i])
 	}
-	for i := 0; i < len(w.controller.ColumnAssignments); i++ {
+	for i := 0; i < len(w.colAssignExprs); i++ {
 		// eval expression of `SET` clause
-		d, err := expression.EvalAstExpr(w.ctx, w.controller.ColumnAssignments[i].Expr)
+		d, err := w.colAssignExprs[i].Eval(chunk.Row{})
 		if err != nil {
 			if w.controller.Restrictive {
 				return nil, err
@@ -828,6 +838,10 @@ func (w *encodeWorker) parserData2TableData(
 			w.handleWarning(err)
 		}
 		row = append(row, d)
+	}
+
+	if len(w.exprWarnings) > 0 {
+		w.ctx.GetSessionVars().StmtCtx.AppendWarnings(w.exprWarnings)
 	}
 
 	// a new row buffer will be allocated in getRow

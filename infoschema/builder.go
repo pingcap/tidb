@@ -227,6 +227,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyCreateTables(m, diff)
 	case model.ActionReorganizePartition:
 		return b.applyReorganizePartition(m, diff)
+	case model.ActionExchangeTablePartition:
+		return b.applyExchangeTablePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
@@ -320,6 +322,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	ptID := diff.TableID
 	partID := diff.TableID
 	if len(diff.AffectedOpts) > 0 {
+		// should always have len == 1
 		ptID = diff.AffectedOpts[0].TableID
 		if diff.AffectedOpts[0].SchemaID != 0 {
 			ptSchemaID = diff.AffectedOpts[0].SchemaID
@@ -328,9 +331,6 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	// The normal table needs to be updated first:
 	// Just update the tables separately
 	currDiff := &model.SchemaDiff{
-		// This is only for the case since https://github.com/pingcap/tidb/pull/45877
-		// Fixed now, by adding back the AffectedOpts
-		// to carry the partitioned Table ID.
 		Type:     diff.Type,
 		Version:  diff.Version,
 		TableID:  ntID,
@@ -432,14 +432,6 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]in
 			return nil, errors.Trace(err)
 		}
 		tblIDs = append(tblIDs, affectedIDs...)
-
-		if diff.Type == model.ActionExchangeTablePartition {
-			// handle partition table and table AutoID
-			err = updateAutoIDForExchangePartition(b.store, affectedDiff.SchemaID, affectedDiff.TableID, diff.SchemaID, diff.TableID)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-		}
 	}
 
 	return tblIDs, nil
@@ -490,8 +482,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionRecoverTable:
 		b.markTableBundleShouldUpdate(newTableID)
-	case model.ActionExchangeTablePartition:
-		b.markPartitionBundleShouldUpdate(newTableID)
 	case model.ActionAlterTablePlacement:
 		b.markTableBundleShouldUpdate(newTableID)
 	}
@@ -502,7 +492,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	var allocs autoid.Allocators
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID && (diff.Type != model.ActionRenameTable && diff.Type != model.ActionRenameTables) &&
-			diff.Type != model.ActionExchangeTablePartition &&
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
 			// For normal node's information schema, repaired table is existed.
 			// For repair node's information schema, repaired table is filtered (couldn't find it in `is`).

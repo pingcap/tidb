@@ -1400,14 +1400,6 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			// Also add correct SchemaID in case different schemas
 			diff.AffectedOpts[0].SchemaID = ptSchemaID
 		}
-		diff.OldTableID = job.TableID
-		affects := make([]*model.AffectedOption, 1)
-		affects[0] = &model.AffectedOption{
-			SchemaID:   ptSchemaID,
-			TableID:    ptTableID,
-			OldTableID: ptTableID,
-		}
-		diff.AffectedOpts = affects
 	case model.ActionTruncateTablePartition:
 		diff.TableID = job.TableID
 		if len(job.CtxVars) > 0 {
