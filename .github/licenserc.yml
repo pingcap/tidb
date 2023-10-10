@@ -37,7 +37,7 @@ header:
     - "LICENSE"
     - ".github/"
     - "pkg/parser/"
-    - "pkg/dumpling/"
+    - "dumpling/"
     - "pkg/tidb-binlog/driver/example"
     - "pkg/tidb-binlog/proto/go-binlog/secondary_binlog.pb.go"
     - "**/*.sql"
