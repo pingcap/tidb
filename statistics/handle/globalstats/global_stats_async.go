@@ -91,9 +91,9 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
 		pool:                      pool,
-		cmsketch:                  make(chan mergeItem[*statistics.CMSketch]),
-		fmsketch:                  make(chan mergeItem[*statistics.FMSketch]),
-		histogramAndTopn:          make(chan mergeItem[*StatsWrapper]),
+		cmsketch:                  make(chan mergeItem[*statistics.CMSketch], 5),
+		fmsketch:                  make(chan mergeItem[*statistics.FMSketch], 5),
+		histogramAndTopn:          make(chan mergeItem[*StatsWrapper], 5),
 		PartitionDefinition:       make(map[int64]model.PartitionDefinition),
 		tableInfo:                 make(map[int64]*model.TableInfo),
 		partitionIDs:              make([]int64, 0, partitionNum),
