@@ -176,8 +176,11 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 
 func (a *recordSet) Close() error {
 	err := a.executor.Close()
-	a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
-	return err
+	err1 := a.stmt.CloseRecordSet(a.txnStartTS, a.lastErr)
+	if err != nil {
+		return err
+	}
+	return err1
 }
 
 // OnFetchReturned implements commandLifeCycle#OnFetchReturned
@@ -469,6 +472,13 @@ func (a *ExecStmt) handleNoDelay(ctx context.Context, e Executor, isPessimistic 
 			if sc.DiskTracker != nil {
 				sc.DiskTracker.DetachFromGlobalTracker()
 			}
+			if handled {
+				cteErr := resetCTEStorageMap(a.Ctx)
+				if err == nil {
+					// Only overwrite err when it's nil.
+					err = cteErr
+				}
+			}
 		}
 	}()
 
@@ -562,8 +572,7 @@ func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 }
 
 func (c *chunkRowRecordSet) Close() error {
-	c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
-	return nil
+	return c.execStmt.CloseRecordSet(c.execStmt.Ctx.GetSessionVars().TxnCtx.StartTS, nil)
 }
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e Executor) (sqlexec.RecordSet, error) {
@@ -970,7 +979,11 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 }
 
 // CloseRecordSet will finish the execution of current statement and do some record work
-func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
+func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) error {
+	cteErr := resetCTEStorageMap(a.Ctx)
+	if cteErr != nil {
+		logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
+	}
 	a.FinishExecuteStmt(txnStartTS, lastErr, false)
 	a.logAudit()
 	// Detach the Memory and disk tracker for the previous stmtCtx from GlobalMemoryUsageTracker and GlobalDiskUsageTracker
@@ -982,6 +995,39 @@ func (a *ExecStmt) CloseRecordSet(txnStartTS uint64, lastErr error) {
 			stmtCtx.MemTracker.DetachFromGlobalTracker()
 		}
 	}
+	return cteErr
+}
+
+// Clean CTE storage shared by different CTEFullScan executor within a SQL stmt.
+// Will return err in two situations:
+// 1. Got err when remove disk spill file.
+// 2. Some logical error like ref count of CTEStorage is less than 0.
+func resetCTEStorageMap(se sessionctx.Context) error {
+	tmp := se.GetSessionVars().StmtCtx.CTEStorageMap
+	if tmp == nil {
+		// Close() is already called, so no need to reset. Such as TraceExec.
+		return nil
+	}
+	storageMap, ok := tmp.(map[int]*CTEStorages)
+	if !ok {
+		return errors.New("type assertion for CTEStorageMap failed")
+	}
+	for _, v := range storageMap {
+		v.ResTbl.Lock()
+		err1 := v.ResTbl.DerefAndClose()
+		// Make sure we do not hold the lock for longer than necessary.
+		v.ResTbl.Unlock()
+		// No need to lock IterInTbl.
+		err2 := v.IterInTbl.DerefAndClose()
+		if err1 != nil {
+			return err1
+		}
+		if err2 != nil {
+			return err2
+		}
+	}
+	se.GetSessionVars().StmtCtx.CTEStorageMap = nil
+	return nil
 }
 
 // LogSlowQuery is used to print the slow query in the log files.
