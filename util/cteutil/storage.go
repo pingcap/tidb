@@ -30,12 +30,12 @@ var _ Storage = &StorageRC{}
 //
 // Common usage as follows:
 //
-//  storage.Lock()
-//  if !storage.Done() {
-//      fill all data into storage
-//  }
-//  storage.UnLock()
-//  read data from storage
+//	storage.Lock()
+//	if !storage.Done() {
+//	    fill all data into storage
+//	}
+//	storage.UnLock()
+//	read data from storage
 type Storage interface {
 	// If is first called, will open underlying storage. Otherwise will add ref count by one.
 	OpenAndRef() error
@@ -77,6 +77,10 @@ type Storage interface {
 	Done() bool
 	SetDone()
 
+	// Store error message, so we can return directly.
+	Error() error
+	SetError(err error)
+
 	// Readers use iter information to determine
 	// whether they need to read data from the beginning.
 	SetIter(iter int)
@@ -89,16 +93,14 @@ type Storage interface {
 
 // StorageRC implements Storage interface using RowContainer.
 type StorageRC struct {
-	mu      sync.Mutex
-	refCnt  int
+	err     error
+	rc      *chunk.RowContainer
 	tp      []*types.FieldType
+	refCnt  int
 	chkSize int
-
-	begCh chan struct{}
-	done  bool
-	iter  int
-
-	rc *chunk.RowContainer
+	iter    int
+	mu      sync.Mutex
+	done    bool
 }
 
 // NewStorageRowContainer create a new StorageRC.
@@ -111,10 +113,9 @@ func (s *StorageRC) OpenAndRef() (err error) {
 	if !s.valid() {
 		s.rc = chunk.NewRowContainer(s.tp, s.chkSize)
 		s.refCnt = 1
-		s.begCh = make(chan struct{})
 		s.iter = 0
 	} else {
-		s.refCnt += 1
+		s.refCnt++
 	}
 	return nil
 }
@@ -124,12 +125,13 @@ func (s *StorageRC) DerefAndClose() (err error) {
 	if !s.valid() {
 		return errors.New("Storage not opend yet")
 	}
-	s.refCnt -= 1
+	s.refCnt--
 	if s.refCnt < 0 {
 		return errors.New("Storage ref count is less than zero")
 	} else if s.refCnt == 0 {
 		s.refCnt = -1
 		s.done = false
+		s.err = nil
 		s.iter = 0
 		if err = s.rc.Close(); err != nil {
 			return err
@@ -158,8 +160,8 @@ func (s *StorageRC) Reopen() (err error) {
 		return err
 	}
 	s.iter = 0
-	s.begCh = make(chan struct{})
 	s.done = false
+	s.err = nil
 	// Create a new RowContainer.
 	// Because some meta infos in old RowContainer are not resetted.
 	// Such as memTracker/actionSpill etc. So we just use a new one.
@@ -222,6 +224,16 @@ func (s *StorageRC) Done() bool {
 // SetDone impls Storage SetDone interface.
 func (s *StorageRC) SetDone() {
 	s.done = true
+}
+
+// Error impls Storage Error interface.
+func (s *StorageRC) Error() error {
+	return s.err
+}
+
+// SetError impls Storage SetError interface.
+func (s *StorageRC) SetError(err error) {
+	s.err = err
 }
 
 // SetIter impls Storage SetIter interface.

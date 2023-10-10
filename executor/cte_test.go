@@ -484,6 +484,23 @@ func TestCTEPanic(t *testing.T) {
 	require.NoError(t, failpoint.Disable(fpPathPrefix+fp))
 }
 
+func TestCTEShareCorColumn(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+
+	tk.MustExec("create table t1(c1 int, c2 varchar(100));")
+	tk.MustExec("insert into t1 values(1, '2020-10-10');")
+	tk.MustExec("create table t2(c1 int, c2 date);")
+	tk.MustExec("insert into t2 values(1, '2020-10-10');")
+	for i := 0; i < 100; i++ {
+		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias1) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
+		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias2) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
+	}
+}
+
 func TestCTEDelSpillFile(t *testing.T) {
 	oriGlobalConfig := config.GetGlobalConfig()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -497,6 +514,7 @@ func TestCTEDelSpillFile(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
+
 	tk.MustExec("create table t1(c1 int, c2 int);")
 	tk.MustExec("create table t2(c1 int);")
 	tk.MustExec("set @@cte_max_recursion_depth = 1000000;")
