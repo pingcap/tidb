@@ -354,10 +354,11 @@ func TestCTEWithLimit(t *testing.T) {
 }
 
 func TestSpillToDisk(t *testing.T) {
-	defer config.RestoreFunc()()
+	oriGlobalConfig := config.GetGlobalConfig()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.OOMUseTmpStorage = true
 	})
+	defer config.StoreGlobalConfig(oriGlobalConfig)
 
 	store, close := testkit.CreateMockStore(t)
 	defer close()
@@ -484,12 +485,13 @@ func TestCTEPanic(t *testing.T) {
 }
 
 func TestCTEShareCorColumn(t *testing.T) {
-	store, clean := testkit.CreateMockStore(t)
+  store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1(c1 int, c2 varchar(100));")
+  
+  tk.MustExec("create table t1(c1 int, c2 varchar(100));")
 	tk.MustExec("insert into t1 values(1, '2020-10-10');")
 	tk.MustExec("create table t2(c1 int, c2 date);")
 	tk.MustExec("insert into t2 values(1, '2020-10-10');")
@@ -497,4 +499,27 @@ func TestCTEShareCorColumn(t *testing.T) {
 		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias1) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
 		tk.MustQuery("with cte1 as (select t1.c1, (select t2.c2 from t2 where t2.c2 = str_to_date(t1.c2, '%Y-%m-%d')) from t1 inner join t2 on t1.c1 = t2.c1) select /*+ hash_join_build(alias2) */ * from cte1 alias1 inner join cte1 alias2 on alias1.c1 =   alias2.c1;").Check(testkit.Rows("1 2020-10-10 1 2020-10-10"))
 	}
+}
+
+func TestCTEDelSpillFile(t *testing.T) {
+	oriGlobalConfig := config.GetGlobalConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.OOMUseTmpStorage = true
+		conf.OOMAction = config.OOMActionLog
+	})
+	defer config.StoreGlobalConfig(oriGlobalConfig)
+
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2;")
+
+	tk.MustExec("create table t1(c1 int, c2 int);")
+	tk.MustExec("create table t2(c1 int);")
+	tk.MustExec("set @@cte_max_recursion_depth = 1000000;")
+	tk.MustExec("set @@tidb_mem_quota_query = 100;")
+	tk.MustExec("insert into t2 values(1);")
+	tk.MustExec("insert into t1 (c1, c2) with recursive cte1 as (select c1 from t2 union select cte1.c1 + 1 from cte1 where cte1.c1 < 100000) select cte1.c1, cte1.c1+1 from cte1;")
+	require.Nil(t, tk.Session().GetSessionVars().StmtCtx.CTEStorageMap)
 }
