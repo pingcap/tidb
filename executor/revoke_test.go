@@ -233,7 +233,7 @@ func (s *testSuite1) TestIssue41773(c *C) {
 }
 
 // Check https://github.com/pingcap/tidb/issues/41048
-func (s *testSuite1) TestCaseInsensitiveSchemaNames(c *C) {
+func (s *testSerialSuite2) TestCaseInsensitiveSchemaNames(c *C) {
 	defer collate.SetNewCollationEnabledForTest(false)
 	collate.SetNewCollationEnabledForTest(true)
 	tk := testkit.NewTestKit(c, s.store)
