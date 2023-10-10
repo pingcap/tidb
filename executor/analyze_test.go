@@ -219,3 +219,11 @@ func TestMergeGlobalStatsWithUnAnalyzedPartition(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/2) as the sample-rate=1\""))
 }
+
+func TestSetFastAnalyzeSystemVariable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
+}

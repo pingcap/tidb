@@ -1915,7 +1915,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			if TiDBOptOn(normalizedValue) {
-				vars.StmtCtx.AppendWarning(errors.New("The fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect."))
+				vars.StmtCtx.AppendWarning(errors.New("the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
 			}
 			return normalizedValue, nil
 		},
