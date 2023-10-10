@@ -114,11 +114,9 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.StatsLoadI
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err), zap.Float64("sync wait timeout", float64(syncWait)), zap.Int64("max exec in hint", hintMaxExecutionTime), zap.Int64("max exec in sess", sessMaxExecutionTime))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err), zap.Float64("sync wait timeout", float64(syncWait)), zap.Int64("max exec in hint", hintMaxExecutionTime), zap.Int64("max exec in sess", sessMaxExecutionTime))
 		return err
 	}
 	return nil
