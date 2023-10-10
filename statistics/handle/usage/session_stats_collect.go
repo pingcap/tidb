@@ -70,6 +70,7 @@ func (s *SessionStatsItem) UpdateColStatsUsage(colMap map[model.TableItemID]time
 }
 
 // SessionStatsList is a list of SessionStatsItem, which is used to collect stats usage and table delta information from sessions.
+// TODO: merge SessionIndexUsage into this list.
 /*
                             [session1]                [session2]                        [sessionN]
                                 |                         |                                 |
