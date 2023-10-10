@@ -200,7 +200,7 @@ func (c *RowContainer) alreadySpilled() bool {
 func (c *RowContainer) AlreadySpilledSafeForTest() bool {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	return c.m.records.inDisk != nil
+	return c.alreadySpilled()
 }
 
 // NumRow returns the number of rows in the container
@@ -373,6 +373,11 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 	return c.actionSpill
 }
 
+func (c *RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
+	// should check the memory consumed as SortAndSpillDiskAction?
+	return true
+}
+
 // SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
@@ -416,11 +421,6 @@ func (a *SpillDiskAction) getStatus() spillStatus {
 	a.cond.L.Lock()
 	defer a.cond.L.Unlock()
 	return a.cond.status
-}
-
-func (a *RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
-	// should check the memory consumed as SortAndSpillDiskAction?
-	return true
 }
 
 func (a *SpillDiskAction) Action(t *memory.Tracker) {
@@ -577,7 +577,7 @@ func (c *SortedRowContainer) Sort() {
 	c.sort()
 }
 
-// sort inits pointers and sorts the records, for internal use and the caller should hold the lock of ptrM.
+// sort inits pointers and sorts the records, for internal use and the caller should hold all the needed the locks.
 func (c *SortedRowContainer) sort() {
 	if c.ptrM.rowPtrs != nil {
 		return
@@ -664,17 +664,17 @@ func (c *SortedRowContainer) GetMemTracker() *memory.Tracker {
 	return c.memTracker
 }
 
+func (c *SortedRowContainer) hasEnoughDataToSpill(t *memory.Tracker) bool {
+	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
+	return c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
+}
+
 // SortAndSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, SortAndSpillDiskAction.Action is
 // triggered.
 type SortAndSpillDiskAction struct {
 	c *SortedRowContainer
 	*SpillDiskAction
-}
-
-func (c *SortedRowContainer) hasEnoughDataToSpill(t *memory.Tracker) bool {
-	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	return c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
 }
 
 // WaitForTest waits all goroutine have gone.
