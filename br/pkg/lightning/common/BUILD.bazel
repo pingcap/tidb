@@ -39,6 +39,7 @@ go_library(
         "//util",
         "//util/codec",
         "//util/format",
+        "//util/logutil",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_pingcap_errors//:errors",
