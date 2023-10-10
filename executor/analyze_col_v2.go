@@ -274,7 +274,12 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	mergeTaskCh := make(chan []byte, statsConcurrency)
 	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
-	taskEg.Go(func() error {
+	taskEg.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = getAnalyzePanicErr(r)
+			}
+		}()
 		return readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
 	})
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
@@ -286,6 +291,11 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	mergeWorkerPanicCnt := 0
 	mergeEg, mergeCtx := errgroup.WithContext(context.Background())
 	mergeEg.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = getAnalyzePanicErr(r)
+			}
+		}()
 		for mergeWorkerPanicCnt < statsConcurrency {
 			mergeResult, ok := <-mergeResultCh
 			if !ok {
