@@ -195,7 +195,6 @@ type Checksum struct {
 // Result records the metrics information.
 // This portion of the code may be implemented uniformly in the framework in the future.
 type Result struct {
-	ReadRowCnt   uint64
 	LoadedRowCnt uint64
 	ColSizeMap   map[int64]int64
 }

@@ -579,7 +579,6 @@ func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *Tas
 	}
 	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
-		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
 		for key, val := range subtaskMeta.Result.ColSizeMap {
 			columnSizeMap[key] += val
