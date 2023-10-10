@@ -1942,6 +1942,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		sc = vars.InitStatementContext()
 	}
+	var typeConvFlags types.Flags
 	sc.TimeZone = vars.Location()
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
@@ -2025,7 +2026,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// For `execute stmt` SQL, should reset the SQL digest with the prepare SQL digest.
 		goCtx := context.Background()
 		if variable.EnablePProfSQLCPU.Load() && len(prepareStmt.NormalizedSQL) > 0 {
-			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", util.QueryStrForLog(prepareStmt.NormalizedSQL)))
+			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
 		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
@@ -2137,9 +2138,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
-	sc.SkipUTF8Check = vars.SkipUTF8Check
-	sc.SkipASCIICheck = vars.SkipASCIICheck
-	sc.SkipUTF8MB4Check = !globalConfig.Instance.CheckMb4ValueInUTF8.Load()
+
+	typeConvFlags = typeConvFlags.
+		WithSkipUTF8Check(vars.SkipUTF8Check).
+		WithSkipSACIICheck(vars.SkipASCIICheck).
+		WithSkipUTF8MB4Check(!globalConfig.Instance.CheckMb4ValueInUTF8.Load())
+
 	vars.PlanCacheParams.Reset()
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
 		sc.Priority = priority
@@ -2165,6 +2169,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
+	sc.TypeConvContext = types.NewContext(typeConvFlags, sc.TimeZone, sc.AppendWarning)
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount

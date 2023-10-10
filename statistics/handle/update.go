@@ -16,7 +16,6 @@ package handle
 
 import (
 	"cmp"
-	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -28,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
-	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/usage"
 	utilstats "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
@@ -121,43 +120,8 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	})
 }
 
-var (
-	// flagWrapTxn indicates whether to wrap a transaction.
-	flagWrapTxn = 0
-)
-
 func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			h.pool.Put(se)
-		}
-	}()
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return err
-	}
-
-	wrapTxn := false
-	for _, flag := range flags {
-		if flag == flagWrapTxn {
-			wrapTxn = true
-		}
-	}
-	if wrapTxn {
-		// use a transaction here can let different SQLs in this operation have the same data visibility.
-		if _, err := utilstats.Exec(sctx, "begin"); err != nil {
-			return err
-		}
-		defer func() {
-			err = utilstats.FinishTransaction(sctx, err)
-		}()
-	}
-
-	return f(sctx)
+	return utilstats.CallWithSCtx(h.pool, f, flags...)
 }
 
 // GCIndexUsage will delete the usage information of those indexes that do not exist.
@@ -178,7 +142,7 @@ var (
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
 func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tbl, ok := h.getTableByPhysicalID(is, id)
+	tbl, ok := h.TableInfoByID(is, id)
 	if !ok {
 		return false
 	}
@@ -265,7 +229,7 @@ func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
 			if updated {
 				usage.UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
 			}
-			if err = h.dumpTableStatColSizeToKV(id, item); err != nil {
+			if err = storage.DumpTableStatColSizeToKV(sctx, id, item); err != nil {
 				delete(deltaMap, id)
 				return errors.Trace(err)
 			}
@@ -327,7 +291,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 				isPartitionLocked = true
 			}
 			tableOrPartitionLocked := isTableLocked || isPartitionLocked
-			if err = updateStatsMeta(sctx, statsVersion, delta,
+			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
 				physicalTableID, tableOrPartitionLocked); err != nil {
 				return err
 			}
@@ -345,7 +309,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			// To sum up, we only need to update the global-stats when the table and the partition are not locked.
 			if !isTableLocked && !isPartitionLocked {
 				// If it's a partitioned table and its global-stats exists, update its count and modify_count as well.
-				if err = updateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
+				if err = storage.UpdateStatsMeta(sctx, statsVersion, delta, tableID, isTableLocked); err != nil {
 					return err
 				}
 				affectedRows += sctx.GetSessionVars().StmtCtx.AffectedRows()
@@ -357,7 +321,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 			if _, ok := lockedTables[physicalTableID]; ok {
 				isTableLocked = true
 			}
-			if err = updateStatsMeta(sctx, statsVersion, delta,
+			if err = storage.UpdateStatsMeta(sctx, statsVersion, delta,
 				physicalTableID, isTableLocked); err != nil {
 				return err
 			}
@@ -366,58 +330,8 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 
 		updated = affectedRows > 0
 		return nil
-	}, flagWrapTxn)
+	}, utilstats.FlagWrapTxn)
 	return
-}
-
-func updateStatsMeta(
-	sctx sessionctx.Context,
-	startTS uint64,
-	delta variable.TableDelta,
-	id int64,
-	isLocked bool,
-) (err error) {
-	if isLocked {
-		// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_table_locked.
-		// Note: For locked tables, it is possible that the record gets deleted. So it can be negative.
-		_, err = utilstats.Exec(sctx, "insert into mysql.stats_table_locked (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-			"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)",
-			startTS, id, delta.Count, delta.Delta)
-	} else {
-		if delta.Delta < 0 {
-			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = utilstats.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, 0) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = if(count > %?, count - %?, 0)",
-				startTS, id, delta.Count, -delta.Delta, -delta.Delta)
-		} else {
-			// use INSERT INTO ... ON DUPLICATE KEY UPDATE here to fill missing stats_meta.
-			_, err = utilstats.Exec(sctx, "insert into mysql.stats_meta (version, table_id, modify_count, count) values (%?, %?, %?, %?) on duplicate key "+
-				"update version = values(version), modify_count = modify_count + values(modify_count), count = count + values(count)", startTS,
-				id, delta.Count, delta.Delta)
-		}
-		cache.TableRowStatsCache.Invalidate(id)
-	}
-	return err
-}
-
-func (h *Handle) dumpTableStatColSizeToKV(id int64, delta variable.TableDelta) error {
-	if len(delta.ColSize) == 0 {
-		return nil
-	}
-	values := make([]string, 0, len(delta.ColSize))
-	for histID, deltaColSize := range delta.ColSize {
-		if deltaColSize == 0 {
-			continue
-		}
-		values = append(values, fmt.Sprintf("(%d, 0, %d, 0, %d)", id, histID, deltaColSize))
-	}
-	if len(values) == 0 {
-		return nil
-	}
-	sql := fmt.Sprintf("insert into mysql.stats_histograms (table_id, is_index, hist_id, distinct_count, tot_col_size) "+
-		"values %s on duplicate key update tot_col_size = tot_col_size + values(tot_col_size)", strings.Join(values, ","))
-	_, _, err := h.execRows(sql)
-	return errors.Trace(err)
 }
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.

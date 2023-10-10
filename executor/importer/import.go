@@ -1284,7 +1284,6 @@ type JobImportParam struct {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Msg        string
 	Affected   uint64
 	Warnings   []stmtctx.SQLWarn
 	ColSizeMap map[int64]int64
