@@ -396,7 +396,7 @@ func TestNewBundleFromOptions(t *testing.T) {
 		input: &model.PlacementSettings{
 			LearnerConstraints: "[+region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		err: ErrInvalidConstraintsReplicas,
 	})
 
 	tests = append(tests, TestCase{
@@ -589,6 +589,40 @@ func TestNewBundleFromOptions(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
+		name: "direct syntax: only leader constraints",
+		input: &model.PlacementSettings{
+			LeaderConstraints: "[+region=as]",
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 2, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: only leader constraints",
+		input: &model.PlacementSettings{
+			LeaderConstraints: "[+region=as]",
+			Followers:         4,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 4, NewConstraintsDirect()),
+		},
+	})
+	tests = append(tests, TestCase{
+		name: "direct syntax: leader and follower constraints",
+		input: &model.PlacementSettings{
+			LeaderConstraints:   "[+region=as]",
+			FollowerConstraints: `{"+region=us": 2}`,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
 		name: "direct syntax: lack count 1",
 		input: &model.PlacementSettings{
 			LeaderConstraints:   "[+region=as]",
@@ -606,7 +640,7 @@ func TestNewBundleFromOptions(t *testing.T) {
 			LeaderConstraints:  "[+region=as]",
 			LearnerConstraints: "[-region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		err: ErrInvalidConstraintsReplicas,
 	})
 
 	tests = append(tests, TestCase{
@@ -711,7 +745,41 @@ func TestNewBundleFromOptions(t *testing.T) {
 			LearnerConstraints: `{"+region=us": 2}`,
 			Learners:           4,
 		},
-		err: ErrInvalidConstraintsRelicas,
+		err: ErrInvalidConstraintsReplicas,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: dict constraints",
+		input: &model.PlacementSettings{
+			Constraints: `{"+region=us": 3}`,
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect(NewConstraintDirect("region", In, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: dict constraints, 2:2:1",
+		input: &model.PlacementSettings{
+			Constraints: `{ "+region=us-east-1":2, "+region=us-east-2": 2, "+region=us-west-1": 1}`,
+		},
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us-east-1"))),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us-east-2"))),
+			NewRule(Voter, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "us-west-1"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: dict constraints",
+		input: &model.PlacementSettings{
+			Constraints:        `{"+region=us-east": 3}`,
+			LearnerConstraints: `{"+region=us-west": 1}`,
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect(NewConstraintDirect("region", In, "us-east"))),
+			NewRule(Learner, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "us-west"))),
+		},
 	})
 
 	for _, test := range tests {
@@ -856,7 +924,7 @@ func TestTidy(t *testing.T) {
 	rules1, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	require.NoError(t, err)
 	require.Len(t, rules1, 1)
-	rules2, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
+	rules2, err := NewRules(Voter, 0, `{"-zone=sh,+zone=bj": 4}}`)
 	require.NoError(t, err)
 	bundle.Rules = append(bundle.Rules, rules0...)
 	bundle.Rules = append(bundle.Rules, rules1...)
