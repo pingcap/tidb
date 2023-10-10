@@ -186,10 +186,10 @@ func SortedExplainExpressionList(exprs []Expression) []byte {
 func SortedExplainExpressionListIgnoreInlist(exprs []Expression) []byte {
 	return sortedExplainExpressionList(exprs, false, true)
 }
-func sortedExplainExpressionList(exprs []Expression, normalized bool, IgnoreInlist bool) []byte {
+func sortedExplainExpressionList(exprs []Expression, normalized bool, ignoreInlist bool) []byte {
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
-	if IgnoreInlist {
+	if ignoreInlist {
 		for _, expr := range exprs {
 			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo4InList())
 		}
