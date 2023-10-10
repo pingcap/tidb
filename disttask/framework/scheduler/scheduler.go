@@ -100,7 +100,7 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				if canceled {
 					logutil.Logger(s.logCtx).Info("scheduler canceled")
 					if cancelFn != nil {
-						// subtask transfered to other tidb, don't mark subtask as canceled.
+						// subtask transferred to other tidb, don't mark subtask as canceled.
 						// Should not change the subtask's state.
 						cancelFn(nil)
 					}
