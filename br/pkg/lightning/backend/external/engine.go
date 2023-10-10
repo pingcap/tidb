@@ -98,6 +98,26 @@ func NewExternalEngine(
 	}
 }
 
+func split[T any](in []T, groupNum int) [][]T {
+	if len(in) == 0 {
+		return nil
+	}
+	if groupNum <= 0 {
+		groupNum = 1
+	}
+	ceil := (len(in) + groupNum - 1) / groupNum
+	ret := make([][]T, 0, groupNum)
+	l := len(in)
+	for i := 0; i < l; i += ceil {
+		if i+ceil > l {
+			ret = append(ret, in[i:])
+		} else {
+			ret = append(ret, in[i:i+ceil])
+		}
+	}
+	return ret
+}
+
 // LoadIngestData loads the data from the external storage to memory in [start,
 // end) range, so local backend can ingest it. The used byte slice of ingest data
 // are allocated from Engine.bufPool and must be released by
@@ -110,15 +130,8 @@ func (e *Engine) LoadIngestData(
 	// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 	// try to concurrently process ranges.
 	concurrency := int(MergeSortOverlapThreshold) / len(e.dataFiles)
-	numPerGroup := len(regionRanges) / concurrency
-	rangeGroups := make([][]common.Range, 0, concurrency)
-
-	if numPerGroup > 0 {
-		for i := 0; i < concurrency-1; i++ {
-			rangeGroups = append(rangeGroups, regionRanges[i*numPerGroup:(i+1)*numPerGroup])
-		}
-	}
-	rangeGroups = append(rangeGroups, regionRanges[(concurrency-1)*numPerGroup:])
+	concurrency = min(concurrency, 8)
+	rangeGroups := split(regionRanges, concurrency)
 
 	eg, egCtx := errgroup.WithContext(ctx)
 	for _, ranges := range rangeGroups {
