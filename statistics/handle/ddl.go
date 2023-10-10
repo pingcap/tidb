@@ -130,7 +130,7 @@ var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 func (h *Handle) updateStatsVersion() error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.UpdateStatsVersion(sctx)
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
 
 // updateGlobalStats will trigger the merge of global-stats when we drop table partition
@@ -243,7 +243,7 @@ func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
 			}
 		}
 		return nil
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
 
 func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {
@@ -300,7 +300,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 			}
 		}
 		return nil
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
 
 // resetTableStats2KV resets the count to 0.
@@ -321,7 +321,7 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 			return err
 		}
 		return nil
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }
 
 // insertColStats2KV insert a record to stats_histograms with distinct_count 1 and insert a bucket to stats_buckets with default value.
@@ -389,5 +389,5 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 			}
 		}
 		return nil
-	}, flagWrapTxn)
+	}, statsutil.FlagWrapTxn)
 }

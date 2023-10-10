@@ -39,10 +39,11 @@ type GlobalIndexID struct {
 	IndexID int64
 }
 
-type indexUsageMap map[GlobalIndexID]IndexUsageInformation
+type indexUsage map[GlobalIndexID]IndexUsageInformation
 
 // SessionIndexUsageCollector is a list item that holds the index usage mapper. If you want to write or read mapper, you must lock it.
 // TODO: use a third-party thread-safe list implementation instead of maintaining the list manually.
+// TODO: merge this list into SessionStatsList.
 /*
                             [session1]                [session2]                        [sessionN]
                                 |                         |                                 |
@@ -59,7 +60,7 @@ type indexUsageMap map[GlobalIndexID]IndexUsageInformation
                                                       [storage]
 */
 type SessionIndexUsageCollector struct {
-	mapper indexUsageMap
+	mapper indexUsage
 	next   *SessionIndexUsageCollector
 	sync.Mutex
 
@@ -70,19 +71,19 @@ type SessionIndexUsageCollector struct {
 // If listHead is not nil, add this element to the list.
 func NewSessionIndexUsageCollector(listHead *SessionIndexUsageCollector) *SessionIndexUsageCollector {
 	if listHead == nil {
-		return &SessionIndexUsageCollector{mapper: make(indexUsageMap)}
+		return &SessionIndexUsageCollector{mapper: make(indexUsage)}
 	}
 	listHead.Lock()
 	defer listHead.Unlock()
 	newCollector := &SessionIndexUsageCollector{
-		mapper: make(indexUsageMap),
+		mapper: make(indexUsage),
 		next:   listHead.next,
 	}
 	listHead.next = newCollector
 	return newCollector
 }
 
-func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformation) {
+func (m indexUsage) updateByKey(id GlobalIndexID, value *IndexUsageInformation) {
 	item := m[id]
 	item.QueryCount += value.QueryCount
 	item.RowsSelected += value.RowsSelected
@@ -92,12 +93,12 @@ func (m indexUsageMap) updateByKey(id GlobalIndexID, value *IndexUsageInformatio
 	m[id] = item
 }
 
-func (m indexUsageMap) update(tableID int64, indexID int64, value *IndexUsageInformation) {
+func (m indexUsage) update(tableID int64, indexID int64, value *IndexUsageInformation) {
 	id := GlobalIndexID{TableID: tableID, IndexID: indexID}
 	m.updateByKey(id, value)
 }
 
-func (m indexUsageMap) merge(destMap indexUsageMap) {
+func (m indexUsage) merge(destMap indexUsage) {
 	for id := range destMap {
 		item := destMap[id]
 		m.updateByKey(id, &item)
@@ -122,10 +123,10 @@ func (s *SessionIndexUsageCollector) Delete() {
 // sweepIdxUsageList will loop over the list, merge each session's local index usage information into handle
 // and remove closed session's collector.
 // For convenience, we keep idxUsageListHead always points to sentinel node. So that we don't need to consider corner case.
-func sweepIdxUsageList(listHead *SessionIndexUsageCollector) indexUsageMap {
+func sweepIdxUsageList(listHead *SessionIndexUsageCollector) indexUsage {
 	prev := listHead
 	prev.Lock()
-	mapper := make(indexUsageMap)
+	mapper := make(indexUsage)
 	for curr := prev.next; curr != nil; curr = curr.next {
 		curr.Lock()
 		mapper.merge(curr.mapper)
@@ -134,7 +135,7 @@ func sweepIdxUsageList(listHead *SessionIndexUsageCollector) indexUsageMap {
 			curr.Unlock()
 		} else {
 			prev.Unlock()
-			curr.mapper = make(indexUsageMap)
+			curr.mapper = make(indexUsage)
 			prev = curr
 		}
 	}

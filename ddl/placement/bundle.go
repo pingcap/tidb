@@ -70,13 +70,20 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	followerCount := options.Followers
 	learnerCount := options.Learners
 
+	rules := []*Rule{}
 	commonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
 	if err != nil {
-		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)
+		// If it's not in array format, attempt to parse it as a dictionary for more detailed definitions.
+		// The dictionary format specifies details for each replica. Constraints are used to define normal
+		// replicas that should act as voters.
+		// For example: CONSTRAINTS='{ "+region=us-east-1":2, "+region=us-east-2": 2, "+region=us-west-1": 1}'
+		normalReplicasRules, err := NewRulesWithDictConstraints(Voter, constraints)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, normalReplicasRules...)
 	}
-
-	rules := []*Rule{}
-
+	needCreateDefault := len(rules) == 0
 	leaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConst))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'LeaderConstraints' should be [constraint1, ...] or any yaml compatible array representation", err)
@@ -86,44 +93,59 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	rules = append(rules, NewRule(Leader, 1, leaderConstraints))
-
-	followerRules, err := NewRules(Voter, followerCount, followerConstraints)
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+	leaderReplicas, followerReplicas := uint64(1), uint64(2)
+	if followerCount > 0 {
+		followerReplicas = followerCount
 	}
-	for _, rule := range followerRules {
-		// give a default of 2 followers
-		if rule.Count == 0 {
-			rule.Count = 2
+	if !needCreateDefault {
+		if len(leaderConstraints) == 0 {
+			leaderReplicas = 0
 		}
-		for _, cnst := range commonConstraints {
-			if err := rule.Constraints.Add(cnst); err != nil {
-				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
+		if len(followerConstraints) == 0 {
+			if followerCount > 0 {
+				return nil, fmt.Errorf("%w: specify follower count without specify follower constraints when specify other constraints", ErrInvalidPlacementOptions)
+			}
+			followerReplicas = 0
+		}
+	}
+
+	// create leader rule.
+	// if no constraints, we need create default leader rule.
+	if leaderReplicas > 0 {
+		leaderRule := NewRule(Leader, leaderReplicas, leaderConstraints)
+		rules = append(rules, leaderRule)
+	}
+
+	// create follower rules.
+	// if no constraints, we need create default follower rules.
+	if followerReplicas > 0 {
+		followerRules, err := NewRules(Voter, followerReplicas, followerConstraints)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+		}
+		for _, followerRule := range followerRules {
+			for _, cnst := range commonConstraints {
+				if err := followerRule.Constraints.Add(cnst); err != nil {
+					return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
+				}
 			}
 		}
+		rules = append(rules, followerRules...)
 	}
-	rules = append(rules, followerRules...)
 
+	// create learner rules.
 	learnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
 	}
 	for _, rule := range learnerRules {
-		if rule.Count == 0 {
-			if len(rule.Constraints) > 0 {
-				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
-			}
-		}
 		for _, cnst := range commonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
-		if rule.Count > 0 {
-			rules = append(rules, rule)
-		}
 	}
+	rules = append(rules, learnerRules...)
 	labels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
 	if err != nil {
 		return nil, err

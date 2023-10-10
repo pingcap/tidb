@@ -754,3 +754,10 @@ func TestIssue40535(t *testing.T) {
 	tk.MustExec("(select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;")
 	require.Empty(t, tk.Session().LastMessage())
 }
+
+func TestExplainValuesStatement(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustMatchErrMsg("EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1)", ".*Unknown table ''.*")
+}

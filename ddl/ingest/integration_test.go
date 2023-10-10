@@ -289,4 +289,23 @@ func TestAddIndexIngestMultiSchemaChange(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1), (2, 2);")
 	tk.MustExec("alter table t add index idx(a), add index idx_2(b);")
 	tk.MustExec("admin check table t;")
+	tk.MustExec("alter table t drop index idx, drop index idx_2;")
+	tk.MustExec(`alter table t
+		add unique index idx(a),
+		add unique index idx_2(b, a),
+		add unique index idx_3(b);`)
+	tk.MustExec("admin check table t;")
+
+	tk.MustExec("drop table t;")
+	tk.MustExec(`create table t (a int, b int, c int as (b+10), d int as (b+c),
+		primary key (a) clustered) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than MAXVALUE);`)
+	for i := 0; i < 30; i++ {
+		insertSQL := fmt.Sprintf("insert into t (a, b) values (%d, %d);", i, i)
+		tk.MustExec(insertSQL)
+	}
+	tk.MustExec("alter table t add index idx_a(a), add index idx_ab(a, b), add index idx_d(d);")
+	tk.MustExec("admin check table t;")
 }

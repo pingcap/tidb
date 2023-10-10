@@ -178,24 +178,49 @@ func getYamlMapFormatError(str string) error {
 // NewRules constructs []*Rule from a yaml-compatible representation of
 // 'array' or 'dict' constraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
-func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error) {
-	rules := []*Rule{}
-
+func NewRules(role PeerRoleType, replicas uint64, cnstr string) (rules []*Rule, err error) {
 	cnstbytes := []byte(cnstr)
-
 	constraints1, err1 := NewConstraintsFromYaml(cnstbytes)
 	if err1 == nil {
+		if replicas == 0 {
+			if len(cnstr) > 0 {
+				return nil, fmt.Errorf("%w: count of replicas should be positive, but got %d, constraint %s", ErrInvalidConstraintsReplicas, replicas, cnstr)
+			}
+			return nil, nil
+		}
 		rules = append(rules, NewRule(role, replicas, constraints1))
-		return rules, nil
+		err = err1
+		return
+	}
+	// check if is dict constraints
+	constraints2 := map[string]int{}
+	if err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2); err2 != nil {
+		err = fmt.Errorf("%w: should be [constraint1, ...] (error %s), {constraint1: cnt1, ...} (error %s), or any yaml compatible representation", ErrInvalidConstraintsFormat, err1, err2)
+		return
 	}
 
+	rules, err = NewRulesWithDictConstraints(role, cnstr)
+	// check if replicas is consistent
+	if err == nil {
+		totalCnt := 0
+		for _, rule := range rules {
+			totalCnt += rule.Count
+		}
+		if replicas != 0 && replicas != uint64(totalCnt) {
+			err = fmt.Errorf("%w: count of replicas in dict constrains is %d, but got %d", ErrInvalidConstraintsReplicas, totalCnt, replicas)
+		}
+	}
+	return
+}
+
+// NewRulesWithDictConstraints constructs []*Rule from a yaml-compatible representation of
+// 'dict' constraints.
+func NewRulesWithDictConstraints(role PeerRoleType, cnstr string) ([]*Rule, error) {
+	rules := []*Rule{}
+	cnstbytes := []byte(cnstr)
 	constraints2 := map[string]int{}
 	err2 := yaml.UnmarshalStrict(cnstbytes, &constraints2)
 	if err2 == nil {
-		if replicas != 0 {
-			return rules, fmt.Errorf("%w: should not specify replicas=%d when using dict syntax", ErrInvalidConstraintsRelicas, replicas)
-		}
-
 		for labels, cnt := range constraints2 {
 			if cnt <= 0 {
 				if err := getYamlMapFormatError(string(cnstbytes)); err != nil {
@@ -214,13 +239,15 @@ func NewRules(role PeerRoleType, replicas uint64, cnstr string) ([]*Rule, error)
 			if err != nil {
 				return rules, err
 			}
-
+			if cnt == 0 {
+				return nil, fmt.Errorf("%w: count of replicas should be positive, but got %d", ErrInvalidConstraintsReplicas, cnt)
+			}
 			rules = append(rules, NewRule(overrideRole, uint64(cnt), labelConstraints))
 		}
 		return rules, nil
 	}
 
-	return nil, fmt.Errorf("%w: should be [constraint1, ...] (error %s), {constraint1: cnt1, ...} (error %s), or any yaml compatible representation", ErrInvalidConstraintsFormat, err1, err2)
+	return nil, fmt.Errorf("%w: should be [constraint1, ...] or {constraint1: cnt1, ...}, error %s, or any yaml compatible representation", ErrInvalidConstraintsFormat, err2)
 }
 
 // Clone is used to duplicate a RuleOp for safe modification.

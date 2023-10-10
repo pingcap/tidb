@@ -562,8 +562,8 @@ func jobNeedGC(job *model.Job) bool {
 			model.ActionAlterTablePartitioning:
 			return true
 		case model.ActionMultiSchemaChange:
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := sub.ToProxyJob(job)
+			for i, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job, i)
 				needGC := jobNeedGC(&proxyJob)
 				if needGC {
 					return true

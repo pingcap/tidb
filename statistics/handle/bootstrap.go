@@ -40,7 +40,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.Stat
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
 		// The table is read-only. Please do not modify it.
-		table, ok := h.getTableByPhysicalID(is, physicalID)
+		table, ok := h.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
@@ -105,7 +105,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 		statsVer := row.GetInt64(7)
 		flag := row.GetInt64(9)
 		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
+		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if isIndex > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -171,7 +171,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cach
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
-		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
+		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
