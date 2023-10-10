@@ -136,7 +136,7 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
-			return errors.New(fmt.Sprintf("sync load stats timeout: timeout is %v", sc.StatsLoad.Timeout))
+			return errors.Trace(fmt.Errorf("sync load stats timeout: timeout is %v", sc.StatsLoad.Timeout))
 		}
 	}
 }

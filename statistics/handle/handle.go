@@ -347,7 +347,7 @@ func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statisti
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (h *Handle) LoadNeededHistograms() (err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
+		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 		return storage.LoadNeededHistograms(sctx, h.statsCache, loadFMSketch)
 	}, util.FlagWrapTxn)
 	return err
