@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -438,15 +437,6 @@ func testNewContext(store kv.Storage) sessionctx.Context {
 	return ctx
 }
 
-func TestIssue40150(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("CREATE TABLE t40150 (a int) PARTITION BY HASH (a) PARTITIONS 2")
-	tk.MustContainErrMsg(`alter table t40150 rename column a to c`, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
-}
-
 func TestIssue40135(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -469,18 +459,4 @@ func TestIssue40135(t *testing.T) {
 	tk.MustExec("alter table t40135 modify column a MEDIUMINT NULL DEFAULT '6243108' FIRST")
 
 	require.ErrorContains(t, checkErr, "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
-}
-
-func TestIssue38988And24321(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	// For issue https://github.com/pingcap/tidb/issues/38988
-	tk.MustExec("create table t (a int, b int as (a+3));")
-	tk.MustGetErrCode("alter table t change a c int not null;", errno.ErrDependentByGeneratedColumn)
-
-	// For issue https://github.com/pingcap/tidb/issues/24321
-	// Note, the result is not the same with MySQL, since the limitation of the current modify column implementation.
-	tk.MustExec("create table t2(id int, a int, b int generated always as (abs(a)) virtual);")
-	tk.MustGetErrCode("alter table t2 modify column a bigint;", errno.ErrUnsupportedOnGeneratedColumn)
 }

@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
@@ -116,23 +115,11 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 	var result importer.JobImportResult
 	taskMeta, err := getTaskMeta(ti.jobID)
 	if err != nil {
-		result.Msg = err.Error()
 		return result
 	}
 
-	var (
-		numWarnings uint64
-		numRecords  uint64
-		numDeletes  uint64
-		numSkipped  uint64
-	)
-	numRecords = taskMeta.Result.ReadRowCnt
-	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
-	// we can have it when there's duplicate detection.
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	return importer.JobImportResult{
-		Msg:        msg,
-		Affected:   taskMeta.Result.ReadRowCnt,
+		Affected:   taskMeta.Result.LoadedRowCnt,
 		ColSizeMap: taskMeta.Result.ColSizeMap,
 	}
 }

@@ -209,8 +209,8 @@ func (d *Datum) GetBinaryStringEncoded() string {
 }
 
 // GetBinaryStringDecoded gets the string value decoded with given charset.
-func (d *Datum) GetBinaryStringDecoded(sc *stmtctx.StatementContext, chs string) (string, error) {
-	enc, skip := findEncoding(sc, chs)
+func (d *Datum) GetBinaryStringDecoded(flags Flags, chs string) (string, error) {
+	enc, skip := findEncoding(flags, chs)
 	if skip {
 		return d.GetString(), nil
 	}
@@ -219,8 +219,8 @@ func (d *Datum) GetBinaryStringDecoded(sc *stmtctx.StatementContext, chs string)
 }
 
 // GetStringWithCheck gets the string and checks if it is valid in a given charset.
-func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (string, error) {
-	enc, skip := findEncoding(sc, chs)
+func (d *Datum) GetStringWithCheck(flags Flags, chs string) (string, error) {
+	enc, skip := findEncoding(flags, chs)
 	if skip {
 		return d.GetString(), nil
 	}
@@ -232,16 +232,13 @@ func (d *Datum) GetStringWithCheck(sc *stmtctx.StatementContext, chs string) (st
 	return d.GetString(), nil
 }
 
-func findEncoding(sc *stmtctx.StatementContext, chs string) (enc charset.Encoding, skip bool) {
+func findEncoding(flags Flags, chs string) (enc charset.Encoding, skip bool) {
 	enc = charset.FindEncoding(chs)
-	if sc == nil {
-		return enc, false
-	}
-	if enc.Tp() == charset.EncodingTpUTF8 && sc.SkipUTF8Check ||
-		enc.Tp() == charset.EncodingTpASCII && sc.SkipASCIICheck {
+	if enc.Tp() == charset.EncodingTpUTF8 && flags.SkipUTF8Check() ||
+		enc.Tp() == charset.EncodingTpASCII && flags.SkipASCIICheck() {
 		return nil, true
 	}
-	if chs == charset.CharsetUTF8 && !sc.SkipUTF8MB4Check {
+	if chs == charset.CharsetUTF8 && !flags.SkipUTF8MB4Check() {
 		enc = charset.EncodingUTF8MB3StrictImpl
 	}
 	return enc, false
@@ -1029,6 +1026,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s   string
 		err error
 	)
+	ctx := sc.TypeConvContext
 	switch d.k {
 	case KindInt64:
 		s = strconv.FormatInt(d.GetInt64(), 10)
@@ -1044,11 +1042,11 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		if fromBinary && toBinary {
 			s = d.GetString()
 		} else if fromBinary {
-			s, err = d.GetBinaryStringDecoded(sc, target.GetCharset())
+			s, err = d.GetBinaryStringDecoded(ctx.Flags(), target.GetCharset())
 		} else if toBinary {
 			s = d.GetBinaryStringEncoded()
 		} else {
-			s, err = d.GetStringWithCheck(sc, target.GetCharset())
+			s, err = d.GetStringWithCheck(ctx.Flags(), target.GetCharset())
 		}
 	case KindMysqlTime:
 		s = d.GetMysqlTime().String()
@@ -1061,7 +1059,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 	case KindMysqlSet:
 		s = d.GetMysqlSet().String()
 	case KindBinaryLiteral:
-		s, err = d.GetBinaryStringDecoded(sc, target.GetCharset())
+		s, err = d.GetBinaryStringDecoded(ctx.Flags(), target.GetCharset())
 	case KindMysqlBit:
 		// https://github.com/pingcap/tidb/issues/31124.
 		// Consider converting to uint first.

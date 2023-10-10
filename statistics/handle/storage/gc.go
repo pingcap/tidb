@@ -17,7 +17,9 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -28,12 +30,110 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
+
+// statsGCImpl implements StatsGC interface.
+type statsGCImpl struct {
+	pool          util.SessionPool // used to recycle sessionctx.
+	tblInfoGetter util.TableInfoGetter
+
+	// TODO: it's ugly to use a raw function, solve it later on.
+	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)
+	statsLease               time.Duration // statistics lease
+}
+
+// NewStatsGC creates a new StatsGC.
+func NewStatsGC(pool util.SessionPool, statsLease time.Duration, tblInfo util.TableInfoGetter,
+	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)) util.StatsGC {
+	return &statsGCImpl{
+		pool:                     pool,
+		statsLease:               statsLease,
+		tblInfoGetter:            tblInfo,
+		markExtendedStatsDeleted: markExtendedStatsDeleted,
+	}
+}
+
+// GCStats will garbage collect the useless stats' info.
+// For dropped tables, we will first update their version
+// so that other tidb could know that table is deleted.
+func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
+	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
+		return GCStats(sctx, gc.tblInfoGetter, gc.markExtendedStatsDeleted, is, gc.statsLease, ddlLease)
+	})
+}
+
+// ClearOutdatedHistoryStats clear outdated historical stats.
+// Only for test.
+func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
+	return util.CallWithSCtx(gc.pool, ClearOutdatedHistoryStats)
+}
+
+// DeleteTableStatsFromKV deletes table statistics from kv.
+// A statsID refers to statistic of a table or a partition.
+func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
+	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
+		return DeleteTableStatsFromKV(sctx, statsIDs)
+	}, util.FlagWrapTxn)
+}
+
+// GCStats will garbage collect the useless stats' info.
+// For dropped tables, we will first update their version
+// so that other tidb could know that table is deleted.
+func GCStats(sctx sessionctx.Context,
+	tableInfoGetter util.TableInfoGetter,
+	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
+	is infoschema.InfoSchema, statsLease, ddlLease time.Duration) (err error) {
+	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
+	// we only garbage collect version before 10 lease.
+	lease := max(statsLease, ddlLease)
+	offset := util.DurationToTS(10 * lease)
+	now := oracle.GoTimeToTS(time.Now())
+	if now < offset {
+		return nil
+	}
+
+	// Get the last gc time.
+	gcVer := now - offset
+	lastGC, err := getLastGCTimestamp(sctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err != nil {
+			return
+		}
+		err = writeGCTimestampToKV(sctx, gcVer)
+	}()
+
+	rows, _, err := util.ExecRows(sctx, "select table_id from mysql.stats_meta where version >= %? and version < %?", lastGC, gcVer)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, row := range rows {
+		if err := gcTableStats(sctx, tableInfoGetter, markExtendedStatsDeleted, is, row.GetInt64(0)); err != nil {
+			return errors.Trace(err)
+		}
+		_, existed := is.TableByID(row.GetInt64(0))
+		if !existed {
+			if err := gcHistoryStatsFromKV(sctx, row.GetInt64(0)); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	if err := ClearOutdatedHistoryStats(sctx); err != nil {
+		logutil.BgLogger().Warn("failed to gc outdated historical stats",
+			zap.Duration("duration", variable.HistoricalStatsDuration.Load()),
+			zap.Error(err))
+	}
+
+	return removeDeletedExtendedStats(sctx, gcVer)
+}
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
@@ -105,8 +205,8 @@ func ClearOutdatedHistoryStats(sctx sessionctx.Context) error {
 	return nil
 }
 
-// GCHistoryStatsFromKV delete history stats from kv.
-func GCHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
+// gcHistoryStatsFromKV delete history stats from kv.
+func gcHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error) {
 	sql := "delete from mysql.stats_history where table_id = %?"
 	_, err = util.Exec(sctx, sql, physicalID)
 	if err != nil {
@@ -117,8 +217,8 @@ func GCHistoryStatsFromKV(sctx sessionctx.Context, physicalID int64) (err error)
 	return err
 }
 
-// DeleteHistStatsFromKV deletes all records about a column or an index and updates version.
-func DeleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int64, isIndex int) (err error) {
+// deleteHistStatsFromKV deletes all records about a column or an index and updates version.
+func deleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int64, isIndex int) (err error) {
 	startTS, err := util.GetStartTS(sctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -152,16 +252,16 @@ func DeleteHistStatsFromKV(sctx sessionctx.Context, physicalID int64, histID int
 	return nil
 }
 
-// RemoveDeletedExtendedStats removes deleted extended stats.
-func RemoveDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err error) {
+// removeDeletedExtendedStats removes deleted extended stats.
+func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err error) {
 	const sql = "delete from mysql.stats_extended where status = %? and version < %?"
 	_, err = util.Exec(sctx, sql, statistics.ExtendedStatsDeleted, version)
 	return
 }
 
-// GCTableStats GC this table's stats.
-func GCTableStats(sctx sessionctx.Context,
-	getTableByPhysicalID func(is infoschema.InfoSchema, physicalID int64) (table.Table, bool),
+// gcTableStats GC this table's stats.
+func gcTableStats(sctx sessionctx.Context,
+	tableInfoGetter util.TableInfoGetter,
 	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
 	is infoschema.InfoSchema, physicalID int64) error {
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
@@ -177,7 +277,7 @@ func GCTableStats(sctx sessionctx.Context,
 		}
 		cache.TableRowStatsCache.Invalidate(physicalID)
 	}
-	tbl, ok := getTableByPhysicalID(is, physicalID)
+	tbl, ok := tableInfoGetter.TableInfoByID(is, physicalID)
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
@@ -205,7 +305,7 @@ func GCTableStats(sctx sessionctx.Context,
 		}
 		if !find {
 			err := util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
-				return errors.Trace(DeleteHistStatsFromKV(sctx, physicalID, histID, int(isIndex)))
+				return errors.Trace(deleteHistStatsFromKV(sctx, physicalID, histID, int(isIndex)))
 			})
 			if err != nil {
 				return errors.Trace(err)
@@ -253,8 +353,8 @@ func GCTableStats(sctx sessionctx.Context,
 
 const gcLastTSVarName = "tidb_stats_gc_last_ts"
 
-// GetLastGCTimestamp loads the last gc time from mysql.tidb.
-func GetLastGCTimestamp(sctx sessionctx.Context) (uint64, error) {
+// getLastGCTimestamp loads the last gc time from mysql.tidb.
+func getLastGCTimestamp(sctx sessionctx.Context) (uint64, error) {
 	rows, _, err := util.ExecRows(sctx, "SELECT HIGH_PRIORITY variable_value FROM mysql.tidb WHERE variable_name=%?", gcLastTSVarName)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -270,8 +370,8 @@ func GetLastGCTimestamp(sctx sessionctx.Context) (uint64, error) {
 	return lastGcTS, nil
 }
 
-// WriteGCTimestampToKV write the GC timestamp to the storage.
-func WriteGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
+// writeGCTimestampToKV write the GC timestamp to the storage.
+func writeGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 	_, _, err := util.ExecRows(sctx,
 		"insert into mysql.tidb (variable_name, variable_value) values (%?, %?) on duplicate key update variable_value = %?",
 		gcLastTSVarName,
@@ -279,4 +379,48 @@ func WriteGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 		newTS,
 	)
 	return err
+}
+
+// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+func MarkExtendedStatsDeleted(sctx sessionctx.Context,
+	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
+	currentCache *cache.StatsCache,
+	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
+	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		if ifExists {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("extended statistics '%s' for the specified table does not exist", statsName)
+	}
+	if len(rows) > 1 {
+		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
+	}
+
+	_, err = util.Exec(sctx, "begin pessimistic")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer func() {
+		err1 := util.FinishTransaction(sctx, err)
+		if err == nil && err1 == nil {
+			removeExtendedStatsItem(currentCache, updateStatsCache, tableID, statsName)
+		}
+		err = err1
+	}()
+	version, err := util.GetStartTS(sctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if _, err = util.Exec(sctx, "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?", version, tableID); err != nil {
+		return 0, err
+	}
+	statsVer = version
+	if _, err = util.Exec(sctx, "UPDATE mysql.stats_extended SET version = %?, status = %? WHERE name = %? and table_id = %?", version, statistics.ExtendedStatsDeleted, statsName, tableID); err != nil {
+		return 0, err
+	}
+	return
 }
