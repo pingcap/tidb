@@ -103,7 +103,7 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 		}
 		if len(followerConstraints) == 0 {
 			if followerCount > 0 {
-				return nil, fmt.Errorf("%w: specify follower count without specify follower constraints", ErrInvalidPlacementOptions)
+				return nil, fmt.Errorf("%w: specify follower count without specify follower constraints when specify other constraints", ErrInvalidPlacementOptions)
 			}
 			followerReplicas = 0
 		}
