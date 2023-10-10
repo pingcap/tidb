@@ -282,10 +282,10 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 }
 
 // EnableDataFSR enables FSR for data volume snapshots
-func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) error {
+func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) ([]*string, error) {
 	sourceSnapshotIDs, availableZones := fetchTargetSnapshots(meta, targetAZ)
 
-	log.Info("Start enable FSR for", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs))
+	log.Info("Start enable FSR for", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ))
 
 	resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
 		AvailabilityZones: availableZones,
@@ -293,24 +293,69 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 	})
 
 	if err != nil {
-		return errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
 
 	if len(resp.Unsuccessful) > 0 {
 		log.Warn("not all snapshots enabled FSR")
-		return errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+		return nil, errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 	}
 
-	log.Info("Enable FSR succeed")
+	log.Info("Enable FSR issued")
 
-	return nil
+	return sourceSnapshotIDs, nil
+}
+
+// WaitDataFSREnabled waits FSR for data volume snapshots are all enabled
+func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, progress glue.Progress) error {
+
+	pendingSnapshots := make([]*string, 0, len(snapShotIDs))
+	for volID := range snapIDMap {
+		snapID := snapIDMap[volID]
+		pendingSnapshots = append(pendingSnapshots, &snapID)
+	}
+	snapProgressMap := make([]*string, len(snapShotIDs))
+
+	log.Info("starts check pending snapshots", zap.Any("snapshots", pendingSnapshots))
+	for {
+		if len(pendingSnapshots) == 0 {
+			log.Info("all pending volume snapshots are finished.")
+			return totalVolumeSize, nil
+		}
+
+		// check pending snapshots every 5 seconds
+		time.Sleep(5 * time.Second)
+		log.Info("check pending snapshots", zap.Int("count", len(pendingSnapshots)))
+		resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
+			SnapshotIds: pendingSnapshots,
+		})
+		if err != nil {
+			return 0, errors.Trace(err)
+		}
+
+		var uncompletedSnapshots []*string
+		for _, s := range resp.Snapshots {
+			if *s.State == ec2.SnapshotStateCompleted {
+				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
+			} else {
+				log.Debug("snapshot creating...", zap.Stringer("snap", s))
+				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
+			}
+			currSnapProgress := e.extractSnapProgress(s.Progress)
+			if currSnapProgress > snapProgressMap[*s.SnapshotId] {
+				progress.IncBy(currSnapProgress - snapProgressMap[*s.SnapshotId])
+				snapProgressMap[*s.SnapshotId] = currSnapProgress
+			}
+		}
+		pendingSnapshots = uncompletedSnapshots
+	}
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
 func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) error {
 	sourceSnapshotIDs, availableZones := fetchTargetSnapshots(meta, targetAZ)
 
-	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs))
+	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ))
 
 	resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
 		AvailabilityZones: availableZones,
@@ -326,7 +371,7 @@ func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string
 		return errors.Errorf("Some snapshot fails to disable FSR, such as %s, error code is %v", resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 	}
 
-	log.Info("disable FSR succeed")
+	log.Info("Disable FSR issued")
 
 	return nil
 }
