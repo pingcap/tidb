@@ -24,7 +24,6 @@ var (
 	AutoAnalyzeCounter     *prometheus.CounterVec
 	StatsInaccuracyRate    prometheus.Histogram
 	PseudoEstimation       *prometheus.CounterVec
-	FastAnalyzeHistogram   *prometheus.HistogramVec
 	SyncLoadCounter        prometheus.Counter
 	SyncLoadTimeoutCounter prometheus.Counter
 	SyncLoadHistogram      prometheus.Histogram
@@ -73,15 +72,6 @@ func InitStatsMetrics() {
 			Name:      "pseudo_estimation_total",
 			Help:      "Counter of pseudo estimation caused by outdated stats.",
 		}, []string{LblType})
-
-	FastAnalyzeHistogram = NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "fast_analyze_status",
-			Help:      "Bucketed histogram of some stats in fast analyze.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
-		}, []string{LblSQLType, LblType})
 
 	SyncLoadCounter = NewCounter(
 		prometheus.CounterOpts{
