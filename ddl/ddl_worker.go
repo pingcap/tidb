@@ -818,23 +818,17 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 	w.registerSync(job)
 
-	if runJobErr != nil && !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
+	if runJobErr != nil {
 		// Omit the ErrPausedDDLJob
-		w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
-			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
-		// In test and job is cancelling we can ignore the sleep.
-		if !(intest.InTest && job.IsCancelling()) {
+		if !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
 			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
 			// which may act like a deadlock.
-<<<<<<< HEAD
 			logutil.Logger(w.logCtx).Info("[ddl] run DDL job failed, sleeps a while then retries it.",
 				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
 		}
 
 		// In test and job is cancelling we can ignore the sleep
 		if !(intest.InTest && job.IsCancelling()) {
-=======
->>>>>>> 89fb7adfa99 (ddl: fix a bug that MDL may progress unexpectedly or block forever (#46921))
 			time.Sleep(GetWaitTimeWhenErrorOccurred())
 		}
 	}
@@ -1188,25 +1182,16 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 	}()
 
 	if latestSchemaVersion == 0 {
-<<<<<<< HEAD
 		logutil.Logger(d.ctx).Info("[ddl] schema version doesn't change")
-		return
-=======
-		logutil.Logger(d.ctx).Info("schema version doesn't change", zap.String("category", "ddl"))
 		return nil
->>>>>>> 89fb7adfa99 (ddl: fix a bug that MDL may progress unexpectedly or block forever (#46921))
 	}
 
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(d.ctx, latestSchemaVersion)
 	if err != nil {
-<<<<<<< HEAD
 		logutil.Logger(d.ctx).Info("[ddl] update latest schema version failed", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-=======
-		logutil.Logger(d.ctx).Info("update latest schema version failed", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		if variable.EnableMDL.Load() {
 			return err
 		}
->>>>>>> 89fb7adfa99 (ddl: fix a bug that MDL may progress unexpectedly or block forever (#46921))
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
 			// There is no need to use etcd to sync. The function returns directly.
@@ -1217,13 +1202,8 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
 	err = d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
-<<<<<<< HEAD
 		logutil.Logger(d.ctx).Info("[ddl] wait latest schema version encounter error", zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		return
-=======
-		logutil.Logger(d.ctx).Info("wait latest schema version encounter error", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
 		return err
->>>>>>> 89fb7adfa99 (ddl: fix a bug that MDL may progress unexpectedly or block forever (#46921))
 	}
 	logutil.Logger(d.ctx).Info("[ddl] wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)",
 		zap.Int64("ver", latestSchemaVersion),
