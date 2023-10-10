@@ -182,7 +182,6 @@ func TestAnalyzeParameters(t *testing.T) {
 	}
 	tk.MustExec("insert into t values (19), (19), (19)")
 
-	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 30 samples")
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
@@ -254,7 +253,6 @@ func TestAnlyzeIssue(t *testing.T) {
 	// Issue15993
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_enable_fast_analyze=1;")
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
@@ -339,45 +337,6 @@ func TestExtractTopN(t *testing.T) {
 		"test_extract_topn test_extract_topn  index_b 1 8 1",
 		"test_extract_topn test_extract_topn  index_b 1 9 1",
 	))
-}
-
-func TestHashInTopN(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
-	tk.MustExec(`insert into t values
-				(1, 1.1, 11.1, "0110"),
-				(2, 2.2, 22.2, "0110"),
-				(3, 3.3, 33.3, "0110"),
-				(4, 4.4, 44.4, "0440")`)
-	for i := 0; i < 3; i++ {
-		tk.MustExec("insert into t select * from t")
-	}
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	// get stats of normal analyze
-	tk.MustExec("analyze table t")
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	tblStats1 := dom.StatsHandle().GetTableStats(tblInfo).Copy()
-	// get stats of fast analyze
-	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
-	tk.MustExec("analyze table t")
-	tblStats2 := dom.StatsHandle().GetTableStats(tblInfo).Copy()
-	// check the hash for topn
-	for _, col := range tblInfo.Columns {
-		topn1 := tblStats1.Columns[col.ID].TopN.TopN
-		cm2 := tblStats2.Columns[col.ID].TopN
-		for _, topnMeta := range topn1 {
-			count2, exists := cm2.QueryTopN(nil, topnMeta.Encoded)
-			require.True(t, exists)
-			require.Equal(t, topnMeta.Count, count2)
-		}
-	}
 }
 
 func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
@@ -625,14 +584,10 @@ func TestAnalyzeIndex(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	require.Greater(t, len(tk.MustQuery("show stats_topn where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 0)
 
-	func() {
-		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
-		tk.MustExec("drop stats t1")
-		tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-		tk.MustExec("set @@tidb_analyze_version=1")
-		tk.MustExec("analyze table t1 index k")
-		require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 1)
-	}()
+	tk.MustExec("drop stats t1")
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("analyze table t1 index k")
+	require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 1)
 }
 
 func TestAnalyzeIncremental(t *testing.T) {

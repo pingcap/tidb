@@ -2875,6 +2875,26 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 		return b.buildAnalyzeTable(as, opts, version)
 	}
 	for _, idxName := range as.IndexNames {
+		if isPrimaryIndex(idxName) {
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
+			// Fast analyze use analyze column to solve int handle.
+			if handleCols != nil && handleCols.IsInt() {
+				for i, id := range physicalIDs {
+					if id == tblInfo.ID {
+						id = -1
+					}
+					info := AnalyzeInfo{
+						DBName:        as.TableNames[0].Schema.O,
+						TableName:     as.TableNames[0].Name.O,
+						PartitionName: names[i], TableID: statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
+						Incremental:  as.Incremental,
+						StatsVersion: version,
+					}
+					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
+				}
+				continue
+			}
+		}
 		idx := tblInfo.FindIndexByName(idxName.L)
 		if idx == nil || idx.State != model.StatePublic {
 			return nil, ErrAnalyzeMissIndex.GenWithStackByArgs(idxName.O, tblInfo.Name.O)
