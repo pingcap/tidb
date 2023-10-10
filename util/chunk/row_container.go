@@ -208,6 +208,10 @@ func (c *RowContainer) AlreadySpilledSafeForTest() bool {
 func (c *RowContainer) NumRow() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
+	return c.numRow()
+}
+
+func (c *RowContainer) numRow() int {
 	if c.alreadySpilled() {
 		return c.m.records.inDisk.Len()
 	}
@@ -228,6 +232,10 @@ func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 func (c *RowContainer) NumChunks() int {
 	c.m.RLock()
 	defer c.m.RUnlock()
+	return c.numChunks()
+}
+
+func (c *RowContainer) numChunks() int {
 	if c.alreadySpilled() {
 		return c.m.records.inDisk.NumChunks()
 	}
@@ -263,6 +271,10 @@ func (c *RowContainer) AllocChunk() (chk *Chunk) {
 func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
+	return c.GetChunk(chkIdx)
+}
+
+func (c *RowContainer) getChunk(chkIdx int) (*Chunk, error) {
 	if !c.alreadySpilled() {
 		return c.m.records.inMemory.GetChunk(chkIdx), nil
 	}
@@ -561,6 +573,8 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 func (c *SortedRowContainer) Sort() {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
+	c.m.RLock()
+	defer c.m.RUnlock()
 	c.sort()
 }
 
@@ -569,9 +583,9 @@ func (c *SortedRowContainer) sort() {
 	if c.ptrM.rowPtrs != nil {
 		return
 	}
-	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
-	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
-		rowChk, err := c.GetChunk(chkIdx)
+	c.ptrM.rowPtrs = make([]RowPtr, 0, c.numRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
+	for chkIdx := 0; chkIdx < c.numChunks(); chkIdx++ {
+		rowChk, err := c.getChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
 		if err != nil {
 			panic(err)
@@ -591,7 +605,7 @@ func (c *SortedRowContainer) sort() {
 func (c *SortedRowContainer) SpillToDisk(spillHelper SpillHelper) {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
-	spillHelper.SpillToDisk(spillHelper)
+	c.RowContainer.SpillToDisk(spillHelper)
 }
 
 func (c *SortedRowContainer) workBeforeSpill() {
@@ -667,4 +681,8 @@ func (c *SortedRowContainer) hasEnoughDataToSpill(t *memory.Tracker) bool {
 // WaitForTest waits all goroutine have gone.
 func (a *SortAndSpillDiskAction) WaitForTest() {
 	a.testWg.Wait()
+}
+
+func (a *SortAndSpillDiskAction) Action(t *memory.Tracker) {
+	a.action(t, a.c)
 }
