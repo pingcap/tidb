@@ -261,7 +261,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 		a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
 		a.globalStats.Fms[i].DestroyAndPutToPool()
 	}
-	err := func() error {
+	err = func() error {
 		for {
 			select {
 			case cms, ok := <-a.cmsketch:
