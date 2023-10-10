@@ -15,7 +15,11 @@
 package handle
 
 import (
+	"context"
 	"fmt"
+	"runtime"
+	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/infoschema"
@@ -25,10 +29,13 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
-	"github.com/pingcap/tidb/util/logutil"
+	utilstats "github.com/pingcap/tidb/statistics/handle/util"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
-	"go.uber.org/zap"
 )
+
+// TestLoadStatsErr is only for test.
+type TestLoadStatsErr struct{}
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
@@ -172,67 +179,12 @@ func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
 	return jt, false, nil
 }
 
-func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (*storage.JSONTable, bool, error) {
-	reader, err := h.getGlobalStatsReader(0)
-	if err != nil {
-		return nil, false, err
-	}
-	defer func() {
-		err1 := h.releaseGlobalStatsReader(reader)
-		if err == nil && err1 != nil {
-			err = err1
-		}
-	}()
-
-	// get meta version
-	rows, _, err := reader.Read("select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get records of stats_meta_history",
-			zap.Int64("table-id", physicalID),
-			zap.Uint64("snapshotTS", snapshot))
-		return nil, false, nil
-	}
-	statsMetaVersion := rows[0].GetInt64(0)
-	// get stats meta
-	rows, _, err = reader.Read("select modify_count, count from mysql.stats_meta_history where table_id = %? and version = %?", physicalID, statsMetaVersion)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
-
-	// get stats version
-	rows, _, err = reader.Read("select distinct version from mysql.stats_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	if len(rows) < 1 {
-		logutil.BgLogger().Warn("failed to get record of stats_history",
-			zap.Int64("table-id", physicalID),
-			zap.Uint64("snapshotTS", snapshot))
-		return nil, false, nil
-	}
-	statsVersion := rows[0].GetInt64(0)
-
-	// get stats
-	rows, _, err = reader.Read("select stats_data from mysql.stats_history where table_id = %? and version = %? order by seq_no", physicalID, statsVersion)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	blocks := make([][]byte, 0)
-	for _, row := range rows {
-		blocks = append(blocks, row.GetBytes(0))
-	}
-	jsonTbl, err := storage.BlocksToJSONTable(blocks)
-	if err != nil {
-		return nil, false, errors.AddStack(err)
-	}
-	jsonTbl.Count = count
-	jsonTbl.ModifyCount = modifyCount
-	jsonTbl.IsHistoricalStats = true
-	return jsonTbl, true, nil
+func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *storage.JSONTable, exist bool, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		jt, exist, err = storage.TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
+		return err
+	}, utilstats.FlagWrapTxn)
+	return
 }
 
 func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error) {
@@ -255,7 +207,16 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 }
 
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
-func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *storage.JSONTable) error {
+func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
+	jsonTbl *storage.JSONTable, concurrencyForPartition uint8) error {
+	nCPU := uint8(runtime.GOMAXPROCS(0))
+	if concurrencyForPartition == 0 {
+		concurrencyForPartition = nCPU / 2 // default
+	}
+	if concurrencyForPartition > nCPU {
+		concurrencyForPartition = nCPU // for safety
+	}
+
 	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
@@ -268,16 +229,52 @@ func (h *Handle) LoadStatsFromJSON(is infoschema.InfoSchema, jsonTbl *storage.JS
 			return errors.Trace(err)
 		}
 	} else {
+		// load partition statistics concurrently
+		taskCh := make(chan model.PartitionDefinition, len(pi.Definitions))
 		for _, def := range pi.Definitions {
-			tbl := jsonTbl.Partitions[def.Name.L]
-			if tbl == nil {
-				continue
-			}
-			err := h.loadStatsFromJSON(tableInfo, def.ID, tbl)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			taskCh <- def
 		}
+		close(taskCh)
+		var wg sync.WaitGroup
+		e := new(atomic.Pointer[error])
+		for i := 0; i < int(concurrencyForPartition); i++ {
+			wg.Add(1)
+			h.gpool.Go(func() {
+				defer func() {
+					if r := recover(); r != nil {
+						err := fmt.Errorf("%v", r)
+						e.CompareAndSwap(nil, &err)
+					}
+					wg.Done()
+				}()
+
+				for def := range taskCh {
+					tbl := jsonTbl.Partitions[def.Name.L]
+					if tbl == nil {
+						continue
+					}
+
+					loadFunc := h.loadStatsFromJSON
+					if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
+						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *storage.JSONTable) error)
+					}
+
+					err := loadFunc(tableInfo, def.ID, tbl)
+					if err != nil {
+						e.CompareAndSwap(nil, &err)
+						return
+					}
+					if e.Load() != nil {
+						return
+					}
+				}
+			})
+		}
+		wg.Wait()
+		if e.Load() != nil {
+			return *e.Load()
+		}
+
 		// load global-stats if existed
 		if globalStats, ok := jsonTbl.Partitions[globalstats.TiDBGlobalStats]; ok {
 			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {

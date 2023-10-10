@@ -15,13 +15,13 @@
 package history
 
 import (
-	"context"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/util/sqlexec"
 )
 
 // RecordHistoricalStatsMeta records the historical stats meta.
@@ -32,10 +32,7 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	if !sctx.GetSessionVars().EnableHistoricalStats {
 		return nil
 	}
-	ctx := util.StatsCtx(context.Background())
-	exec := sctx.(sqlexec.SQLExecutor)
-	rexec := sctx.(sqlexec.RestrictedSQLExecutor)
-	rows, _, err := rexec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
+	rows, _, err := util.ExecRows(sctx, "select modify_count, count from mysql.stats_meta where table_id = %? and version = %?", tableID, version)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -44,18 +41,49 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	_, err = exec.ExecuteInternal(ctx, "begin pessimistic")
+	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer func() {
-		err = util.FinishTransaction(ctx, exec, err)
+		err = util.FinishTransaction(sctx, err)
 	}()
 
 	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
-	if _, err := exec.ExecuteInternal(ctx, sql, tableID, modifyCount, count, version, source); err != nil {
+	if _, err := util.Exec(sctx, sql, tableID, modifyCount, count, version, source); err != nil {
 		return errors.Trace(err)
 	}
 	cache.TableRowStatsCache.Invalidate(tableID)
 	return nil
+}
+
+// Max column size is 6MB. Refer https://docs.pingcap.com/tidb/dev/tidb-limitations/#limitation-on-a-single-column
+const maxColumnSize = 6 << 20
+
+// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
+func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *storage.JSONTable) (uint64, error) {
+	version := uint64(0)
+	if len(js.Partitions) == 0 {
+		version = js.Version
+	} else {
+		for _, p := range js.Partitions {
+			version = p.Version
+			if version != 0 {
+				break
+			}
+		}
+	}
+	blocks, err := storage.JSONTableToBlocks(js, maxColumnSize)
+	if err != nil {
+		return version, errors.Trace(err)
+	}
+
+	ts := time.Now().Format("2006-01-02 15:04:05.999999")
+	const sql = "INSERT INTO mysql.stats_history(table_id, stats_data, seq_no, version, create_time) VALUES (%?, %?, %?, %?, %?)"
+	for i := 0; i < len(blocks); i++ {
+		if _, err := util.Exec(sctx, sql, physicalID, blocks[i], i, version, ts); err != nil {
+			return 0, errors.Trace(err)
+		}
+	}
+	return version, err
 }

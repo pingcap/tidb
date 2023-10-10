@@ -83,6 +83,7 @@ func TestWriter(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/0", bufSize)
 	require.NoError(t, err)
@@ -97,6 +98,7 @@ func TestWriter(t *testing.T) {
 		keyCnt += p.keys
 	}
 	require.Equal(t, uint64(kvCnt), keyCnt)
+	require.NoError(t, statReader.Close())
 }
 
 func TestWriterFlushMultiFileNames(t *testing.T) {
@@ -203,6 +205,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+	require.NoError(t, kvReader.Close())
 
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
@@ -418,6 +421,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 }
 
 func TestWriterSort(t *testing.T) {
+	t.Skip("it only tests the performance of sorty")
 	commonPrefix := "abcabcabcabcabcabcabcabc"
 
 	kvs := make([]common.KvPair, 1000000)

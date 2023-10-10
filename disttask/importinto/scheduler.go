@@ -225,7 +225,6 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
 	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()
 	subtaskMeta.Result = Result{
-		ReadRowCnt:   sharedVars.Progress.ReadRowCnt.Load(),
 		LoadedRowCnt: uint64(dataKVCount),
 		ColSizeMap:   sharedVars.Progress.GetColSize(),
 	}

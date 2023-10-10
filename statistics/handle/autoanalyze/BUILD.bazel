@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//infoschema",
-        "//kv",
         "//metrics",
         "//parser/ast",
         "//parser/model",
@@ -21,6 +20,7 @@ go_library(
         "//util/sqlexec",
         "//util/timeutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@org_uber_go_zap//:zap",
     ],
 )

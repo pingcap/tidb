@@ -42,15 +42,20 @@ var (
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 )
 
+// TableInfo is the table info of which will be locked.
+type TableInfo struct {
+	PartitionInfo map[int64]string
+	// schema name + table name.
+	FullName string
+}
+
 // AddLockedTables add locked tables id to store.
 // - exec: sql executor.
-// - tidAndNames: table ids and names of which will be locked.
-// - pidAndNames: partition ids and names of which will be locked.
+// - tables: tables that will be locked.
 // Return the message of skipped tables and error.
 func AddLockedTables(
 	exec sqlexec.RestrictedSQLExecutor,
-	tidAndNames map[int64]string,
-	pidAndNames map[int64]string,
+	tables map[int64]*TableInfo,
 ) (string, error) {
 	ctx := util.StatsCtx(context.Background())
 	err := startTransaction(ctx, exec)
@@ -68,49 +73,39 @@ func AddLockedTables(
 		return "", err
 	}
 
-	skippedTables := make([]string, 0, len(tidAndNames))
-	tids := make([]int64, 0, len(tidAndNames))
-	tables := make([]string, 0, len(tidAndNames))
-	for tid, tableName := range tidAndNames {
-		tids = append(tids, tid)
-		tables = append(tables, tableName)
-	}
-	pids := make([]int64, 0, len(pidAndNames))
-	partitions := make([]string, 0, len(pidAndNames))
-	for pid, partitionName := range pidAndNames {
-		pids = append(pids, pid)
-		partitions = append(partitions, partitionName)
+	skippedTables := make([]string, 0, len(tables))
+	ids := make([]int64, 0, len(tables))
+	for tid, table := range tables {
+		ids = append(ids, tid)
+		for pid := range table.PartitionInfo {
+			ids = append(ids, pid)
+		}
 	}
 	statsLogger.Info("lock table",
-		zap.Int64s("tableIDs", tids),
-		zap.Strings("tableNames", tables),
-		zap.Int64s("partitionIDs", pids),
-		zap.Strings("partitionNames", partitions),
+		zap.Any("tables", tables),
 	)
 
-	// Insert locked tables.
-	checkedTables := GetLockedTables(lockedTables, tids...)
-	for _, tid := range tids {
-		if _, ok := checkedTables[tid]; !ok {
+	// Lock tables and partitions.
+	lockedTablesAndPartitions := GetLockedTables(lockedTables, ids...)
+	for tid, table := range tables {
+		if _, ok := lockedTablesAndPartitions[tid]; !ok {
 			if err := insertIntoStatsTableLocked(ctx, exec, tid); err != nil {
 				return "", err
 			}
 		} else {
-			skippedTables = append(skippedTables, tidAndNames[tid])
+			skippedTables = append(skippedTables, table.FullName)
 		}
-	}
 
-	// Insert related partitions while don't warning duplicate partitions.
-	lockedPartitions := GetLockedTables(lockedTables, pids...)
-	for _, pid := range pids {
-		if _, ok := lockedPartitions[pid]; !ok {
-			if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
-				return "", err
+		for pid := range table.PartitionInfo {
+			if _, ok := lockedTablesAndPartitions[pid]; !ok {
+				if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
+					return "", err
+				}
 			}
 		}
 	}
 
-	msg := generateStableSkippedTablesMessage(tids, skippedTables, lockAction, lockedStatus)
+	msg := generateStableSkippedTablesMessage(len(tables), skippedTables, lockAction, lockedStatus)
 	// Note: defer commit transaction, so we can't use `return nil` here.
 	return msg, err
 }
@@ -184,15 +179,15 @@ func AddLockedPartitions(
 }
 
 // generateStableSkippedTablesMessage generates stable skipped tables message.
-func generateStableSkippedTablesMessage(ids []int64, skippedNames []string, action, status string) string {
+func generateStableSkippedTablesMessage(tableCount int, skippedNames []string, action, status string) string {
 	// Sort to stabilize the output.
 	slices.Sort(skippedNames)
 
 	if len(skippedNames) > 0 {
 		tables := strings.Join(skippedNames, ", ")
 		var msg string
-		if len(ids) > 1 {
-			if len(ids) > len(skippedNames) {
+		if tableCount > 1 {
+			if tableCount > len(skippedNames) {
 				msg = fmt.Sprintf("skip %s %s tables: %s, other tables %s successfully", action, status, tables, status)
 			} else {
 				msg = fmt.Sprintf("skip %s %s tables: %s", action, status, tables)

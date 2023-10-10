@@ -22,6 +22,7 @@ go_library(
         "@com_github_jedib0t_go_pretty_v6//text",
         "@com_github_pingcap_errors//:errors",
         "@com_github_tikv_client_go_v2//error",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_multierr//:multierr",
@@ -35,8 +36,9 @@ go_test(
     srcs = ["errormanager_test.go"],
     embed = [":errormanager"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
+        "//br/pkg/lightning/backend/encode",
         "//br/pkg/lightning/backend/kv",
         "//br/pkg/lightning/config",
         "//br/pkg/lightning/log",
