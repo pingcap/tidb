@@ -62,6 +62,31 @@ func TestPacketIOWrite(t *testing.T) {
 	require.Equal(t, byte(0), res[3])
 }
 
+func TestPacketIOWriteCompressed(t *testing.T) {
+	var testdata, outBuffer bytes.Buffer
+
+	pkt := &PacketIO{
+		bufWriter:            bufio.NewWriter(&outBuffer),
+		compressionAlgorithm: mysql.CompressionZlib,
+		compressedWriter:     newCompressedWriter(&testdata, mysql.CompressionZlib),
+	}
+
+	payload := bytes.Repeat([]byte{'A'}, 16*1024*1024)
+	err := pkt.WritePacket(payload)
+	require.NoError(t, err)
+
+	err = pkt.Flush()
+	require.NoError(t, err)
+
+	compressedLength := []byte{0x18, 0x4, 0x0} // 1048 bytes
+	packetNr := []byte{0x0}
+	uncompressedLength := []byte{0x0, 0x0, 0x10} // 1048576 bytes
+
+	require.Equal(t, compressedLength, testdata.Bytes()[:3])
+	require.Equal(t, packetNr, testdata.Bytes()[3:4])
+	require.Equal(t, uncompressedLength, testdata.Bytes()[4:7])
+}
+
 func TestPacketIORead(t *testing.T) {
 	t.Run("uncompressed", func(t *testing.T) {
 		var inBuffer bytes.Buffer
