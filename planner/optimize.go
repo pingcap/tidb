@@ -631,6 +631,11 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 			if parenthesesIdx != -1 && parenthesesIdx < idx {
 				idx = parenthesesIdx
 			}
+			// If the SQL is `EXPLAIN ((VALUES ROW ()) ORDER BY 1);`, the idx will be -1.
+			if idx == -1 {
+				hash := parser.DigestNormalized(normalizeExplainSQL)
+				return x.Stmt, normalizeExplainSQL, hash.String(), nil
+			}
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash.String(), nil
