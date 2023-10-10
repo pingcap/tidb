@@ -79,18 +79,12 @@ type Handle struct {
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *usage.SessionIndexUsageCollector
 
-	// listHead contains all the stats collector required by session.
-	listHead *SessionStatsCollector
+	// SessionStatsList contains all the stats collector required by session.
+	*usage.SessionStatsList
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
-
-	// tableDelta contains all the delta map from collectors when we dump them to KV.
-	tableDelta *usage.TableDelta
-
-	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
-	statsUsage *usage.StatsUsage
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -117,9 +111,7 @@ func (h *Handle) Clear() {
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.listHead.ClearForTest()
-	h.tableDelta.Reset()
-	h.statsUsage.Reset()
+	h.ResetSessionStatsList()
 }
 
 // NewHandle creates a Handle for update stats.
@@ -129,7 +121,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 	handle := &Handle{
 		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
-		listHead:                NewSessionStatsCollector(),
+		SessionStatsList:        usage.NewSessionStatsList(),
 		idxUsageListHead:        usage.NewSessionIndexUsageCollector(nil),
 		pool:                    pool,
 		sysProcTracker:          tracker,
@@ -147,8 +139,6 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		return nil, err
 	}
 	handle.statsCache = statsCache
-	handle.tableDelta = usage.NewTableDelta()
-	handle.statsUsage = usage.NewStatsUsage()
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)

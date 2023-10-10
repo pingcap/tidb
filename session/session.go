@@ -76,7 +76,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/usage"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
@@ -228,7 +227,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
-	statsCollector *handle.SessionStatsCollector
+	statsCollector *usage.SessionStatsItem
 	// ddlOwnerManager is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerManager owner.Manager
 	// lockedTables use to record the table locks hold by the session.
@@ -3075,7 +3074,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
-		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+		s.statsCollector = do.StatsHandle().NewSessionStatsItem()
 		if GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
 		}
@@ -3627,7 +3626,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
 		if s.statsCollector == nil {
-			s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+			s.statsCollector = dom.StatsHandle().NewSessionStatsItem()
 		}
 		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
