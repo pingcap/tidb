@@ -1257,6 +1257,22 @@ func TestSetJobScheduleWindow(t *testing.T) {
 	require.Equal(t, "16:11 +0800", val)
 }
 
+func TestTiDBIgnoreInlistPlanDigest(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	initValue, err := mock.GetGlobalSysVar(TiDBIgnoreInlistPlanDigest)
+	require.NoError(t, err)
+	require.Equal(t, initValue, Off)
+	// Set to On(init at start)
+	err1 := mock.SetGlobalSysVar(context.Background(), TiDBIgnoreInlistPlanDigest, On)
+	require.NoError(t, err1)
+	NewVal, err2 := mock.GetGlobalSysVar(TiDBIgnoreInlistPlanDigest)
+	require.NoError(t, err2)
+	require.Equal(t, NewVal, On)
+}
+
 func TestTiDBEnableResourceControl(t *testing.T) {
 	// setup the hooks for test
 	// NOTE: the default system variable is true but the switch is false

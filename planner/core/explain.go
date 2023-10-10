@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/property"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
@@ -364,7 +365,11 @@ func (p *PhysicalSelection) ExplainInfo() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalSelection) ExplainNormalizedInfo() string {
-	return string(expression.SortedExplainNormalizedExpressionList4InList(p.Conditions))
+	if variable.IgnoreInlistPlanDigest.Load() {
+		return string(expression.SortedExplainNormalizedExpressionList4InList(p.Conditions))
+	} else {
+		return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
+	}
 }
 
 // ExplainInfo implements Plan interface.
@@ -402,7 +407,11 @@ func (p *PhysicalExpand) explainInfoV2() string {
 
 // ExplainNormalizedInfo implements Plan interface.
 func (p *PhysicalProjection) ExplainNormalizedInfo() string {
-	return string(expression.SortedExplainNormalizedExpressionList4InList(p.Exprs))
+	if variable.IgnoreInlistPlanDigest.Load() {
+		return string(expression.SortedExplainNormalizedExpressionList4InList(p.Exprs))
+	} else {
+		return string(expression.SortedExplainNormalizedExpressionList(p.Exprs))
+	}
 }
 
 // ExplainInfo implements Plan interface.
