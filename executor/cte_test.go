@@ -485,13 +485,13 @@ func TestCTEPanic(t *testing.T) {
 }
 
 func TestCTEShareCorColumn(t *testing.T) {
-  store, clean := testkit.CreateMockStore(t)
+	store, clean := testkit.CreateMockStore(t)
 	defer clean()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	tk.MustExec("drop table if exists t1, t2;")
-  
-  tk.MustExec("create table t1(c1 int, c2 varchar(100));")
+
+	tk.MustExec("create table t1(c1 int, c2 varchar(100));")
 	tk.MustExec("insert into t1 values(1, '2020-10-10');")
 	tk.MustExec("create table t2(c1 int, c2 date);")
 	tk.MustExec("insert into t2 values(1, '2020-10-10');")
