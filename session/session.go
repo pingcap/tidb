@@ -2420,6 +2420,8 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	rs, err = s.Exec(ctx)
+	logStmt(s.(*executor.ExecStmt), se)
+
 	se.updateTelemetryMetric(s.(*executor.ExecStmt))
 	sessVars.TxnCtx.StatementCount++
 	if rs != nil {
