@@ -47,15 +47,25 @@ import (
 
 // Handle can update stats info periodically.
 type Handle struct {
-	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
-	gpool *gp.Pool
-	pool  util.SessionPool
+	pool util.SessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
 
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
+
+	// TableInfoGetter is used to fetch table meta info.
+	util.TableInfoGetter
+
+	// StatsGC is used to GC stats.
+	util.StatsGC
+
+	// StatsUsage is used to track the usage of column / index statistics.
+	util.StatsUsage
+
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
 
 	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
 	autoAnalyzeProcIDGetter func() uint64
@@ -84,15 +94,6 @@ type Handle struct {
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
-
-	// TableInfoGetter is used to fetch table meta info.
-	util.TableInfoGetter
-
-	// StatsGC is used to GC stats.
-	util.StatsGC
-
-	// StatsUsage is used to track the usage of column / index statistics.
-	util.StatsUsage
 
 	lease atomic2.Duration
 }
