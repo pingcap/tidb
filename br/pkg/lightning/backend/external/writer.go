@@ -316,10 +316,10 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	if w.writeCnt < len(w.writeBatch) {
 		w.writeBatch[w.writeCnt].Key = key
 		w.writeBatch[w.writeCnt].Val = val
-		w.writeCnt++
 	} else {
 		w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 	}
+	w.writeCnt++
 	if w.batchSize >= w.memSizeLimit {
 		w.writeBatch = w.writeBatch[:w.writeCnt]
 		if err := w.flushKVs(ctx, false); err != nil {
