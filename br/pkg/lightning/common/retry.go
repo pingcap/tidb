@@ -28,8 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
 	drivererr "github.com/pingcap/tidb/store/driver/error"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -42,7 +40,6 @@ var retryableErrorMsgList = []string{
 	// this error happens on when distsql.Checksum calls TiKV
 	// see https://github.com/pingcap/tidb/blob/2c3d4f1ae418881a95686e8b93d4237f2e76eec6/store/copr/coprocessor.go#L941
 	"coprocessor task terminated due to exceeding the deadline",
-	// ywq todo check
 	"PD server timeout",
 }
 
@@ -50,7 +47,6 @@ func isRetryableFromErrorMessage(err error) bool {
 	msg := err.Error()
 	msgLower := strings.ToLower(msg)
 	for _, errStr := range retryableErrorMsgList {
-		logutil.BgLogger().Info("ywq test error error msg", zap.String("errStr", errStr))
 		if strings.Contains(msgLower, errStr) {
 			return true
 		}
@@ -113,7 +109,6 @@ func isSingleRetryableError(err error) bool {
 		}
 		return false
 	case *mysql.MySQLError:
-		logutil.BgLogger().Info("ywq test error", zap.Uint16("num", nerr.Number))
 		switch nerr.Number {
 		// ErrLockDeadlock can retry to commit while meet deadlock
 		case tmysql.ErrUnknown, tmysql.ErrLockDeadlock, tmysql.ErrWriteConflict, tmysql.ErrWriteConflictInTiDB,
