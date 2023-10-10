@@ -65,8 +65,7 @@ type encodeAndSortOperator struct {
 	logger            *zap.Logger
 	errCh             chan error
 
-	dataWriter  *external.EngineWriter
-	indexWriter *importer.IndexRouteWriter
+	sharedDeliver *importer.SharedKVDeliver
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
@@ -138,10 +137,9 @@ func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, index
 	prefix := subtaskPrefix(op.taskID, op.subtaskID)
 	// writer id for data: data/{workerID}
 	writerID := path.Join("data", workerUUID)
-	writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+	dataWriter := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
 
-	op.dataWriter = external.NewEngineWriter(writer)
-	op.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
+	op.sharedDeliver = importer.NewSharedKVDeliver(op.ctx, dataWriter, indexWriterFn)
 }
 
 func (op *encodeAndSortOperator) Open() error {
@@ -174,15 +172,8 @@ func (op *encodeAndSortOperator) Close() error {
 		closeCtx = newCtx
 		defer cancel()
 	}
-	if op.dataWriter != nil {
-		// Note: we cannot ignore close error as we're writing to S3 or GCS.
-		// ignore error might cause data loss. below too.
-		if _, err := op.dataWriter.Close(closeCtx); err != nil {
-			op.onError(errors.Trace(err))
-		}
-	}
-	if op.indexWriter != nil {
-		if _, err := op.indexWriter.Close(closeCtx); err != nil {
+	if op.sharedDeliver != nil {
+		if err := op.sharedDeliver.Close(closeCtx); err != nil {
 			op.onError(errors.Trace(err))
 		}
 	}
@@ -231,7 +222,7 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.op.dataWriter, w.op.indexWriter); err != nil {
+	if err := executor.Run(w.ctx, w.op.sharedDeliver); err != nil {
 		w.op.onError(err)
 	}
 }

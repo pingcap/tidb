@@ -34,6 +34,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	tidbkv "github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
@@ -418,6 +419,210 @@ func (p *localSortChunkProcessor) deliverLoop(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// SharedKVDeliver manages kv deliver routines that's shared by all chunk
+// processors, each KV group, i.e. data or some index, will have only 1
+// writer and delivers in 1 routine.
+// used in global sort.
+type SharedKVDeliver struct {
+	sync.RWMutex
+	writerFactory  func(int64) *external.Writer
+	dataKVChan     chan *common.KvPair
+	indexKVChans   map[int64]chan *common.KvPair
+	dataWriter     *external.Writer
+	indexKVWriters map[int64]*external.Writer
+	errGroup       *errgroup.Group
+	groupCtx       context.Context
+
+	metrics *metric.Common
+}
+
+// NewSharedKVDeliver creates a new SharedKVDeliver.
+func NewSharedKVDeliver(ctx context.Context, dataKVWriter *external.Writer, writerFactory func(int64) *external.Writer) *SharedKVDeliver {
+	group, gCtx := errgroup.WithContext(ctx)
+	d := &SharedKVDeliver{
+		writerFactory:  writerFactory,
+		dataKVChan:     make(chan *common.KvPair, maxKVQueueSize),
+		indexKVChans:   make(map[int64]chan *common.KvPair),
+		dataWriter:     dataKVWriter,
+		indexKVWriters: make(map[int64]*external.Writer),
+		errGroup:       group,
+		groupCtx:       gCtx,
+	}
+	if metrics, ok := metric.GetCommonMetric(ctx); ok {
+		d.metrics = metrics
+	}
+	d.startDeliverRoutine(dataKVWriter, d.dataKVChan)
+	return d
+}
+
+// Close closes the delivery routines.
+func (d *SharedKVDeliver) Close(ctx context.Context) error {
+	d.Lock()
+	defer d.Unlock()
+	close(d.dataKVChan)
+	for _, ch := range d.indexKVChans {
+		close(ch)
+	}
+
+	err := d.errGroup.Wait()
+
+	if d.dataWriter != nil {
+		// Note: we cannot ignore close error as we're writing to S3 or GCS.
+		// ignore error might cause data loss. below too.
+		if err2 := d.dataWriter.Close(ctx); err2 != nil {
+			if err == nil {
+				err = err2
+			} else {
+				logutil.BgLogger().Error("failed to close data writer", zap.Error(err2))
+			}
+		}
+	}
+
+	for indexID, w := range d.indexKVWriters {
+		if err2 := w.Close(ctx); err2 != nil {
+			if err == nil {
+				err = err2
+			} else {
+				logutil.BgLogger().Error("failed to close index writer",
+					zap.Int64("index-id", indexID), zap.Error(err2))
+			}
+		}
+	}
+	return err
+}
+
+func (d *SharedKVDeliver) getOrCreateDeliverCh(indexID int64) chan *common.KvPair {
+	d.RLock()
+	ch, ok := d.indexKVChans[indexID]
+	d.RUnlock()
+	if ok {
+		return ch
+	}
+
+	d.Lock()
+	defer d.Unlock()
+	ch, ok = d.indexKVChans[indexID]
+	if ok {
+		return ch
+	}
+
+	ch = make(chan *common.KvPair, maxKVQueueSize)
+	writer := d.writerFactory(indexID)
+	d.indexKVChans[indexID] = ch
+	d.indexKVWriters[indexID] = writer
+	d.startDeliverRoutine(writer, ch)
+	return ch
+}
+
+func (d *SharedKVDeliver) startDeliverRoutine(writer *external.Writer, ch chan *common.KvPair) {
+	d.errGroup.Go(func() error {
+		var (
+			deliverBytesCounter prometheus.Counter
+		)
+		if d.metrics != nil {
+			deliverBytesCounter = d.metrics.BytesCounter.WithLabelValues(metric.StateRestoreWritten)
+		}
+		for oneKV := range ch {
+			if err := writer.WriteRow(d.groupCtx, oneKV.Key, oneKV.Val, nil); err != nil {
+				return err
+			}
+			if d.metrics != nil {
+				deliverBytesCounter.Add(float64(len(oneKV.Key) + len(oneKV.Val)))
+			}
+		}
+		return nil
+	})
+}
+
+// globalSortChunkProcessor encode and sort kv, then write to global storage.
+// each chunk processor will have an encode routine.
+// each KV group(data, some index) will have a delivery routine and all those
+// delivery routines are shared by all chunk processors.
+// as current design of global sort requires 1 writer per KV group.
+type globalSortChunkProcessor struct {
+	*baseChunkProcessor
+	sharedDeliver *SharedKVDeliver
+
+	chanCache map[int64]chan *common.KvPair
+}
+
+// NewGlobalSortChunkProcessor creates a new global sort chunk processor.
+// exported for test.
+func NewGlobalSortChunkProcessor(
+	parser mydump.Parser,
+	encoder KVEncoder,
+	kvCodec tikv.Codec,
+	chunk *checkpoints.ChunkCheckpoint,
+	sharedDeliver *SharedKVDeliver,
+	logger *zap.Logger,
+) ChunkProcessor {
+	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
+	cp := &globalSortChunkProcessor{
+		sharedDeliver: sharedDeliver,
+		chanCache:     make(map[int64]chan *common.KvPair),
+	}
+	kvChecksum := verify.NewKVChecksumWithKeyspace(kvCodec)
+	cp.baseChunkProcessor = &baseChunkProcessor{
+		enc: &chunkEncoder{
+			parser:    parser,
+			chunkInfo: chunk,
+			logger:    chunkLogger,
+			encoder:   encoder,
+			kvCodec:   kvCodec,
+			sendFn:    cp.sendEncodedData,
+		},
+		logger:   chunkLogger,
+		kvCodec:  kvCodec,
+		checksum: *kvChecksum,
+		deliverLoop: func(context.Context) error {
+			// delivery routines are shared by all chunk processors, and
+			// initialized in SharedKVDeliver.
+			return nil
+		},
+		encodeDone: func(context.Context) {},
+	}
+	return cp
+}
+
+func (p *globalSortChunkProcessor) sendEncodedData(ctx context.Context, rows []deliveredRow) error {
+	sharedDeliverCtx := p.sharedDeliver.groupCtx
+	for _, row := range rows {
+		// kv pairs of a row are send to different channel, a little complex to
+		// determine when to recycle, so we don't do it, so we need a buffer
+		// without CGO.
+		for i := range row.kvs.Pairs {
+			pair := row.kvs.Pairs[i]
+			ch := p.sharedDeliver.dataKVChan
+			if tablecodec.IsIndexKey(pair.Key) {
+				indexID, err := tablecodec.DecodeIndexID(pair.Key)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				ch = p.getIndexKVChannel(indexID)
+			}
+			select {
+			case ch <- &pair:
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-sharedDeliverCtx.Done():
+				// if deliver routine failed, we should return error to stop encode routine.
+				return sharedDeliverCtx.Err()
+			}
+		}
+		p.checksum.Update(row.kvs.Pairs)
+	}
+	return nil
+}
+
+func (p *globalSortChunkProcessor) getIndexKVChannel(indexID int64) chan *common.KvPair {
+	if ch, ok := p.chanCache[indexID]; ok {
+		return ch
+	}
+	ch := p.sharedDeliver.getOrCreateDeliverCh(indexID)
+	p.chanCache[indexID] = ch
+	return ch
 }
 
 // IndexRouteWriter is a writer for index when using global sort.

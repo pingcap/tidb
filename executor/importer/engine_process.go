@@ -66,7 +66,7 @@ func ProcessChunk(
 		}
 	}()
 
-	return ProcessChunkWith(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
+	return ProcessChunkWith(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, nil, logger)
 }
 
 // ProcessChunkWith processes a chunk, and write kv pairs to dataWriter and indexWriter.
@@ -76,6 +76,7 @@ func ProcessChunkWith(
 	tableImporter *TableImporter,
 	dataWriter, indexWriter backend.EngineWriter,
 	progress *asyncloaddata.Progress,
+	sharedDeliver *SharedKVDeliver,
 	logger *zap.Logger,
 ) error {
 	parser, err := tableImporter.getParser(ctx, chunk)
@@ -97,12 +98,18 @@ func ProcessChunkWith(
 		}
 	}()
 
-	// TODO: right now we use this chunk processor for global sort too, will
-	// impl another one for it later.
-	cp := NewLocalSortChunkProcessor(
-		parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
-		tableImporter.diskQuotaLock, dataWriter, indexWriter,
-	)
+	var cp ChunkProcessor
+	if sharedDeliver != nil {
+		cp = NewGlobalSortChunkProcessor(
+			parser, encoder, tableImporter.kvStore.GetCodec(), chunk,
+			sharedDeliver, logger,
+		)
+	} else {
+		cp = NewLocalSortChunkProcessor(
+			parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
+			tableImporter.diskQuotaLock, dataWriter, indexWriter,
+		)
+	}
 	err = cp.Process(ctx)
 	if err != nil {
 		return err

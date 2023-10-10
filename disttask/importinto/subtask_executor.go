@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -47,7 +46,7 @@ var TestSyncChan = make(chan struct{})
 // MiniTaskExecutor is the interface for a minimal task executor.
 // exported for testing.
 type MiniTaskExecutor interface {
-	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error
+	Run(ctx context.Context, sharedDeliver *importer.SharedKVDeliver) error
 }
 
 // importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
@@ -63,7 +62,7 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 	}
 }
 
-func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
+func (e *importMinimalTaskExecutor) Run(ctx context.Context, sharedDeliver *importer.SharedKVDeliver) error {
 	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("run minimal task")
 	failpoint.Inject("waitBeforeSortChunk", func() {
@@ -83,7 +82,10 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			return err
 		}
 	} else {
-		if err := importer.ProcessChunkWith(ctx, &chunkCheckpoint, sharedVars.TableImporter, dataWriter, indexWriter, sharedVars.Progress, logger); err != nil {
+		if err := importer.ProcessChunkWith(
+			ctx, &chunkCheckpoint, sharedVars.TableImporter,
+			nil, nil, sharedVars.Progress, sharedDeliver, logger,
+		); err != nil {
 			return err
 		}
 	}
