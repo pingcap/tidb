@@ -6,7 +6,12 @@ package manual
 
 // #include <stdlib.h>
 import "C"
-import "unsafe"
+import (
+	"unsafe"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+)
 
 // The go:linkname directives provides backdoor access to private functions in
 // the runtime. Below we're accessing the throw function.
@@ -49,6 +54,7 @@ func New(n int) []byte {
 		// it cannot allocate memory.
 		throw("out of memory")
 	}
+	log.L().Info("manual.New", zap.Int("n", n))
 	// Interpret the C pointer as a pointer to a Go array, then slice.
 	return (*[MaxArrayLen]byte)(ptr)[:n:n]
 }
@@ -60,6 +66,7 @@ func Free(b []byte) {
 			b = b[:cap(b)]
 		}
 		ptr := unsafe.Pointer(&b[0])
+		log.L().Info("manual.Free")
 		C.free(ptr)
 	}
 }
