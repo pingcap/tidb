@@ -120,43 +120,8 @@ func (h *Handle) DumpIndexUsageToKV() error {
 	})
 }
 
-var (
-	// flagWrapTxn indicates whether to wrap a transaction.
-	flagWrapTxn = 0
-)
-
 func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			h.pool.Put(se)
-		}
-	}()
-	sctx := se.(sessionctx.Context)
-	if err := UpdateSCtxVarsForStats(sctx); err != nil { // update stats variables automatically
-		return err
-	}
-
-	wrapTxn := false
-	for _, flag := range flags {
-		if flag == flagWrapTxn {
-			wrapTxn = true
-		}
-	}
-	if wrapTxn {
-		// use a transaction here can let different SQLs in this operation have the same data visibility.
-		if _, err := utilstats.Exec(sctx, "begin"); err != nil {
-			return err
-		}
-		defer func() {
-			err = utilstats.FinishTransaction(sctx, err)
-		}()
-	}
-
-	return f(sctx)
+	return utilstats.CallWithSCtx(h.pool, f, flags...)
 }
 
 // GCIndexUsage will delete the usage information of those indexes that do not exist.
@@ -365,7 +330,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 
 		updated = affectedRows > 0
 		return nil
-	}, flagWrapTxn)
+	}, utilstats.FlagWrapTxn)
 	return
 }
 
