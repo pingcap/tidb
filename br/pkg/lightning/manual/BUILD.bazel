@@ -10,5 +10,9 @@ go_library(
     cgo = True,
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/manual",
     visibility = ["//visibility:public"],
-    deps = ["@org_uber_go_atomic//:atomic"],
+    deps = [
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
 )
