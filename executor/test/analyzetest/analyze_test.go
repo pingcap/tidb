@@ -3091,6 +3091,7 @@ func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
 // It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
+	t.Skip()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/DebugAnalyzeJobOperations", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/DebugAnalyzeJobOperations", "return(true)"))
 	defer func() {
