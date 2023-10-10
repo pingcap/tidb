@@ -75,7 +75,7 @@ func TestSel(t *testing.T) {
 		require.Equal(t, n-1, i)
 	}
 	checkByIter(NewMultiIterator(NewIterator4RowContainer(rc), NewIterator4Chunk(chk)))
-	rc.SpillToDisk()
+	rc.SpillToDisk(rc)
 	err := rc.m.records.spillError
 	require.NoError(t, err)
 	require.True(t, rc.AlreadySpilledSafeForTest())
@@ -218,6 +218,7 @@ func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
 	err = rc.Add(chk)
 	require.NoError(t, err)
 	rc.actionSpill.WaitForTest()
+	require.True(t, rc.AlreadySpilledSafeForTest())
 
 	_, err = rc.GetRow(RowPtr{})
 	require.EqualError(t, err, "sort meet error")
@@ -377,7 +378,7 @@ func TestRowContainerReaderInDisk(t *testing.T) {
 	})
 
 	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 16)
-	rc.SpillToDisk()
+	rc.SpillToDisk(rc)
 
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
@@ -398,7 +399,7 @@ func TestCloseRowContainerReader(t *testing.T) {
 	})
 
 	rc, allRows := insertBytesRowsIntoRowContainer(t, 16, 16)
-	rc.SpillToDisk()
+	rc.SpillToDisk(rc)
 
 	// read 8.5 of these chunks
 	reader := NewRowContainerReader(rc)
@@ -442,7 +443,7 @@ func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
 			}
 		}
 	}()
-	rc.SpillToDisk()
+	rc.SpillToDisk(rc)
 	wg.Wait()
 }
 
@@ -464,7 +465,7 @@ func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
 			reader.Next()
 		}
 	}
-	rc.SpillToDisk()
+	rc.SpillToDisk(rc)
 	for i := 8; i < 16; i++ {
 		for j := 0; j < 1024; j++ {
 			row := reader.Current()
@@ -535,7 +536,7 @@ func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int)
 
 	// create a row container which stores the data in disk
 	rc := NewRowContainer(fields, 1<<10)
-	rc.SpillToDisk()
+	rc.SpillToDisk(rc)
 
 	// insert `b.N * 1<<10` rows (`b.N` chunks) into the rc
 	for i := 0; i < b.N; i++ {

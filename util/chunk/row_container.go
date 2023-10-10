@@ -78,6 +78,12 @@ func (m *mutexForRowContainer) RUnlock() {
 	m.rLock.RUnlock()
 }
 
+type SpillHelper interface {
+	workBeforeSpill()
+	hasEnoughDataToSpill(t *memory.Tracker) bool
+	SpillToDisk(spillHelper SpillHelper)
+}
+
 // RowContainer provides a place for many rows, so many that we might want to spill them into disk.
 // nolint:structcheck
 type RowContainer struct {
@@ -123,7 +129,7 @@ func (c *RowContainer) workBeforeSpill() {
 }
 
 // SpillToDisk spills data to disk. This function may be called in parallel.
-func (c *RowContainer) SpillToDisk() {
+func (c *RowContainer) SpillToDisk(spillHelper SpillHelper) {
 	c.m.Lock()
 	defer c.m.Unlock()
 	if c.alreadySpilled() {
@@ -155,7 +161,7 @@ func (c *RowContainer) SpillToDisk() {
 			panic("out of disk quota when spilling")
 		}
 	})
-	c.workBeforeSpill()
+	spillHelper.workBeforeSpill()
 	n := c.m.records.inMemory.NumChunks()
 	for i := 0; i < n; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
@@ -401,31 +407,34 @@ func (a *SpillDiskAction) getStatus() spillStatus {
 	return a.cond.status
 }
 
-func (a *SpillDiskAction) hasEnoughDataToSpill(_ *memory.Tracker) bool {
+func (a *RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
 	// should check the memory consumed as SortAndSpillDiskAction?
 	return true
 }
 
+func (a *SpillDiskAction) Action(t *memory.Tracker) {
+	a.action(t, a.c)
+}
+
 // Action sends a signal to trigger spillToDisk method of RowContainer
 // and if it is already triggered before, call its fallbackAction.
-func (a *SpillDiskAction) Action(t *memory.Tracker) {
+func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper SpillHelper) {
 	a.m.Lock()
 	defer a.m.Unlock()
 
-	if a.getStatus() == notSpilled && a.hasEnoughDataToSpill(t) {
+	if a.getStatus() == notSpilled && spillHelper.hasEnoughDataToSpill(t) {
 		a.once.Do(func() {
 			logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 				zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 			if a.testSyncInputFunc != nil {
 				a.testSyncInputFunc()
-				c := a.c
 				go func() {
-					c.SpillToDisk()
+					spillHelper.SpillToDisk(spillHelper)
 					a.testSyncOutputFunc()
 				}()
 				return
 			}
-			go a.c.SpillToDisk()
+			go spillHelper.SpillToDisk(spillHelper)
 		})
 		return
 	}
@@ -579,10 +588,10 @@ func (c *SortedRowContainer) sort() {
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
 }
 
-func (c *SortedRowContainer) SpillToDisk() {
+func (c *SortedRowContainer) SpillToDisk(spillHelper SpillHelper) {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
-	c.RowContainer.SpillToDisk()
+	spillHelper.SpillToDisk(spillHelper)
 }
 
 func (c *SortedRowContainer) workBeforeSpill() {
@@ -650,9 +659,9 @@ type SortAndSpillDiskAction struct {
 	*SpillDiskAction
 }
 
-func (a *SortAndSpillDiskAction) hasEnoughDataToSpill(t *memory.Tracker) bool {
+func (c *SortedRowContainer) hasEnoughDataToSpill(t *memory.Tracker) bool {
 	// Guarantee that each partition size is at least 10% of the threshold, to avoid opening too many files.
-	return a.c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
+	return c.GetMemTracker().BytesConsumed() > t.GetBytesLimit()/10
 }
 
 // WaitForTest waits all goroutine have gone.
