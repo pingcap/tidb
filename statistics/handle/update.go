@@ -142,7 +142,7 @@ var (
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
 func (h *Handle) needDumpStatsDelta(is infoschema.InfoSchema, mode dumpMode, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tbl, ok := h.getTableByPhysicalID(is, id)
+	tbl, ok := h.TableInfoByID(is, id)
 	if !ok {
 		return false
 	}
