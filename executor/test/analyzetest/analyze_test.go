@@ -3056,6 +3056,8 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx_c"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Check(testkit.Rows(
 		"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate"))
 
 	is := dom.InfoSchema()
