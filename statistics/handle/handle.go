@@ -17,11 +17,8 @@ package handle
 import (
 	"fmt"
 	"math"
-	"strconv"
-	"sync"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
 	ddlUtil "github.com/pingcap/tidb/ddl/util"
@@ -30,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/statistics/handle/cache"
@@ -41,27 +37,35 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/usage"
 	"github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tiancaiamao/gp"
-	"github.com/tikv/client-go/v2/oracle"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 // Handle can update stats info periodically.
 type Handle struct {
-	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
-	gpool *gp.Pool
-	pool  sessionPool
+	pool util.SessionPool
 
 	// initStatsCtx is the ctx only used for initStats
 	initStatsCtx sessionctx.Context
 
 	// sysProcTracker is used to track sys process like analyze
 	sysProcTracker sessionctx.SysProcTracker
+
+	// TableInfoGetter is used to fetch table meta info.
+	util.TableInfoGetter
+
+	// StatsGC is used to GC stats.
+	util.StatsGC
+
+	// StatsUsage is used to track the usage of column / index statistics.
+	util.StatsUsage
+
+	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
+	gpool *gp.Pool
 
 	// autoAnalyzeProcIDGetter is used to generate auto analyze ID.
 	autoAnalyzeProcIDGetter func() uint64
@@ -75,29 +79,15 @@ type Handle struct {
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *usage.SessionIndexUsageCollector
 
-	// listHead contains all the stats collector required by session.
-	listHead *SessionStatsCollector
+	// SessionStatsList contains all the stats collector required by session.
+	*usage.SessionStatsList
 
 	// It can be read by multiple readers at the same time without acquiring lock, but it can be
 	// written only after acquiring the lock.
 	statsCache *cache.StatsCachePointer
 
-	// tableDelta contains all the delta map from collectors when we dump them to KV.
-	tableDelta *usage.TableDelta
-
-	// statsUsage contains all the column stats usage information from collectors when we dump them to KV.
-	statsUsage *usage.StatsUsage
-
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
-
-	schemaMu struct {
-		// pid2tid is the map from partition ID to table ID.
-		pid2tid map[int64]int64
-		// schemaVersion is the version of information schema when `pid2tid` is built.
-		schemaVersion int64
-		sync.RWMutex
-	}
 
 	lease atomic2.Duration
 }
@@ -121,30 +111,27 @@ func (h *Handle) Clear() {
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
-	h.listHead.ClearForTest()
-	h.tableDelta.Reset()
-	h.statsUsage.Reset()
-}
-
-type sessionPool interface {
-	Get() (pools.Resource, error)
-	Put(pools.Resource)
+	h.ResetSessionStatsList()
 }
 
 // NewHandle creates a Handle for update stats.
-func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool sessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
+func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool util.SessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
 	cfg := config.GetGlobalConfig()
 
 	handle := &Handle{
 		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
-		listHead:                NewSessionStatsCollector(),
+		SessionStatsList:        usage.NewSessionStatsList(),
 		idxUsageListHead:        usage.NewSessionIndexUsageCollector(nil),
 		pool:                    pool,
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
 		InitStatsDone:           make(chan struct{}),
+		TableInfoGetter:         util.NewTableInfoGetter(),
+		StatsUsage:              usage.NewStatsUsageImpl(pool),
 	}
+	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
+
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
 	statsCache, err := cache.NewStatsCachePointer()
@@ -152,8 +139,6 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool ses
 		return nil, err
 	}
 	handle.statsCache = statsCache
-	handle.tableDelta = usage.NewTableDelta()
-	handle.statsUsage = usage.NewStatsUsage()
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -169,11 +154,6 @@ func (h *Handle) Lease() time.Duration {
 // SetLease sets the stats lease.
 func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
-}
-
-// DurationToTS converts duration to timestamp.
-func DurationToTS(d time.Duration) uint64 {
-	return oracle.ComposeTS(d.Nanoseconds()/int64(time.Millisecond), 0)
 }
 
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
@@ -214,7 +194,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := DurationToTS(3 * h.Lease())
+	offset := util.DurationToTS(3 * h.Lease())
 	if oldCache.Version() >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -231,7 +211,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
-		table, ok := h.getTableByPhysicalID(is, physicalID)
+		table, ok := h.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -262,56 +242,6 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 	return nil
 }
 
-// UpdateSCtxVarsForStats updates all necessary variables that may affect the behavior of statistics.
-func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
-	// analyzer version
-	verInString, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeVersion)
-	if err != nil {
-		return err
-	}
-	ver, err := strconv.ParseInt(verInString, 10, 64)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzeVersion = int(ver)
-
-	// enable historical stats
-	val, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableHistoricalStats)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().EnableHistoricalStats = variable.TiDBOptOn(val)
-
-	// partition mode
-	pruneMode, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().PartitionPruneMode.Store(pruneMode)
-
-	// enable analyze snapshot
-	analyzeSnapshot, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBEnableAnalyzeSnapshot)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().EnableAnalyzeSnapshot = variable.TiDBOptOn(analyzeSnapshot)
-
-	// enable skip column types
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBAnalyzeSkipColumnTypes)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().AnalyzeSkipColumnTypes = variable.ParseAnalyzeSkipColumnTypes(val)
-
-	// skip missing partition stats
-	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
-	if err != nil {
-		return err
-	}
-	sctx.GetSessionVars().SkipMissingPartitionStats = variable.TiDBOptOn(val)
-	return nil
-}
-
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
 	sc sessionctx.Context,
@@ -321,7 +251,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(
 	histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table,
 ) (globalStats *globalstats.GlobalStats, err error) {
-	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, allPartitionStats, h.TableInfoByID, h.loadTablePartitionStats)
 }
 
 func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
@@ -349,40 +279,10 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	allPartitionStats map[int64]*statistics.Table,
 ) (gstats *globalstats.GlobalStats, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.getTableByPhysicalID, h.loadTablePartitionStats)
+		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex, histIDs, allPartitionStats, h.TableInfoByID, h.loadTablePartitionStats)
 		return err
 	})
 	return
-}
-
-func (h *Handle) getTableByPhysicalID(is infoschema.InfoSchema, physicalID int64) (table.Table, bool) {
-	h.schemaMu.Lock()
-	defer h.schemaMu.Unlock()
-	if is.SchemaMetaVersion() != h.schemaMu.schemaVersion {
-		h.schemaMu.schemaVersion = is.SchemaMetaVersion()
-		h.schemaMu.pid2tid = buildPartitionID2TableID(is)
-	}
-	if id, ok := h.schemaMu.pid2tid[physicalID]; ok {
-		return is.TableByID(id)
-	}
-	return is.TableByID(physicalID)
-}
-
-func buildPartitionID2TableID(is infoschema.InfoSchema) map[int64]int64 {
-	mapper := make(map[int64]int64)
-	for _, db := range is.AllSchemas() {
-		tbls := db.Tables
-		for _, tbl := range tbls {
-			pi := tbl.GetPartitionInfo()
-			if pi == nil {
-				continue
-			}
-			for _, def := range pi.Definitions {
-				mapper[def.ID] = tbl.ID
-			}
-		}
-	}
-	return mapper
 }
 
 // GetMemConsumed returns the mem size of statscache consumed
@@ -439,7 +339,7 @@ func (h *Handle) LoadNeededHistograms() (err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 		return storage.LoadNeededHistograms(sctx, h.statsCache, loadFMSketch)
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return err
 }
 
@@ -471,16 +371,16 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 		}
 		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, h.Lease(), statsTbl)
 		return err
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return
 }
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		count, modifyCount, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
+		count, modifyCount, _, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
 		return err
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return
 }
 
@@ -542,7 +442,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = extstats.InsertExtendedStats(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, colIDs, tp, tableID, ifNotExists)
+		statsVer, err = storage.InsertExtendedStats(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, colIDs, tp, tableID, ifNotExists)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -555,7 +455,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = extstats.MarkExtendedStatsDeleted(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, tableID, ifExists)
+		statsVer, err = storage.MarkExtendedStatsDeleted(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, tableID, ifExists)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -585,7 +485,7 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 		}
 		return fmt.Errorf("update stats cache failed for %d attempts", updateStatsCacheRetryCnt)
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 }
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
@@ -601,7 +501,7 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = extstats.SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
+		statsVer, err = storage.SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -626,33 +526,6 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-// LoadColumnStatsUsage loads column stats usage information from disk.
-func (h *Handle) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]usage.ColStatsTimeInfo, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		colStatsMap, err = usage.LoadColumnStatsUsage(sctx, loc)
-		return err
-	})
-	return
-}
-
-// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-func (h *Handle) CollectColumnsInExtendedStats(tableID int64) (columnIDs []int64, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		columnIDs, err = usage.CollectColumnsInExtendedStats(sctx, tableID)
-		return err
-	})
-	return
-}
-
-// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-func (h *Handle) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		columnIDs, err = usage.GetPredicateColumns(sctx, tableID)
-		return err
-	})
-	return
-}
-
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error) {
 	var js *storage.JSONTable
@@ -670,7 +543,7 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		version, err = history.RecordHistoricalStatsToStorage(sctx, physicalID, js)
 		return err
-	}, flagWrapTxn)
+	}, util.FlagWrapTxn)
 	return version, err
 }
 
