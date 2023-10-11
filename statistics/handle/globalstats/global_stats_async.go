@@ -66,9 +66,9 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	PartitionDefinition map[int64]model.PartitionDefinition
 	tableInfo           map[int64]*model.TableInfo
 	// key is partition id and histID
-	skipPartition             map[skipItem]struct{} //
+	skipPartition             map[skipItem]struct{}
 	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
-	loadTablePartitionStatsFn loadTablePartitionStatsFunc
+	callWithSCtxFunc          callWithSCtxFunc
 	exitChan                  chan struct{}
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
@@ -80,33 +80,30 @@ type AsyncMergePartitionStats2GlobalStats struct {
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
 func NewAsyncMergePartitionStats2GlobalStats(
-	pool util.SessionPool,
 	gpool *gp.Pool,
-	_ map[int64]*statistics.Table,
 	globalTableInfo *model.TableInfo,
 	histIDs []int64,
 	is infoschema.InfoSchema,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
-	loadTablePartitionStatsFn loadTablePartitionStatsFunc) (*AsyncMergePartitionStats2GlobalStats, error) {
+	callWithSCtxFunc callWithSCtxFunc) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
-		pool:                      pool,
-		cmsketch:                  make(chan mergeItem[*statistics.CMSketch], 5),
-		fmsketch:                  make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:          make(chan mergeItem[*StatsWrapper], 5),
-		PartitionDefinition:       make(map[int64]model.PartitionDefinition),
-		tableInfo:                 make(map[int64]*model.TableInfo),
-		partitionIDs:              make([]int64, 0, partitionNum),
-		exitChan:                  make(chan struct{}),
-		skipPartition:             make(map[skipItem]struct{}),
-		gpool:                     gpool,
-		allPartitionStats:         make(map[int64]*statistics.Table),
-		globalTableInfo:           globalTableInfo,
-		getTableByPhysicalIDFn:    getTableByPhysicalIDFn,
-		loadTablePartitionStatsFn: loadTablePartitionStatsFn,
-		histIDs:                   histIDs,
-		is:                        is,
-		partitionNum:              partitionNum,
+		callWithSCtxFunc:       callWithSCtxFunc,
+		cmsketch:               make(chan mergeItem[*statistics.CMSketch], 5),
+		fmsketch:               make(chan mergeItem[*statistics.FMSketch], 5),
+		histogramAndTopn:       make(chan mergeItem[*StatsWrapper], 5),
+		PartitionDefinition:    make(map[int64]model.PartitionDefinition),
+		tableInfo:              make(map[int64]*model.TableInfo),
+		partitionIDs:           make([]int64, 0, partitionNum),
+		exitChan:               make(chan struct{}),
+		skipPartition:          make(map[skipItem]struct{}),
+		gpool:                  gpool,
+		allPartitionStats:      make(map[int64]*statistics.Table),
+		globalTableInfo:        globalTableInfo,
+		getTableByPhysicalIDFn: getTableByPhysicalIDFn,
+		histIDs:                histIDs,
+		is:                     is,
+		partitionNum:           partitionNum,
 	}, nil
 }
 
@@ -347,44 +344,34 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	isIndex bool,
 ) error {
 	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
-
-	se, err := a.pool.Get()
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err == nil { // only recycle when no error
-			a.pool.Put(se)
-		}
-	}()
-	sc := se.(sessionctx.Context)
-	if err := util.UpdateSCtxVarsForStats(sc); err != nil {
-		return err
-	}
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	err = a.prepare(sc, isIndex)
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	metawg, _ := errgroup.WithContext(ctx)
-	mergeWg, _ := errgroup.WithContext(ctx)
-	metawg.Go(func() error {
-		return a.ioWorker(sc, isIndex)
-	})
-	mergeWg.Go(func() error {
-		return a.cpuWorker(stmtCtx, sc, opts, isIndex, tz, analyzeVersion)
-	})
-	err = metawg.Wait()
-	if err != nil {
-		if err1 := mergeWg.Wait(); err1 != nil {
-			err = stderrors.Join(err, err1)
-		}
-		return err
-	}
-	return mergeWg.Wait()
+	return a.callWithSCtxFunc(
+		func(sctx sessionctx.Context) error {
+			err := a.prepare(sctx, isIndex)
+			if err != nil {
+				return err
+			}
+			ctx := context.Background()
+			metawg, _ := errgroup.WithContext(ctx)
+			mergeWg, _ := errgroup.WithContext(ctx)
+			metawg.Go(func() error {
+				return a.ioWorker(sctx, isIndex)
+			})
+			mergeWg.Go(func() error {
+				return a.cpuWorker(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
+			})
+			err = metawg.Wait()
+			if err != nil {
+				if err1 := mergeWg.Wait(); err1 != nil {
+					err = stderrors.Join(err, err1)
+				}
+				return err
+			}
+			return mergeWg.Wait()
+		},
+	)
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Context, isIndex bool) error {

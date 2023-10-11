@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/tiancaiamao/gp"
@@ -64,14 +63,12 @@ func newGlobalStats(histCount int) *GlobalStats {
 }
 
 type (
-	getTableByPhysicalIDFunc    func(is infoschema.InfoSchema, tableID int64) (table.Table, bool)
-	loadTablePartitionStatsFunc func(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
-	// GlobalStatusHandler is used to handle the global-level stats.
+	getTableByPhysicalIDFunc func(is infoschema.InfoSchema, tableID int64) (table.Table, bool)
+	callWithSCtxFunc         func(f func(sctx sessionctx.Context) error, flags ...int) (err error)
 )
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
 func MergePartitionStats2GlobalStats(
-	pool util.SessionPool,
 	sc sessionctx.Context,
 	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
@@ -79,11 +76,10 @@ func MergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
-	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
+	callWithSCtxFunc callWithSCtxFunc,
 ) (globalStats *GlobalStats, err error) {
-	worker, err := NewAsyncMergePartitionStats2GlobalStats(pool, gpool, allPartitionStats, globalTableInfo, histIDs, is, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
+	worker, err := NewAsyncMergePartitionStats2GlobalStats(gpool, globalTableInfo, histIDs, is, getTableByPhysicalIDFn, callWithSCtxFunc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -96,7 +92,6 @@ func MergePartitionStats2GlobalStats(
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func MergePartitionStats2GlobalStatsByTableID(
-	pool util.SessionPool,
 	sc sessionctx.Context,
 	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
@@ -104,9 +99,8 @@ func MergePartitionStats2GlobalStatsByTableID(
 	tableID int64,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
-	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
+	callWithSCtxFunc callWithSCtxFunc,
 ) (globalStats *GlobalStats, err error) {
 	// Get the partition table IDs.
 	globalTable, ok := getTableByPhysicalIDFn(is, tableID)
@@ -117,7 +111,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 
 	globalTableInfo := globalTable.Meta()
 
-	worker, err := NewAsyncMergePartitionStats2GlobalStats(pool, gpool, allPartitionStats, globalTableInfo, histIDs, is, getTableByPhysicalIDFn, loadTablePartitionStatsFn)
+	worker, err := NewAsyncMergePartitionStats2GlobalStats(gpool, globalTableInfo, histIDs, is, getTableByPhysicalIDFn, callWithSCtxFunc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
