@@ -2777,12 +2777,8 @@ func pickColumnList(astColChoice model.ColumnChoice, astColList []*model.ColumnI
 	return tblSavedColChoice, tblSavedColList
 }
 
-// buildAnalyzeTable constructs anylyze tasks for each table.
+// buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
-	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
-	}
-
 	p := &Analyze{Opts: opts}
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
 	usePersistedOptions := variable.PersistAnalyzeOptions.Load()
@@ -2858,10 +2854,6 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 }
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
-	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
-	}
-
 	p := &Analyze{Opts: opts}
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	if statsHandle == nil {
@@ -2914,10 +2906,6 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 }
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
-	if as.Incremental {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
-	}
-
 	p := &Analyze{Opts: opts}
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
 	if statsHandle == nil {
@@ -3138,7 +3126,12 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 	return optMap, nil
 }
 
+const removedIncrementalAnalyzeMsg = "the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"
+
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	if as.Incremental {
+		return nil, errors.Errorf(removedIncrementalAnalyzeMsg)
+	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
 	// Require INSERT and SELECT privilege for tables.
 	b.requireInsertAndSelectPriv(as.TableNames)
