@@ -562,12 +562,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tidb_statistics_update_stats_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
 		Labels:  []string{"instance", "type"},
 	},
-	"tidb_statistics_fast_analyze_status": {
-		Comment:  "The quantile of TiDB fast analyze statistics ",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_statistics_fast_analyze_status_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, type,instance))",
-		Labels:   []string{"instance", "type"},
-		Quantile: 0.95,
-	},
 	"tidb_new_etcd_session_duration": {
 		Comment:  "The quantile of TiDB new session durations for new etcd sessions",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_owner_new_session_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,result, instance))",
@@ -2983,16 +2977,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tidb_tikvclient_txn_write_size_bytes_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total kv write size in transaction execution",
-	},
-	"tidb_statistics_fast_analyze_status_total_count": {
-		PromQL:  "sum(increase(tidb_statistics_fast_analyze_status_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
-		Labels:  []string{"instance", "type"},
-		Comment: "The total count of TiDB fast analyze statistics ",
-	},
-	"tidb_statistics_fast_analyze_total_status": {
-		PromQL:  "sum(increase(tidb_statistics_fast_analyze_status_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
-		Labels:  []string{"instance", "type"},
-		Comment: "The total time of TiDB fast analyze statistics ",
 	},
 	"tidb_statistics_stats_inaccuracy_rate_total_count": {
 		PromQL:  "sum(increase(tidb_statistics_stats_inaccuracy_rate_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",

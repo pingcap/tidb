@@ -160,7 +160,7 @@ var MockDMLExecutionAddIndexSubTaskFinish func()
 func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
-		if val.(bool) && MockDMLExecutionAddIndexSubTaskFinish != nil {
+		if val.(bool) {
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})

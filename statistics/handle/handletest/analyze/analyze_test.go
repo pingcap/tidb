@@ -19,8 +19,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -246,51 +244,4 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
 	))
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
-}
-
-func TestFastAnalyzeColumnHistWithNullValue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int)")
-	testKit.MustExec("insert into t values (1), (2), (3), (4), (NULL)")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
-	testKit.MustExec("set @@tidb_enable_fast_analyze=1")
-	defer testKit.MustExec("set @@tidb_enable_fast_analyze=0")
-	testKit.MustExec("analyze table t with 0 topn, 2 buckets")
-	// If NULL is in hist, the min(lower_bound) will be "".
-	testKit.MustQuery("select min(lower_bound) from mysql.stats_buckets").Check(testkit.Rows("1"))
-}
-
-func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
-	t.Skip("now we don't support to evict index")
-	restore := config.RestoreFunc()
-	defer restore()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.EnableStatsCacheMemQuota = true
-	})
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b varchar(10), index idx_b (b))")
-	tk.MustExec("analyze table test.t")
-	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.Nil(t, err)
-	tblStats := domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
-	for _, index := range tblStats.Indices {
-		require.False(t, index.IsEvicted())
-	}
-
-	domain.GetDomain(tk.Session()).StatsHandle().SetStatsCacheCapacity(1)
-	tblStats = domain.GetDomain(tk.Session()).StatsHandle().GetTableStats(tbl.Meta())
-	for _, index := range tblStats.Indices {
-		require.True(t, index.IsEvicted())
-	}
-
-	require.Nil(t, failpoint.Enable("github.com/pingcap/tidb/executor/assertEvictIndex", `return(true)`))
-	tk.MustExec("analyze incremental table test.t index idx_b")
-	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/executor/assertEvictIndex"))
 }

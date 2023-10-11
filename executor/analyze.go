@@ -80,9 +80,6 @@ type taskType int
 const (
 	colTask taskType = iota
 	idxTask
-	fastTask
-	pkIncrementalTask
-	idxIncrementalTask
 )
 
 // Next implements the Executor Next interface.
@@ -274,12 +271,6 @@ func getTableIDFromTask(task *analyzeTask) statistics.AnalyzeTableID {
 		return task.colExec.tableID
 	case idxTask:
 		return task.idxExec.tableID
-	case fastTask:
-		return task.fastExec.tableID
-	case pkIncrementalTask:
-		return task.colIncrementalExec.tableID
-	case idxIncrementalTask:
-		return task.idxIncrementalExec.tableID
 	}
 
 	panic("unreachable")
@@ -504,24 +495,15 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 			resultsCh <- analyzeColumnsPushDownEntry(task.colExec)
 		case idxTask:
 			resultsCh <- analyzeIndexPushdown(task.idxExec)
-		case fastTask:
-			resultsCh <- analyzeFastExec(task.fastExec)
-		case pkIncrementalTask:
-			resultsCh <- analyzePKIncremental(task.colIncrementalExec)
-		case idxIncrementalTask:
-			resultsCh <- analyzeIndexIncremental(task.idxIncrementalExec)
 		}
 	}
 }
 
 type analyzeTask struct {
-	taskType           taskType
-	idxExec            *AnalyzeIndexExec
-	colExec            *AnalyzeColumnsExec
-	fastExec           *AnalyzeFastExec
-	idxIncrementalExec *analyzeIndexIncrementalExec
-	colIncrementalExec *analyzePKIncrementalExec
-	job                *statistics.AnalyzeJob
+	taskType taskType
+	idxExec  *AnalyzeIndexExec
+	colExec  *AnalyzeColumnsExec
+	job      *statistics.AnalyzeJob
 }
 
 type baseAnalyzeExec struct {
