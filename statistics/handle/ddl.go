@@ -276,7 +276,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
+			h.RecordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
 		}
 	}()
 
@@ -308,7 +308,7 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
+			h.RecordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
 		}
 	}()
 
@@ -330,7 +330,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.recordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
+			h.RecordHistoricalStatsMeta(physicalID, statsVer, StatsMetaHistorySourceSchemaChange)
 		}
 	}()
 

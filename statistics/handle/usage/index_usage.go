@@ -26,6 +26,25 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
+// NewSessionIndexUsageCollector creates a new IndexUsageCollector on the list.
+// The returned value's type should be *usage.SessionIndexUsageCollector, use interface{} to avoid cycle import now.
+// TODO: use *usage.SessionIndexUsageCollector instead of interface{}.
+func (u *statsUsageImpl) NewSessionIndexUsageCollector() interface{} {
+	return newSessionIndexUsageCollector(u.idxUsageListHead)
+}
+
+// DumpIndexUsageToKV dumps all collected index usage info to storage.
+func (u *statsUsageImpl) DumpIndexUsageToKV() error {
+	return util.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+		return dumpIndexUsageToKV(sctx, u.idxUsageListHead)
+	})
+}
+
+// GCIndexUsage removes unnecessary index usage data.
+func (u *statsUsageImpl) GCIndexUsage() error {
+	return util.CallWithSCtx(u.pool, gcIndexUsageOnKV)
+}
+
 // IndexUsageInformation is the data struct to store index usage information.
 type IndexUsageInformation struct {
 	LastUsedAt   string
@@ -67,9 +86,9 @@ type SessionIndexUsageCollector struct {
 	deleted bool
 }
 
-// NewSessionIndexUsageCollector creates a new SessionIndexUsageCollector.
+// newSessionIndexUsageCollector creates a new SessionIndexUsageCollector.
 // If listHead is not nil, add this element to the list.
-func NewSessionIndexUsageCollector(listHead *SessionIndexUsageCollector) *SessionIndexUsageCollector {
+func newSessionIndexUsageCollector(listHead *SessionIndexUsageCollector) *SessionIndexUsageCollector {
 	if listHead == nil {
 		return &SessionIndexUsageCollector{mapper: make(indexUsage)}
 	}
@@ -146,8 +165,8 @@ func sweepIdxUsageList(listHead *SessionIndexUsageCollector) indexUsage {
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 
-// DumpIndexUsageToKV will dump in-memory index usage information to KV.
-func DumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageCollector) error {
+// dumpIndexUsageToKV will dump in-memory index usage information to KV.
+func dumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageCollector) error {
 	mapper := sweepIdxUsageList(listHead)
 	type FullIndexUsageInformation struct {
 		information IndexUsageInformation
@@ -180,8 +199,8 @@ func DumpIndexUsageToKV(sctx sessionctx.Context, listHead *SessionIndexUsageColl
 	return nil
 }
 
-// GCIndexUsageOnKV will delete the usage information of non-existent indexes.
-func GCIndexUsageOnKV(sctx sessionctx.Context) error {
+// gcIndexUsageOnKV will delete the usage information of non-existent indexes.
+func gcIndexUsageOnKV(sctx sessionctx.Context) error {
 	// For performance and implementation reasons, mysql.schema_index_usage doesn't handle DDL.
 	// We periodically delete the usage information of non-existent indexes through information_schema.tidb_indexes.
 	// This sql will delete the usage information of those indexes that not in information_schema.tidb_indexes.
