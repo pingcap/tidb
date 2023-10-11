@@ -146,19 +146,6 @@ type Domain struct {
 	memoryUsageAlarmHandle  *memoryusagealarm.Handle
 	serverMemoryLimitHandle *servermemorylimit.Handle
 	// TODO: use Run for each process in future pr
-<<<<<<< HEAD
-	wg                    *util.WaitGroupEnhancedWrapper
-	statsUpdating         atomicutil.Int32
-	cancel                context.CancelFunc
-	indexUsageSyncLease   time.Duration
-	dumpFileGcChecker     *dumpFileGcChecker
-	planReplayerHandle    *planReplayerHandle
-	extractTaskHandle     *ExtractHandle
-	expiredTimeStamp4PC   types.Time
-	logBackupAdvancer     *daemon.OwnerDaemon
-	historicalStatsWorker *HistoricalStatsWorker
-	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
-=======
 	wg                  *util.WaitGroupEnhancedWrapper
 	statsUpdating       atomicutil.Int32
 	cancel              context.CancelFunc
@@ -172,20 +159,14 @@ type Domain struct {
 		sync.RWMutex
 		expiredTimeStamp types.Time
 	}
-
-	logBackupAdvancer        *daemon.OwnerDaemon
-	historicalStatsWorker    *HistoricalStatsWorker
-	ttlJobManager            atomic.Pointer[ttlworker.JobManager]
-	runawayManager           *resourcegroup.RunawayManager
-	runawaySyncer            *runawaySyncer
-	resourceGroupsController *rmclient.ResourceGroupsController
->>>>>>> 29727caacb8 (domain: use dedicated lock for expiredTimeStamp4PC (#45802))
-
-	serverID             uint64
-	serverIDSession      *concurrency.Session
-	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
-	onClose              func()
-	sysExecutorFactory   func(*Domain) (pools.Resource, error)
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	serverID              uint64
+	serverIDSession       *concurrency.Session
+	isLostConnectionToPD  atomicutil.Int32 // !0: true, 0: false.
+	onClose               func()
+	sysExecutorFactory    func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
 
