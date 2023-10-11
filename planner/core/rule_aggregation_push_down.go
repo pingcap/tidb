@@ -432,9 +432,9 @@ func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, uni
 }
 
 func (a *aggregationPushDownSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	newLogicalPlan, err := a.aggPushDown(p, opt)
-	return newLogicalPlan, err, changedFlag
+	return newLogicalPlan, err, planChanged
 }
 
 func (a *aggregationPushDownSolver) tryAggPushDownForUnion(union *LogicalUnionAll, agg *LogicalAggregation, opt *logicalOptimizeOp) error {

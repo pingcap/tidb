@@ -32,9 +32,9 @@ type columnPruner struct {
 }
 
 func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	err := lp.PruneColumns(lp.Schema().Columns, opt)
-	return lp, err, changedFlag
+	return lp, err, planChanged
 }
 
 // ExprsHasSideEffects checks if any of the expressions has side effects.

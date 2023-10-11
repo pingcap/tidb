@@ -26,9 +26,9 @@ import (
 type buildKeySolver struct{}
 
 func (*buildKeySolver) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	buildKeyInfo(p)
-	return p, nil, changedFlag
+	return p, nil, planChanged
 }
 
 // buildKeyInfo recursively calls LogicalPlan's BuildKeyInfo method.

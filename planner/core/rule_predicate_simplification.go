@@ -66,8 +66,8 @@ func findPredicateType(expr expression.Expression) (*expression.Column, predicat
 }
 
 func (*predicateSimplification) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
-	return p.predicateSimplification(opt), nil, changedFlag
+	planChanged := false
+	return p.predicateSimplification(opt), nil, planChanged
 }
 
 func (s *baseLogicalPlan) predicateSimplification(opt *logicalOptimizeOp) LogicalPlan {

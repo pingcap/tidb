@@ -194,7 +194,7 @@ func (*decorrelateSolver) aggDefaultValueMap(agg *LogicalAggregation) map[int]*e
 
 // optimize implements logicalOptRule interface.
 func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	if apply, ok := p.(*LogicalApply); ok {
 		outerPlan := apply.children[0]
 		innerPlan := apply.children[1]
@@ -273,13 +273,13 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				proj.SetSchema(apply.Schema())
 				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
 				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, err, changedFlag := s.optimize(ctx, p, opt)
+				np, err, planChanged := s.optimize(ctx, p, opt)
 				if err != nil {
-					return nil, err, changedFlag
+					return nil, err, planChanged
 				}
 				proj.SetChildren(np)
 				appendMoveProjTraceStep(apply, np, proj, opt)
-				return proj, nil, changedFlag
+				return proj, nil, planChanged
 			}
 			appendRemoveProjTraceStep(apply, proj, opt)
 			return s.optimize(ctx, p, opt)
@@ -314,7 +314,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 				for i, col := range outerPlan.Schema().Columns {
 					first, err := aggregation.NewAggFuncDesc(agg.SCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
 					if err != nil {
-						return nil, err, changedFlag
+						return nil, err, planChanged
 					}
 					newAggFuncs = append(newAggFuncs, first)
 
@@ -344,20 +344,20 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 					}
 					desc, err := aggregation.NewAggFuncDesc(agg.SCtx(), agg.AggFuncs[i].Name, aggArgs, agg.AggFuncs[i].HasDistinct)
 					if err != nil {
-						return nil, err, changedFlag
+						return nil, err, planChanged
 					}
 					newAggFuncs = append(newAggFuncs, desc)
 				}
 				agg.AggFuncs = newAggFuncs
-				np, err, changedFlag := s.optimize(ctx, p, opt)
+				np, err, planChanged := s.optimize(ctx, p, opt)
 				if err != nil {
-					return nil, err, changedFlag
+					return nil, err, planChanged
 				}
 				agg.SetChildren(np)
 				appendPullUpAggTraceStep(apply, np, agg, opt)
 				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
 				// agg.buildProjectionIfNecessary()
-				return agg, nil, changedFlag
+				return agg, nil, planChanged
 			}
 			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
 			// the equal conditions contain the correlated column of this apply.
@@ -392,7 +392,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 							if agg.schema.ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
 								newFunc, err := aggregation.NewAggFuncDesc(apply.SCtx(), ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
 								if err != nil {
-									return nil, err, changedFlag
+									return nil, err, planChanged
 								}
 								agg.AggFuncs = append(agg.AggFuncs, newFunc)
 								agg.schema.Append(clonedCol)
@@ -445,18 +445,18 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 NoOptimize:
 	// CTE's logical optimization is independent.
 	if _, ok := p.(*LogicalCTE); ok {
-		return p, nil, changedFlag
+		return p, nil, planChanged
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		np, err, changedFlag := s.optimize(ctx, child, opt)
+		np, err, planChanged := s.optimize(ctx, child, opt)
 		if err != nil {
-			return nil, err, changedFlag
+			return nil, err, planChanged
 		}
 		newChildren = append(newChildren, np)
 	}
 	p.SetChildren(newChildren...)
-	return p, nil, changedFlag
+	return p, nil, planChanged
 }
 
 func (*decorrelateSolver) name() string {

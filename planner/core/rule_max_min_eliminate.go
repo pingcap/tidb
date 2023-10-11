@@ -37,8 +37,8 @@ type maxMinEliminator struct {
 }
 
 func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
-	return a.eliminateMaxMin(p, opt), nil, changedFlag
+	planChanged := false
+	return a.eliminateMaxMin(p, opt), nil, planChanged
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.

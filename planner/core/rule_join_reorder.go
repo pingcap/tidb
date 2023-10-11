@@ -223,13 +223,13 @@ type joinTypeWithExtMsg struct {
 }
 
 func (s *joinReOrderSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	tracer := &joinReorderTrace{cost: map[string]float64{}, opt: opt}
 	tracer.traceJoinReorder(p)
 	p, err := s.optimizeRecursive(p.SCtx(), p, tracer)
 	tracer.traceJoinReorder(p)
 	appendJoinReorderTraceStep(tracer, p, opt)
-	return p, err, changedFlag
+	return p, err, planChanged
 }
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.

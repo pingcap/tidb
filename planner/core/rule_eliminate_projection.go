@@ -168,9 +168,9 @@ type projectionEliminator struct {
 
 // optimize implements the logicalOptRule interface.
 func (pe *projectionEliminator) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	root := pe.eliminate(lp, make(map[string]*expression.Column), false, opt)
-	return root, nil, changedFlag
+	return root, nil, planChanged
 }
 
 // eliminate eliminates the redundant projection in a logical plan.

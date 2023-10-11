@@ -62,9 +62,9 @@ const FullRange = -1
 type partitionProcessor struct{}
 
 func (s *partitionProcessor) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	p, err := s.rewriteDataSource(lp, opt)
-	return p, err, changedFlag
+	return p, err, planChanged
 }
 
 func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {

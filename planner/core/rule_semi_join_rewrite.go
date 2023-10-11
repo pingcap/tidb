@@ -26,9 +26,9 @@ type semiJoinRewriter struct {
 }
 
 func (smj *semiJoinRewriter) optimize(_ context.Context, p LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	newLogicalPlan, err := smj.recursivePlan(p)
-	return newLogicalPlan, err, changedFlag
+	return newLogicalPlan, err, planChanged
 }
 
 func (*semiJoinRewriter) name() string {

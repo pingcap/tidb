@@ -43,9 +43,9 @@ type exprPrefixAdder struct {
 }
 
 func (*ppdSolver) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	_, p := lp.PredicatePushDown(nil, opt)
-	return p, nil, changedFlag
+	return p, nil, planChanged
 }
 
 func addSelection(p LogicalPlan, child LogicalPlan, conditions []expression.Expression, chIdx int, opt *logicalOptimizeOp) {

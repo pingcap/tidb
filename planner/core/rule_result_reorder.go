@@ -40,12 +40,12 @@ type resultReorder struct {
 }
 
 func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	ordered := rs.completeSort(lp)
 	if !ordered {
 		lp = rs.injectSort(lp)
 	}
-	return lp, nil, changedFlag
+	return lp, nil, planChanged
 }
 
 func (rs *resultReorder) completeSort(lp LogicalPlan) bool {

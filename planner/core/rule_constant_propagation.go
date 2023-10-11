@@ -51,7 +51,7 @@ type constantPropagationSolver struct {
 // Currently only the Logical Join implements this function. (Used for the subquery in FROM List)
 // In the future, the Logical Apply will implements this function. (Used for the subquery in WHERE or SELECT list)
 func (cp *constantPropagationSolver) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	// constant propagation root plan
 	newRoot := p.constantPropagation(nil, 0, opt)
 
@@ -61,9 +61,9 @@ func (cp *constantPropagationSolver) optimize(_ context.Context, p LogicalPlan, 
 	}
 
 	if newRoot == nil {
-		return p, nil, changedFlag
+		return p, nil, planChanged
 	}
-	return newRoot, nil, changedFlag
+	return newRoot, nil, planChanged
 }
 
 // execOptimize optimize constant propagation exclude root plan node

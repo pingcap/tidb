@@ -37,13 +37,13 @@ type ExprColumnMap map[expression.Expression]*expression.Column
 // an index on c. We need to replace a+1 with c so that we can use the index on c.
 // See also https://dev.mysql.com/doc/refman/8.0/en/generated-column-index-optimizations.html
 func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	exprToColumn := make(ExprColumnMap)
 	collectGenerateColumn(lp, exprToColumn)
 	if len(exprToColumn) == 0 {
-		return lp, nil, changedFlag
+		return lp, nil, planChanged
 	}
-	return gc.substitute(ctx, lp, exprToColumn, opt), nil, changedFlag
+	return gc.substitute(ctx, lp, exprToColumn, opt), nil, planChanged
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.

@@ -73,11 +73,11 @@ type resolveExpand struct {
 //
 // Expand operator itself is kind like a projection, while difference is that it has a multi projection list, named as leveled projection.
 func (*resolveExpand) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
-	changedFlag := false
+	planChanged := false
 	// As you see, Expand's leveled projection should be built after all column-prune is done. So we just make generating-leveled-projection
 	// as the last rule of logical optimization, which is more clear. (spark has column prune action before building expand)
 	newLogicalPlan, err := genExpand(p, opt)
-	return newLogicalPlan, err, changedFlag
+	return newLogicalPlan, err, planChanged
 }
 
 func (*resolveExpand) name() string {
