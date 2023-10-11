@@ -511,7 +511,6 @@ type AnalyzeInfo struct {
 	TableName     string
 	PartitionName string
 	TableID       statistics.AnalyzeTableID
-	Incremental   bool
 	StatsVersion  int
 	V2Options     *V2AnalyzeOptions
 }

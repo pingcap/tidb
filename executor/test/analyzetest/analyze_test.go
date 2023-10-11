@@ -42,8 +42,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
@@ -588,87 +586,6 @@ func TestAnalyzeIndex(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_version=1")
 	tk.MustExec("analyze table t1 index k")
 	require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 1)
-}
-
-func TestAnalyzeIncremental(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	testAnalyzeIncremental(tk, t, dom)
-}
-
-func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domain) {
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
-	tk.MustExec("insert into t values (1,1)")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 1 1 0"))
-	tk.MustExec("insert into t values (2,2)")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
-	tk.MustExec("analyze incremental table t index")
-	// Result should not change.
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
-
-	tk.MustExec("set @@tidb_enable_paging = off")
-
-	tk.MustExec("insert into t values (3,3)")
-	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := table.Meta()
-	tk.MustQuery("select * from t use index(idx) where b = 3")
-	tk.MustQuery("select * from t where a > 1")
-	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(is))
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
-	tblStats := h.GetTableStats(tblInfo)
-	val, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
-	require.True(t, statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag))
-	require.True(t, statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag))
-
-	tk.MustExec("analyze incremental table t index")
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  a 0 2 3 1 3 3 0",
-		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
-	tblStats = h.GetTableStats(tblInfo)
-	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
-
-	// test analyzeIndexIncremental for global-level stats;
-	tk.MustExec("set @@session.tidb_analyze_version = 1;")
-	tk.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b)) partition by range (a) (
-		partition p0 values less than (10),
-		partition p1 values less than (20),
-		partition p2 values less than (30)
-	);`)
-	tk.MustExec("analyze incremental table t index")
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
-	tk.MustExec("insert into t values (1,1)")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
-	tk.MustExec("insert into t values (2,2)")
-	tk.MustExec("analyze incremental table t index")
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
-	tk.MustExec("insert into t values (11,11)")
-	err = tk.ExecToErr("analyze incremental table t index")
-	require.Equal(t, "[stats]: global statistics for partitioned tables unavailable in ANALYZE INCREMENTAL", err.Error())
 }
 
 func TestIssue20874(t *testing.T) {
