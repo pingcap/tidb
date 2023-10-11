@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -eux
 DB="$TEST_NAME"
 
 run_sql "CREATE DATABASE $DB;"
@@ -36,6 +36,7 @@ run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB"
 
 # Test debug decode
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "Schemas"
+run_br -s "local://$TEST_DIR/$DB" debug decode --field "SchemaIndex"
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "EndVersion"
 # Ensure compatibility
 run_br -s "local://$TEST_DIR/$DB" validate decode --field "end-version"
@@ -43,6 +44,8 @@ run_br -s "local://$TEST_DIR/$DB" validate decode --field "end-version"
 # Test redact-log and redact-info-log compalibility
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "Schemas" --redact-log=true
 run_br -s "local://$TEST_DIR/$DB" debug decode --field "Schemas" --redact-info-log=true
+run_br -s "local://$TEST_DIR/$DB" debug decode --field "SchemaIndex" --redact-log=true
+run_br -s "local://$TEST_DIR/$DB" debug decode --field "SchemaIndex" --redact-info-log=true
 
 # Test validate backupmeta
 run_br debug backupmeta validate -s "local://$TEST_DIR/$DB"

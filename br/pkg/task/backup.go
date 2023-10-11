@@ -136,7 +136,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// This flag is used for test. we should backup stats all the time.
 	_ = flags.MarkHidden(flagIgnoreStats)
 
-	flags.Bool(flagUseBackupMetaV2, false,
+	flags.Bool(flagUseBackupMetaV2, true,
 		"use backup meta v2 to store meta info")
 
 	flags.String(flagKeyspaceName, "", "keyspace name for backup")
@@ -147,7 +147,9 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	// if we put this feature in v4.0.14, then v4.0.14 br can parse v2 meta
 	// but will generate v1 meta due to this flag is false. the behaviour is as same as v4.0.15, v4.0.16.
 	// finally v4.0.17 will set this flag to true, and generate v2 meta.
-	_ = flags.MarkHidden(flagUseBackupMetaV2)
+	//
+	// the version currently is v7.4.0, the flag can be set to true as default value.
+	// _ = flags.MarkHidden(flagUseBackupMetaV2)
 
 	flags.Bool(flagUseCheckpoint, true, "use checkpoint mode")
 	_ = flags.MarkHidden(flagUseCheckpoint)
