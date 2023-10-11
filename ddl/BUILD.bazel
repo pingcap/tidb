@@ -123,6 +123,7 @@ go_library(
         "//types",
         "//types/parser_driver",
         "//util",
+        "//util/backoff",
         "//util/chunk",
         "//util/codec",
         "//util/collate",
