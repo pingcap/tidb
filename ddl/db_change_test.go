@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -412,32 +411,6 @@ type sqlWithErr struct {
 type expectQuery struct {
 	sql  string
 	rows []string
-}
-
-func TestAppendEnum(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	tk.MustExec("use test_db_state")
-	tk.MustExec(`create table t (
-			c1 varchar(64),
-			c2 enum('N','Y') not null default 'N',
-			c3 timestamp on update current_timestamp,
-			c4 int primary key,
-			unique key idx2 (c2, c3))`)
-	tk.MustExec("insert into t values('a', 'N', '2017-07-01', 8)")
-	// Make sure these SQLs use the plan of index scan.
-	tk.MustExec("drop stats t")
-	tk.MustGetErrMsg("insert into t values('a', 'A', '2018-09-19', 9)", "[types:1265]Data truncated for column 'c2' at row 1")
-	tk.MustExec("alter table t change c2 c2 enum('N') DEFAULT 'N'")
-	tk.MustExec("alter table t change c2 c2 int default 0")
-	tk.MustExec("alter table t change c2 c2 enum('N','Y','A') DEFAULT 'A'")
-	tk.MustExec("insert into t values('a', 'A', '2018-09-20', 10)")
-	tk.MustExec("insert into t (c1, c3, c4) values('a', '2018-09-21', 11)")
-	tk.MustQuery("select c4, c2 from t order by c4 asc").Check(testkit.Rows("8 N", "10 A", "11 A"))
-	// fixed
-	tk.MustExec("update t set c2='N' where c4 = 10")
-	tk.MustQuery("select c2 from t where c4 = 10").Check(testkit.Rows("N"))
 }
 
 // https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
@@ -1897,15 +1870,6 @@ func TestDropExpressionIndex(t *testing.T) {
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10"))
-}
-
-func TestExpressionIndexDDLError(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index idx((a+b)))")
-	tk.MustGetErrCode("alter table t rename column b to b2", errno.ErrDependentByFunctionalIndex)
-	tk.MustGetErrCode("alter table t drop column b", errno.ErrDependentByFunctionalIndex)
 }
 
 func TestParallelRenameTable(t *testing.T) {

@@ -27,30 +27,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRenameIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (pk int primary key, c int default 1, c1 int default 1, unique key k1(c), key k2(c1))")
-
-	// Test rename success
-	tk.MustExec("alter table t rename index k1 to k3")
-	tk.MustExec("admin check index t k3")
-
-	// Test rename to the same name
-	tk.MustExec("alter table t rename index k3 to k3")
-	tk.MustExec("admin check index t k3")
-
-	// Test rename on non-exists keys
-	tk.MustGetErrCode("alter table t rename index x to x", errno.ErrKeyDoesNotExist)
-
-	// Test rename on already-exists keys
-	tk.MustGetErrCode("alter table t rename index k3 to k2", errno.ErrDupKeyName)
-
-	tk.MustExec("alter table t rename index k2 to K2")
-	tk.MustGetErrCode("alter table t rename key k3 to K2", errno.ErrDupKeyName)
-}
-
 // See issue: https://github.com/pingcap/tidb/issues/29752
 // Ref https://dev.mysql.com/doc/refman/8.0/en/rename-table.html
 func TestRenameTableWithLocked(t *testing.T) {
