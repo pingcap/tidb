@@ -21,8 +21,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // Column represents a column histogram.
@@ -164,12 +162,6 @@ func ColumnStatsIsInvalid(colStats *Column, sctx sessionctx.Context, histColl *H
 			stmtctx != nil &&
 			histColl.PhysicalID > 0 &&
 			!histColl.CanNotTriggerLoad {
-			if stmtctx.StatsLoad.Timeout > 0 {
-				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-					zap.Int64("table id", histColl.PhysicalID),
-					zap.Int64("column id", cid),
-				)
-			}
 			HistogramNeededItems.insert(model.TableItemID{TableID: histColl.PhysicalID, ID: cid, IsIndex: false})
 		}
 	}

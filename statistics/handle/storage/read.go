@@ -509,6 +509,12 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache *cache.Stats
 	tbl.Columns[col.ID] = colHist
 	statsCache.UpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
+	if sctx.GetSessionVars().StmtCtx.StatsLoad.Timeout > 0 {
+		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
+			zap.Int64("table id", tbl.PhysicalID),
+			zap.Int64("column id", col.ID),
+		)
+	}
 	return nil
 }
 
