@@ -248,21 +248,6 @@ func TestFMSWithAnalyzePartition(t *testing.T) {
 	tk.MustQuery("select count(*) from mysql.stats_fm_sketch").Check(testkit.Rows("2"))
 }
 
-func TestFastAnalyzeColumnHistWithNullValue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t (a int)")
-	testKit.MustExec("insert into t values (1), (2), (3), (4), (NULL)")
-	testKit.MustExec("set @@session.tidb_analyze_version = 1")
-	testKit.MustExec("set @@tidb_enable_fast_analyze=1")
-	defer testKit.MustExec("set @@tidb_enable_fast_analyze=0")
-	testKit.MustExec("analyze table t with 0 topn, 2 buckets")
-	// If NULL is in hist, the min(lower_bound) will be "".
-	testKit.MustQuery("select min(lower_bound) from mysql.stats_buckets").Check(testkit.Rows("1"))
-}
-
 func TestAnalyzeIncrementalEvictedIndex(t *testing.T) {
 	t.Skip("now we don't support to evict index")
 	restore := config.RestoreFunc()

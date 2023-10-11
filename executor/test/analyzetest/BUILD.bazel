@@ -28,8 +28,6 @@ go_test(
         "//statistics",
         "//statistics/handle",
         "//statistics/handle/autoanalyze",
-        "//store/mockstore",
-        "//tablecodec",
         "//testkit",
         "//types",
         "//util/codec",
@@ -37,8 +35,6 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//testutils",
-        "@com_github_tikv_client_go_v2//tikv",
         "@org_uber_go_goleak//:goleak",
     ],
 )
