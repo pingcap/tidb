@@ -64,8 +64,8 @@ type Manager struct {
 	schedulerPool Pool
 	mu            struct {
 		sync.RWMutex
-		// taskID -> cancelFunc.
-		// cancelFunc is used to fast cancel the scheduler.Run.
+		// taskID -> CancelCauseFunc.
+		// CancelCauseFunc is used to fast cancel the scheduler.Run.
 		handlingTasks map[int64]context.CancelCauseFunc
 	}
 	// id, it's the same as server id now, i.e. host:port.
