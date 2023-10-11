@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/replayer"
@@ -443,7 +443,7 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 }
 
 func loadStats(ctx sessionctx.Context, f *zip.File) error {
-	jsonTbl := &handle.JSONTable{}
+	jsonTbl := &storage.JSONTable{}
 	r, err := f.Open()
 	if err != nil {
 		return errors.AddStack(err)
@@ -463,7 +463,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	if h == nil {
 		return errors.New("plan replayer: hanlde is nil")
 	}
-	return h.LoadStatsFromJSON(ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl)
+	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }
 
 // Update updates the data of the corresponding table.

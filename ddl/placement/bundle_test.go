@@ -17,6 +17,7 @@ package placement
 import (
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -395,7 +396,7 @@ func TestNewBundleFromOptions(t *testing.T) {
 		input: &model.PlacementSettings{
 			LearnerConstraints: "[+region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		err: ErrInvalidConstraintsReplicas,
 	})
 
 	tests = append(tests, TestCase{
@@ -588,6 +589,40 @@ func TestNewBundleFromOptions(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
+		name: "direct syntax: only leader constraints",
+		input: &model.PlacementSettings{
+			LeaderConstraints: "[+region=as]",
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 2, NewConstraintsDirect()),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: only leader constraints",
+		input: &model.PlacementSettings{
+			LeaderConstraints: "[+region=as]",
+			Followers:         4,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 4, NewConstraintsDirect()),
+		},
+	})
+	tests = append(tests, TestCase{
+		name: "direct syntax: leader and follower constraints",
+		input: &model.PlacementSettings{
+			LeaderConstraints:   "[+region=as]",
+			FollowerConstraints: `{"+region=us": 2}`,
+		},
+		output: []*Rule{
+			NewRule(Leader, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "as"))),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
 		name: "direct syntax: lack count 1",
 		input: &model.PlacementSettings{
 			LeaderConstraints:   "[+region=as]",
@@ -605,7 +640,7 @@ func TestNewBundleFromOptions(t *testing.T) {
 			LeaderConstraints:  "[+region=as]",
 			LearnerConstraints: "[-region=us]",
 		},
-		err: ErrInvalidPlacementOptions,
+		err: ErrInvalidConstraintsReplicas,
 	})
 
 	tests = append(tests, TestCase{
@@ -710,7 +745,41 @@ func TestNewBundleFromOptions(t *testing.T) {
 			LearnerConstraints: `{"+region=us": 2}`,
 			Learners:           4,
 		},
-		err: ErrInvalidConstraintsRelicas,
+		err: ErrInvalidConstraintsReplicas,
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: dict constraints",
+		input: &model.PlacementSettings{
+			Constraints: `{"+region=us": 3}`,
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect(NewConstraintDirect("region", In, "us"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: dict constraints, 2:2:1",
+		input: &model.PlacementSettings{
+			Constraints: `{ "+region=us-east-1":2, "+region=us-east-2": 2, "+region=us-west-1": 1}`,
+		},
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us-east-1"))),
+			NewRule(Voter, 2, NewConstraintsDirect(NewConstraintDirect("region", In, "us-east-2"))),
+			NewRule(Voter, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "us-west-1"))),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name: "direct syntax: dict constraints",
+		input: &model.PlacementSettings{
+			Constraints:        `{"+region=us-east": 3}`,
+			LearnerConstraints: `{"+region=us-west": 1}`,
+		},
+		output: []*Rule{
+			NewRule(Voter, 3, NewConstraintsDirect(NewConstraintDirect("region", In, "us-east"))),
+			NewRule(Learner, 1, NewConstraintsDirect(NewConstraintDirect("region", In, "us-west"))),
+		},
 	})
 
 	for _, test := range tests {
@@ -855,23 +924,23 @@ func TestTidy(t *testing.T) {
 	rules1, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
 	require.NoError(t, err)
 	require.Len(t, rules1, 1)
-	rules2, err := NewRules(Voter, 4, `["-zone=sh", "+zone=bj"]`)
+	rules2, err := NewRules(Voter, 0, `{"-zone=sh,+zone=bj": 4}}`)
 	require.NoError(t, err)
 	bundle.Rules = append(bundle.Rules, rules0...)
 	bundle.Rules = append(bundle.Rules, rules1...)
 	bundle.Rules = append(bundle.Rules, rules2...)
 
+	require.Len(t, bundle.Rules, 3)
 	err = bundle.Tidy()
 	require.NoError(t, err)
-	require.Len(t, bundle.Rules, 2)
-	require.Equal(t, "1", bundle.Rules[0].ID)
+	require.Len(t, bundle.Rules, 1)
+	require.Equal(t, "0", bundle.Rules[0].ID)
 	require.Len(t, bundle.Rules[0].Constraints, 3)
 	require.Equal(t, Constraint{
 		Op:     NotIn,
 		Key:    EngineLabelKey,
 		Values: []string{EngineLabelTiFlash},
 	}, bundle.Rules[0].Constraints[2])
-	require.Equal(t, "2", bundle.Rules[1].ID)
 
 	// merge
 	rules3, err := NewRules(Follower, 4, "")
@@ -892,19 +961,18 @@ func TestTidy(t *testing.T) {
 	}
 	chkfunc := func() {
 		require.NoError(t, err)
-		require.Len(t, bundle.Rules, 3)
+		require.Len(t, bundle.Rules, 2)
 		require.Equal(t, "0", bundle.Rules[0].ID)
 		require.Equal(t, "1", bundle.Rules[1].ID)
-		require.Equal(t, "follower", bundle.Rules[2].ID)
-		require.Equal(t, 9, bundle.Rules[2].Count)
+		require.Equal(t, 9, bundle.Rules[1].Count)
 		require.Equal(t, Constraints{
 			{
 				Op:     NotIn,
 				Key:    EngineLabelKey,
 				Values: []string{EngineLabelTiFlash},
 			},
-		}, bundle.Rules[2].Constraints)
-		require.Equal(t, []string{"zone", "host"}, bundle.Rules[2].LocationLabels)
+		}, bundle.Rules[1].Constraints)
+		require.Equal(t, []string{"zone", "host"}, bundle.Rules[1].LocationLabels)
 	}
 	err = bundle.Tidy()
 	chkfunc()
@@ -921,10 +989,474 @@ func TestTidy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, bundle, bundle2)
 
-	bundle.Rules[2].Constraints = append(bundle.Rules[2].Constraints, Constraint{
+	bundle.Rules[1].Constraints = append(bundle.Rules[1].Constraints, Constraint{
 		Op:     In,
 		Key:    EngineLabelKey,
 		Values: []string{EngineLabelTiFlash},
 	})
 	require.ErrorIs(t, bundle.Tidy(), ErrConflictingConstraints)
+}
+
+func TestTidy2(t *testing.T) {
+	tests := []struct {
+		name     string
+		bundle   Bundle
+		expected Bundle
+	}{
+		{
+			name: "Empty bundle",
+			bundle: Bundle{
+				Rules: []*Rule{},
+			},
+			expected: Bundle{
+				Rules: []*Rule{},
+			},
+		},
+		{
+			name: "Rules with empty constraints are merged",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:             "1",
+						Role:           Leader,
+						Count:          1,
+						Constraints:    Constraints{},
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:             "2",
+						Role:           Voter,
+						Count:          2,
+						Constraints:    Constraints{},
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:             "0",
+						Role:           Voter,
+						Count:          3,
+						Constraints:    Constraints{},
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints are merged, Leader + Follower",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          2,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          3,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints are merged, Leader + Voter",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          2,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          3,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints and role are merged,  Leader + Follower + Voter",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          3,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints and role are merged,  Leader + Follower + Voter + Learner",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "4",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          2,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          3,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          2,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints and role are merged,  Leader + Follower + Learner | Follower",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "4",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          2,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with same constraints and role are merged,  Leader + Follower + Learner | Voter",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "4",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "1",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Learner,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "3",
+						Role: Voter,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+		{
+			name: "Rules with different constraints are kept separate",
+			bundle: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "1",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "2",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+			expected: Bundle{
+				Rules: []*Rule{
+					{
+						ID:   "0",
+						Role: Leader,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"1"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+					{
+						ID:   "1",
+						Role: Follower,
+						Constraints: Constraints{
+							{Op: In, Key: "rack", Values: []string{"2"}},
+						},
+						Count:          1,
+						LocationLabels: []string{"region"},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.bundle.Tidy()
+			require.NoError(t, err)
+
+			require.Equal(t, len(tt.expected.Rules), len(tt.bundle.Rules))
+
+			for i, rule := range tt.bundle.Rules {
+				expectedRule := tt.expected.Rules[i]
+				// Tiflash is always excluded from the constraints.
+				expectedRule.Constraints.Add(Constraint{
+					Op:     NotIn,
+					Key:    EngineLabelKey,
+					Values: []string{EngineLabelTiFlash},
+				})
+				if !reflect.DeepEqual(rule, expectedRule) {
+					t.Errorf("unexpected rule at index %d:\nactual=%#v,\nexpected=%#v\n", i, rule, expectedRule)
+				}
+			}
+		})
+	}
 }

@@ -40,7 +40,6 @@ import (
 	pumpcli "github.com/pingcap/tidb/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
@@ -563,8 +562,8 @@ func jobNeedGC(job *model.Job) bool {
 			model.ActionAlterTablePartitioning:
 			return true
 		case model.ActionMultiSchemaChange:
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := sub.ToProxyJob(job)
+			for i, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job, i)
 				needGC := jobNeedGC(&proxyJob)
 				if needGC {
 					return true
@@ -835,19 +834,13 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 	w.registerSync(job)
 
-	if runJobErr != nil {
-		// Omit the ErrPausedDDLJob
-		if !dbterror.ErrPausedDDLJob.Equal(runJobErr) {
-			// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
-			// which may act like a deadlock.
-			w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
-				zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
-		}
-
-		// In test and job is cancelling we can ignore the sleep
-		if !(intest.InTest && job.IsCancelling()) {
-			time.Sleep(GetWaitTimeWhenErrorOccurred())
-		}
+	// If error is non-retryable, we can ignore the sleep.
+	if runJobErr != nil && errorIsRetryable(runJobErr, job) {
+		w.jobLogger(job).Info("run DDL job failed, sleeps a while then retries it.",
+			zap.Duration("waitTime", GetWaitTimeWhenErrorOccurred()), zap.Error(runJobErr))
+		// wait a while to retry again. If we don't wait here, DDL will retry this job immediately,
+		// which may act like a deadlock.
+		time.Sleep(GetWaitTimeWhenErrorOccurred())
 	}
 
 	return schemaVer, nil
@@ -1190,14 +1183,14 @@ func toTError(err error) *terror.Error {
 	return dbterror.ClassDDL.Synthesize(terror.CodeUnknown, err.Error())
 }
 
-// waitSchemaChanged waits for the completion of updating all servers' schema. In order to make sure that happens,
+// waitSchemaChanged waits for the completion of updating all servers' schema or MDL synced. In order to make sure that happens,
 // we wait at most 2 * lease time(sessionTTL, 90 seconds).
-func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) {
+func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion int64, job *model.Job) error {
 	if !job.IsRunning() && !job.IsRollingback() && !job.IsDone() && !job.IsRollbackDone() {
-		return
+		return nil
 	}
 	if waitTime == 0 {
-		return
+		return nil
 	}
 
 	timeStart := time.Now()
@@ -1208,16 +1201,19 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 
 	if latestSchemaVersion == 0 {
 		logutil.Logger(d.ctx).Info("schema version doesn't change", zap.String("category", "ddl"))
-		return
+		return nil
 	}
 
 	err = d.schemaSyncer.OwnerUpdateGlobalVersion(d.ctx, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("update latest schema version failed", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		if variable.EnableMDL.Load() {
+			return err
+		}
 		if terror.ErrorEqual(err, context.DeadlineExceeded) {
 			// If err is context.DeadlineExceeded, it means waitTime(2 * lease) is elapsed. So all the schemas are synced by ticker.
 			// There is no need to use etcd to sync. The function returns directly.
-			return
+			return nil
 		}
 	}
 
@@ -1225,12 +1221,13 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 	err = d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
 		logutil.Logger(d.ctx).Info("wait latest schema version encounter error", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		return
+		return err
 	}
 	logutil.Logger(d.ctx).Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)", zap.String("category", "ddl"),
 		zap.Int64("ver", latestSchemaVersion),
 		zap.Duration("take time", time.Since(timeStart)),
 		zap.String("job", job.String()))
+	return nil
 }
 
 // waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
@@ -1289,8 +1286,7 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		}
 	})
 
-	waitSchemaChanged(d, waitTime, latestSchemaVersion, job)
-	return nil
+	return waitSchemaChanged(d, waitTime, latestSchemaVersion, job)
 }
 
 func buildPlacementAffects(oldIDs []int64, newIDs []int64) []*model.AffectedOption {
@@ -1377,9 +1373,13 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		affects := make([]*model.AffectedOption, len(newSchemaIDs))
+		affects := make([]*model.AffectedOption, len(newSchemaIDs)-1)
 		for i, newSchemaID := range newSchemaIDs {
-			affects[i] = &model.AffectedOption{
+			// Do not add the first table to AffectedOpts. Related issue tidb#47064.
+			if i == 0 {
+				continue
+			}
+			affects[i-1] = &model.AffectedOption{
 				SchemaID:    newSchemaID,
 				TableID:     tableIDs[i],
 				OldTableID:  tableIDs[i],
@@ -1420,6 +1420,10 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 			// Keep this as Schema ID of non-partitioned table
 			// to avoid trigger early rename in TiFlash
 			diff.AffectedOpts[0].SchemaID = job.SchemaID
+			// Need reload partition table, use diff.AffectedOpts[0].OldSchemaID to mark it.
+			if len(multiInfos) > 0 {
+				diff.AffectedOpts[0].OldSchemaID = ptSchemaID
+			}
 		} else {
 			// Swap
 			diff.TableID = ptDefID

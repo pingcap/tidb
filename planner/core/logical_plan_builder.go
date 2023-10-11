@@ -50,7 +50,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/table/temptable"
@@ -163,8 +162,6 @@ const (
 	HintNoIndexMerge = "no_index_merge"
 	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
 	HintMaxExecutionTime = "max_execution_time"
-	// HintTidbKvReadTimeout specifies timeout value for any readonly kv request in milliseconds
-	HintTidbKvReadTimeout = "tidb_kv_read_timeout"
 )
 
 const (
@@ -4723,10 +4720,10 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo)
 	} else {
 		usePartitionStats = true
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
 
 	allowPseudoTblTriggerLoading := false
@@ -4791,9 +4788,9 @@ func getLatestVersionFromStatsTable(ctx sessionctx.Context, tblInfo *model.Table
 
 	var statsTbl *statistics.Table
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
-		statsTbl = statsHandle.GetTableStats(tblInfo, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetTableStats(tblInfo)
 	} else {
-		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid, cache.WithTableStatsByQuery())
+		statsTbl = statsHandle.GetPartitionStats(tblInfo, pid)
 	}
 
 	// 2. Table row count from statistics is zero. Pseudo stats table.
@@ -6744,7 +6741,7 @@ func (b *PlanBuilder) buildByItemsForWindow(
 // For type `Range`, the bound expr must be temporal or numeric types.
 func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast.WindowSpec, orderByItems []property.SortItem, boundClause *ast.FrameBound) (*FrameBound, error) {
 	frameType := spec.Frame.Type
-	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded}
+	bound := &FrameBound{Type: boundClause.Type, UnBounded: boundClause.UnBounded, IsExplicitRange: false}
 	if bound.UnBounded {
 		return bound, nil
 	}
@@ -6792,7 +6789,9 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		}
 	}
 
+	bound.IsExplicitRange = true
 	desc := orderByItems[0].Desc
+	var funcName string
 	if boundClause.Unit != ast.TimeUnitInvalid {
 		// TODO: Perhaps we don't need to transcode this back to generic string
 		unitVal := boundClause.Unit.String()
@@ -6804,29 +6803,32 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 		// When the order is asc:
 		//   `+` for following, and `-` for the preceding
 		// When the order is desc, `+` becomes `-` and vice-versa.
-		funcName := ast.DateAdd
+		funcName = ast.DateAdd
 		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
 			funcName = ast.DateSub
 		}
+
 		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr, &unit)
 		if err != nil {
 			return nil, err
 		}
-		bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
-		return bound, nil
+	} else {
+		// When the order is asc:
+		//   `+` for following, and `-` for the preceding
+		// When the order is desc, `+` becomes `-` and vice-versa.
+		funcName = ast.Plus
+		if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
+			funcName = ast.Minus
+		}
+
+		bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
+		if err != nil {
+			return nil, err
+		}
 	}
-	// When the order is asc:
-	//   `+` for following, and `-` for the preceding
-	// When the order is desc, `+` becomes `-` and vice-versa.
-	funcName := ast.Plus
-	if (!desc && bound.Type == ast.Preceding) || (desc && bound.Type == ast.Following) {
-		funcName = ast.Minus
-	}
-	bound.CalcFuncs[0], err = expression.NewFunctionBase(b.ctx, funcName, col.RetType, col, &expr)
-	if err != nil {
-		return nil, err
-	}
-	bound.CmpFuncs[0] = expression.GetCmpFunction(b.ctx, orderByItems[0].Col, bound.CalcFuncs[0])
+
+	cmpDataType := expression.GetAccurateCmpType(col, bound.CalcFuncs[0])
+	bound.updateCmpFuncsAndCmpDataType(cmpDataType)
 	return bound, nil
 }
 

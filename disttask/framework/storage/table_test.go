@@ -40,20 +40,28 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func TestGlobalTaskTable(t *testing.T) {
+func GetResourcePool(t *testing.T) *pools.ResourcePool {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return tk.Session(), nil
 	}, 1, 1, time.Second)
-	defer pool.Close()
-	gm := storage.NewTaskManager(context.Background(), pool)
+	return pool
+}
 
-	storage.SetTaskManager(gm)
-	gm, err := storage.GetTaskManager()
+func GetTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager {
+	manager := storage.NewTaskManager(context.Background(), pool)
+	storage.SetTaskManager(manager)
+	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
+	return manager
+}
 
+func TestGlobalTaskTable(t *testing.T) {
+	pool := GetResourcePool(t)
+	gm := GetTaskManager(t, pool)
+	defer pool.Close()
 	id, err := gm.AddNewGlobalTask("key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
@@ -80,6 +88,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, task4, 1)
 	require.Equal(t, task, task4[0])
+	require.GreaterOrEqual(t, task4[0].StateUpdateTime, task.StateUpdateTime)
 
 	prevState := task.State
 	task.State = proto.TaskStateRunning
@@ -90,11 +99,12 @@ func TestGlobalTaskTable(t *testing.T) {
 	task5, err := gm.GetGlobalTasksInStates(proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Len(t, task5, 1)
-	require.Equal(t, task, task5[0])
+	require.Equal(t, task.State, task5[0].State)
 
 	task6, err := gm.GetGlobalTaskByKey("key1")
 	require.NoError(t, err)
-	require.Equal(t, task, task6)
+	require.Len(t, task5, 1)
+	require.Equal(t, task.State, task6.State)
 
 	// test cannot insert task with dup key
 	_, err = gm.AddNewGlobalTask("key1", "test2", 4, []byte("test2"))
@@ -115,27 +125,18 @@ func TestGlobalTaskTable(t *testing.T) {
 }
 
 func TestSubTaskTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
+	pool := GetResourcePool(t)
+	sm := GetTaskManager(t, pool)
 	defer pool.Close()
-	sm := storage.NewTaskManager(context.Background(), pool)
 
-	storage.SetTaskManager(sm)
-	sm, err := storage.GetTaskManager()
+	err := sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 
-	err = sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false)
-	require.NoError(t, err)
-
-	nilTask, err := sm.GetSubtaskInStates("tidb2", 1, proto.StepInit, proto.TaskStatePending)
+	nilTask, err := sm.GetFirstSubtaskInStates("tidb2", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Nil(t, nilTask)
 
-	subtask, err := sm.GetSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending)
+	subtask, err := sm.GetFirstSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskTypeExample, subtask.Type)
 	require.Equal(t, int64(1), subtask.TaskID)
@@ -145,7 +146,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Zero(t, subtask.StartTime)
 	require.Zero(t, subtask.UpdateTime)
 
-	subtask2, err := sm.GetSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending, proto.TaskStateReverted)
+	subtask2, err := sm.GetFirstSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending, proto.TaskStateReverted)
 	require.NoError(t, err)
 	require.Equal(t, subtask, subtask2)
 
@@ -170,18 +171,15 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	err = sm.UpdateSubtaskHeartbeat("tidb1", 1, time.Now())
-	require.NoError(t, err)
-
 	ts := time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.StartSubtask(1))
 
-	subtask, err = sm.GetSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending)
+	subtask, err = sm.GetFirstSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Nil(t, subtask)
 
-	subtask, err = sm.GetSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStateRunning)
+	subtask, err = sm.GetFirstSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskTypeExample, subtask.Type)
 	require.Equal(t, int64(1), subtask.TaskID)
@@ -194,7 +192,7 @@ func TestSubTaskTable(t *testing.T) {
 	// check update time after state change to cancel
 	time.Sleep(time.Second)
 	require.NoError(t, sm.UpdateSubtaskStateAndError(1, proto.TaskStateCancelling, nil))
-	subtask2, err = sm.GetSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStateCancelling)
+	subtask2, err = sm.GetFirstSubtaskInStates("tidb1", 1, proto.StepInit, proto.TaskStateCancelling)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateCancelling, subtask2.State)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
@@ -245,7 +243,7 @@ func TestSubTaskTable(t *testing.T) {
 	err = sm.AddNewSubTask(3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
 	require.NoError(t, sm.UpdateErrorToSubtask("for_test", 3, errors.New("fail")))
-	subtask, err = sm.GetSubtaskInStates("for_test", 3, proto.StepInit, proto.TaskStateFailed)
+	subtask, err = sm.GetFirstSubtaskInStates("for_test", 3, proto.StepInit, proto.TaskStateFailed)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateFailed, subtask.State)
 	require.Greater(t, subtask.StartTime, ts)
@@ -254,28 +252,28 @@ func TestSubTaskTable(t *testing.T) {
 	// test FinishSubtask do update update time
 	err = sm.AddNewSubTask(4, proto.StepInit, "for_test1", []byte("test"), proto.TaskTypeExample, false)
 	require.NoError(t, err)
-	subtask, err = sm.GetSubtaskInStates("for_test1", 4, proto.StepInit, proto.TaskStatePending)
+	subtask, err = sm.GetFirstSubtaskInStates("for_test1", 4, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.NoError(t, sm.StartSubtask(subtask.ID))
-	subtask, err = sm.GetSubtaskInStates("for_test1", 4, proto.StepInit, proto.TaskStateRunning)
+	subtask, err = sm.GetFirstSubtaskInStates("for_test1", 4, proto.StepInit, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Greater(t, subtask.StartTime, ts)
 	require.Greater(t, subtask.UpdateTime, ts)
 	time.Sleep(time.Second)
 	require.NoError(t, sm.FinishSubtask(subtask.ID, []byte{}))
-	subtask2, err = sm.GetSubtaskInStates("for_test1", 4, proto.StepInit, proto.TaskStateSucceed)
+	subtask2, err = sm.GetFirstSubtaskInStates("for_test1", 4, proto.StepInit, proto.TaskStateSucceed)
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
 
 	// test UpdateFailedSchedulerIDs and IsSchedulerCanceled
-	canceled, err := sm.IsSchedulerCanceled(4, "for_test999")
+	canceled, err := sm.IsSchedulerCanceled("for_test999", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(4, "for_test1")
+	canceled, err = sm.IsSchedulerCanceled("for_test1", 4)
 	require.NoError(t, err)
 	require.False(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(4, "for_test2")
+	canceled, err = sm.IsSchedulerCanceled("for_test2", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
 
@@ -285,30 +283,21 @@ func TestSubTaskTable(t *testing.T) {
 		"for_test2": "for_test999",
 	}))
 
-	canceled, err = sm.IsSchedulerCanceled(4, "for_test1")
+	canceled, err = sm.IsSchedulerCanceled("for_test1", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(4, "for_test2")
+	canceled, err = sm.IsSchedulerCanceled("for_test2", 4)
 	require.NoError(t, err)
 	require.True(t, canceled)
-	canceled, err = sm.IsSchedulerCanceled(4, "for_test999")
+	canceled, err = sm.IsSchedulerCanceled("for_test999", 4)
 	require.NoError(t, err)
 	require.False(t, canceled)
 }
 
 func TestBothGlobalAndSubTaskTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
+	pool := GetResourcePool(t)
+	sm := GetTaskManager(t, pool)
 	defer pool.Close()
-	sm := storage.NewTaskManager(context.Background(), pool)
-
-	storage.SetTaskManager(sm)
-	sm, err := storage.GetTaskManager()
-	require.NoError(t, err)
 
 	id, err := sm.AddNewGlobalTask("key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
@@ -323,11 +312,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	subTasks := []*proto.Subtask{
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance1",
 			Meta:        []byte("m1"),
 		},
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance2",
 			Meta:        []byte("m2"),
@@ -341,13 +332,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateRunning, task.State)
 
-	subtask1, err := sm.GetSubtaskInStates("instance1", 1, proto.StepInit, proto.TaskStatePending)
+	subtask1, err := sm.GetFirstSubtaskInStates("instance1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), subtask1.ID)
 	require.Equal(t, proto.TaskTypeExample, subtask1.Type)
 	require.Equal(t, []byte("m1"), subtask1.Meta)
 
-	subtask2, err := sm.GetSubtaskInStates("instance2", 1, proto.StepInit, proto.TaskStatePending)
+	subtask2, err := sm.GetFirstSubtaskInStates("instance2", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), subtask2.ID)
 	require.Equal(t, proto.TaskTypeExample, subtask2.Type)
@@ -362,11 +353,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateReverting
 	subTasks = []*proto.Subtask{
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance3",
 			Meta:        []byte("m3"),
 		},
 		{
+			Step:        proto.StepInit,
 			Type:        proto.TaskTypeExample,
 			SchedulerID: "instance4",
 			Meta:        []byte("m4"),
@@ -380,13 +373,13 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateReverting, task.State)
 
-	subtask1, err = sm.GetSubtaskInStates("instance3", 1, proto.StepInit, proto.TaskStateRevertPending)
+	subtask1, err = sm.GetFirstSubtaskInStates("instance3", 1, proto.StepInit, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), subtask1.ID)
 	require.Equal(t, proto.TaskTypeExample, subtask1.Type)
 	require.Equal(t, []byte("m3"), subtask1.Meta)
 
-	subtask2, err = sm.GetSubtaskInStates("instance4", 1, proto.StepInit, proto.TaskStateRevertPending)
+	subtask2, err = sm.GetFirstSubtaskInStates("instance4", 1, proto.StepInit, proto.TaskStateRevertPending)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), subtask2.ID)
 	require.Equal(t, proto.TaskTypeExample, subtask2.Type)
@@ -418,17 +411,9 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 }
 
 func TestDistFrameworkMeta(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
+	pool := GetResourcePool(t)
+	sm := GetTaskManager(t, pool)
 	defer pool.Close()
-	sm := storage.NewTaskManager(context.Background(), pool)
-
-	storage.SetTaskManager(sm)
-	sm, err := storage.GetTaskManager()
-	require.NoError(t, err)
 
 	require.NoError(t, sm.StartManager(":4000", "background"))
 	require.NoError(t, sm.StartManager(":4001", ""))
@@ -448,18 +433,9 @@ func TestDistFrameworkMeta(t *testing.T) {
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
+	pool := GetResourcePool(t)
+	sm := GetTaskManager(t, pool)
 	defer pool.Close()
-	sm := storage.NewTaskManager(context.Background(), pool)
-
-	storage.SetTaskManager(sm)
-	sm, err := storage.GetTaskManager()
-	require.NoError(t, err)
 
 	const (
 		taskID       = 1
@@ -505,7 +481,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 
-	// test GC
+	// test GC history table.
 	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
@@ -516,9 +492,84 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.NoError(t, sm.UpdateSubtaskStateAndError(subTask4, proto.TaskStateFailed, nil))
 	require.NoError(t, sm.TransferSubTasks2History(taskID2))
 
-	require.NoError(t, sm.GC())
+	require.NoError(t, sm.GCSubtasks())
 
 	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(sm)
 	require.NoError(t, err)
 	require.Equal(t, 1, historySubTasksCnt)
+}
+
+func TestTaskHistoryTable(t *testing.T) {
+	pool := GetResourcePool(t)
+	gm := GetTaskManager(t, pool)
+	defer pool.Close()
+
+	_, err := gm.AddNewGlobalTask("1", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	taskID, err := gm.AddNewGlobalTask("2", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+
+	tasks, err := gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 2, len(tasks))
+
+	require.NoError(t, gm.TransferTasks2History(tasks))
+
+	tasks, err = gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(tasks))
+	num, err := storage.GetTasksFromHistoryForTest(gm)
+	require.NoError(t, err)
+	require.Equal(t, 2, num)
+
+	task, err := gm.GetTaskByIDWithHistory(taskID)
+	require.NoError(t, err)
+	require.NotNil(t, task)
+
+	task, err = gm.GetGlobalTaskByKeyWithHistory("1")
+	require.NoError(t, err)
+	require.NotNil(t, task)
+
+	// task with fail transfer
+	_, err = gm.AddNewGlobalTask("3", proto.TaskTypeExample, 1, nil)
+	require.NoError(t, err)
+	tasks, err = gm.GetGlobalTasksInStates(proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(tasks))
+	tasks[0].Error = errors.New("mock err")
+	require.NoError(t, gm.TransferTasks2History(tasks))
+	num, err = storage.GetTasksFromHistoryForTest(gm)
+	require.NoError(t, err)
+	require.Equal(t, 3, num)
+}
+
+func TestPauseAndResume(t *testing.T) {
+	pool := GetResourcePool(t)
+	sm := GetTaskManager(t, pool)
+	defer pool.Close()
+	require.NoError(t, sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	require.NoError(t, sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	require.NoError(t, sm.AddNewSubTask(1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, false))
+	// 1.1 pause all subtasks.
+	require.NoError(t, sm.PauseSubtasks("tidb1", 1))
+	cnt, err := sm.GetSubtaskInStatesCnt(1, proto.TaskStatePaused)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), cnt)
+	// 1.2 resume all subtasks.
+	require.NoError(t, sm.ResumeSubtasks(1))
+	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), cnt)
+
+	// 2.1 pause 2 subtasks.
+	sm.UpdateSubtaskStateAndError(1, proto.TaskStateSucceed, nil)
+	require.NoError(t, sm.PauseSubtasks("tidb1", 1))
+	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStatePaused)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cnt)
+	// 2.2 resume 2 subtasks.
+	require.NoError(t, sm.ResumeSubtasks(1))
+	cnt, err = sm.GetSubtaskInStatesCnt(1, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), cnt)
 }

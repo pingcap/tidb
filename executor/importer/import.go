@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,11 +30,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
@@ -49,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -92,6 +96,7 @@ const (
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
+	cloudStorageURIOption       = "cloud_storage_uri"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
 )
@@ -115,6 +120,7 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+		cloudStorageURIOption:       true,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -195,6 +201,7 @@ type Plan struct {
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
+	CloudStorageURI       string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -248,6 +255,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
+	// GlobalSortStore is used to store sorted data when using global sort.
+	GlobalSortStore storage.ExternalStorage
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -497,6 +506,7 @@ func (p *Plan) initDefaultOptions() {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+	p.CloudStorageURI = variable.CloudStorageURI.Load()
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -654,6 +664,25 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
 		p.DisableTiKVImportMode = true
 	}
+	if opt, ok := specifiedOptions[cloudStorageURIOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		// set cloud storage uri to empty string to force uses local sort when
+		// the global variable is set.
+		if v != "" {
+			b, err := storage.ParseBackend(v, nil)
+			if err != nil {
+				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			}
+			// only support s3 and gcs now.
+			if b.GetS3() == nil && b.GetGcs() == nil {
+				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			}
+		}
+		p.CloudStorageURI = v
+	}
 	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil {
@@ -715,7 +744,11 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	optionMap := make(map[string]interface{}, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			optionMap[opt.Name] = opt.Value.String()
+			val := opt.Value.String()
+			if opt.Name == cloudStorageURIOption {
+				val = ast.RedactURL(val)
+			}
+			optionMap[opt.Name] = val
 		} else {
 			optionMap[opt.Name] = nil
 		}
@@ -863,11 +896,64 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	return csvConfig
 }
 
+// InitDataStore initializes the data store.
+func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+	u, err2 := storage.ParseRawURL(e.Path)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
+	}
+
+	if storage.IsLocal(u) {
+		u.Path = filepath.Dir(e.Path)
+	} else {
+		u.Path = ""
+	}
+	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	e.dataStore = s
+
+	if e.IsGlobalSort() {
+		target := "cloud storage"
+		cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+		if err3 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
+				err3.Error())
+		}
+		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
+		if err != nil {
+			return err
+		}
+		e.GlobalSortStore = s
+	}
+	return nil
+}
+func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
+	b, err2 := storage.ParseBackendFromURL(u, nil)
+	if err2 != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+	}
+
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	s, err := storage.New(ctx, b, opt)
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
+	}
+	return s, nil
+}
+
 // InitDataFiles initializes the data store and files.
+// it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
 	}
 
 	var fileNameKey string
@@ -878,52 +964,46 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		if !filepath.IsAbs(e.Path) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("file location should be absolute path when import from server disk")
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				"file location should be absolute path when import from server disk")
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
 		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("the file suffix is not supported when import from server disk")
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				"the file suffix is not supported when import from server disk")
 		}
 		dir := filepath.Dir(e.Path)
 		_, err := os.Stat(dir)
 		if err != nil {
 			// permission denied / file not exist error, etc.
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				err.Error())
 		}
 
 		fileNameKey = filepath.Base(e.Path)
-		u.Path = dir
 	} else {
 		fileNameKey = strings.Trim(u.Path, "/")
-		u.Path = ""
-	}
-	b, err2 := storage.ParseBackendFromURL(u, nil)
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
 	}
 	// try to find pattern error in advance
 	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			"Glob pattern error: "+err2.Error())
 	}
 
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
-	if err != nil {
-		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+	if err2 = e.InitDataStore(ctx); err2 != nil {
+		return err2
 	}
 
+	s := e.dataStore
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(fileNameKey, '*')
 	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
-		fileReader, err2 := s.Open(ctx, fileNameKey)
+		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
 		}
@@ -955,7 +1035,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
-		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -980,7 +1060,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
-	e.dataStore = s
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
@@ -1131,6 +1210,16 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 	return res
 }
 
+// IsLocalSort returns true if we sort data on local disk.
+func (e *LoadDataController) IsLocalSort() bool {
+	return e.Plan.CloudStorageURI == ""
+}
+
+// IsGlobalSort returns true if we sort data on global storage.
+func (e *LoadDataController) IsGlobalSort() bool {
+	return !e.IsLocalSort()
+}
+
 // CreateColAssignExprs creates the column assignment expressions using session context.
 // RewriteAstExpr will write ast node in place(due to xxNode.Accept), but it doesn't change node content,
 // so we sync it.
@@ -1153,6 +1242,35 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	return res, allWarnings, nil
 }
 
+func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+	backendConfig := local.BackendConfig{
+		PDAddr:                 pdAddr,
+		LocalStoreDir:          dataDir,
+		MaxConnPerStore:        config.DefaultRangeConcurrency,
+		ConnCompressType:       config.CompressionNone,
+		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:       config.KVWriteBatchSize,
+		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
+		// enable after we support checkpoint
+		CheckpointEnabled:           false,
+		MemTableSize:                config.DefaultEngineMemCacheSize,
+		LocalWriterMemCacheSize:     int64(config.DefaultLocalWriterMemCacheSize),
+		ShouldCheckTiKV:             true,
+		DupeDetectEnabled:           false,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
+		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
+		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
+		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
+		DisableAutomaticCompactions: true,
+	}
+	if e.IsRaftKV2 {
+		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+	}
+	return backendConfig
+}
+
 // JobImportParam is the param of the job import.
 type JobImportParam struct {
 	Job      *asyncloaddata.Job
@@ -1166,7 +1284,6 @@ type JobImportParam struct {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Msg        string
 	Affected   uint64
 	Warnings   []stmtctx.SQLWarn
 	ColSizeMap map[int64]int64

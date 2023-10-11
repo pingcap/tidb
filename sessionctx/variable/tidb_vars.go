@@ -416,11 +416,6 @@ const (
 	// TiFlashQuerySpillRatio is the threshold that TiFlash will trigger auto spill when the memory usage is above this percentage
 	TiFlashQuerySpillRatio = "tiflash_query_spill_ratio"
 
-	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `true`, means never use pipeline model in tiflash.
-	// Value set to `true` means try to execute query with pipeline model in tiflash.
-	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
-
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
 	TiDBMPPStoreFailTTL = "tidb_mpp_store_fail_ttl"
@@ -911,6 +906,9 @@ const (
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
 
+	// TiDBOptEnableHashJoin indicates whether to enable hash join.
+	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
+
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
@@ -998,6 +996,10 @@ const (
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
+	// TiDBGOGCTunerMaxValue is the max value of GOGC that GOGC tuner can change to.
+	TiDBGOGCTunerMaxValue = "tidb_gogc_tuner_max_value"
+	// TiDBGOGCTunerMinValue is the min value of GOGC that GOGC tuner can change to.
+	TiDBGOGCTunerMinValue = "tidb_gogc_tuner_min_value"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
 	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
@@ -1101,6 +1103,9 @@ const (
 	TiDBServiceScope = "tidb_service_scope"
 	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
 	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
+	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// It's deprecated and setting it will not have any effect.
+	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
 )
 
 // TiDB intentional limits
@@ -1351,6 +1356,8 @@ const (
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBGOGCMaxValue                               = 500
+	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
@@ -1407,6 +1414,7 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 )
@@ -1504,6 +1512,7 @@ var (
 	EnableResourceControl     = atomic.NewBool(false)
 	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	TiFlashEnablePipelineMode = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
 	ServiceScope              = atomic.NewString("")
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")

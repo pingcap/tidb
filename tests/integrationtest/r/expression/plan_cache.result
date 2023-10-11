@@ -1,0 +1,153 @@
+prepare pr1 from 'select ? in (1,?,?)';
+set @a=1, @b=2, @c=3;
+execute pr1 using @a,@b,@c;
+? in (1,?,?)
+1
+prepare pr2 from 'select 3 in (1,?,?)';
+set @a=2, @b=3;
+execute pr2 using @a,@b;
+3 in (1,?,?)
+1
+prepare pr3 from 'select ? in (1,2,3)';
+set @a=4;
+execute pr3 using @a;
+? in (1,2,3)
+0
+prepare pr4 from 'select ? in (?,?,?)';
+set @a=1, @b=2, @c=3, @d=4;
+execute pr4 using @a,@b,@c,@d;
+? in (?,?,?)
+0
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'SELECT * FROM t order by rand()';
+execute stmt;
+a
+prepare stmt from 'SELECT * FROM t order by now()';
+execute stmt;
+a
+drop table if exists t;
+create table t(a int);
+insert into t values(1), (2), (3);
+set @@session.sql_select_limit = 1;
+prepare stmt from 'SELECT * FROM t';
+execute stmt;
+a
+1
+set @@session.sql_select_limit = default;
+execute stmt;
+a
+1
+2
+3
+set @@session.sql_select_limit = 2;
+execute stmt;
+a
+1
+2
+set @@session.sql_select_limit = 1;
+execute stmt;
+a
+1
+set @@session.sql_select_limit = default;
+execute stmt;
+a
+1
+2
+3
+set @@session.sql_select_limit = 2;
+execute stmt;
+a
+1
+2
+set sql_select_limit=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t where a = ?';
+set @a = 1;
+execute stmt using @a;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @a;
+a
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(a int auto_increment primary key);
+prepare stmt from 'select row_count()';
+insert into t values();
+execute stmt;
+row_count()
+1
+insert into t values(),(),();
+execute stmt;
+row_count()
+3
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t1;
+create table t1 (a varchar(40));
+insert into t1 values ('C1'),('R1');
+prepare stmt1 from 'select a from t1 where a rlike ?';
+set @a='^C.*';
+execute stmt1 using @a;
+a
+C1
+set @a='^R.*';
+execute stmt1 using @a;
+a
+R1
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(col_int int);
+insert into t values(null);
+prepare stmt from 'SELECT ((col_int is true) = ?) AS res FROM t';
+set @p0='0.8';
+execute stmt using @p0;
+res
+0
+set @p0='0';
+execute stmt using @p0;
+res
+1
+prepare stmt from 'SELECT UCASE(?) < col_int from t;';
+set @a1 = 'xayh7vrWVNqZtzlJmdJQUwAHnkI8Ec';
+execute stmt using @a1;
+UCASE(?) < col_int
+NULL
+delete from t;
+insert into t values(1);
+prepare stmt from 'SELECT col_int < ? FROM t';
+set @p0='-184467440737095516167.1';
+execute stmt using @p0;
+col_int < ?
+0
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t;
+create table t(col_double double);
+insert into t values (1);
+set tidb_enable_vectorized_expression=false;
+insert into mysql.expr_pushdown_blacklist values('cast', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+
+prepare stmt from 'SELECT * FROM (SELECT col_double AS c0 FROM t) t WHERE (ABS((REPEAT(?, ?) OR 5617780767323292672)) < LN(EXP(c0)) + (? ^ ?))';
+set @a1 = 'JuvkBX7ykVux20zQlkwDK2DFelgn7';
+set @a2 = 1;
+set @a3 = -112990.35179796701;
+set @a4 = 87997.92704840179;
+execute stmt using @a1, @a2, @a3, @a4;
+c0
+1
+set tidb_enable_vectorized_expression=default;
+delete from mysql.expr_pushdown_blacklist where name = 'cast' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+
+set tidb_enable_prepared_plan_cache=default;

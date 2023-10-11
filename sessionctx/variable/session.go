@@ -892,11 +892,6 @@ type SessionVars struct {
 	// TiFlashQuerySpillRatio is the percentage threshold to trigger auto spill in TiFlash if TiFlashMaxQueryMemoryPerNode is set
 	TiFlashQuerySpillRatio float64
 
-	// TiFlashEnablePipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `true`, means never use pipeline model in tiflash.
-	// Value set to `true` means try to execute query with pipeline model in tiflash.
-	TiFlashEnablePipelineMode bool
-
 	// TiDBAllowAutoRandExplicitInsert indicates whether explicit insertion on auto_random column is allowed.
 	AllowAutoRandExplicitInsert bool
 
@@ -976,6 +971,9 @@ type SessionVars struct {
 
 	// SkipUTF8Check check on input value.
 	SkipUTF8Check bool
+
+	// DefaultCollationForUTF8MB4 indicates the default collation of UTF8MB4.
+	DefaultCollationForUTF8MB4 string
 
 	// BatchInsert indicates if we should split insert data into multiple batches.
 	BatchInsert bool
@@ -1078,9 +1076,9 @@ type SessionVars struct {
 	// See https://dev.mysql.com/doc/refman/5.7/en/server-system-variables.html#sysvar_max_execution_time
 	MaxExecutionTime uint64
 
-	// TidbKvReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
+	// TiKVClientReadTimeout is the timeout for readonly kv request in milliseconds, 0 means using default value
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
-	TidbKvReadTimeout uint64
+	TiKVClientReadTimeout uint64
 
 	// Killed is a flag to indicate that this query is killed.
 	Killed uint32
@@ -1245,6 +1243,12 @@ type SessionVars struct {
 
 	// AnalyzeVersion indicates how TiDB collect and use analyzed statistics.
 	AnalyzeVersion int
+
+	// DisableHashJoin indicates whether to disable hash join.
+	DisableHashJoin bool
+
+	// EnableHistoricalStats indicates whether to enable historical statistics.
+	EnableHistoricalStats bool
 
 	// EnableIndexMergeJoin indicates whether to enable index merge join.
 	EnableIndexMergeJoin bool
@@ -2013,6 +2017,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
+		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
 	vars.Concurrency = Concurrency{
@@ -2053,7 +2058,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.TiFlashMaxBytesBeforeExternalSort = DefTiFlashMaxBytesBeforeExternalSort
 	vars.TiFlashMaxQueryMemoryPerNode = DefTiFlashMemQuotaQueryPerNode
 	vars.TiFlashQuerySpillRatio = DefTiFlashQuerySpillRatio
-	vars.TiFlashEnablePipelineMode = DefTiDBEnableTiFlashPipelineMode
 	vars.MPPStoreFailTTL = DefTiDBMPPStoreFailTTL
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
@@ -3533,12 +3537,9 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
-// GetTidbKvReadTimeout returns readonly kv request timeout, prefer query hint over session variable
-func (s *SessionVars) GetTidbKvReadTimeout() uint64 {
-	if s.StmtCtx.HasTidbKvReadTimeout {
-		return s.StmtCtx.TidbKvReadTimeout
-	}
-	return s.TidbKvReadTimeout
+// GetTiKVClientReadTimeout returns readonly kv request timeout, prefer query hint over session variable
+func (s *SessionVars) GetTiKVClientReadTimeout() uint64 {
+	return s.TiKVClientReadTimeout
 }
 
 // RuntimeFilterType type of runtime filter "IN"

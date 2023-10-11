@@ -102,8 +102,8 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667) != nil { // update the AST in the middle of the process
-		ctx.Value(core.PlanCacheKeyTestIssue43667).(func(stmt ast.StmtNode))(stmt)
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue43667{}) != nil { // update the AST in the middle of the process
+		ctx.Value(core.PlanCacheKeyTestIssue43667{}).(func(stmt ast.StmtNode))(stmt)
 	}
 	val := sctx.GetSessionVars().GetNonPreparedPlanCacheStmt(paramSQL)
 	paramExprs := core.Params2Expressions(paramsVals)
@@ -134,6 +134,11 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	if err != nil {
 		return nil, nil, false, err
 	}
+
+	if intest.InTest && ctx.Value(core.PlanCacheKeyTestIssue47133{}) != nil {
+		ctx.Value(core.PlanCacheKeyTestIssue47133{}).(func(names []*types.FieldName))(names)
+	}
+
 	return cachedPlan, names, true, nil
 }
 
@@ -626,6 +631,11 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 			if parenthesesIdx != -1 && parenthesesIdx < idx {
 				idx = parenthesesIdx
 			}
+			// If the SQL is `EXPLAIN ((VALUES ROW ()) ORDER BY 1);`, the idx will be -1.
+			if idx == -1 {
+				hash := parser.DigestNormalized(normalizeExplainSQL)
+				return x.Stmt, normalizeExplainSQL, hash.String(), nil
+			}
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
 			return x.Stmt, normalizeSQL, hash.String(), nil
@@ -719,7 +729,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	}
 	hintOffs := make(map[string]int, len(hints))
 	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, tidbKvReadTimeoutCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
 	setVars := make(map[string]string)
 	setVarsOffs := make([]int, 0, len(hints))
 	for i, hint := range hints {
@@ -745,9 +755,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		case "max_execution_time":
 			hintOffs[hint.HintName.L] = i
 			maxExecutionTimeCnt++
-		case "tidb_kv_read_timeout":
-			hintOffs[hint.HintName.L] = i
-			tidbKvReadTimeoutCnt++
 		case "nth_plan":
 			forceNthPlanCnt++
 			forceNthPlan = hint
@@ -763,9 +770,8 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 				warns = append(warns, core.ErrUnresolvedHintName.GenWithStackByArgs(setVarHint.VarName, hint.HintName.String()))
 				continue
 			}
-			if !sysVar.IsHintUpdatable {
+			if !sysVar.IsHintUpdatableVerfied {
 				warns = append(warns, core.ErrNotHintUpdatable.GenWithStackByArgs(setVarHint.VarName))
-				continue
 			}
 			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
 			if _, ok := setVars[setVarHint.VarName]; ok {
@@ -855,16 +861,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 		}
 		stmtHints.HasMaxExecutionTime = true
 		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
-	}
-	// Handle TIDB_KV_READ_TIMEOUT
-	if tidbKvReadTimeoutCnt != 0 {
-		tidbKvReadTimeout := hints[hintOffs["tidb_kv_read_timeout"]]
-		if tidbKvReadTimeoutCnt > 1 {
-			warn := errors.Errorf("TIDB_KV_READ_TIMEOUT() is defined more than once, only the last definition takes effect: TIDB_KV_READ_TIMEOUT(%v)", tidbKvReadTimeout.HintData.(uint64))
-			warns = append(warns, warn)
-		}
-		stmtHints.HasTidbKvReadTimeout = true
-		stmtHints.TidbKvReadTimeout = tidbKvReadTimeout.HintData.(uint64)
 	}
 	// Handle RESOURCE_GROUP
 	if resourceGroupHintCnt != 0 {

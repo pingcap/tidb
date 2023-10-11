@@ -33,12 +33,13 @@ type Extension interface {
 	// the event is generated every checkTaskRunningInterval, and only when the task NOT FINISHED and NO ERROR.
 	OnTick(ctx context.Context, task *proto.Task)
 
-	// OnNextSubtasksBatch is used to generate batch of subtasks for current stage
+	// OnNextSubtasksBatch is used to generate batch of subtasks for next stage
 	// NOTE: don't change gTask.State inside, framework will manage it.
 	// it's called when:
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task) (subtaskMetas [][]byte, err error)
+	// when next step is StepDone, it should return nil, nil.
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step int64) (subtaskMetas [][]byte, err error)
 
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
@@ -52,24 +53,20 @@ type Extension interface {
 	// IsRetryableErr is used to check whether the error occurred in dispatcher is retryable.
 	IsRetryableErr(err error) bool
 
-	// StageFinished is used to check if all subtasks in current stage are dispatched and processed.
-	// StageFinished is called before generating batch of subtasks.
-	StageFinished(task *proto.Task) bool
-
-	// Finished is used to check if all subtasks for the task are dispatched and processed.
-	// Finished is called before generating batch of subtasks.
-	// Once Finished return true, mark the task as succeed.
-	Finished(task *proto.Task) bool
+	// GetNextStep is used to get the next step for the task.
+	// if task runs successfully, it should go from StepInit to business steps,
+	// then to StepDone, then dispatcher will mark it as finished.
+	GetNextStep(h TaskHandle, task *proto.Task) int64
 }
 
-// FactoryFn is used to create a dispatcher.
-type FactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
+// dispatcherFactoryFn is used to create a dispatcher.
+type dispatcherFactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
 
 var dispatcherFactoryMap = struct {
 	syncutil.RWMutex
-	m map[string]FactoryFn
+	m map[string]dispatcherFactoryFn
 }{
-	m: make(map[string]FactoryFn),
+	m: make(map[string]dispatcherFactoryFn),
 }
 
 // RegisterDispatcherFactory is used to register the dispatcher factory.
@@ -78,22 +75,59 @@ var dispatcherFactoryMap = struct {
 // after the server start, there's should be no write to the map.
 // but for index backfill, the register call stack is so deep, not sure
 // if it's safe to do so, so we use a lock here.
-func RegisterDispatcherFactory(taskType string, ctor FactoryFn) {
+func RegisterDispatcherFactory(taskType string, ctor dispatcherFactoryFn) {
 	dispatcherFactoryMap.Lock()
 	defer dispatcherFactoryMap.Unlock()
 	dispatcherFactoryMap.m[taskType] = ctor
 }
 
-// GetDispatcherFactory is used to get the dispatcher factory.
-func GetDispatcherFactory(taskType string) FactoryFn {
+// getDispatcherFactory is used to get the dispatcher factory.
+func getDispatcherFactory(taskType string) dispatcherFactoryFn {
 	dispatcherFactoryMap.RLock()
 	defer dispatcherFactoryMap.RUnlock()
 	return dispatcherFactoryMap.m[taskType]
 }
 
-// ClearDispatcherFactory is only used in test
+// ClearDispatcherFactory is only used in test.
 func ClearDispatcherFactory() {
 	dispatcherFactoryMap.Lock()
 	defer dispatcherFactoryMap.Unlock()
-	dispatcherFactoryMap.m = make(map[string]FactoryFn)
+	dispatcherFactoryMap.m = make(map[string]dispatcherFactoryFn)
+}
+
+// CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
+type CleanUpRoutine interface {
+	// CleanUp do the clean up work.
+	CleanUp(ctx context.Context, task *proto.Task) error
+}
+type cleanUpFactoryFn func() CleanUpRoutine
+
+var cleanUpFactoryMap = struct {
+	syncutil.RWMutex
+	m map[string]cleanUpFactoryFn
+}{
+	m: make(map[string]cleanUpFactoryFn),
+}
+
+// RegisterDispatcherCleanUpFactory is used to register the dispatcher clean up factory.
+// normally dispatcher cleanup is used in the dispatcher_manager gcTaskLoop to do clean up
+// works when tasks are finished.
+func RegisterDispatcherCleanUpFactory(taskType string, ctor cleanUpFactoryFn) {
+	cleanUpFactoryMap.Lock()
+	defer cleanUpFactoryMap.Unlock()
+	cleanUpFactoryMap.m[taskType] = ctor
+}
+
+// getDispatcherCleanUpFactory is used to get the dispatcher factory.
+func getDispatcherCleanUpFactory(taskType string) cleanUpFactoryFn {
+	cleanUpFactoryMap.RLock()
+	defer cleanUpFactoryMap.RUnlock()
+	return cleanUpFactoryMap.m[taskType]
+}
+
+// ClearDispatcherCleanUpFactory is only used in test.
+func ClearDispatcherCleanUpFactory() {
+	cleanUpFactoryMap.Lock()
+	defer cleanUpFactoryMap.Unlock()
+	cleanUpFactoryMap.m = make(map[string]cleanUpFactoryFn)
 }

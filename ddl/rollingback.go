@@ -44,38 +44,53 @@ func UpdateColsNull2NotNull(tblInfo *model.TableInfo, indexInfo *model.IndexInfo
 	return nil
 }
 
-func convertAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, err error) (int64, error) {
+func convertAddIdxJob2RollbackJob(
+	d *ddlCtx,
+	t *meta.Meta,
+	job *model.Job,
+	tblInfo *model.TableInfo,
+	allIndexInfos []*model.IndexInfo,
+	err error,
+) (int64, error) {
 	failpoint.Inject("mockConvertAddIdxJob2RollbackJobError", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(0, errors.New("mock convert add index job to rollback job error"))
 		}
 	})
-	if indexInfo.Primary {
-		nullCols, err := getNullColInfos(tblInfo, indexInfo)
-		if err != nil {
-			return 0, errors.Trace(err)
+
+	originalState := allIndexInfos[0].State
+	idxNames := make([]model.CIStr, 0, len(allIndexInfos))
+	ifExists := make([]bool, 0, len(allIndexInfos))
+	for _, indexInfo := range allIndexInfos {
+		if indexInfo.Primary {
+			nullCols, err := getNullColInfos(tblInfo, indexInfo)
+			if err != nil {
+				return 0, errors.Trace(err)
+			}
+			for _, col := range nullCols {
+				// Field PreventNullInsertFlag flag reset.
+				col.DelFlag(mysql.PreventNullInsertFlag)
+			}
 		}
-		for _, col := range nullCols {
-			// Field PreventNullInsertFlag flag reset.
-			col.DelFlag(mysql.PreventNullInsertFlag)
-		}
+		// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
+		// Its work is the same as drop index job do.
+		// The write reorganization state in add index job that likes write only state in drop index job.
+		// So the next state is delete only state.
+		indexInfo.State = model.StateDeleteOnly
+		idxNames = append(idxNames, indexInfo.Name)
+		ifExists = append(ifExists, false)
 	}
 
 	// the second and the third args will be used in onDropIndex.
-	job.Args = []interface{}{indexInfo.Name, false /* ifExists */, getPartitionIDs(tblInfo)}
-	// If add index job rollbacks in write reorganization state, its need to delete all keys which has been added.
-	// Its work is the same as drop index job do.
-	// The write reorganization state in add index job that likes write only state in drop index job.
-	// So the next state is delete only state.
-	originalState := indexInfo.State
-	indexInfo.State = model.StateDeleteOnly
+	job.Args = []interface{}{idxNames, ifExists, getPartitionIDs(tblInfo)}
 	job.SchemaState = model.StateDeleteOnly
-	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != indexInfo.State)
+	ver, err1 := updateVersionAndTableInfo(d, t, job, tblInfo, originalState != model.StateDeleteOnly)
 	if err1 != nil {
 		return ver, errors.Trace(err1)
 	}
 	job.State = model.JobStateRollingback
-	err = completeErr(err, indexInfo)
+	// TODO(tangenta): get duplicate column and match index.
+	err = completeErr(err, allIndexInfos[0])
 	if ingest.LitBackCtxMgr != nil {
 		ingest.LitBackCtxMgr.Unregister(job.ID)
 	}
@@ -96,24 +111,32 @@ func convertNotReorgAddIdxJob2RollbackJob(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	var (
-		unique                  bool
-		indexName               model.CIStr
-		indexPartSpecifications []*ast.IndexPartSpecification
-		indexOption             *ast.IndexOption
-	)
-	err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption)
+	unique := make([]bool, 1)
+	indexName := make([]model.CIStr, 1)
+	indexPartSpecifications := make([][]*ast.IndexPartSpecification, 1)
+	indexOption := make([]*ast.IndexOption, 1)
+
+	err = job.DecodeArgs(&unique[0], &indexName[0], &indexPartSpecifications[0], &indexOption[0])
+	if err != nil {
+		err = job.DecodeArgs(&unique, &indexName, &indexPartSpecifications, &indexOption)
+	}
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
 
-	indexInfo := tblInfo.FindIndexByName(indexName.L)
-	if indexInfo == nil {
+	var indexesInfo []*model.IndexInfo
+	for _, idxName := range indexName {
+		indexInfo := tblInfo.FindIndexByName(idxName.L)
+		if indexInfo != nil {
+			indexesInfo = append(indexesInfo, indexInfo)
+		}
+	}
+	if len(indexesInfo) == 0 {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	}
-	return convertAddIdxJob2RollbackJob(d, t, job, tblInfo, indexInfo, occuredErr)
+	return convertAddIdxJob2RollbackJob(d, t, job, tblInfo, indexesInfo, occuredErr)
 }
 
 // rollingbackModifyColumn change the modifying-column job into rolling back state.
@@ -222,7 +245,7 @@ func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 		return ver, errors.Trace(err)
 	}
 
-	switch indexInfo.State {
+	switch indexInfo[0].State {
 	case model.StateWriteOnly, model.StateDeleteOnly, model.StateDeleteReorganization, model.StateNone:
 		// We can not rollback now, so just continue to drop index.
 		// Normally won't fetch here, because there is check when cancel ddl jobs. see function: isJobRollbackable.
@@ -232,7 +255,7 @@ func rollingbackDropIndex(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, e
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrCancelledDDLJob
 	default:
-		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
+		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo[0].State)
 	}
 }
 
@@ -264,11 +287,35 @@ func needNotifyAndStopReorgWorker(job *model.Job) bool {
 
 // rollbackExchangeTablePartition will clear the non-partitioned
 // table's ExchangePartitionInfo state.
-func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (int64, error) {
+func rollbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
 	tblInfo.ExchangePartitionInfo = nil
 	job.State = model.JobStateRollbackDone
 	job.SchemaState = model.StatePublic
-	return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	if len(tblInfo.Constraints) == 0 {
+		return updateVersionAndTableInfo(d, t, job, tblInfo, true)
+	}
+	var (
+		defID          int64
+		ptSchemaID     int64
+		ptID           int64
+		partName       string
+		withValidation bool
+	)
+	if err = job.DecodeArgs(&defID, &ptSchemaID, &ptID, &partName, &withValidation); err != nil {
+		return ver, errors.Trace(err)
+	}
+	pt, err := getTableInfo(t, ptID, ptSchemaID)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	pt.ExchangePartitionInfo = nil
+	var ptInfo []schemaIDAndTableInfo
+	ptInfo = append(ptInfo, schemaIDAndTableInfo{
+		schemaID: ptSchemaID,
+		tblInfo:  pt,
+	})
+	ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true, ptInfo...)
+	return ver, errors.Trace(err)
 }
 
 func rollingbackExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, err error) {

@@ -25,9 +25,9 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/mock"
+	mockexecute "github.com/pingcap/tidb/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/testkit"
@@ -44,7 +44,7 @@ var _ dispatcher.Extension = (*testDispatcherExt)(nil)
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task) (metas [][]byte, err error) {
+func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		dsp.cnt = 3
 		return [][]byte{
@@ -66,18 +66,15 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 	return nil, nil
 }
 
-func (dsp *testDispatcherExt) StageFinished(task *proto.Task) bool {
-	if task.Step == proto.StepInit && dsp.cnt >= 3 {
-		return true
+func (dsp *testDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+	switch task.Step {
+	case proto.StepInit:
+		return proto.StepOne
+	case proto.StepOne:
+		return proto.StepTwo
+	default:
+		return proto.StepDone
 	}
-	if task.Step == proto.StepOne && dsp.cnt >= 4 {
-		return true
-	}
-	return false
-}
-
-func (dsp *testDispatcherExt) Finished(task *proto.Task) bool {
-	return task.Step == proto.StepOne && dsp.cnt >= 4
 }
 
 func generateSchedulerNodes4Test() ([]*infosync.ServerInfo, error) {
@@ -101,121 +98,57 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-type testMiniTask struct{}
-
-func (testMiniTask) IsMinimalTask() {}
-
-func (testMiniTask) String() string {
-	return "testMiniTask"
-}
-
-type testScheduler struct{}
-
-func (*testScheduler) Init(_ context.Context) error { return nil }
-
-func (t *testScheduler) Cleanup(_ context.Context) error { return nil }
-
-func (t *testScheduler) Rollback(_ context.Context) error { return nil }
-
-func (t *testScheduler) SplitSubtask(_ context.Context, _ *proto.Subtask) ([]proto.MinimalTask, error) {
-	return []proto.MinimalTask{
-		testMiniTask{},
-		testMiniTask{},
-		testMiniTask{},
-	}, nil
-}
-
-func (t *testScheduler) OnFinished(_ context.Context, _ *proto.Subtask) error {
-	return nil
-}
-
-// Note: the subtask must be Reentrant.
-type testSubtaskExecutor struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor) Run(_ context.Context) error {
-	e.m.Store("0", "0")
-	return nil
-}
-
-type testSubtaskExecutor1 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor1) Run(_ context.Context) error {
-	e.m.Store("1", "1")
-	return nil
-}
-
-type testSubtaskExecutor2 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor2) Run(_ context.Context) error {
-	e.m.Store("2", "2")
-	return nil
-}
-
-type testSubtaskExecutor3 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor3) Run(_ context.Context) error {
-	e.m.Store("3", "3")
-	return nil
-}
-
-type testSubtaskExecutor4 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor4) Run(_ context.Context) error {
-	e.m.Store("4", "4")
-	return nil
-}
-
-type testSubtaskExecutor5 struct {
-	m *sync.Map
-}
-
-func (e *testSubtaskExecutor5) Run(_ context.Context) error {
-	e.m.Store("5", "5")
-	return nil
+func getMockSubtaskExecutor(ctrl *gomock.Controller) *mockexecute.MockSubtaskExecutor {
+	executor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().Rollback(gomock.Any()).Return(nil).AnyTimes()
+	executor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return executor
 }
 
 func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&testScheduler{}, nil).AnyTimes()
-	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
-			switch step {
-			case proto.StepInit:
-				return &testSubtaskExecutor{m: m}, nil
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
 			case proto.StepOne:
-				return &testSubtaskExecutor1{m: m}, nil
+				m.Store("0", "0")
+			case proto.StepTwo:
+				m.Store("1", "1")
+			default:
+				panic("invalid step")
 			}
-			panic("invalid step")
+			return nil
 		}).AnyTimes()
-	registerTaskMetaInner(t, mockExtension, dispatcherHandle)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType string, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
 	t.Cleanup(func() {
 		dispatcher.ClearDispatcherFactory()
+		dispatcher.ClearDispatcherCleanUpFactory()
 		scheduler.ClearSchedulers()
 	})
-	dispatcher.ClearDispatcherFactory()
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+	dispatcher.RegisterDispatcherFactory(taskType,
 		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
 			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher
 		})
-	scheduler.ClearSchedulers()
-	scheduler.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
+
+	dispatcher.RegisterDispatcherCleanUpFactory(taskType,
+		func() dispatcher.CleanUpRoutine {
+			return mockCleanup
+		})
+
+	scheduler.RegisterTaskType(taskType,
+		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
+			s := scheduler.NewBaseScheduler(ctx, id, task.ID, taskTable)
 			s.Extension = mockExtension
 			return s
 		},
@@ -224,95 +157,69 @@ func registerTaskMetaInner(t *testing.T, mockExtension scheduler.Extension, disp
 
 func RegisterTaskMetaForExample2(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&testScheduler{}, nil).AnyTimes()
-	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
-			switch step {
-			case proto.StepInit:
-				return &testSubtaskExecutor2{m: m}, nil
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
 			case proto.StepOne:
-				return &testSubtaskExecutor3{m: m}, nil
+				m.Store("2", "2")
+			case proto.StepTwo:
+				m.Store("3", "3")
+			default:
+				panic("invalid step")
 			}
-			panic("invalid step")
+			return nil
 		}).AnyTimes()
-	RegisterTaskMetaForExample2Inner(t, mockExtension, dispatcherHandle)
-}
-
-func RegisterTaskMetaForExample2Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
-	t.Cleanup(func() {
-		dispatcher.ClearDispatcherFactory()
-		scheduler.ClearSchedulers()
-	})
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample2,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-			baseDispatcher.Extension = dispatcherHandle
-			return baseDispatcher
-		})
-	scheduler.RegisterTaskType(proto.TaskTypeExample2,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
-			s.Extension = mockExtension
-			return s
-		},
-	)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample2, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
 func RegisterTaskMetaForExample3(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispatcherHandle dispatcher.Extension) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(&testScheduler{}, nil).AnyTimes()
-	mockExtension.EXPECT().GetMiniTaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(minimalTask proto.MinimalTask, tp string, step int64) (execute.MiniTaskExecutor, error) {
-			switch step {
-			case proto.StepInit:
-				return &testSubtaskExecutor4{m: m}, nil
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	mockSubtaskExecutor := getMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
 			case proto.StepOne:
-				return &testSubtaskExecutor5{m: m}, nil
+				m.Store("4", "4")
+			case proto.StepTwo:
+				m.Store("5", "5")
+			default:
+				panic("invalid step")
 			}
-			panic("invalid step")
+			return nil
 		}).AnyTimes()
-	RegisterTaskMetaForExample3Inner(t, mockExtension, dispatcherHandle)
-}
-
-func RegisterTaskMetaForExample3Inner(t *testing.T, mockExtension scheduler.Extension, dispatcherHandle dispatcher.Extension) {
-	t.Cleanup(func() {
-		dispatcher.ClearDispatcherFactory()
-		scheduler.ClearSchedulers()
-	})
-	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample3,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-			baseDispatcher.Extension = dispatcherHandle
-			return baseDispatcher
-		})
-	scheduler.RegisterTaskType(proto.TaskTypeExample3,
-		func(ctx context.Context, id string, taskID int64, taskTable scheduler.TaskTable, pool scheduler.Pool) scheduler.Scheduler {
-			s := scheduler.NewBaseScheduler(ctx, id, taskID, taskTable, pool)
-			s.Extension = mockExtension
-			return s
-		},
-	)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample3, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
 func DispatchTask(taskKey string, t *testing.T) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	taskID, err := mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
+	_, err = mgr.AddNewGlobalTask(taskKey, proto.TaskTypeExample, 8, nil)
 	require.NoError(t, err)
-	start := time.Now()
+	return WaitTaskExit(t, taskKey)
+}
 
+func WaitTaskExit(t *testing.T, taskKey string) *proto.Task {
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
 	var task *proto.Task
+	start := time.Now()
 	for {
 		if time.Since(start) > 10*time.Minute {
 			require.FailNow(t, "timeout")
 		}
 
 		time.Sleep(time.Second)
-		task, err = mgr.GetGlobalTaskByID(taskID)
-
+		task, err = mgr.GetGlobalTaskByKeyWithHistory(taskKey)
 		require.NoError(t, err)
 		require.NotNil(t, task)
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
+		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting && task.State != proto.TaskStatePausing {
 			break
 		}
 	}
@@ -352,6 +259,7 @@ func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state 
 		return true
 	})
 }
+
 func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.Task {
 	var tasks []*proto.Task
 	var taskID []int64
@@ -374,10 +282,10 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 					require.FailNow(t, "timeout")
 				}
 				time.Sleep(time.Second)
-				task, err = mgr.GetGlobalTaskByID(taskID[0])
-				tasks[0] = task
+				task, err = mgr.GetTaskByIDWithHistory(taskID[0])
 				require.NoError(t, err)
 				require.NotNil(t, task)
+				tasks[0] = task
 				if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
 					break
 				}
@@ -397,10 +305,11 @@ func DispatchMultiTasksAndOneFail(t *testing.T, num int, m []sync.Map) []*proto.
 				require.FailNow(t, "timeout")
 			}
 			time.Sleep(time.Second)
-			task, err = mgr.GetGlobalTaskByID(taskID[i])
-			tasks[i] = task
+			task, err = mgr.GetTaskByIDWithHistory(taskID[i])
 			require.NoError(t, err)
 			require.NotNil(t, task)
+			tasks[i] = task
+
 			if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting {
 				break
 			}
@@ -682,9 +591,8 @@ func TestGC(t *testing.T) {
 	defer ctrl.Finish()
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
-	// 10s to wait all subtask completed
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/historySubtaskTableGcInterval", "return(10)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/historySubtaskTableGcInterval", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/historySubtaskTableGcInterval"))
@@ -696,18 +604,71 @@ func TestGC(t *testing.T) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 
-	// check the subtask history table
-	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(mgr)
+	var historySubTasksCnt int
+	require.Eventually(t, func() bool {
+		historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(mgr)
+		if err != nil {
+			return false
+		}
+		return historySubTasksCnt == 4
+	}, 10*time.Second, 500*time.Millisecond)
+
+	dispatcher.WaitTaskFinished <- struct{}{}
+
+	require.Eventually(t, func() bool {
+		historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(mgr)
+		if err != nil {
+			return false
+		}
+		return historySubTasksCnt == 0
+	}, 10*time.Second, 500*time.Millisecond)
+
+	distContext.Close()
+}
+
+func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
+	var m sync.Map
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockSubtaskFinishedCancel", "1*return(true)")
 	require.NoError(t, err)
-	require.Equal(t, 4, historySubTasksCnt)
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockSubtaskFinishedCancel"))
+	}()
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	distContext.Close()
+}
 
-	// wait for gc
-	time.Sleep(10 * time.Second)
+func TestFrameworkRunSubtaskCancel(t *testing.T) {
+	var m sync.Map
 
-	// check the subtask in history table removed.
-	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(mgr)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	err := failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel", "1*return(true)")
 	require.NoError(t, err)
-	require.Equal(t, 0, historySubTasksCnt)
+	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStateReverted)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskCancel"))
+	distContext.Close()
+}
 
+func TestFrameworkCleanUpRoutine(t *testing.T) {
+	var m sync.Map
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
+	distContext := testkit.NewDistExecutionContext(t, 3)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
+	DispatchTaskAndCheckSuccess("key1", t, &m)
+	<-dispatcher.WaitCleanUpFinished
+	mgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	tasks, err := mgr.GetGlobalTaskByKeyWithHistory("key1")
+	require.NoError(t, err)
+	require.NotEmpty(t, tasks)
 	distContext.Close()
 }

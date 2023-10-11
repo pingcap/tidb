@@ -15,43 +15,67 @@
 package handle
 
 import (
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/ast"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// AddLockedTables add locked tables id to store.
-// - tids: table ids of which will be locked.
-// - pids: partition ids of which will be locked.
-// - tables: table names of which will be locked.
+// LockTables add locked tables id to store.
+// - tables: tables that will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) AddLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-
-	return lockstats.AddLockedTables(exec, tids, pids, tables)
+func (h *Handle) LockTables(tables map[int64]*lockstats.TableInfo) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.AddLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tables)
+		return err
+	})
+	return
 }
 
-// RemoveLockedTables remove tables from table locked array.
-// - tids: table ids of which will be unlocked.
-// - pids: partition ids of which will be unlocked.
-// - tables: table names of which will be unlocked.
+// LockPartitions add locked partitions id to store.
+// If the whole table is locked, then skip all partitions of the table.
+// - tid: table id of which will be locked.
+// - tableName: table name of which will be locked.
+// - pidNames: partition ids of which will be locked.
 // Return the message of skipped tables and error.
-func (h *Handle) RemoveLockedTables(tids []int64, pids []int64, tables []*ast.TableName) (string, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return "", errors.Trace(err)
-	}
-	defer h.pool.Put(se)
+// Note: If the whole table is locked, then skip all partitions of the table.
+func (h *Handle) LockPartitions(
+	tid int64,
+	tableName string,
+	pidNames map[int64]string,
+) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.AddLockedPartitions(sctx.(sqlexec.RestrictedSQLExecutor), tid, tableName, pidNames)
+		return err
+	})
+	return
+}
 
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return lockstats.RemoveLockedTables(exec, tids, pids, tables)
+// RemoveLockedTables remove tables from table locked records.
+// - tables: tables of which will be unlocked.
+// Return the message of skipped tables and error.
+func (h *Handle) RemoveLockedTables(tables map[int64]*lockstats.TableInfo) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.RemoveLockedTables(sctx.(sqlexec.RestrictedSQLExecutor), tables)
+		return err
+	})
+	return
+}
+
+// RemoveLockedPartitions remove partitions from table locked records.
+// - tid: table id of which will be unlocked.
+// - tableName: table name of which will be unlocked.
+// - pidNames: partition ids of which will be unlocked.
+// Note: If the whole table is locked, then skip all partitions of the table.
+func (h *Handle) RemoveLockedPartitions(
+	tid int64,
+	tableName string,
+	pidNames map[int64]string,
+) (skipped string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		skipped, err = lockstats.RemoveLockedPartitions(sctx.(sqlexec.RestrictedSQLExecutor), tid, tableName, pidNames)
+		return err
+	})
+	return
 }
 
 // GetLockedTables returns the locked status of the given tables.
@@ -66,15 +90,12 @@ func (h *Handle) GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error) 
 }
 
 // queryLockedTables query locked tables from store.
-func (h *Handle) queryLockedTables() (map[int64]struct{}, error) {
-	se, err := h.pool.Get()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	defer h.pool.Put(se)
-
-	exec := se.(sqlexec.RestrictedSQLExecutor)
-	return lockstats.QueryLockedTables(exec)
+func (h *Handle) queryLockedTables() (tables map[int64]struct{}, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		tables, err = lockstats.QueryLockedTables(sctx.(sqlexec.RestrictedSQLExecutor))
+		return err
+	})
+	return
 }
 
 // GetTableLockedAndClearForTest for unit test only.

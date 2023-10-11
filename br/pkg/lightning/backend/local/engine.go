@@ -1032,6 +1032,12 @@ func (e *Engine) GetTS() uint64 {
 	return e.TS
 }
 
+// IncRef implements IngestData interface.
+func (*Engine) IncRef() {}
+
+// DecRef implements IngestData interface.
+func (*Engine) DecRef() {}
+
 // Finish implements IngestData interface.
 func (e *Engine) Finish(totalBytes, totalCount int64) {
 	e.importedKVSize.Add(totalBytes)

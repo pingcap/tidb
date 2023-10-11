@@ -582,6 +582,24 @@ const (
 		key(state),
       	UNIQUE KEY task_key(task_key)
 	);`
+
+	// CreateGlobalTaskHistory is a table about history global task.
+	CreateGlobalTaskHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task_history (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    	task_key VARCHAR(256) NOT NULL,
+		type VARCHAR(256) NOT NULL,
+		dispatcher_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time TIMESTAMP,
+		state_update_time TIMESTAMP,
+		meta LONGBLOB,
+		concurrency INT(11),
+		step INT(11),
+		error BLOB,
+		key(state),
+      	UNIQUE KEY task_key(task_key)
+	);`
+
 	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
 	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
@@ -984,17 +1002,32 @@ const (
 	//   add column `step`, `error`; delete unique key; and add key idx_state_update_time
 	//   to `mysql.tidb_background_subtask_history`.
 	version174 = 174
+
+	// version 175
+	//   update normalized bindings of `in (?)` to `in (...)` to solve #44298.
+	version175 = 175
+
+	// version 176
+	// add `mysql.tidb_global_task_history`.
+	version176 = 176
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version173
+var currentBootstrapVersion int64 = version176
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
 
 // whether to run the sql file in bootstrap.
 var runBootstrapSQLFile = false
+
+// DisableRunBootstrapSQLFileInTest only used for test
+func DisableRunBootstrapSQLFileInTest() {
+	if intest.InTest {
+		runBootstrapSQLFile = false
+	}
+}
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -1131,6 +1164,8 @@ var (
 		upgradeToVer172,
 		upgradeToVer173,
 		upgradeToVer174,
+		upgradeToVer175,
+		upgradeToVer176,
 	}
 )
 
@@ -2737,6 +2772,63 @@ func upgradeToVer174(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_state_update_time`(`state_update_time`)", dbterror.ErrDupKeyName)
 }
 
+// upgradeToVer175 updates normalized bindings of `in (?)` to `in (...)` to solve
+// the issue #44298 that bindings for `in (?)` can't work for `in (?, ?, ?)`.
+// After this update, multiple bindings may have the same `original_sql`, but it's OK, and
+// for safety, don't remove duplicated bindings when upgrading.
+func upgradeToVer175(s Session, ver int64) {
+	if ver >= version175 {
+		return
+	}
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT original_sql, bind_sql FROM mysql.bind_info WHERE source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < req.NumRows(); i++ {
+			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL)
+			// update `in (?)` to `in (...)`
+			if originalNormalizedSQL == newNormalizedSQL {
+				continue // no need to update
+			}
+			mustExecute(s, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+	}
+}
+
+func upgradeToVer176(s Session, ver int64) {
+	if ver >= version176 {
+		return
+	}
+	mustExecute(s, CreateGlobalTaskHistory)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2850,6 +2942,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
+	// Create tidb_global_task_history table
+	mustExecute(s, CreateGlobalTaskHistory)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
