@@ -192,53 +192,6 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	}
 }
 
-func TestFastAnalyzeOnVer2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
-	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3)")
-	_, err := tk.Exec("analyze table t")
-	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
-	tk.MustExec("set @@session.tidb_enable_fast_analyze = 0")
-	tk.MustExec("analyze table t")
-	is := dom.InfoSchema()
-	tblT, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	h := dom.StatsHandle()
-	require.NoError(t, h.Update(is))
-	statsTblT := h.GetTableStats(tblT.Meta())
-	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(2), col.GetStatsVer())
-	}
-	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(2), idx.GetStatsVer())
-	}
-	tk.MustExec("set @@session.tidb_enable_fast_analyze = 1")
-	err = tk.ExecToErr("analyze table t index idx")
-	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently", err.Error())
-	tk.MustExec("set @@session.tidb_analyze_version = 1")
-	_, err = tk.Exec("analyze table t index idx")
-	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
-	_, err = tk.Exec("analyze table t index")
-	require.Error(t, err)
-	require.Equal(t, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1", err.Error())
-	tk.MustExec("analyze table t")
-	require.NoError(t, h.Update(is))
-	statsTblT = h.GetTableStats(tblT.Meta())
-	for _, col := range statsTblT.Columns {
-		require.Equal(t, int64(1), col.GetStatsVer())
-	}
-	for _, idx := range statsTblT.Indices {
-		require.Equal(t, int64(1), idx.GetStatsVer())
-	}
-}
-
 func TestIncAnalyzeOnVer2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

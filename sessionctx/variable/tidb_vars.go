@@ -554,6 +554,7 @@ const (
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.

@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -2869,9 +2868,6 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	}
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
-		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
-		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
@@ -2881,8 +2877,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
-			// Fast analyze use analyze column to solve int handle.
-			if handleCols != nil && handleCols.IsInt() && b.ctx.GetSessionVars().EnableFastAnalyze {
+			// FIXME: How about non-int primary key?
+			if handleCols != nil && handleCols.IsInt() {
 				for i, id := range physicalIDs {
 					if id == tblInfo.ID {
 						id = -1
@@ -2925,9 +2921,6 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 	}
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
-		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
-		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
@@ -3140,17 +3133,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 }
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
-	// If enable fast analyze, the storage must be tikv.Storage.
-	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
-		return nil, errors.Errorf("Only support fast analyze in tikv storage")
-	}
-
-	// If enable fast analyze, the stats version must be 1.
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
-	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
-		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently")
-	}
-
 	// Require INSERT and SELECT privilege for tables.
 	b.requireInsertAndSelectPriv(as.TableNames)
 
