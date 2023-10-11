@@ -21,11 +21,24 @@ import (
 const (
 	// TiFlashRuleGroupID is the rule group id of tiflash
 	TiFlashRuleGroupID = "tiflash"
+	// TiDBBundleRangePrefixForGlobal is the bundle prefix of system global range.
+	TiDBBundleRangePrefixForGlobal = "TiDB_GLOBAL"
+	// TiDBBundleRangePrefixForMeta is the bundle prefix of system meta range.
+	TiDBBundleRangePrefixForMeta = "TiDB_META"
 	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
 	BundleIDPrefix = "TiDB_DDL_"
 	// PDBundleID is the bundle name of pd, the default bundle for all regions.
 	PDBundleID = "pd"
+
+	// DefaultKwd is used to reset the default rule (remove bundle).
+	DefaultKwd = "default"
+
+	// ranges
+	keyRangeGlobal = "global"
+	keyRangeMeta   = "meta"
 )
+
+var metaPrefix = []byte("m")
 
 // GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
 func GroupID(id int64) string {
@@ -33,6 +46,10 @@ func GroupID(id int64) string {
 }
 
 const (
+	// RuleIndexKeyRangeForGlobal is the index for a rule of whole system range.
+	RuleIndexKeyRangeForGlobal = 20
+	// RuleIndexKeyRangeForMeta is the index for a rule of system meta range.
+	RuleIndexKeyRangeForMeta = 21
 	// RuleIndexTable is the index for a rule of table.
 	RuleIndexTable = 40
 	// RuleIndexPartition is the index for a rule of partition.
