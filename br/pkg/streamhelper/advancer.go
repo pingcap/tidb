@@ -443,7 +443,7 @@ func (c *CheckpointAdvancer) stopSubscriber() {
 	c.subscriber = nil
 }
 
-func (c *CheckpointAdvancer) spawnSubscriptionHandler(ctx context.Context) {
+func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
 	c.subscriberMu.Lock()
 	defer c.subscriberMu.Unlock()
 	c.subscriber = NewSubscriber(c.env, c.env, WithMasterContext(ctx))
@@ -470,9 +470,12 @@ func (c *CheckpointAdvancer) spawnSubscriptionHandler(ctx context.Context) {
 }
 
 func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
 	if c.subscriber == nil {
 		return nil
 	}
+	failpoint.Inject("get_subscriber", nil)
 	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
 		log.Warn("Error when updating store topology.",
 			zap.String("category", "log backup advancer"), logutil.ShortError(err))
