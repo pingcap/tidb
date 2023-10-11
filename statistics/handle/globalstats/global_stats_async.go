@@ -146,7 +146,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
-		err1 := skipPartiton(sctx, partitionID, isIndex)
+		err1 :=i skipPartiton(sctx, partitionID, isIndex)
 		if err1 != nil {
 			// no idx so idx = 0
 			err := a.dealWithSkipPartition(partitionID, isIndex, 0, err1)
@@ -477,7 +477,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 	}
 }
 
-func skipPartiton(sctx sessionctx.Context, partitionID int64, isIndex bool) error {
+func skipPartition(sctx sessionctx.Context, partitionID int64, isIndex bool) error {
 	return storage.CheckSkipPartition(sctx, partitionID, toSQLIndex(isIndex))
 }
 
