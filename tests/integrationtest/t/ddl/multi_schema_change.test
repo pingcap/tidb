@@ -270,16 +270,16 @@ alter table t change column a b datetime null default '8972-12-24 10:56:03', ren
 drop table if exists t;
 create table t (a int, b double, index i(a, b));
 alter table t rename index i to i1, change column b c int;
-select count(*) from information_schema.TIDB_INDEXES where TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='i1';
+select count(*) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='i1';
 drop table if exists t;
 create table t (a int, b double, index i(a, b), index _Idx$_i(a, b));
 alter table t rename index i to i1, change column b c int;
-select count(*) from information_schema.TIDB_INDEXES where TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='i1';
-select count(*) from information_schema.TIDB_INDEXES where TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='_Idx$_i';
+select count(*) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='i1';
+select count(*) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t' and COLUMN_NAME='c' and KEY_NAME='_Idx$_i';
 drop table if exists t;
 create table t (a int, _Col$_a double, index _Idx$_i(a, _Col$_a), index i(a, _Col$_a));
 alter table t modify column a tinyint;
-select count(distinct KEY_NAME) from information_schema.TIDB_INDEXES where TABLE_NAME='t';
+select count(distinct KEY_NAME) from information_schema.TIDB_INDEXES where TABLE_SCHEMA='ddl__multi_schema_change' and TABLE_NAME='t';
 drop table if exists t;
 create table t (a BIGINT NULL DEFAULT '-283977870758975838', b double);
 insert into t values (-283977870758975838, 0);
@@ -325,7 +325,7 @@ select * from t;
 drop table if exists t;
 create table t (a int, b int) charset = utf8 shard_row_id_bits=2;
 alter table t modify column a tinyint, comment = 'abc', charset = utf8mb4;
-select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where table_name = 't';
+select TIDB_ROW_ID_SHARDING_INFO, TABLE_COMMENT, TABLE_COLLATION from information_schema.tables where TABLE_SCHEMA='ddl__multi_schema_change' and table_name = 't';
 
 # TestMultiSchemaChangeNonPublicDefaultValue
 drop table if exists t;
