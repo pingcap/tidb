@@ -64,7 +64,7 @@ func newGlobalStats(histCount int) *GlobalStats {
 }
 
 type (
-	getTableByPhysicalIDFunc    func(is infoschema.InfoSchema, physicalID int64) (table.Table, bool)
+	getTableByPhysicalIDFunc    func(is infoschema.InfoSchema, tableID int64) (table.Table, bool)
 	loadTablePartitionStatsFunc func(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
 	// GlobalStatusHandler is used to handle the global-level stats.
 )
@@ -101,7 +101,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
 	is infoschema.InfoSchema,
-	physicalID int64,
+	tableID int64,
 	isIndex bool,
 	histIDs []int64,
 	allPartitionStats map[int64]*statistics.Table,
@@ -109,9 +109,9 @@ func MergePartitionStats2GlobalStatsByTableID(
 	loadTablePartitionStatsFn loadTablePartitionStatsFunc,
 ) (globalStats *GlobalStats, err error) {
 	// Get the partition table IDs.
-	globalTable, ok := getTableByPhysicalIDFn(is, physicalID)
+	globalTable, ok := getTableByPhysicalIDFn(is, tableID)
 	if !ok {
-		err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", physicalID)
+		err = errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", tableID)
 		return
 	}
 

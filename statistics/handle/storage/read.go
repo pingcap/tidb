@@ -170,7 +170,7 @@ func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, 
 }
 
 // ExtendedStatsFromStorage reads extended stats from storage.
-func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
 		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
 	})
@@ -181,7 +181,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 		table.ExtendedStats = statistics.NewExtendedStatsColl()
 	}
 	rows, _, err := util.ExecRows(sctx, "select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?",
-		physicalID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
+		tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
 	if err != nil || len(rows) == 0 {
 		return table, nil
 	}
@@ -407,12 +407,12 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, physicalID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
 		histColl := statistics.HistColl{
-			PhysicalID:     physicalID,
+			PhysicalID:     tableID,
 			HavePhysicalID: true,
 			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
@@ -426,14 +426,14 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	table.Pseudo = false
 
-	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, physicalID)
+	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, tableID)
 	if err != nil || isNull {
 		return nil, err
 	}
 	table.ModifyCount = modidyCount
 	table.RealtimeCount = realtimeCount
 
-	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
+	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", tableID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
@@ -448,12 +448,12 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			return nil, err
 		}
 	}
-	return ExtendedStatsFromStorage(sctx, table, physicalID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
 }
 
 // LoadHistogram will load histogram from storage.
-func LoadHistogram(sctx sessionctx.Context, physicalID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
-	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", physicalID, isIndex, histID)
+func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
+	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)
 	if err != nil || len(row) == 0 {
 		return nil, err
 	}
@@ -473,9 +473,9 @@ func LoadHistogram(sctx sessionctx.Context, physicalID int64, isIndex int, histI
 			tp = colInfo.FieldType
 			break
 		}
-		return HistogramFromStorage(sctx, physicalID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr)
+		return HistogramFromStorage(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr)
 	}
-	return HistogramFromStorage(sctx, physicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0)
+	return HistogramFromStorage(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
