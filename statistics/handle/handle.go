@@ -278,7 +278,7 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	globalTableInfo *model.TableInfo,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
+	_ map[int64]*statistics.Table,
 ) (gstats *globalstats.GlobalStats, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex,
