@@ -3076,7 +3076,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsItem()
 		if GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
 		}
 	}
 
@@ -3629,7 +3629,7 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 			s.statsCollector = dom.StatsHandle().NewSessionStatsItem()
 		}
 		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
 		}
 	}
 

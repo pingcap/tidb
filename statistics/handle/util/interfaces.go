@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 )
 
@@ -46,6 +47,8 @@ type ColStatsTimeInfo struct {
 
 // StatsUsage is used to track the usage of column / index statistics.
 type StatsUsage interface {
+	// Below methods are for predicated columns.
+
 	// LoadColumnStatsUsage returns all columns' usage information.
 	LoadColumnStatsUsage(loc *time.Location) (map[model.TableItemID]ColStatsTimeInfo, error)
 
@@ -54,4 +57,39 @@ type StatsUsage interface {
 
 	// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 	CollectColumnsInExtendedStats(tableID int64) ([]int64, error)
+
+	// Below methods are for index usage.
+
+	// NewSessionIndexUsageCollector creates a new IndexUsageCollector on the list.
+	// The returned value's type should be *usage.SessionIndexUsageCollector, use interface{} to avoid cycle import now.
+	// TODO: use *usage.SessionIndexUsageCollector instead of interface{}.
+	NewSessionIndexUsageCollector() interface{}
+
+	// DumpIndexUsageToKV dumps all collected index usage info to storage.
+	DumpIndexUsageToKV() error
+
+	// GCIndexUsage removes unnecessary index usage data.
+	GCIndexUsage() error
+}
+
+// StatsHistory is used to manage historical stats.
+type StatsHistory interface {
+	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
+	RecordHistoricalStatsMeta(tableID int64, version uint64, source string)
+
+	// CheckHistoricalStatsEnable check whether historical stats is enabled.
+	CheckHistoricalStatsEnable() (enable bool, err error)
+
+	// TODO: RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
+}
+
+// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+type StatsAnalyze interface {
+	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
+
+	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
+	DeleteAnalyzeJobs(updateTime time.Time) error
+
+	// TODO: HandleAutoAnalyze
 }

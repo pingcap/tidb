@@ -34,30 +34,11 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 )
 
-// NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
-// idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
-// points to new item. It's helpful to sweepIdxUsageList.
-func (h *Handle) NewSessionIndexUsageCollector() *usage.SessionIndexUsageCollector {
-	return usage.NewSessionIndexUsageCollector(h.idxUsageListHead)
-}
-
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 
-// DumpIndexUsageToKV will dump in-memory index usage information to KV.
-func (h *Handle) DumpIndexUsageToKV() error {
-	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return usage.DumpIndexUsageToKV(sctx, h.idxUsageListHead)
-	})
-}
-
 func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error, flags ...int) (err error) {
 	return utilstats.CallWithSCtx(h.pool, f, flags...)
-}
-
-// GCIndexUsage will delete the usage information of those indexes that do not exist.
-func (h *Handle) GCIndexUsage() error {
-	return h.callWithSCtx(usage.GCIndexUsageOnKV)
 }
 
 var (
@@ -156,7 +137,7 @@ func (h *Handle) dumpTableStatCountToKV(is infoschema.InfoSchema, physicalTableI
 	statsVersion := uint64(0)
 	defer func() {
 		if err == nil && statsVersion != 0 {
-			h.recordHistoricalStatsMeta(physicalTableID, statsVersion, StatsMetaHistorySourceFlushStats)
+			h.RecordHistoricalStatsMeta(physicalTableID, statsVersion, StatsMetaHistorySourceFlushStats)
 		}
 	}()
 	if delta.Count == 0 {
