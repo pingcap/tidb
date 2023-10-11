@@ -163,10 +163,11 @@ type Domain struct {
 	historicalStatsWorker *HistoricalStatsWorker
 	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
 	serverID              uint64
-	serverIDSession       *concurrency.Session
-	isLostConnectionToPD  atomicutil.Int32 // !0: true, 0: false.
-	onClose               func()
-	sysExecutorFactory    func(*Domain) (pools.Resource, error)
+
+	serverIDSession      *concurrency.Session
+	isLostConnectionToPD atomicutil.Int32 // !0: true, 0: false.
+	onClose              func()
+	sysExecutorFactory   func(*Domain) (pools.Resource, error)
 
 	sysProcesses SysProcesses
 
