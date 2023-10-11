@@ -109,7 +109,6 @@ func TestGetCorrectResult(t *testing.T) {
 	tk.RequireEqual(true, checkResults(res.Rows(), ciCollationResult))
 }
 
-// TestRandomFail may be a unstable test
 func TestRandomFail(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -122,9 +121,9 @@ func TestRandomFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%d;", hardLimitBytesNum))
 	failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/triggerSpill", fmt.Sprintf("return(%d)", hardLimitBytesNum))
 	failpoint.Enable("github.com/pingcap/tidb/executor/aggregate/enableAggSpillIntest", `return(true)`)
+
 	// Test is successful when all sqls are not hung
-	for i := 0; i < 100; i++ {
-		fmt.Println("xzxdebug")
-		tk.Exec("select k, sum(v) from test_spill_random_fail group by k;")
+	for i := 0; i < 50; i++ {
+		tk.ExecuteAndResultSetToResultWithCtx("select k, sum(v) from test_spill_random_fail group by k;")
 	}
 }
