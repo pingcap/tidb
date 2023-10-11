@@ -1007,3 +1007,17 @@ func (stm *TaskManager) GetNodesByRole(role string) (map[string]bool, error) {
 	}
 	return nodes, nil
 }
+
+// GetAllNodes gets nodes in dist_framework_meta.
+func (stm *TaskManager) GetAllNodes() ([]string, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select host from mysql.dist_framework_meta")
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]string, 0, len(rs))
+	for _, r := range rs {
+		nodes = append(nodes, r.GetString(0))
+	}
+	return nodes, nil
+}

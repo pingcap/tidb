@@ -123,12 +123,25 @@ func MockDispatcherManager(t *testing.T, pool *pools.ResourcePool) (*dispatcher.
 	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
 	require.NoError(t, err)
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
 			mockDispatcher.Extension = &testDispatcherExt{}
 			return mockDispatcher
 		})
 	return dsp, mgr
+}
+
+func MockDispatcherManagerWithMockTaskMgr(t *testing.T, pool *pools.ResourcePool, taskMgr *mock.MockTaskManager) *dispatcher.Manager {
+	ctx := context.WithValue(context.Background(), "etcd", true)
+	dsp, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), taskMgr, "host:port")
+	require.NoError(t, err)
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			mockDispatcher := dsp.MockDispatcher(task)
+			mockDispatcher.Extension = &testDispatcherExt{}
+			return mockDispatcher
+		})
+	return dsp
 }
 
 func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
@@ -218,7 +231,7 @@ func TestTaskFailInManager(t *testing.T) {
 
 	dspManager, mgr := MockDispatcherManager(t, pool)
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			return mockDispatcher
 		})
 	dspManager.Start()
@@ -267,7 +280,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	dsp, mgr := MockDispatcherManager(t, pool)
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
 			mockDispatcher.Extension = &numberExampleDispatcherExt{}
 			return mockDispatcher
@@ -493,10 +506,6 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 }
 
 func TestCleanUpRoutine(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/domain/MockDisableDistTask"))
-	}()
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -510,7 +519,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			mockDispatcher := dsp.MockDispatcher(task)
 			mockDispatcher.Extension = &numberExampleDispatcherExt{}
 			return mockDispatcher
@@ -557,4 +566,30 @@ func TestCleanUpRoutine(t *testing.T) {
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, time.Second*10, time.Millisecond*300)
+}
+
+func TestCleanUpMeta(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	gtk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return gtk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	dspMgr := MockDispatcherManagerWithMockTaskMgr(t, pool, taskMgr)
+	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	dispatcher.RegisterDispatcherFactory(proto.TaskTypeExample,
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			mockDispatcher := dspMgr.MockDispatcher(task)
+			mockDispatcher.Extension = &numberExampleDispatcherExt{}
+			return mockDispatcher
+		})
+	dispatcher.RegisterDispatcherCleanUpFactory(proto.TaskTypeExample,
+		func() dispatcher.CleanUpRoutine {
+			return mockCleanupRountine
+		})
+	dspMgr.CleanUpMeta()
 }

@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
@@ -703,7 +702,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
-			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
 			})
 		dispatcher.RegisterDispatcherCleanUpFactory(BackfillTaskType, newBackfillCleanUpS3)

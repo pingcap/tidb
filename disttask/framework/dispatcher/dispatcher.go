@@ -79,7 +79,7 @@ type Dispatcher interface {
 // each task type embed this struct and implement the Extension interface.
 type BaseDispatcher struct {
 	ctx     context.Context
-	taskMgr *storage.TaskManager
+	taskMgr TaskManager
 	Task    *proto.Task
 	logCtx  context.Context
 	// serverID, it's value is ip:port now.
@@ -103,7 +103,7 @@ type BaseDispatcher struct {
 var MockOwnerChange func()
 
 // NewBaseDispatcher creates a new BaseDispatcher.
-func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
+func NewBaseDispatcher(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
 		zap.String("task-type", task.Type))
 	return &BaseDispatcher{

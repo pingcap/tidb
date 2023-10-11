@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	disttaskutil "github.com/pingcap/tidb/util/disttask"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
@@ -90,7 +90,7 @@ func (dm *Manager) clearRunningTasks() {
 type Manager struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
-	taskMgr *storage.TaskManager
+	taskMgr TaskManager
 	wg      tidbutil.WaitGroupWrapper
 	gPool   *spool.Pool
 	inited  bool
@@ -107,9 +107,9 @@ type Manager struct {
 }
 
 // NewManager creates a dispatcher struct.
-func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID string) (*Manager, error) {
+func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Manager, error) {
 	dispatcherManager := &Manager{
-		taskMgr:  taskTable,
+		taskMgr:  taskMgr,
 		serverID: serverID,
 	}
 	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
@@ -302,11 +302,12 @@ func (dm *Manager) cleanUpLoop() {
 // WaitCleanUpFinished is used to sync the test.
 var WaitCleanUpFinished = make(chan struct{})
 
-// doCleanUpRoutine processes clean up routine defined by each type of tasks.
+// doCleanUpRoutine processes clean up routine defined by each type of tasks and cleanUpMeta.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
 func (dm *Manager) doCleanUpRoutine() {
+	dm.CleanUpMeta()
 	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
 		proto.TaskStateFailed,
 		proto.TaskStateReverted,
@@ -329,6 +330,32 @@ func (dm *Manager) doCleanUpRoutine() {
 		WaitCleanUpFinished <- struct{}{}
 	})
 	logutil.Logger(dm.ctx).Info("cleanUp routine success")
+}
+
+// cleanUpMeta clean up old node info in dist_framework_meta table.
+func (dm *Manager) CleanUpMeta() {
+	// Safe to discard errors since this function can be called at regular intervals.
+	serverInfos, err := GenerateSchedulerNodes(dm.ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("generate scheduler nodes met error")
+	}
+
+	oldNodes, err := dm.taskMgr.GetAllNodes()
+	if err != nil {
+		logutil.BgLogger().Warn("get all nodes met error")
+	}
+
+	cleanNodes := make([]string, 0)
+	for _, nodeID := range oldNodes {
+		if ok := disttaskutil.MatchServerInfo(serverInfos, nodeID); !ok {
+			cleanNodes = append(cleanNodes, nodeID)
+		}
+	}
+	logutil.BgLogger().Info("start to clean up dist_framework_meta")
+	err = dm.taskMgr.CleanUpMeta(cleanNodes)
+	if err != nil {
+		logutil.BgLogger().Warn("clean up dist_framework_meta met error")
+	}
 }
 
 func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {

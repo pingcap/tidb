@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	framework_store "github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -182,7 +181,7 @@ type litBackfillDispatcher struct {
 	*dispatcher.BaseDispatcher
 }
 
-func newLitBackfillDispatcher(ctx context.Context, taskMgr *framework_store.TaskManager,
+func newLitBackfillDispatcher(ctx context.Context, taskMgr dispatcher.TaskManager,
 	serverID string, task *proto.Task, handle dispatcher.Extension) dispatcher.Dispatcher {
 	dis := litBackfillDispatcher{
 		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
