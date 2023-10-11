@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -38,11 +37,55 @@ import (
 	"go.uber.org/zap"
 )
 
+// statsGCImpl implements StatsGC interface.
+type statsGCImpl struct {
+	pool          util.SessionPool // used to recycle sessionctx.
+	tblInfoGetter util.TableInfoGetter
+
+	// TODO: it's ugly to use a raw function, solve it later on.
+	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)
+	statsLease               time.Duration // statistics lease
+}
+
+// NewStatsGC creates a new StatsGC.
+func NewStatsGC(pool util.SessionPool, statsLease time.Duration, tblInfo util.TableInfoGetter,
+	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)) util.StatsGC {
+	return &statsGCImpl{
+		pool:                     pool,
+		statsLease:               statsLease,
+		tblInfoGetter:            tblInfo,
+		markExtendedStatsDeleted: markExtendedStatsDeleted,
+	}
+}
+
+// GCStats will garbage collect the useless stats' info.
+// For dropped tables, we will first update their version
+// so that other tidb could know that table is deleted.
+func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
+	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
+		return GCStats(sctx, gc.tblInfoGetter, gc.markExtendedStatsDeleted, is, gc.statsLease, ddlLease)
+	})
+}
+
+// ClearOutdatedHistoryStats clear outdated historical stats.
+// Only for test.
+func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
+	return util.CallWithSCtx(gc.pool, ClearOutdatedHistoryStats)
+}
+
+// DeleteTableStatsFromKV deletes table statistics from kv.
+// A statsID refers to statistic of a table or a partition.
+func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
+	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
+		return DeleteTableStatsFromKV(sctx, statsIDs)
+	}, util.FlagWrapTxn)
+}
+
 // GCStats will garbage collect the useless stats' info.
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func GCStats(sctx sessionctx.Context,
-	getTableByPhysicalID func(is infoschema.InfoSchema, physicalID int64) (table.Table, bool),
+	tableInfoGetter util.TableInfoGetter,
 	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
 	is infoschema.InfoSchema, statsLease, ddlLease time.Duration) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
@@ -72,7 +115,7 @@ func GCStats(sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		if err := gcTableStats(sctx, getTableByPhysicalID, markExtendedStatsDeleted, is, row.GetInt64(0)); err != nil {
+		if err := gcTableStats(sctx, tableInfoGetter, markExtendedStatsDeleted, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
 		_, existed := is.TableByID(row.GetInt64(0))
@@ -218,7 +261,7 @@ func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err er
 
 // gcTableStats GC this table's stats.
 func gcTableStats(sctx sessionctx.Context,
-	getTableByPhysicalID func(is infoschema.InfoSchema, physicalID int64) (table.Table, bool),
+	tableInfoGetter util.TableInfoGetter,
 	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
 	is infoschema.InfoSchema, physicalID int64) error {
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
@@ -234,7 +277,7 @@ func gcTableStats(sctx sessionctx.Context,
 		}
 		cache.TableRowStatsCache.Invalidate(physicalID)
 	}
-	tbl, ok := getTableByPhysicalID(is, physicalID)
+	tbl, ok := tableInfoGetter.TableInfoByID(is, physicalID)
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {

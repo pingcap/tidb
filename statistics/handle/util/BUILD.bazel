@@ -2,15 +2,23 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "util",
-    srcs = ["util.go"],
+    srcs = [
+        "interfaces.go",
+        "table_info.go",
+        "util.go",
+    ],
     importpath = "github.com/pingcap/tidb/statistics/handle/util",
     visibility = ["//visibility:public"],
     deps = [
+        "//infoschema",
         "//kv",
         "//parser/ast",
+        "//parser/model",
         "//parser/terror",
         "//sessionctx",
         "//sessionctx/variable",
+        "//table",
+        "//types",
         "//util/chunk",
         "//util/sqlexec",
         "@com_github_ngaut_pools//:pools",
