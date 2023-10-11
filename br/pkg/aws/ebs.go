@@ -311,45 +311,49 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, progress glue.Progress) error {
 
 	pendingSnapshots := make([]*string, 0, len(snapShotIDs))
-	for volID := range snapIDMap {
-		snapID := snapIDMap[volID]
-		pendingSnapshots = append(pendingSnapshots, &snapID)
+	for _, snaphotID := range snapShotIDs {
+		pendingSnapshots = append(pendingSnapshots, snaphotID)
 	}
-	snapProgressMap := make([]*string, len(snapShotIDs))
 
-	log.Info("starts check pending snapshots", zap.Any("snapshots", pendingSnapshots))
+	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots))
 	for {
 		if len(pendingSnapshots) == 0 {
-			log.Info("all pending volume snapshots are finished.")
-			return totalVolumeSize, nil
+			log.Info("all snapshots fsr enablement is finished.")
+			return nil
 		}
 
-		// check pending snapshots every 5 seconds
-		time.Sleep(5 * time.Second)
-		log.Info("check pending snapshots", zap.Int("count", len(pendingSnapshots)))
-		resp, err := e.ec2.DescribeSnapshots(&ec2.DescribeSnapshotsInput{
-			SnapshotIds: pendingSnapshots,
-		})
+		// check pending snapshots every 1 minute
+		time.Sleep(1 * time.Minute)
+		log.Info("check snapshots not fsr enabled", zap.Int("count", len(pendingSnapshots)))
+		input := &ec2.DescribeFastSnapshotRestoresInput{
+			Filters: []*ec2.Filter{
+				{
+					Name:   aws.String("state"),
+					Values: []*string{aws.String("disabled"), aws.String("disabling"), aws.String("enabling"), aws.String("optimizing")},
+				},
+				{
+					Name:   aws.String("availability-zone"),
+					Values: []*string{aws.String(targetAZ)},
+				},
+			},
+		}
+
+		result, err := e.ec2.DescribeFastSnapshotRestores(input)
 		if err != nil {
-			return 0, errors.Trace(err)
+			return errors.Trace(err)
 		}
 
 		var uncompletedSnapshots []*string
-		for _, s := range resp.Snapshots {
-			if *s.State == ec2.SnapshotStateCompleted {
-				log.Info("snapshot completed", zap.String("id", *s.SnapshotId))
-			} else {
-				log.Debug("snapshot creating...", zap.Stringer("snap", s))
-				uncompletedSnapshots = append(uncompletedSnapshots, s.SnapshotId)
-			}
-			currSnapProgress := e.extractSnapProgress(s.Progress)
-			if currSnapProgress > snapProgressMap[*s.SnapshotId] {
-				progress.IncBy(currSnapProgress - snapProgressMap[*s.SnapshotId])
-				snapProgressMap[*s.SnapshotId] = currSnapProgress
-			}
+		for _, fastRestore := range result.FastSnapshotRestores {
+			uncompletedSnapshots = append(uncompletedSnapshots, fastRestore.SnapshotId)
+			progress.IncBy(int64(len(pendingSnapshots) - len(uncompletedSnapshots)))
 		}
 		pendingSnapshots = uncompletedSnapshots
 	}
+
+	log.Info("all snaashots are fsr enabled.")
+	return nil
+
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
