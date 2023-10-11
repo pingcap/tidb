@@ -1,0 +1,316 @@
+set tidb_enable_clustered_index = ON;
+drop table if exists t;
+create table t (a int, b varchar(10));
+alter table t add primary key(a) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+alter table t add primary key(a) nonclustered;
+alter table t drop primary key;
+alter table t add primary key(a) nonclustered;
+drop index `primary` on t;
+alter table t add primary key(a);
+drop index `primary` on t;
+drop index `primary` on t;
+Error 1091 (42000): Can't DROP 'PRIMARY'; check that column/key exists
+drop table if exists t;
+create table t (a int, b varchar(10), primary key(a) clustered);
+alter table t drop primary key;
+Error 8200 (HY000): Unsupported drop primary key when the table is using clustered index
+alter table t add primary key(a) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+alter table t add primary key(a) nonclustered;
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(a);
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(b) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+alter table t add primary key(b) nonclustered;
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(b);
+Error 1068 (42000): Multiple primary key defined
+drop table if exists t;
+create table t (a int, b varchar(10), primary key(a) nonclustered);
+alter table t add primary key(a) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+alter table t add primary key(a) nonclustered;
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(a);
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(b) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+alter table t add primary key(b) nonclustered;
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(b);
+Error 1068 (42000): Multiple primary key defined
+alter table t drop primary key;
+drop table if exists t;
+create table t (a int, b varchar(10), primary key(b) clustered);
+alter table t drop primary key;
+Error 8200 (HY000): Unsupported drop primary key when the table is using clustered index
+alter table t add primary key(a) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+alter table t add primary key(a) nonclustered;
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(a);
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(b) clustered;
+Error 8200 (HY000): Adding clustered primary key is not supported. Please consider adding NONCLUSTERED primary key instead
+alter table t add primary key(b) nonclustered;
+Error 1068 (42000): Multiple primary key defined
+alter table t add primary key(b);
+Error 1068 (42000): Multiple primary key defined
+drop table if exists t;
+create table t (`primary` int);
+alter table t add index (`primary`);
+drop index `primary` on t;
+Error 1091 (42000): Can't DROP 'PRIMARY'; check that column/key exists
+drop table if exists t;
+create table t(c1 int not null, primary key(c1) invisible);
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t (a int, b int not null, primary key(a), unique(b) invisible);
+drop table t;
+set tidb_enable_clustered_index = default;
+set @@tidb_allow_remove_auto_inc = 1;
+drop table if exists t;
+create table t (a bigint auto_increment primary key);
+insert into t values (), (), ();
+alter table t modify column a bigint auto_random(3);
+insert into t values (), (), ();
+show table t next_row_id;
+DB_NAME	TABLE_NAME	COLUMN_NAME	NEXT_GLOBAL_ROW_ID	ID_TYPE
+ddl__primary_key_handle	t	a	60002	AUTO_RANDOM
+drop table if exists t;
+create table t (a bigint auto_increment unique key);
+alter table t modify column a bigint auto_random;
+Error 8216 (HY000): Invalid auto random: auto_random can only be converted from auto_increment clustered primary key
+drop table if exists t;
+create table t (a bigint auto_increment unique key, b bigint auto_random primary key);
+alter table t modify column a bigint auto_random;
+Error 8216 (HY000): Invalid auto random: auto_random can only be converted from auto_increment clustered primary key
+drop table if exists t;
+create table t (a bigint);
+alter table t modify column a bigint auto_random;
+Error 8216 (HY000): Invalid auto random: auto_random can only be converted from auto_increment clustered primary key
+drop table if exists t;
+create table t (a bigint primary key);
+alter table t modify column a bigint auto_random;
+Error 8216 (HY000): Invalid auto random: auto_random can only be converted from auto_increment clustered primary key
+drop table if exists t;
+create table t (a int auto_increment primary key);
+alter table t modify column a int auto_random;
+Error 8216 (HY000): Invalid auto random: auto_random option must be defined on `bigint` column, but not on `int` column
+alter table t modify column a bigint auto_random;
+Error 8216 (HY000): Invalid auto random: modifying the auto_random column type is not supported
+drop table if exists t;
+create table t (a bigint auto_random primary key);
+alter table t modify column a bigint auto_increment;
+Error 8200 (HY000): Unsupported modify column: can't set auto_increment
+drop table if exists t;
+create table t (a bigint auto_increment primary key);
+insert into t values (1<<(64-5));
+alter table t modify column a bigint auto_random(4);
+Error 8216 (HY000): Invalid auto random: max allowed auto_random shard bits is 3, but got 4 on column `a`
+drop table if exists t;
+create table t (a bigint auto_increment primary key);
+insert into t values (1<<(64-6));
+alter table t modify column a bigint auto_random(4);
+set @@tidb_allow_remove_auto_inc = default;
+set @@tidb_enable_exchange_partition=1;
+drop table if exists e1, e2, e3, e4;
+create table e1 (a bigint primary key clustered auto_random(3)) partition by hash(a) partitions 1;
+create table e2 (a bigint primary key);
+alter table e1 exchange partition p0 with table e2;
+Error 1736 (HY000): Tables have different definitions
+create table e3 (a bigint primary key auto_random(2));
+alter table e1 exchange partition p0 with table e3;
+Error 1736 (HY000): Tables have different definitions
+insert into e1 values (), (), ();
+create table e4 (a bigint primary key auto_random(3));
+insert into e4 values ();
+alter table e1 exchange partition p0 with table e4;
+select count(*) from e1;
+count(*)
+1
+insert into e1 values ();
+select count(*) from e1;
+count(*)
+2
+select count(*) from e4;
+count(*)
+3
+insert into e4 values ();
+select count(*) from e4;
+count(*)
+4
+set @@tidb_enable_exchange_partition=default;
+drop database if exists auto_random_db;
+drop table if exists t;
+create table t (a bigint auto_random(6) primary key clustered);
+set @@auto_increment_increment=5;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+a & b'111111111111111111111111111111111111111111111111111111111'
+10
+15
+20
+drop table if exists t;
+create table t (a bigint auto_random(6) primary key clustered);
+set @@auto_increment_increment=2;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+a & b'111111111111111111111111111111111111111111111111111111111'
+10
+12
+14
+delete from t;
+set @@auto_increment_increment=5;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+a & b'111111111111111111111111111111111111111111111111111111111'
+15
+20
+25
+delete from t;
+set @@auto_increment_increment=10;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+a & b'111111111111111111111111111111111111111111111111111111111'
+30
+40
+50
+delete from t;
+set @@auto_increment_increment=5;
+set @@auto_increment_offset=10;
+insert into t values ();
+insert into t values ();
+insert into t values ();
+select a & b'111111111111111111111111111111111111111111111111111111111' from t order by a & b'111111111111111111111111111111111111111111111111111111111' asc;
+a & b'111111111111111111111111111111111111111111111111111111111'
+55
+60
+65
+drop database if exists auto_random_db;
+set @@auto_increment_increment=default;
+set @@auto_increment_offset=default;
+drop table if exists t,t1,t2,t3,t4,t5,t6;
+create table t (a int, b int, unique (a) invisible);
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+index_name	is_visible
+a	NO
+insert into t values (1, 2);
+select * from t;
+a	b
+1	2
+alter table t drop index a;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+index_name	is_visible
+insert into t values (3, 4);
+select * from t;
+a	b
+1	2
+3	4
+alter table t add index (b) invisible;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+index_name	is_visible
+b	NO
+insert into t values (5, 6);
+select * from t;
+a	b
+1	2
+3	4
+5	6
+alter table t drop index b;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+index_name	is_visible
+insert into t values (7, 8);
+select * from t;
+a	b
+1	2
+3	4
+5	6
+7	8
+alter table t add index a_b(a, b) invisible;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+index_name	is_visible
+a_b	NO
+a_b	NO
+insert into t values (9, 10);
+select * from t;
+a	b
+1	2
+3	4
+5	6
+7	8
+9	10
+alter table t drop index a_b;
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't';
+index_name	is_visible
+insert into t values (11, 12);
+select * from t;
+a	b
+1	2
+3	4
+5	6
+7	8
+9	10
+11	12
+create table t1 (a int, primary key (a) nonclustered invisible);
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t1 (a int, b int, primary key (a, b) nonclustered invisible);
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t1 (a int, b int);
+alter table t1 add primary key(a) nonclustered invisible;
+Error 3522 (HY000): A primary key index cannot be invisible
+alter table t1 add primary key(a, b) nonclustered invisible;
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t2(a int not null, unique (a) invisible);
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t2(a int auto_increment, unique key (a) invisible);
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t2(a int not null);
+alter table t2 add unique (a) invisible;
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t3(a int, unique index (a) invisible);
+alter table t3 modify column a int not null;
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t4(a int not null, b int not null, unique (a), unique (b) invisible);
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't4';
+index_name	is_visible
+a	YES
+b	NO
+insert into t4 values (1, 2);
+select * from t4;
+a	b
+1	2
+create table t5(a int not null, b int not null, unique (b) invisible, unique (a));
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t5(a int not null, b int not null, unique (a), unique (b) invisible);
+alter table t5 drop index a;
+Error 3522 (HY000): A primary key index cannot be invisible
+alter table t5 modify column a int null;
+Error 3522 (HY000): A primary key index cannot be invisible
+create table t6 (a int not null, b int, unique (a) invisible, primary key(b) nonclustered);
+select index_name, is_visible from information_schema.statistics where table_schema = 'ddl__primary_key_handle' and table_name = 't6';
+index_name	is_visible
+a	NO
+PRIMARY	YES
+insert into t6 values (1, 2);
+select * from t6;
+a	b
+1	2
+alter table t6 drop primary key;
+Error 3522 (HY000): A primary key index cannot be invisible
+show index from t6 where Key_name='PRIMARY';
+Table	Non_unique	Key_name	Seq_in_index	Column_name	Collation	Cardinality	Sub_part	Packed	Null	Index_type	Comment	Index_comment	Visible	Expression	Clustered
+t6	0	PRIMARY	1	b	A	0	NULL	NULL		BTREE			YES	NULL	NO

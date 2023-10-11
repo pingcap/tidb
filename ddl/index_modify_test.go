@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	testddlutil "github.com/pingcap/tidb/ddl/testutil"
 	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
@@ -983,48 +982,6 @@ LOOP:
 	require.NotContains(t, fmt.Sprintf("%v", rows), idxName)
 
 	tk.MustExec("drop table test_drop_index")
-}
-
-func TestAddMultiColumnsIndexClusterIndex(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists test_add_multi_col_index_clustered;")
-	tk.MustExec("create database test_add_multi_col_index_clustered;")
-	tk.MustExec("use test_add_multi_col_index_clustered;")
-
-	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
-	tk.MustExec("create table t (a int, b varchar(10), c int, primary key (a, b));")
-	tk.MustExec("insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);")
-	tk.MustExec("create index idx on t (a, c);")
-
-	tk.MustExec("admin check index t idx;")
-	tk.MustExec("admin check table t;")
-
-	tk.MustExec("insert into t values (5, '5', 5), (6, '6', NULL);")
-
-	tk.MustExec("admin check index t idx;")
-	tk.MustExec("admin check table t;")
-}
-
-func TestAddIndexWithDupCols(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	err1 := infoschema.ErrColumnExists.GenWithStackByArgs("b")
-	err2 := infoschema.ErrColumnExists.GenWithStackByArgs("B")
-
-	tk.MustExec("create table test_add_index_with_dup (a int, b int)")
-	err := tk.ExecToErr("create index c on test_add_index_with_dup(b, a, b)")
-	require.ErrorIs(t, err, errors.Cause(err1))
-	err = tk.ExecToErr("create index c on test_add_index_with_dup(b, a, B)")
-	require.ErrorIs(t, err, errors.Cause(err2))
-	err = tk.ExecToErr("alter table test_add_index_with_dup add index c (b, a, b)")
-	require.ErrorIs(t, err, errors.Cause(err1))
-	err = tk.ExecToErr("alter table test_add_index_with_dup add index c (b, a, B)")
-	require.ErrorIs(t, err, errors.Cause(err2))
-
-	tk.MustExec("drop table test_add_index_with_dup")
 }
 
 func TestAnonymousIndex(t *testing.T) {

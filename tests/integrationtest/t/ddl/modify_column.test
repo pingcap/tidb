@@ -1,0 +1,757 @@
+# TestModifyColumnTypeWithWarnings
+drop table if exists t;
+create table t(a decimal(5,2));
+insert into t values(111.22),(111.22),(111.22),(111.22),(333.4);
+alter table t modify column a decimal(4,1);
+show warnings;
+drop table if exists t;
+create table t(a decimal(5,2));
+insert into t values(111.22),(111.22),(111.22),(33.4);
+-- error 1690
+alter table t modify column a decimal(3,1);
+set @@sql_mode="";
+alter table t modify column a decimal(3,1);
+show warnings;
+set @@sql_mode=default;
+
+# TestModifyColumnAutoIncrementWithDefaultValue
+drop table if exists t;
+create table t (a bigint auto_increment primary key);
+-- error 1067
+alter table t modify column a bigint auto_increment default 3;
+
+# TestModifyColumnTime_TimeToYear
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("30 20:00:12");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("30 20:00");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("30 20");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("20:00:12");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("20:00");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("12");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("200012");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values (200012);
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values (0012);
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values (12);
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("30 20:00:12.498");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("20:00:12.498");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values ("200012.498");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a time);
+insert into t_mc (a) values (200012.498);
+-- error 1264
+alter table t_mc modify a year;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_DateToTime
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("2019-01-02");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("19-01-02");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("20190102");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("190102");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values (20190102);
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values (190102);
+alter table t_mc modify a time;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_DateToYear
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("2019-01-02");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("19-01-02");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("20190102");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("190102");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values (20190102);
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values (190102);
+alter table t_mc modify a year;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_DateToDatetime
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("2019-01-02");
+alter table t_mc modify a datetime;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("19-01-02");
+alter table t_mc modify a datetime;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("20190102");
+alter table t_mc modify a datetime;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values ("190102");
+alter table t_mc modify a datetime;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values (20190102);
+alter table t_mc modify a datetime;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a date);
+insert into t_mc (a) values (190102);
+alter table t_mc modify a datetime;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_TimestampToYear
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("2006-01-02 15:04:05");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("06-01-02 15:04:05");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("20060102150405");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("060102150405");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values (20060102150405);
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values (060102150405);
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("2006-01-02 23:59:59.506");
+alter table t_mc modify a year;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_TimestampToTime
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("2006-01-02 15:04:05");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("06-01-02 15:04:05");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("20060102150405");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("060102150405");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values (20060102150405);
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values (060102150405);
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("2006-01-02 23:59:59.506");
+alter table t_mc modify a time;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_TimestampToDate
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("2006-01-02 15:04:05");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("06-01-02 15:04:05");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("20060102150405");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("060102150405");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values (20060102150405);
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values (060102150405);
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a timestamp);
+insert into t_mc (a) values ("2006-01-02 23:59:59.506");
+alter table t_mc modify a date;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_DatetimeToYear
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 15:04:05");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("06-01-02 15:04:05");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("20060102150405");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("060102150405");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (20060102150405);
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (060102150405);
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 23:59:59.506");
+alter table t_mc modify a year;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("1000-01-02 23:59:59");
+-- error 1264
+alter table t_mc modify a year;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("9999-01-02 23:59:59");
+-- error 1264
+alter table t_mc modify a year;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_DatetimeToTime
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 15:04:05");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("06-01-02 15:04:05");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("20060102150405");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("060102150405");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (20060102150405);
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (060102150405);
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 23:59:59.506");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("1000-01-02 23:59:59");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("9999-01-02 23:59:59");
+alter table t_mc modify a time;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_DatetimeToDate
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 15:04:05");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("06-01-02 15:04:05");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("20060102150405");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("060102150405");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (20060102150405);
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (060102150405);
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 23:59:59.506");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("1000-01-02 23:59:59");
+alter table t_mc modify a date;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("9999-01-02 23:59:59");
+alter table t_mc modify a date;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_DatetimeToTimestamp
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 15:04:05");
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("06-01-02 15:04:05");
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("20060102150405");
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("060102150405");
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (20060102150405);
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values (060102150405);
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2006-01-02 23:59:59.506");
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("1971-01-02 23:59:59");
+alter table t_mc modify a timestamp;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a datetime);
+insert into t_mc (a) values ("2009-01-02 23:59:59");
+alter table t_mc modify a timestamp;
+select a from t_mc;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_YearToTime
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("2019");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (2019);
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("00");
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("69");
+-- error 1292
+alter table t_mc modify a time;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("70");
+-- error 1292
+alter table t_mc modify a time;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("99");
+-- error 1292
+alter table t_mc modify a time;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (00);
+alter table t_mc modify a time;
+select a from t_mc;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (69);
+-- error 1292
+alter table t_mc modify a time;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (70);
+-- error 1292
+alter table t_mc modify a time;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (99);
+-- error 1292
+alter table t_mc modify a time;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_YearToDate
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("2019");
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (2019);
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("00");
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("69");
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("70");
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("99");
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (00);
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (69);
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (70);
+-- error 1292
+alter table t_mc modify a date;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (99);
+-- error 1292
+alter table t_mc modify a date;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_YearToDatetime
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("2019");
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (2019);
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("00");
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("69");
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("70");
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("99");
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (00);
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (69);
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (70);
+-- error 1292
+alter table t_mc modify a datetime;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (99);
+-- error 1292
+alter table t_mc modify a datetime;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
+# TestModifyColumnTime_YearToTimestamp
+set @@global.tidb_ddl_error_count_limit = 3;
+set @@time_zone=UTC;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("2019");
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (2019);
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("00");
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("69");
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("70");
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values ("99");
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (00);
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (69);
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (70);
+-- error 1292
+alter table t_mc modify a timestamp;
+drop table if exists t_mc;
+create table t_mc(a year);
+insert into t_mc (a) values (99);
+-- error 1292
+alter table t_mc modify a timestamp;
+set @@global.tidb_ddl_error_count_limit = default;
+set @@time_zone=default;
+
