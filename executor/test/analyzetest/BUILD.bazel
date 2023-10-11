@@ -29,8 +29,6 @@ go_test(
         "//statistics/handle",
         "//statistics/handle/autoanalyze",
         "//testkit",
-        "//types",
-        "//util/codec",
         "//util/dbterror/exeerrors",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

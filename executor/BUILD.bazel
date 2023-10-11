@@ -12,7 +12,6 @@ go_library(
         "analyze_col_v2.go",
         "analyze_global_stats.go",
         "analyze_idx.go",
-        "analyze_incremental.go",
         "analyze_utils.go",
         "analyze_worker.go",
         "batch_checker.go",

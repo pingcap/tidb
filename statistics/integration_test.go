@@ -192,32 +192,6 @@ func TestChangeVerTo2BehaviorWithPersistedOptions(t *testing.T) {
 	}
 }
 
-func TestIncAnalyzeOnVer2(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	tk.MustExec("insert into t values(1, 1), (1, 2)")
-	tk.MustExec("analyze table t with 2 topn")
-	is := dom.InfoSchema()
-	h := dom.StatsHandle()
-	require.NoError(t, h.Update(is))
-	tk.MustExec("insert into t values(2, 1), (2, 2), (2, 3), (3, 3), (4, 4), (4, 3), (4, 2), (4, 1)")
-	require.NoError(t, h.Update(is))
-	tk.MustExec("analyze incremental table t index idx with 2 topn")
-	// After analyze, there's two val in hist.
-	tk.MustQuery("show stats_buckets where table_name = 't' and column_name = 'idx'").Check(testkit.Rows(
-		"test t  idx 1 0 2 2 1 1 0",
-		"test t  idx 1 1 3 1 3 3 0",
-	))
-	// Two val in topn.
-	tk.MustQuery("show stats_topn where table_name = 't' and column_name = 'idx'").Check(testkit.Rows(
-		"test t  idx 1 2 3",
-		"test t  idx 1 4 4",
-	))
-}
-
 func TestExpBackoffEstimation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

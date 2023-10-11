@@ -227,3 +227,17 @@ func TestSetFastAnalyzeSystemVariable(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows(
 		"Warning 1105 the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
 }
+
+func TestIncrementalAnalyze(t *testing.T) {
+	msg := "the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
+	tk.MustMatchErrMsg("analyze incremental table t index", msg)
+	// Create a partition table.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustMatchErrMsg("analyze incremental table t partition p0 index idx", msg)
+}
