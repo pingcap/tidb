@@ -69,7 +69,7 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	skipPartition             map[skipItem]struct{}
 	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
 	callWithSCtxFunc          callWithSCtxFunc
-	exitChan                  chan struct{}
+	exitWhenErrChan           chan struct{}
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
@@ -95,7 +95,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		PartitionDefinition:    make(map[int64]model.PartitionDefinition),
 		tableInfo:              make(map[int64]*model.TableInfo),
 		partitionIDs:           make([]int64, 0, partitionNum),
-		exitChan:               make(chan struct{}),
+		exitWhenErrChan:        make(chan struct{}),
 		skipPartition:          make(map[skipItem]struct{}),
 		gpool:                  gpool,
 		allPartitionStats:      make(map[int64]*statistics.Table),
@@ -211,25 +211,25 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissin
 func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			close(a.exitChan)
+			close(a.exitWhenErrChan)
 			err = errors.New(fmt.Sprint(r))
 		}
 	}()
 	err = a.loadFmsketch(sctx, isIndex)
 	if err != nil {
-		close(a.exitChan)
+		close(a.exitWhenErrChan)
 		return err
 	}
 	close(a.fmsketch)
 	err = a.loadCMsketch(sctx, isIndex)
 	if err != nil {
-		close(a.exitChan)
+		close(a.exitWhenErrChan)
 		return err
 	}
 	close(a.cmsketch)
 	err = a.loadHistogramAndTopN(sctx, a.globalTableInfo, isIndex)
 	if err != nil {
-		close(a.exitChan)
+		close(a.exitWhenErrChan)
 		return err
 	}
 	close(a.histogramAndTopn)
@@ -239,7 +239,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			close(a.exitChan)
+			close(a.exitWhenErrChan)
 			err = errors.New(fmt.Sprint(r))
 		}
 	}()
@@ -255,7 +255,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 				} else {
 					a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
 				}
-			case <-a.exitChan:
+			case <-a.exitWhenErrChan:
 				return
 			}
 		}
@@ -284,7 +284,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 						return err
 					}
 				}
-			case <-a.exitChan:
+			case <-a.exitWhenErrChan:
 				return nil
 			}
 		}
@@ -321,7 +321,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 					a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
 				}
 				a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
-			case <-a.exitChan:
+			case <-a.exitWhenErrChan:
 				return nil
 			}
 		}
