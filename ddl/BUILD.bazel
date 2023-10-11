@@ -192,7 +192,6 @@ go_test(
         "db_cache_test.go",
         "db_change_failpoints_test.go",
         "db_change_test.go",
-        "db_foreign_key_test.go",
         "db_integration_test.go",
         "db_rename_test.go",
         "db_table_test.go",
