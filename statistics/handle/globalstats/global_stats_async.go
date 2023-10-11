@@ -341,8 +341,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 			if err != nil {
 				return err
 			}
-			a.fmsketch <- mergeItem[*statistics.FMSketch]{
+			select {
+			case a.fmsketch <- mergeItem[*statistics.FMSketch]{
 				fmsketch, i,
+			}:
+			case <-a.exitWhenErrChan:
+				return nil
 			}
 		}
 	}
@@ -366,6 +370,13 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 			}
 			a.cmsketch <- mergeItem[*statistics.CMSketch]{
 				cmsketch, i,
+			}
+			select {
+			case a.cmsketch <- mergeItem[*statistics.CMSketch]{
+				cmsketch, i,
+			}:
+			case <-a.exitWhenErrChan:
+				return nil
 			}
 		}
 	}
@@ -395,8 +406,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			hists = append(hists, h)
 			topn = append(topn, t)
 		}
-		a.histogramAndTopn <- mergeItem[*StatsWrapper]{
+		select {
+		case a.histogramAndTopn <- mergeItem[*StatsWrapper]{
 			NewStatsWrapper(hists, topn), i,
+		}:
+		case <-a.exitWhenErrChan:
+			return nil
 		}
 	}
 	return nil

@@ -63,8 +63,8 @@ func simpleTest(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
-	tk.MustExec("insert into t values (1), (2), (3), (4)")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 10")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (8), (10), (20), (30)")
 	tk.MustExec("analyze table t with 0 topn, 1 buckets")
 }
 
