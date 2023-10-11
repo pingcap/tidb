@@ -153,7 +153,6 @@ func initSessCtx(
 		tz := *time.UTC
 		sessCtx.GetSessionVars().StmtCtx.TimeZone = &tz
 	}
-	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1

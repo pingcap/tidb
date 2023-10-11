@@ -468,15 +468,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := new(stmtctx.StatementContext)
-	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
-	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
-	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
-	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
-	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
-	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInSetOprStmt,
+	sc.SetFlagsFromPBFlag(flags)
 	return sc
 }
 

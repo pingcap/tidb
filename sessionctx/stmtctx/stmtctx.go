@@ -1102,13 +1102,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	return details
 }
 
-// ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
-// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
-// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-func (sc *StatementContext) ShouldClipToZero() bool {
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
-}
-
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
 // so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
 func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
@@ -1201,9 +1194,22 @@ func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+	typeFlags := typectx.StrictFlags.WithClipNegativeToZero(sc.InInsertStmt)
+	sc.ResetTypeContext(typeFlags)
+}
+
+// TypeFlags returns the flags used by types package.
+func (sc *StatementContext) TypeFlags() typectx.Flags {
+	return sc.TypeConvContext.Flags()
+}
+
+// ResetTypeContext resets the inner type context.
+func (sc *StatementContext) ResetTypeContext(flags typectx.Flags) {
+	sc.TypeConvContext = typectx.NewContext(flags, sc.TimeZone, sc.AppendWarning)
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time

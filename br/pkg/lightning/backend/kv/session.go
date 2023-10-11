@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"go.uber.org/zap"
@@ -312,6 +313,9 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		}
 	}
 	vars.StmtCtx.TimeZone = vars.Location()
+	vars.StmtCtx.ResetTypeContext(types.StrictFlags.
+		WithClipNegativeToZero(true),
+	)
 	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
 		logger.Warn("new session: failed to set timestamp",
 			log.ShortError(err))

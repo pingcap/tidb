@@ -61,6 +61,19 @@ const (
 	FlagSkipUTF8MB4Check
 )
 
+// ClipNegativeToZero indicates whether the flag `FlagClipNegativeToZero` is set
+func (f Flags) ClipNegativeToZero() bool {
+	return f&FlagClipNegativeToZero != 0
+}
+
+// WithClipNegativeToZero returns a new flags with `FlagClipNegativeToZero` set/unset according to the clip parameter
+func (f Flags) WithClipNegativeToZero(clip bool) Flags {
+	if clip {
+		return f | FlagClipNegativeToZero
+	}
+	return f &^ FlagClipNegativeToZero
+}
+
 // SkipASCIICheck indicates whether the flag `FlagSkipASCIICheck` is set
 func (f Flags) SkipASCIICheck() bool {
 	return f&FlagSkipASCIICheck != 0
@@ -130,6 +143,9 @@ func (c *Context) WithFlags(f Flags) Context {
 
 // Location returns the location of the context
 func (c *Context) Location() *time.Location {
+	if c.loc == nil {
+		return time.UTC
+	}
 	return c.loc
 }
 
