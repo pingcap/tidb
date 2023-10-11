@@ -146,6 +146,15 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		}
 		tableInfo := partitionTable.Meta()
 		a.tableInfo[partitionID] = tableInfo
+		realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, partitionID)
+		if err != nil {
+			return err
+		}
+		if !isNull {
+			// In a partition, we will only update globalStats.Count once.
+			a.globalStats.Count += realtimeCount
+			a.globalStats.ModifyCount += modifyCount
+		}
 		err1 := skipPartition(sctx, partitionID, isIndex)
 		if err1 != nil {
 			// no idx so idx = 0
@@ -167,15 +176,6 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 				if types.ErrPartitionStatsMissing.Equal(err1) {
 					break
 				}
-			}
-			if idx == 0 {
-				realtimeCount, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, partitionID)
-				if err != nil || isNull {
-					return err
-				}
-				// In a partition, we will only update globalStats.Count once.
-				a.globalStats.Count += realtimeCount
-				a.globalStats.ModifyCount += modifyCount
 			}
 		}
 	}
