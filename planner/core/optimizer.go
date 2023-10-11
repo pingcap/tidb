@@ -88,6 +88,7 @@ const (
 	flagPrunColumnsAgain
 	flagPushDownSequence
 	flagResolveExpand
+	flagEliminateApply
 )
 
 var optRuleList = []logicalOptRule{
@@ -99,6 +100,7 @@ var optRuleList = []logicalOptRule{
 	&semiJoinRewriter{},
 	&aggregationEliminator{},
 	&skewDistinctAggRewriter{},
+	&applyEliminator{},
 	&projectionEliminator{},
 	&maxMinEliminator{},
 	&constantPropagationSolver{},
