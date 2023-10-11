@@ -78,7 +78,7 @@ func (m *mutexForRowContainer) RUnlock() {
 	m.rLock.RUnlock()
 }
 
-type SpillHelper interface {
+type spillHelper interface {
 	preSpillAction()
 	hasEnoughDataToSpill(t *memory.Tracker) bool
 }
@@ -124,7 +124,7 @@ func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	return &newRC
 }
 
-func (c *RowContainer) preSpillAction() {
+func (_ *RowContainer) preSpillAction() {
 }
 
 // SpillToDisk spills data to disk. This function may be called in parallel.
@@ -270,7 +270,7 @@ func (c *RowContainer) AllocChunk() (chk *Chunk) {
 func (c *RowContainer) GetChunk(chkIdx int) (*Chunk, error) {
 	c.m.RLock()
 	defer c.m.RUnlock()
-	return c.GetChunk(chkIdx)
+	return c.getChunk(chkIdx)
 }
 
 func (c *RowContainer) getChunk(chkIdx int) (*Chunk, error) {
@@ -373,7 +373,7 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 	return c.actionSpill
 }
 
-func (c *RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
+func (_ *RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
 	// should check the memory consumed as SortAndSpillDiskAction?
 	return true
 }
@@ -429,7 +429,7 @@ func (a *SpillDiskAction) Action(t *memory.Tracker) {
 	a.action(t, a.c)
 }
 
-func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper SpillHelper) {
+func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper spillHelper) {
 	a.m.Lock()
 	defer a.m.Unlock()
 
@@ -601,6 +601,7 @@ func (c *SortedRowContainer) sort() {
 	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
 }
 
+// SpillToDisk spills data to disk. This function may be called in parallel.
 func (c *SortedRowContainer) SpillToDisk(preSpill func()) {
 	c.ptrM.Lock()
 	defer c.ptrM.Unlock()
