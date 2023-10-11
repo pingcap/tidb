@@ -15,6 +15,7 @@
 package util
 
 import (
+	"github.com/pingcap/tidb/statistics"
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
@@ -80,4 +81,15 @@ type StatsHistory interface {
 	CheckHistoricalStatsEnable() (enable bool, err error)
 
 	// TODO: RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
+}
+
+// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+type StatsAnalyze interface {
+	// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+	InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error
+
+	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
+	DeleteAnalyzeJobs(updateTime time.Time) error
+
+	// TODO: HandleAutoAnalyze
 }

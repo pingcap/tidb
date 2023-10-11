@@ -67,6 +67,9 @@ type Handle struct {
 	// StatsHistory is used to manage historical stats.
 	util.StatsHistory
 
+	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+	util.StatsAnalyze
+
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
 
@@ -128,6 +131,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		InitStatsDone:           make(chan struct{}),
 		TableInfoGetter:         util.NewTableInfoGetter(),
 		StatsUsage:              usage.NewStatsUsageImpl(pool),
+		StatsAnalyze:            autoanalyze.NewStatsAnalyze(pool),
 	}
 	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
 
@@ -545,19 +549,6 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 		return err
 	}, util.FlagWrapTxn)
 	return version, err
-}
-
-// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return autoanalyze.InsertAnalyzeJob(sctx, job, instance, procID)
-	})
-}
-
-// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
-func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
-	_, _, err := h.execRows("DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
-	return err
 }
 
 // SetStatsCacheCapacity sets capacity

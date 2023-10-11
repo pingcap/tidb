@@ -16,6 +16,7 @@ package autoanalyze
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/types"
 	"math"
 	"math/rand"
 	"strconv"
@@ -39,6 +40,31 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
+
+// statsAnalyze implements util.StatsAnalyze.
+// statsAnalyze is used to handle auto-analyze and manage analyze jobs.
+type statsAnalyze struct {
+	pool statsutil.SessionPool
+}
+
+// NewStatsAnalyze creates a new StatsAnalyze.
+func NewStatsAnalyze(pool statsutil.SessionPool) statsutil.StatsAnalyze {
+	return &statsAnalyze{pool: pool}
+}
+
+func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
+	return statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
+		return insertAnalyzeJob(sctx, job, instance, procID)
+	})
+}
+
+// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
+func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
+	return statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
+		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
+		return err
+	})
+}
 
 func parseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
@@ -210,7 +236,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 		return false
 	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*opt.StatsLease, ratio); needAnalyze {
+	if needAnalyze, reason := needAnalyzeTable(statsTbl, 20*opt.StatsLease, ratio); needAnalyze {
 		escaped, err := sqlexec.EscapeSQL(sql, params...)
 		if err != nil {
 			return false
@@ -239,7 +265,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 	return false
 }
 
-// NeedAnalyzeTable checks if we need to analyze the table:
+// needAnalyzeTable checks if we need to analyze the table:
 //  1. If the table has never been analyzed, we need to analyze it when it has
 //     not been modified for a while.
 //  2. If the table had been analyzed before, we need to analyze it when
@@ -247,8 +273,8 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 //     between `start` and `end`.
 //
 // Exposed for test.
-func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := TableAnalyzed(tbl)
+func needAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
+	analyzed := tableAnalyzed(tbl)
 	if !analyzed {
 		return true, "table unanalyzed"
 	}
@@ -267,9 +293,9 @@ func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio f
 	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
 
-// TableAnalyzed checks if the table is analyzed.
+// tableAnalyzed checks if the table is analyzed.
 // Exposed for test.
-func TableAnalyzed(tbl *statistics.Table) bool {
+func tableAnalyzed(tbl *statistics.Table) bool {
 	for _, col := range tbl.Columns {
 		if col.IsAnalyzed() {
 			return true
@@ -295,7 +321,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*opt.StatsLease, ratio); needAnalyze {
+		if needAnalyze, _ := needAnalyzeTable(partitionStatsTbl, 20*opt.StatsLease, ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
@@ -411,8 +437,8 @@ func execAnalyzeStmt(sctx sessionctx.Context,
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }
 
-// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func InsertAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
+// insertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+func insertAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
 	jobInfo := job.JobInfo
 	const textMaxLength = 65535
 	if len(jobInfo) > textMaxLength {
