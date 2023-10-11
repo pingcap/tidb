@@ -85,61 +85,52 @@ func newCheckSumCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 
-			for _, schema := range backupMeta.Schemas {
-				dbInfo := &model.DBInfo{}
-				err = json.Unmarshal(schema.Db, dbInfo)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if schema.Table == nil {
-					continue
-				}
-				tblInfo := &model.TableInfo{}
-				err = json.Unmarshal(schema.Table, tblInfo)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				tbl := dbs[dbInfo.Name.String()].GetTable(tblInfo.Name.String())
+			for _, db := range dbs {
+				for _, tbl := range db.Tables {
+					var calCRC64 uint64
+					var totalKVs uint64
+					var totalBytes uint64
+					for _, file := range tbl.Files {
+						calCRC64 ^= file.Crc64Xor
+						totalKVs += file.GetTotalKvs()
+						totalBytes += file.GetTotalBytes()
+						log.Info("file info", zap.Stringer("table", tbl.Info.Name),
+							zap.String("file", file.GetName()),
+							zap.Uint64("crc64xor", file.GetCrc64Xor()),
+							zap.Uint64("totalKvs", file.GetTotalKvs()),
+							zap.Uint64("totalBytes", file.GetTotalBytes()),
+							zap.Uint64("startVersion", file.GetStartVersion()),
+							zap.Uint64("endVersion", file.GetEndVersion()),
+							logutil.Key("startKey", file.GetStartKey()),
+							logutil.Key("endKey", file.GetEndKey()),
+						)
 
-				var calCRC64 uint64
-				var totalKVs uint64
-				var totalBytes uint64
-				for _, file := range tbl.Files {
-					calCRC64 ^= file.Crc64Xor
-					totalKVs += file.GetTotalKvs()
-					totalBytes += file.GetTotalBytes()
-					log.Info("file info", zap.Stringer("table", tblInfo.Name),
-						zap.String("file", file.GetName()),
-						zap.Uint64("crc64xor", file.GetCrc64Xor()),
-						zap.Uint64("totalKvs", file.GetTotalKvs()),
-						zap.Uint64("totalBytes", file.GetTotalBytes()),
-						zap.Uint64("startVersion", file.GetStartVersion()),
-						zap.Uint64("endVersion", file.GetEndVersion()),
-						logutil.Key("startKey", file.GetStartKey()),
-						logutil.Key("endKey", file.GetEndKey()),
-					)
-
-					var data []byte
-					data, err = s.ReadFile(ctx, file.Name)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					s := sha256.Sum256(data)
-					if !bytes.Equal(s[:], file.Sha256) {
-						return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
+						var data []byte
+						data, err = s.ReadFile(ctx, file.Name)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						s := sha256.Sum256(data)
+						if !bytes.Equal(s[:], file.Sha256) {
+							return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
 backup data checksum failed: %s may be changed
 calculated sha256 is %s,
 origin sha256 is %s`,
-							file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+								file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+						}
+					}
+					if tbl.Info == nil {
+						log.Info("table info(empty)", zap.Stringer("db", db.Info.Name))
+					} else {
+						log.Info("table info", zap.Stringer("table", tbl.Info.Name),
+							zap.Uint64("CRC64", calCRC64),
+							zap.Uint64("totalKvs", totalKVs),
+							zap.Uint64("totalBytes", totalBytes),
+							zap.Uint64("schemaTotalKvs", tbl.TotalKvs),
+							zap.Uint64("schemaTotalBytes", tbl.TotalBytes),
+							zap.Uint64("schemaCRC64", tbl.Crc64Xor))
 					}
 				}
-				log.Info("table info", zap.Stringer("table", tblInfo.Name),
-					zap.Uint64("CRC64", calCRC64),
-					zap.Uint64("totalKvs", totalKVs),
-					zap.Uint64("totalBytes", totalBytes),
-					zap.Uint64("schemaTotalKvs", schema.TotalKvs),
-					zap.Uint64("schemaTotalBytes", schema.TotalBytes),
-					zap.Uint64("schemaCRC64", schema.Crc64Xor))
 			}
 			cmd.Println("backup data checksum succeed!")
 			return nil

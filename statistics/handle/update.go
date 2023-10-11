@@ -18,7 +18,6 @@ import (
 	"cmp"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,74 +33,6 @@ import (
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/sqlexec"
 )
-
-func merge(s *SessionStatsCollector, deltaMap *usage.TableDelta, colMap *usage.StatsUsage) {
-	deltaMap.Merge(s.mapper.GetDeltaAndReset())
-	colMap.Merge(s.statsUsage.GetUsageAndReset())
-}
-
-// SessionStatsCollector is a list item that holds the delta mapper. If you want to write or read mapper, you must lock it.
-type SessionStatsCollector struct {
-	mapper     *usage.TableDelta
-	statsUsage *usage.StatsUsage
-	next       *SessionStatsCollector
-	sync.Mutex
-
-	// deleted is set to true when a session is closed. Every time we sweep the list, we will remove the useless collector.
-	deleted bool
-}
-
-// NewSessionStatsCollector initializes a new SessionStatsCollector.
-func NewSessionStatsCollector() *SessionStatsCollector {
-	return &SessionStatsCollector{
-		mapper:     usage.NewTableDelta(),
-		statsUsage: usage.NewStatsUsage(),
-	}
-}
-
-// Delete only sets the deleted flag true, it will be deleted from list when DumpStatsDeltaToKV is called.
-func (s *SessionStatsCollector) Delete() {
-	s.Lock()
-	defer s.Unlock()
-	s.deleted = true
-}
-
-// Update will updates the delta and count for one table id.
-func (s *SessionStatsCollector) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
-	s.Lock()
-	defer s.Unlock()
-	s.mapper.Update(id, delta, count, colSize)
-}
-
-// ClearForTest clears the mapper for test.
-func (s *SessionStatsCollector) ClearForTest() {
-	s.Lock()
-	defer s.Unlock()
-	s.mapper = usage.NewTableDelta()
-	s.statsUsage = usage.NewStatsUsage()
-	s.next = nil
-	s.deleted = false
-}
-
-// UpdateColStatsUsage updates the last time when the column stats are used(needed).
-func (s *SessionStatsCollector) UpdateColStatsUsage(colMap map[model.TableItemID]time.Time) {
-	s.Lock()
-	defer s.Unlock()
-	s.statsUsage.Merge(colMap)
-}
-
-// NewSessionStatsCollector allocates a stats collector for a session.
-func (h *Handle) NewSessionStatsCollector() *SessionStatsCollector {
-	h.listHead.Lock()
-	defer h.listHead.Unlock()
-	newCollector := &SessionStatsCollector{
-		mapper:     usage.NewTableDelta(),
-		next:       h.listHead.next,
-		statsUsage: usage.NewStatsUsage(),
-	}
-	h.listHead.next = newCollector
-	return newCollector
-}
 
 // NewSessionIndexUsageCollector will add a new SessionIndexUsageCollector into linked list headed by idxUsageListHead.
 // idxUsageListHead always points to an empty SessionIndexUsageCollector as a sentinel node. So we let idxUsageListHead.next
@@ -180,39 +111,13 @@ const (
 	DumpDelta dumpMode = false
 )
 
-// sweepList will loop over the list, merge each session's local stats into handle
-// and remove closed session's collector.
-func (h *Handle) sweepList() {
-	deltaMap := usage.NewTableDelta()
-	colMap := usage.NewStatsUsage()
-	prev := h.listHead
-	prev.Lock()
-	for curr := prev.next; curr != nil; curr = curr.next {
-		curr.Lock()
-		// Merge the session stats into deltaMap respectively.
-		merge(curr, deltaMap, colMap)
-		if curr.deleted {
-			prev.next = curr.next
-			// Since the session is already closed, we can safely unlock it here.
-			curr.Unlock()
-		} else {
-			// Unlock the previous lock, so we only holds at most two session's lock at the same time.
-			prev.Unlock()
-			prev = curr
-		}
-	}
-	prev.Unlock()
-	h.tableDelta.Merge(deltaMap.GetDeltaAndReset())
-	h.statsUsage.Merge(colMap.GetUsageAndReset())
-}
-
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (h *Handle) DumpStatsDeltaToKV(mode dumpMode) error {
-	h.sweepList()
-	deltaMap := h.tableDelta.GetDeltaAndReset()
+	h.SweepSessionStatsList()
+	deltaMap := h.SessionTableDelta().GetDeltaAndReset()
 	defer func() {
-		h.tableDelta.Merge(deltaMap)
+		h.SessionTableDelta().Merge(deltaMap)
 	}()
 
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
@@ -339,10 +244,10 @@ func (h *Handle) DumpColStatsUsageToKV() error {
 	if !variable.EnableColumnTracking.Load() {
 		return nil
 	}
-	h.sweepList()
-	colMap := h.statsUsage.GetUsageAndReset()
+	h.SweepSessionStatsList()
+	colMap := h.SessionStatsUsage().GetUsageAndReset()
 	defer func() {
-		h.statsUsage.Merge(colMap)
+		h.SessionStatsUsage().Merge(colMap)
 	}()
 	type pair struct {
 		lastUsedAt string

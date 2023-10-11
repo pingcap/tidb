@@ -48,37 +48,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestTableForeignKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int, index(a), index(b));")
-	// test create table with foreign key.
-	failSQL := "create table t2 (c int, foreign key (a) references t1(a));"
-	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
-	// test add foreign key.
-	tk.MustExec("create table t3 (a int, b int);")
-	failSQL = "alter table t1 add foreign key (c) REFERENCES t3(a);"
-	tk.MustGetErrCode(failSQL, errno.ErrKeyColumnDoesNotExits)
-	// test origin key not match error
-	failSQL = "alter table t1 add foreign key (a) REFERENCES t3(a, b);"
-	tk.MustGetErrCode(failSQL, errno.ErrWrongFkDef)
-	// Test drop column with foreign key.
-	tk.MustExec("create table t4 (c int,d int,foreign key (d) references t1 (b));")
-	failSQL = "alter table t4 drop column d"
-	tk.MustGetErrCode(failSQL, errno.ErrFkColumnCannotDrop)
-	// Test change column with foreign key.
-	failSQL = "alter table t4 change column d e bigint;"
-	tk.MustGetErrCode(failSQL, errno.ErrFKIncompatibleColumns)
-	// Test modify column with foreign key.
-	failSQL = "alter table t4 modify column d bigint;"
-	tk.MustGetErrCode(failSQL, errno.ErrFKIncompatibleColumns)
-	tk.MustQuery("select count(*) from information_schema.KEY_COLUMN_USAGE;")
-	tk.MustExec("alter table t4 drop foreign key fk_1")
-	tk.MustExec("alter table t4 modify column d bigint;")
-	tk.MustExec("drop table if exists t1,t2,t3,t4;")
-}
-
 func TestAddNotNullColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -108,29 +77,6 @@ out:
 	expected := fmt.Sprintf("%d %d", updateCnt, 3)
 	tk.MustQuery("select c2, c3 from tnn where c1 = 99").Check(testkit.Rows(expected))
 	tk.MustExec("drop table tnn")
-}
-
-func TestCharacterSetInColumns(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database varchar_test;")
-	defer tk.MustExec("drop database varchar_test;")
-	tk.MustExec("use varchar_test")
-	tk.MustExec("create table t (c1 int, s1 varchar(10), s2 text)")
-	tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name != 'utf8mb4'").Check(testkit.Rows("0"))
-	tk.MustQuery("select count(*) from information_schema.columns where table_schema = 'varchar_test' and character_set_name = 'utf8mb4'").Check(testkit.Rows("2"))
-
-	tk.MustExec("create table t1(id int) charset=UTF8;")
-	tk.MustExec("create table t2(id int) charset=BINARY;")
-	tk.MustExec("create table t3(id int) charset=LATIN1;")
-	tk.MustExec("create table t4(id int) charset=ASCII;")
-	tk.MustExec("create table t5(id int) charset=UTF8MB4;")
-
-	tk.MustExec("create table t11(id int) charset=utf8;")
-	tk.MustExec("create table t12(id int) charset=binary;")
-	tk.MustExec("create table t13(id int) charset=latin1;")
-	tk.MustExec("create table t14(id int) charset=ascii;")
-	tk.MustExec("create table t15(id int) charset=utf8mb4;")
 }
 
 func TestAddNotNullColumnWhileInsertOnDupUpdate(t *testing.T) {
@@ -363,26 +309,6 @@ func TestCreateTableWithIntegerColWithDefault(t *testing.T) {
 	require.True(t, strings.Contains(ret.(string), "`a` double DEFAULT '12.43'"))
 }
 
-func TestAlterTableWithValidation(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	defer tk.MustExec("drop table if exists t1")
-
-	tk.MustExec("create table t1 (c1 int, c2 int as (c1 + 1));")
-
-	// Test for alter table with validation.
-	tk.MustExec("alter table t1 with validation")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8200|ALTER TABLE WITH VALIDATION is currently unsupported"))
-
-	// Test for alter table without validation.
-	tk.MustExec("alter table t1 without validation")
-	require.Equal(t, uint16(1), tk.Session().GetSessionVars().StmtCtx.WarningCount())
-	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|8200|ALTER TABLE WITHOUT VALIDATION is currently unsupported"))
-}
-
 func TestCreateTableWithInfo(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -494,28 +420,6 @@ func TestBatchCreateTable(t *testing.T) {
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
 	err = d.BatchCreateTableWithInfo(tk.Session(), model.NewCIStr("test"), []*model.TableInfo{newinfo}, ddl.OnExistError)
 	require.NoError(t, err)
-}
-
-// port from mysql
-// https://github.com/mysql/mysql-server/blob/124c7ab1d6f914637521fd4463a993aa73403513/mysql-test/t/lock.test
-func TestLock(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	/* Testing of table locking */
-	tk.MustExec("DROP TABLE IF EXISTS t1")
-	tk.MustExec("CREATE TABLE t1 (  `id` int(11) NOT NULL default '0', `id2` int(11) NOT NULL default '0', `id3` int(11) NOT NULL default '0', `dummy1` char(30) default NULL, PRIMARY KEY  (`id`,`id2`), KEY `index_id3` (`id3`))")
-	tk.MustExec("insert into t1 (id,id2) values (1,1),(1,2),(1,3)")
-	tk.MustExec("LOCK TABLE t1 WRITE")
-	tk.MustExec("select dummy1,count(distinct id) from t1 group by dummy1")
-	tk.MustExec("update t1 set id=-1 where id=1")
-	tk.MustExec("LOCK TABLE t1 READ")
-	_, err := tk.Exec("update t1 set id=1 where id=1")
-	require.True(t, terror.ErrorEqual(err, infoschema.ErrTableNotLockedForWrite))
-	tk.MustExec("unlock tables")
-	tk.MustExec("update t1 set id=1 where id=-1")
-	tk.MustExec("drop table t1")
 }
 
 // port from mysql
@@ -852,31 +756,6 @@ func TestTablesLockDelayClean(t *testing.T) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.DelayCleanTableLock = 0
 	})
-}
-
-func TestDDLWithInvalidTableInfo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	defer tk.MustExec("drop table if exists t")
-	// Test create with invalid expression.
-	_, err := tk.Exec(`CREATE TABLE t (
-		c0 int(11) ,
-  		c1 int(11),
-    	c2 decimal(16,4) GENERATED ALWAYS AS ((case when (c0 = 0) then 0when (c0 > 0) then (c1 / c0) end))
-	);`)
-	require.Error(t, err)
-	require.Equal(t, "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 4 column 88 near \"then (c1 / c0) end))\n\t);\" ", err.Error())
-
-	tk.MustExec("create table t (a bigint, b int, c int generated always as (b+1)) partition by hash(a) partitions 4;")
-	// Test drop partition column.
-	tk.MustGetErrMsg("alter table t drop column a;", "[ddl:3855]Column 'a' has a partitioning function dependency and cannot be dropped or renamed")
-	// Test modify column with invalid expression.
-	tk.MustGetErrMsg("alter table t modify column c int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));", "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 97 near \"then (b / a) end));\" ")
-	// Test add column with invalid expression.
-	tk.MustGetErrMsg("alter table t add column d int GENERATED ALWAYS AS ((case when (a = 0) then 0when (a > 0) then (b / a) end));", "[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 94 near \"then (b / a) end));\" ")
 }
 
 func TestAddColumn2(t *testing.T) {
