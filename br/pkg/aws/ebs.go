@@ -299,7 +299,7 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 	if len(resp.Unsuccessful) > 0 {
 		log.Warn("not all snapshots enabled FSR")
-		return nil, errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+		return nil, errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 	}
 
 	log.Info("Enable FSR issued")
@@ -309,11 +309,9 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 // WaitDataFSREnabled waits FSR for data volume snapshots are all enabled
 func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, progress glue.Progress) error {
-
 	pendingSnapshots := make([]*string, 0, len(snapShotIDs))
-	for _, snaphotID := range snapShotIDs {
-		pendingSnapshots = append(pendingSnapshots, snaphotID)
-	}
+
+	pendingSnapshots = append(pendingSnapshots, snapShotIDs...)
 
 	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots))
 	for {
@@ -350,10 +348,6 @@ func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, 
 		}
 		pendingSnapshots = uncompletedSnapshots
 	}
-
-	log.Info("all snaashots are fsr enabled.")
-	return nil
-
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
@@ -373,7 +367,7 @@ func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string
 
 	if len(resp.Unsuccessful) > 0 {
 		log.Warn("not all snapshots disabled FSR")
-		return errors.Errorf("Some snapshot fails to disable FSR, such as %s, error code is %v", resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+		return errors.Errorf("Some snapshot fails to disable FSR, such as %s, error code is %v", *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 	}
 
 	log.Info("Disable FSR issued")
