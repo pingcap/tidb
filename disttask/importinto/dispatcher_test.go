@@ -174,3 +174,12 @@ func (s *importIntoSuite) TestGetStepOfEncode() {
 	s.Equal(StepImport, getStepOfEncode(false))
 	s.Equal(StepEncodeAndSort, getStepOfEncode(true))
 }
+
+func TestIsImporting2TiKV(t *testing.T) {
+	ext := &ImportDispatcherExt{}
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepEncodeAndSort}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepMergeSort}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepPostProcess}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: StepImport}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: StepWriteAndIngest}))
+}
