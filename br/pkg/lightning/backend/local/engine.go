@@ -1046,8 +1046,19 @@ func (e *Engine) Finish(totalBytes, totalCount int64) {
 
 // LoadIngestData return (local) Engine itself because Engine has implemented
 // IngestData interface.
-func (e *Engine) LoadIngestData(_ context.Context, _, _ []byte) (common.IngestData, error) {
-	return e, nil
+func (e *Engine) LoadIngestData(
+	ctx context.Context,
+	regionRanges []common.Range,
+	outCh chan<- common.DataAndRange,
+) error {
+	for _, r := range regionRanges {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- common.DataAndRange{Data: e, Range: r}:
+		}
+	}
+	return nil
 }
 
 type sstMeta struct {
