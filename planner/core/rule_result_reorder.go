@@ -39,12 +39,13 @@ This rule reorders results by modifying or injecting a Sort operator:
 type resultReorder struct {
 }
 
-func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (rs *resultReorder) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error, bool) {
+	changedFlag := false
 	ordered := rs.completeSort(lp)
 	if !ordered {
 		lp = rs.injectSort(lp)
 	}
-	return lp, nil
+	return lp, nil, changedFlag
 }
 
 func (rs *resultReorder) completeSort(lp LogicalPlan) bool {

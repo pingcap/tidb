@@ -254,25 +254,26 @@ func wrapCastFunction(ctx sessionctx.Context, arg expression.Expression, targetT
 	return expression.BuildCastFunction(ctx, arg, targetTp)
 }
 
-func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (a *aggregationEliminator) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
+	changedFlag := false
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := a.optimize(ctx, child, opt)
+		newChild, err, changedFlag := a.optimize(ctx, child, opt)
 		if err != nil {
-			return nil, err
+			return nil, err, changedFlag
 		}
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
 	agg, ok := p.(*LogicalAggregation)
 	if !ok {
-		return p, nil
+		return p, nil, changedFlag
 	}
 	a.tryToEliminateDistinct(agg, opt)
 	if proj := a.tryToEliminateAggregation(agg, opt); proj != nil {
-		return proj, nil
+		return proj, nil, changedFlag
 	}
-	return p, nil
+	return p, nil, changedFlag
 }
 
 func (*aggregationEliminator) name() string {

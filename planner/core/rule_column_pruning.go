@@ -31,9 +31,10 @@ import (
 type columnPruner struct {
 }
 
-func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (*columnPruner) optimize(_ context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
+	changedFlag := false
 	err := lp.PruneColumns(lp.Schema().Columns, opt)
-	return lp, err
+	return lp, err, changedFlag
 }
 
 // ExprsHasSideEffects checks if any of the expressions has side effects.

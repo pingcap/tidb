@@ -23,8 +23,9 @@ func (*pushDownSequenceSolver) name() string {
 	return "push_down_sequence"
 }
 
-func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
-	return pdss.recursiveOptimize(nil, lp), nil
+func (pdss *pushDownSequenceSolver) optimize(_ context.Context, lp LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error, bool) {
+	changedFlag := false
+	return pdss.recursiveOptimize(nil, lp), nil, changedFlag
 }
 
 func (pdss *pushDownSequenceSolver) recursiveOptimize(pushedSequence *LogicalSequence, lp LogicalPlan) LogicalPlan {
