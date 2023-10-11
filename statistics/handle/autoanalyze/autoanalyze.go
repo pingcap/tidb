@@ -236,7 +236,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 		return false
 	}
-	if needAnalyze, reason := needAnalyzeTable(statsTbl, 20*opt.StatsLease, ratio); needAnalyze {
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*opt.StatsLease, ratio); needAnalyze {
 		escaped, err := sqlexec.EscapeSQL(sql, params...)
 		if err != nil {
 			return false
@@ -265,7 +265,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 	return false
 }
 
-// needAnalyzeTable checks if we need to analyze the table:
+// NeedAnalyzeTable checks if we need to analyze the table:
 //  1. If the table has never been analyzed, we need to analyze it when it has
 //     not been modified for a while.
 //  2. If the table had been analyzed before, we need to analyze it when
@@ -273,8 +273,8 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 //     between `start` and `end`.
 //
 // Exposed for test.
-func needAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
-	analyzed := tableAnalyzed(tbl)
+func NeedAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio float64) (bool, string) {
+	analyzed := TableAnalyzed(tbl)
 	if !analyzed {
 		return true, "table unanalyzed"
 	}
@@ -293,9 +293,9 @@ func needAnalyzeTable(tbl *statistics.Table, _ time.Duration, autoAnalyzeRatio f
 	return true, fmt.Sprintf("too many modifications(%v/%v>%v)", tbl.ModifyCount, tblCnt, autoAnalyzeRatio)
 }
 
-// tableAnalyzed checks if the table is analyzed.
+// TableAnalyzed checks if the table is analyzed.
 // Exposed for test.
-func tableAnalyzed(tbl *statistics.Table) bool {
+func TableAnalyzed(tbl *statistics.Table) bool {
 	for _, col := range tbl.Columns {
 		if col.IsAnalyzed() {
 			return true
@@ -321,7 +321,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
-		if needAnalyze, _ := needAnalyzeTable(partitionStatsTbl, 20*opt.StatsLease, ratio); needAnalyze {
+		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*opt.StatsLease, ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}

@@ -66,7 +66,6 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uin
 			zap.String("source", source),
 			zap.Error(err))
 	}
-	return
 }
 
 // CheckHistoricalStatsEnable checks whether historical stats is enabled.
