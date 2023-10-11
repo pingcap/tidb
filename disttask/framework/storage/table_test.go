@@ -419,6 +419,10 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.NoError(t, sm.StartManager(":4001", ""))
 	require.NoError(t, sm.StartManager(":4002", "background"))
 
+	allNodes, err := sm.GetAllNodes()
+	require.NoError(t, err)
+	require.Equal(t, []string{":4000", ":4001", ":4002"}, allNodes)
+
 	nodes, err := sm.GetNodesByRole("background")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{

@@ -13,6 +13,7 @@ go_library(
         "//disttask/framework/planner",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler/execute",
+        "//sessionctx",
         "@org_uber_go_mock//gomock",
     ],
 )

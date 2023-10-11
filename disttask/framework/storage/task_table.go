@@ -669,7 +669,7 @@ func (stm *TaskManager) UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[
 	return err
 }
 
-// CleanMeta cleanup the outdated row in dist_framework_meta when some tidb down.
+// CleanUpMeta cleanup the outdated row in dist_framework_meta when some tidb down.
 func (stm *TaskManager) CleanUpMeta(nodes []string) error {
 	if len(nodes) == 0 {
 		return nil
