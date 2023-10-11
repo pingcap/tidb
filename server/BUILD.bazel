@@ -22,6 +22,7 @@ go_library(
         "stat.go",
         "statistics_handler.go",
         "tokenlimiter.go",
+        "upgrade_handler.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/server",
