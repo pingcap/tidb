@@ -239,6 +239,9 @@ func (s *Server) startHTTPServer() {
 	// HTTP path for get table tiflash replica info.
 	router.Handle("/tiflash/replica-deprecated", flashReplicaHandler{tikvHandlerTool})
 
+	// HTTP path for upgrade operations.
+	router.Handle("/upgrade/{op}", NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
+
 	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tableHandler{tikvHandlerTool, opTableRegions})
