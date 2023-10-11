@@ -118,6 +118,24 @@ func CMSketchAndTopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex, h
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
+// CMSketchFromStorage reads CMSketch from storage
+func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.CMSketch, err error) {
+	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeCMSketch(rows[0].GetBytes(0))
+}
+
+// TopNFromStorage reads TopN from storage
+func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
+	rows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeTopN(rows)
+}
+
 // FMSketchFromStorage reads FMSketch from storage
 func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
 	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
@@ -127,8 +145,32 @@ func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID i
 	return statistics.DecodeFMSketch(rows[0].GetBytes(0))
 }
 
+// CheckSkipPartition checks if we can skip loading the partition.
+func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex int) error {
+	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id =%? and is_index = %?", tblID, isIndex)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return types.ErrPartitionStatsMissing
+	}
+	return nil
+}
+
+// CheckSkipColumnPartiion checks if we can skip loading the partition.
+func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, histsID int64) error {
+	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histsID)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return types.ErrPartitionColumnStatsMissing
+	}
+	return nil
+}
+
 // ExtendedStatsFromStorage reads extended stats from storage.
-func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
 		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
 	})
@@ -139,7 +181,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 		table.ExtendedStats = statistics.NewExtendedStatsColl()
 	}
 	rows, _, err := util.ExecRows(sctx, "select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?",
-		physicalID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
+		tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
 	if err != nil || len(rows) == 0 {
 		return table, nil
 	}
@@ -365,12 +407,12 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, physicalID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
 		histColl := statistics.HistColl{
-			PhysicalID:     physicalID,
+			PhysicalID:     tableID,
 			HavePhysicalID: true,
 			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
@@ -384,14 +426,14 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	table.Pseudo = false
 
-	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, physicalID)
+	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, tableID)
 	if err != nil || isNull {
 		return nil, err
 	}
 	table.ModifyCount = modidyCount
 	table.RealtimeCount = realtimeCount
 
-	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
+	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", tableID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
@@ -406,7 +448,34 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			return nil, err
 		}
 	}
-	return ExtendedStatsFromStorage(sctx, table, physicalID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
+}
+
+// LoadHistogram will load histogram from storage.
+func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
+	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)
+	if err != nil || len(row) == 0 {
+		return nil, err
+	}
+	distinct := row[0].GetInt64(0)
+	histVer := row[0].GetUint64(1)
+	nullCount := row[0].GetInt64(2)
+	var totColSize int64
+	var corr float64
+	var tp types.FieldType
+	if isIndex == 0 {
+		totColSize = row[0].GetInt64(3)
+		corr = row[0].GetFloat64(6)
+		for _, colInfo := range tableInfo.Columns {
+			if histID != colInfo.ID {
+				continue
+			}
+			tp = colInfo.FieldType
+			break
+		}
+		return HistogramFromStorage(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr)
+	}
+	return HistogramFromStorage(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
