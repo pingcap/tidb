@@ -2877,7 +2877,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
-			if handleCols != nil {
+			// FIXME: How about non-int primary key?
+			if handleCols != nil && handleCols.IsInt() {
 				for i, id := range physicalIDs {
 					if id == tblInfo.ID {
 						id = -1
