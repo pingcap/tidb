@@ -65,7 +65,7 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 
 func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
-	logger.Info("run minimal task")
+	logger.Info("execute chunk")
 	failpoint.Inject("waitBeforeSortChunk", func() {
 		time.Sleep(3 * time.Second)
 	})

@@ -137,12 +137,17 @@ func (*BaseDispatcher) Close() {
 }
 
 // refreshTask fetch task state from tidb_global_task table.
-func (d *BaseDispatcher) refreshTask() (err error) {
-	d.Task, err = d.taskMgr.GetGlobalTaskByID(d.Task.ID)
+func (d *BaseDispatcher) refreshTask() error {
+	newTask, err := d.taskMgr.GetGlobalTaskByID(d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Error("refresh task failed", zap.Error(err))
+		return err
 	}
-	return err
+	// newTask might be nil when GC routine move the task into history table.
+	if newTask != nil {
+		d.Task = newTask
+	}
+	return nil
 }
 
 // scheduleTask schedule the task execution step by step.
