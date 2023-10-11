@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -349,6 +350,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
+	failpoint.Inject("PanicInIOWorker", nil)
 	for i := 0; i < a.globalStats.Num; i++ {
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
@@ -401,6 +403,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
+	failpoint.Inject("PanicInCPUWorker", nil)
 	for {
 		select {
 		case fms, ok := <-a.fmsketch:
