@@ -230,7 +230,8 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 		cancel()
 		return errors.Annotate(err, "failed to subscribe events")
 	}
-	lcx := logutil.ContextWithField(cx, zap.Uint64("store-id", s.storeID), zap.String("category", "log backup flush subscriber"))
+	lcx := logutil.ContextWithField(cx, zap.Uint64("store-id", s.storeID),
+		zap.String("category", "log backup flush subscriber"))
 	s.cancel = cancel
 	s.background = spawnJoinable(func() { s.listenOver(lcx, cli) })
 	return nil
