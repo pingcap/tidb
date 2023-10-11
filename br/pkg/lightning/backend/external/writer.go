@@ -99,6 +99,7 @@ type WriterBuilder struct {
 	writeBatchCount uint64
 	propSizeDist    uint64
 	propKeysDist    uint64
+	sortThread      uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
 	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
@@ -114,6 +115,7 @@ func NewWriterBuilder() *WriterBuilder {
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
+		sortThread:      min(8, uint64(variable.GetDDLReorgWorkerCounter())),
 		onClose:         dummyOnCloseFunc,
 	}
 }
@@ -171,6 +173,11 @@ func (b *WriterBuilder) SetMutex(mu *sync.Mutex) *WriterBuilder {
 	return b
 }
 
+func (b *WriterBuilder) SetSortThread(thread uint64) *WriterBuilder {
+	b.sortThread = thread
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -209,6 +216,7 @@ func (b *WriterBuilder) Build(
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		shareMu:        b.mu,
+		sortThread:     b.sortThread,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 	return ret
@@ -294,8 +302,11 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
-	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
+	// This mutex is used to make sure the writer is flushed mutually exclusively
+	// in a TiDB server, as the sort on flush is running using multiple goroutines.
 	shareMu *sync.Mutex
+	// number of thread to used to sort the file data.
+	sortThread uint64
 }
 
 // WriteRow implements ingest.Writer.
@@ -404,12 +415,13 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			return
 		}
 		logger.Info("flush kv",
+			zap.Uint64("sort-thread", w.sortThread),
 			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", savedBytes),
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 
-	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
+	sorty.MaxGor = w.sortThread
 	sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
 		if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
 			if r != s {

@@ -106,8 +106,9 @@ func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
 // each kv group, and all chunks shares the same writers.
 // the writer itself will sort and upload data concurrently.
 func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, indexMemorySizeLimit uint64) {
-	totalDataKVMemSizeLimit := external.DefaultMemSizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt)
-	totalMemSizeLimitPerIndexWriter := indexMemorySizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt)
+	threadCnt := uint64(executor.taskMeta.Plan.ThreadCnt)
+	totalDataKVMemSizeLimit := external.DefaultMemSizeLimit * threadCnt
+	totalMemSizeLimitPerIndexWriter := indexMemorySizeLimit * threadCnt
 	op.logger.Info("init global sort writer with mem limit",
 		zap.String("data-limit", units.BytesSize(float64(totalDataKVMemSizeLimit))),
 		zap.String("per-index-limit", units.BytesSize(float64(totalMemSizeLimitPerIndexWriter))))
@@ -121,7 +122,8 @@ func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, index
 			SetOnCloseFunc(func(summary *external.WriterSummary) {
 				op.sharedVars.mergeIndexSummary(indexID, summary)
 			}).SetMemorySizeLimit(totalMemSizeLimitPerIndexWriter).
-			SetMutex(&op.sharedVars.ShareMu)
+			SetMutex(&op.sharedVars.ShareMu).
+			SetSortThread(threadCnt)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for index: index/{indexID}/{workerID}
 		writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -133,7 +135,8 @@ func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, index
 	builder := external.NewWriterBuilder().
 		SetOnCloseFunc(op.sharedVars.mergeDataSummary).
 		SetMemorySizeLimit(totalDataKVMemSizeLimit).
-		SetMutex(&op.sharedVars.ShareMu)
+		SetMutex(&op.sharedVars.ShareMu).
+		SetSortThread(threadCnt)
 	prefix := subtaskPrefix(op.taskID, op.subtaskID)
 	// writer id for data: data/{workerID}
 	writerID := path.Join("data", workerUUID)
