@@ -588,15 +588,6 @@ func TestAnalyzeIndex(t *testing.T) {
 	require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 1)
 }
 
-func TestAnalyzeIncremental(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	testAnalyzeIncremental(tk, t, dom)
-}
-
 func TestIssue20874(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 

@@ -203,56 +203,6 @@ func TestCMSketchTopN(t *testing.T) {
 	}
 }
 
-func TestMergeCMSketch4IncrementalAnalyze(t *testing.T) {
-	tests := []struct {
-		zipfFactor float64
-		avgError   uint64
-	}{
-		{
-			zipfFactor: 1.0000001,
-			avgError:   48,
-		},
-		{
-			zipfFactor: 1.1,
-			avgError:   48,
-		},
-		{
-			zipfFactor: 2,
-			avgError:   128,
-		},
-		{
-			zipfFactor: 5,
-			avgError:   256,
-		},
-	}
-	d, w := int32(5), int32(2048)
-	total, imax := uint64(100000), uint64(1000000)
-	for _, tt := range tests {
-		lSketch, lMap, err := buildCMSketchAndMap(d, w, 0, total, imax, tt.zipfFactor)
-		require.NoError(t, err)
-		avg, err := averageAbsoluteError(lSketch, nil, lMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
-
-		rSketch, rMap, err := buildCMSketchAndMapWithOffset(d, w, 1, total, imax, tt.zipfFactor, int64(imax))
-		require.NoError(t, err)
-		avg, err = averageAbsoluteError(rSketch, nil, rMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
-
-		for key, val := range rMap {
-			lMap[key] += val
-		}
-		require.NoError(t, lSketch.MergeCMSketch4IncrementalAnalyze(rSketch, 0))
-		avg, err = averageAbsoluteError(lSketch, nil, lMap)
-		require.NoError(t, err)
-		require.LessOrEqual(t, avg, tt.avgError)
-		width, depth := lSketch.GetWidthAndDepth()
-		require.Equal(t, int32(2048), width)
-		require.Equal(t, int32(5), depth)
-	}
-}
-
 func TestCMSketchTopNUniqueData(t *testing.T) {
 	d, w := int32(5), int32(2048)
 	total := uint64(1000000)
