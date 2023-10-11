@@ -19,7 +19,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
@@ -73,8 +72,7 @@ func newChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 		return nil, nil
 	}
 
-	pdAddr := rc.cfg.TiDB.PdAddr
-	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.tls, pdAddr)
+	pdVersion, err := pdutil.FetchPDVersion(ctx, rc.tls, rc.pdCli.GetLeaderAddr())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -82,14 +80,7 @@ func newChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 	// for v4.0.0 or upper, we can use the gc ttl api
 	var manager ChecksumManager
 	if pdVersion.Major >= 4 {
-		tlsOpt := rc.tls.ToPDSecurityOption()
-		addrs := strings.Split(pdAddr, ",")
-		pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-
-		manager = newTiKVChecksumManager(store.GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency))
+		manager = newTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency))
 	} else {
 		db, err := rc.tidbGlue.GetDB()
 		if err != nil {
