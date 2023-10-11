@@ -59,6 +59,33 @@ func TestShowGlobalStats(t *testing.T) {
 	require.Len(t, tk.MustQuery("show stats_healthy where partition_name='global'").Rows(), 1)
 }
 
+func simpleTest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 10")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (8), (10), (20), (30)")
+	tk.MustExec("analyze table t with 0 topn, 1 buckets")
+}
+
+func TestGlobalStatsPanicInIOWorker(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/statistics/handle/globalstats/PanicInIOWorker"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"inject panic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsPanicInCPUWorker(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/statistics/handle/globalstats/PanicInCPUWorker"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"inject panic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
 func TestBuildGlobalLevelStats(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	testKit := testkit.NewTestKit(t, store)

@@ -462,6 +462,45 @@ func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN,
 	return cm, topN, nil
 }
 
+// DecodeTopN decodes a TopN from the given byte slice.
+func DecodeTopN(topNRows []chunk.Row) (*TopN, error) {
+	pbTopN := make([]*tipb.CMSketchTopN, 0, len(topNRows))
+	for _, row := range topNRows {
+		data := make([]byte, len(row.GetBytes(0)))
+		copy(data, row.GetBytes(0))
+		pbTopN = append(pbTopN, &tipb.CMSketchTopN{
+			Data:  data,
+			Count: row.GetUint64(1),
+		})
+	}
+	return TopNFromProto(pbTopN), nil
+}
+
+// DecodeCMSketch encodes the given CMSketch to byte slice.
+func DecodeCMSketch(data []byte) (*CMSketch, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	protoSketch := &tipb.CMSketch{}
+	err := protoSketch.Unmarshal(data)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(protoSketch.Rows) == 0 {
+		return nil, nil
+	}
+	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
+	for i, row := range protoSketch.Rows {
+		c.count = 0
+		for j, counter := range row.Counters {
+			c.table[i][j] = counter
+			c.count = c.count + uint64(counter)
+		}
+	}
+	c.defaultValue = protoSketch.DefaultValue
+	return c, nil
+}
+
 // TotalCount returns the total count in the sketch, it is only used for test.
 func (c *CMSketch) TotalCount() uint64 {
 	if c == nil {
