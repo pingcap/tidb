@@ -3126,11 +3126,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 	return optMap, nil
 }
 
-const removedIncrementalAnalyzeMsg = "the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"
-
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
 	if as.Incremental {
-		return nil, errors.Errorf(removedIncrementalAnalyzeMsg)
+		return nil, errors.Errorf("the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect")
 	}
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
 	// Require INSERT and SELECT privilege for tables.
