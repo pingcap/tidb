@@ -163,12 +163,12 @@ func (op *logicalOptimizeOp) recordFinalLogicalPlan(final LogicalPlan) {
 type logicalOptRule interface {
 	/* Return Parameters:
 	1. LogicalPlan: The optimized LogicalPlan after rule is applied
-	2. error: If there is error during the rule optimizer, it will be thrown
-	3. bool: Used to judge whether the plan is changed or not by logical rule.
-	         If the plan is changed, it will return true.
-	         The default value is false. It means that no interaction rule will be triggered.
+	2. bool: Used to judge whether the plan is changed or not by logical rule.
+		 If the plan is changed, it will return true.
+		 The default value is false. It means that no interaction rule will be triggered.
+	3. error: If there is error during the rule optimizer, it will be thrown
 	*/
-	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, error, bool)
+	optimize(context.Context, LogicalPlan, *logicalOptimizeOp) (LogicalPlan, bool, error)
 	name() string
 }
 
@@ -1149,7 +1149,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		}
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
 		var planChanged bool
-		logic, err, planChanged = rule.optimize(ctx, logic, opt)
+		logic, planChanged, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}
@@ -1163,7 +1163,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 	// Trigger the interaction rule
 	for i, rule := range againRuleList {
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
-		logic, err, _ = rule.optimize(ctx, logic, opt)
+		logic, _, err = rule.optimize(ctx, logic, opt)
 		if err != nil {
 			return nil, err
 		}

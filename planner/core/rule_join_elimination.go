@@ -245,10 +245,10 @@ func (o *outerJoinEliminator) doOptimize(p LogicalPlan, aggCols []*expression.Co
 	return p, nil
 }
 
-func (o *outerJoinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error, bool) {
+func (o *outerJoinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
 	planChanged := false
 	p, err := o.doOptimize(p, nil, nil, opt)
-	return p, err, planChanged
+	return p, planChanged, err
 }
 
 func (*outerJoinEliminator) name() string {
