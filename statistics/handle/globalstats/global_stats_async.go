@@ -358,6 +358,9 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 		}
 	}()
 	sc := se.(sessionctx.Context)
+	if err := util.UpdateSCtxVarsForStats(sc); err != nil {
+		return err
+	}
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
