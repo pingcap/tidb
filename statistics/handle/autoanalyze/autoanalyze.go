@@ -16,7 +16,6 @@ package autoanalyze
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/types"
 	"math"
 	"math/rand"
 	"strconv"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	statsutil "github.com/pingcap/tidb/statistics/handle/util"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"

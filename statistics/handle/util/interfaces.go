@@ -15,11 +15,11 @@
 package util
 
 import (
-	"github.com/pingcap/tidb/statistics"
 	"time"
 
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 )
 
