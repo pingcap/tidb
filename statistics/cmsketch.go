@@ -368,30 +368,6 @@ func (c *CMSketch) MergeCMSketch(rc *CMSketch) error {
 	return nil
 }
 
-// MergeCMSketch4IncrementalAnalyze merges two CM Sketch for incremental analyze. Since there is no value
-// that appears partially in `c` and `rc` for incremental analyze, it uses `max` to merge them.
-// Here is a simple proof: when we query from the CM sketch, we use the `min` to get the answer:
-//
-//	(1): For values that only appears in `c, using `max` to merge them affects the `min` query result less than using `sum`;
-//	(2): For values that only appears in `rc`, it is the same as condition (1);
-//	(3): For values that appears both in `c` and `rc`, if they do not appear partially in `c` and `rc`, for example,
-//	     if `v` appears 5 times in the table, it can appears 5 times in `c` and 3 times in `rc`, then `max` also gives the correct answer.
-//
-// So in fact, if we can know the number of appearances of each value in the first place, it is better to use `max` to construct the CM sketch rather than `sum`.
-func (c *CMSketch) MergeCMSketch4IncrementalAnalyze(rc *CMSketch, _ uint32) error {
-	if c.depth != rc.depth || c.width != rc.width {
-		return errors.New("Dimensions of Count-Min Sketch should be the same")
-	}
-	for i := range c.table {
-		c.count = 0
-		for j := range c.table[i] {
-			c.table[i][j] = max(c.table[i][j], rc.table[i][j])
-			c.count += uint64(c.table[i][j])
-		}
-	}
-	return nil
-}
-
 // CMSketchToProto converts CMSketch to its protobuf representation.
 func CMSketchToProto(c *CMSketch, topn *TopN) *tipb.CMSketch {
 	protoSketch := &tipb.CMSketch{}
@@ -484,6 +460,45 @@ func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN,
 	p.TopN = pbTopN
 	cm, topN := CMSketchAndTopNFromProto(p)
 	return cm, topN, nil
+}
+
+// DecodeTopN decodes a TopN from the given byte slice.
+func DecodeTopN(topNRows []chunk.Row) (*TopN, error) {
+	pbTopN := make([]*tipb.CMSketchTopN, 0, len(topNRows))
+	for _, row := range topNRows {
+		data := make([]byte, len(row.GetBytes(0)))
+		copy(data, row.GetBytes(0))
+		pbTopN = append(pbTopN, &tipb.CMSketchTopN{
+			Data:  data,
+			Count: row.GetUint64(1),
+		})
+	}
+	return TopNFromProto(pbTopN), nil
+}
+
+// DecodeCMSketch encodes the given CMSketch to byte slice.
+func DecodeCMSketch(data []byte) (*CMSketch, error) {
+	if len(data) == 0 {
+		return nil, nil
+	}
+	protoSketch := &tipb.CMSketch{}
+	err := protoSketch.Unmarshal(data)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(protoSketch.Rows) == 0 {
+		return nil, nil
+	}
+	c := NewCMSketch(int32(len(protoSketch.Rows)), int32(len(protoSketch.Rows[0].Counters)))
+	for i, row := range protoSketch.Rows {
+		c.count = 0
+		for j, counter := range row.Counters {
+			c.table[i][j] = counter
+			c.count = c.count + uint64(counter)
+		}
+	}
+	c.defaultValue = protoSketch.DefaultValue
+	return c, nil
 }
 
 // TotalCount returns the total count in the sketch, it is only used for test.

@@ -14,6 +14,7 @@ go_library(
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle/util",
+        "//types",
         "//util",
         "//util/chunk",
         "//util/logutil",

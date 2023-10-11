@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/stmtsummary"
 	"github.com/tikv/client-go/v2/oracle"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -2557,7 +2556,6 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 			TableName:     tbl.Name.O,
 			PartitionName: partitionNames[i],
 			TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-			Incremental:   false,
 			StatsVersion:  version,
 		}
 		if optsV2, ok := optionsMap[physicalID]; ok {
@@ -2779,7 +2777,7 @@ func pickColumnList(astColChoice model.ColumnChoice, astColList []*model.ColumnI
 	return tblSavedColChoice, tblSavedColList
 }
 
-// buildAnalyzeTable constructs anylyze tasks for each table.
+// buildAnalyzeTable constructs analyze tasks for each table.
 func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
 	p.OptionsMap = make(map[int64]V2AnalyzeOptions)
@@ -2839,7 +2837,6 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 					TableName:     tbl.Name.O,
 					PartitionName: partitionNames[i],
 					TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
-					Incremental:   as.Incremental,
 					StatsVersion:  version,
 				}
 				p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{
@@ -2858,20 +2855,17 @@ func (b *PlanBuilder) buildAnalyzeTable(as *ast.AnalyzeTableStmt, opts map[ast.A
 
 func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	if statsHandle == nil {
+		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
+	}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	if statsHandle == nil {
-		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
-	}
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
-		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
-		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
@@ -2881,8 +2875,8 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 	for _, idxName := range as.IndexNames {
 		if isPrimaryIndex(idxName) {
 			handleCols := BuildHandleColsForAnalyze(b.ctx, tblInfo, true, nil)
-			// Fast analyze use analyze column to solve int handle.
-			if handleCols != nil && handleCols.IsInt() && b.ctx.GetSessionVars().EnableFastAnalyze {
+			// FIXME: How about non-int primary key?
+			if handleCols != nil && handleCols.IsInt() {
 				for i, id := range physicalIDs {
 					if id == tblInfo.ID {
 						id = -1
@@ -2891,7 +2885,6 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 						DBName:        as.TableNames[0].Schema.O,
 						TableName:     as.TableNames[0].Name.O,
 						PartitionName: names[i], TableID: statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
-						Incremental:  as.Incremental,
 						StatsVersion: version,
 					}
 					p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
@@ -2914,20 +2907,17 @@ func (b *PlanBuilder) buildAnalyzeIndex(as *ast.AnalyzeTableStmt, opts map[ast.A
 
 func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[ast.AnalyzeOptionType]uint64, version int) (Plan, error) {
 	p := &Analyze{Opts: opts}
+	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
+	if statsHandle == nil {
+		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
+	}
 	tblInfo := as.TableNames[0].TableInfo
 	physicalIDs, names, err := GetPhysicalIDsAndPartitionNames(tblInfo, as.PartitionNames)
 	if err != nil {
 		return nil, err
 	}
-	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
-	if statsHandle == nil {
-		return nil, errors.Errorf("statistics hasn't been initialized, please try again later")
-	}
 	versionIsSame := statsHandle.CheckAnalyzeVersion(tblInfo, physicalIDs, &version)
 	if !versionIsSame {
-		if b.ctx.GetSessionVars().EnableFastAnalyze {
-			return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently. But the existing statistics of the table is not version 1")
-		}
 		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The analyze version from the session is not compatible with the existing statistics of the table. Use the existing version instead"))
 	}
 	if version == statistics.Version2 {
@@ -2955,7 +2945,6 @@ func (b *PlanBuilder) buildAnalyzeAllIndex(as *ast.AnalyzeTableStmt, opts map[as
 				TableName:     as.TableNames[0].Name.O,
 				PartitionName: names[i],
 				TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
-				Incremental:   as.Incremental,
 				StatsVersion:  version,
 			}
 			p.ColTasks = append(p.ColTasks, AnalyzeColumnsTask{HandleCols: handleCols, AnalyzeInfo: info, TblInfo: tblInfo})
@@ -2971,7 +2960,6 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 			TableName:     as.TableNames[0].Name.O,
 			PartitionName: "",
 			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: -1},
-			Incremental:   as.Incremental,
 			StatsVersion:  version,
 		}
 		return []AnalyzeIndexTask{{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo}}
@@ -2987,7 +2975,6 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 			TableName:     as.TableNames[0].Name.O,
 			PartitionName: names[i],
 			TableID:       statistics.AnalyzeTableID{TableID: tblInfo.ID, PartitionID: id},
-			Incremental:   as.Incremental,
 			StatsVersion:  version,
 		}
 		indexTasks = append(indexTasks, AnalyzeIndexTask{IndexInfo: idx, AnalyzeInfo: info, TblInfo: tblInfo})
@@ -3140,17 +3127,10 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 }
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
-	// If enable fast analyze, the storage must be tikv.Storage.
-	if _, isTikvStorage := b.ctx.GetStore().(tikv.Storage); !isTikvStorage && b.ctx.GetSessionVars().EnableFastAnalyze {
-		return nil, errors.Errorf("Only support fast analyze in tikv storage")
+	if as.Incremental {
+		return nil, errors.Errorf("the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect")
 	}
-
-	// If enable fast analyze, the stats version must be 1.
 	statsVersion := b.ctx.GetSessionVars().AnalyzeVersion
-	if b.ctx.GetSessionVars().EnableFastAnalyze && statsVersion >= statistics.Version2 {
-		return nil, errors.Errorf("Fast analyze hasn't reached General Availability and only support analyze version 1 currently")
-	}
-
 	// Require INSERT and SELECT privilege for tables.
 	b.requireInsertAndSelectPriv(as.TableNames)
 
