@@ -124,7 +124,7 @@ func (c *RowContainer) ShallowCopyWithNewMutex() *RowContainer {
 	return &newRC
 }
 
-func (_ *RowContainer) preSpillAction() {
+func (*RowContainer) preSpillAction() {
 }
 
 // SpillToDisk spills data to disk. This function may be called in parallel.
@@ -373,7 +373,7 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 	return c.actionSpill
 }
 
-func (_ *RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
+func (*RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
 	// should check the memory consumed as SortAndSpillDiskAction?
 	return true
 }
