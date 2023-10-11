@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -78,6 +79,8 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			continue
 		}
 
+		failpoint.Inject("ConsumeRandomPanic", nil)
+
 		execStart := time.Now()
 		allMemDelta := int64(0)
 		for key, value := range *input {
@@ -115,6 +118,9 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	if finished {
 		return
 	}
+
+	failpoint.Inject("ConsumeRandomPanic", nil)
+
 	execStart := time.Now()
 	for _, results := range w.partialResultMap {
 		if result.IsFull() {
