@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testenv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -354,6 +355,17 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 			}
 			if i == 0 {
 				rs0 = rs
+				if len(stmts) > 1 && rs != nil {
+					// The result of the first statement will be drained and closed later. To avoid leaking
+					// resource on the statement context, we'll need to store the result and close the
+					// resultSet before executing other statements.
+					rs0 = buildRowsRecordSet(ctx, rs)
+					// the `rs` can be closed safely now
+					terror.Call(rs.Close)
+				}
+			} else if rs != nil {
+				// other statements are executed, but the `ResultSet` is not returned, so close them here
+				terror.Call(rs.Close)
 			}
 			if err != nil {
 				tk.session.GetSessionVars().StmtCtx.AppendError(err)
@@ -594,4 +606,71 @@ func (m MockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogR
 // PullBinlogs is a mock method.
 func (m MockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
 	return nil, nil
+}
+
+var _ sqlexec.RecordSet = &rowsRecordSet{}
+
+type rowsRecordSet struct {
+	fields []*ast.ResultField
+	rows   []chunk.Row
+
+	idx int
+
+	// this error is stored here to return in the future
+	err error
+}
+
+func (r *rowsRecordSet) Fields() []*ast.ResultField {
+	return r.fields
+}
+
+func (r *rowsRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
+	if r.err != nil {
+		return r.err
+	}
+
+	req.Reset()
+	for r.idx < len(r.rows) {
+		if req.IsFull() {
+			return nil
+		}
+		req.AppendRow(r.rows[r.idx])
+		r.idx++
+	}
+	return nil
+}
+
+func (r *rowsRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	fields := make([]*types.FieldType, 0, len(r.fields))
+	for _, field := range r.fields {
+		fields = append(fields, &field.Column.FieldType)
+	}
+	if alloc != nil {
+		return alloc.Alloc(fields, 0, 1024)
+	}
+	return chunk.New(fields, 1024, 1024)
+}
+
+func (r *rowsRecordSet) Close() error {
+	// do nothing
+	return nil
+}
+
+// buildRowsRecordSet builds a `rowsRecordSet` from any `RecordSet` by draining all rows from it.
+// It's used to store the result temporarily. After building a new RecordSet, the original rs (in the argument) can be
+// closed safely.
+func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.RecordSet {
+	rows, err := session.GetRows4Test(ctx, nil, rs)
+	if err != nil {
+		return &rowsRecordSet{
+			fields: rs.Fields(),
+			err:    err,
+		}
+	}
+
+	return &rowsRecordSet{
+		fields: rs.Fields(),
+		rows:   rows,
+		idx:    0,
+	}
 }
