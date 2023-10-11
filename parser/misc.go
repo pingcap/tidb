@@ -623,6 +623,7 @@ var tokenMap = map[string]int{
 	"QUICK":                    quick,
 	"RANGE":                    rangeKwd,
 	"RATE_LIMIT":               rateLimit,
+	"RAW":                      raw,
 	"READ":                     read,
 	"REAL":                     realType,
 	"REBUILD":                  rebuild,

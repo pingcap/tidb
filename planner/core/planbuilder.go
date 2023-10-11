@@ -3450,6 +3450,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 			Extended:              show.Extended,
 			Limit:                 show.Limit,
 			ImportJobID:           show.ImportJobID,
+			PlacementPolicyFormat: show.PlacementPolicyFormat,
 		},
 	}.Init(b.ctx)
 	isView := false
