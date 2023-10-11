@@ -202,7 +202,8 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	ti.taskID = taskID
 	ti.logger = ti.logger.With(zap.Int64("task-id", globalTask.ID))
 
-	ti.logger.Info("job submitted to global task queue", zap.Int64("job-id", jobID))
+	ti.logger.Info("job submitted to global task queue",
+		zap.Int64("job-id", jobID), zap.Int64("thread-cnt", plan.ThreadCnt))
 
 	return jobID, globalTask, nil
 }
