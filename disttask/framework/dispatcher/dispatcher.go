@@ -238,7 +238,7 @@ func (d *BaseDispatcher) onCancelling() error {
 // handle task in pausing state, cancel all running subtasks.
 func (d *BaseDispatcher) onPausing() error {
 	logutil.Logger(d.logCtx).Info("on pausing state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending) // ywq todo remove
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -251,9 +251,17 @@ func (d *BaseDispatcher) onPausing() error {
 	return nil
 }
 
+// MockDMLExecutionOnPausedState is used to mock DML execution when tasks paused.
+var MockDMLExecutionOnPausedState func(task *proto.Task)
+
 // handle task in paused state
 func (d *BaseDispatcher) onPaused() error {
 	logutil.Logger(d.logCtx).Info("on paused state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
+	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
+		if val.(bool) {
+			MockDMLExecutionOnPausedState(d.Task)
+		}
+	})
 	return nil
 }
 
