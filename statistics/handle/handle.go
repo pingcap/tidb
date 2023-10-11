@@ -251,7 +251,7 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	physicalID int64,
 	isIndex bool,
 	histIDs []int64,
-	allPartitionStats map[int64]*statistics.Table,
+	_ map[int64]*statistics.Table,
 ) (globalStats *globalstats.GlobalStats, err error) {
 	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, h.TableInfoByID, h.callWithSCtx)
 }
