@@ -540,3 +540,77 @@ func TestRandomPanicConsume(t *testing.T) {
 		}
 	}
 }
+
+func checkResults(actualRes [][]interface{}, expectedRes map[string]string) bool {
+	if len(actualRes) != len(expectedRes) {
+		return false
+	}
+
+	var key string
+	var expectVal string
+	var actualVal string
+	var ok bool
+	for _, row := range actualRes {
+		if len(row) != 2 {
+			return false
+		}
+
+		key, ok = row[0].(string)
+		if !ok {
+			return false
+		}
+
+		expectVal, ok = expectedRes[key]
+		if !ok {
+			return false
+		}
+
+		actualVal, ok = row[1].(string)
+		if !ok {
+			return false
+		}
+
+		if expectVal != actualVal {
+			return false
+		}
+	}
+	return true
+}
+
+func TestParallelHashAgg(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.parallel_hash_agg;")
+	tk.MustExec("create table test.parallel_hash_agg(k varchar(30), v int);")
+	for i := 0; i < 20; i++ {
+		tk.MustExec("insert into test.parallel_hash_agg (k, v) values ('aa', 1), ('AA', 1), ('aA', 1), ('Aa', 1), ('bb', 1), ('BB', 1), ('bB', 1), ('Bb', 1), ('cc', 1), ('CC', 1), ('cC', 1), ('Cc', 1), ('dd', 1), ('DD', 1), ('dD', 1), ('Dd', 1), ('ee', 1), ('EE', 1), ('eE', 1), ('Ee', 1);")
+	}
+
+	tk.MustExec("set @@tidb_max_chunk_size=32;")
+
+	expectedResult := make(map[string]string)
+	expectedResult["dd"] = "20"
+	expectedResult["AA"] = "20"
+	expectedResult["cc"] = "20"
+	expectedResult["eE"] = "20"
+	expectedResult["bb"] = "20"
+	expectedResult["Cc"] = "20"
+	expectedResult["EE"] = "20"
+	expectedResult["Aa"] = "20"
+	expectedResult["ee"] = "20"
+	expectedResult["Bb"] = "20"
+	expectedResult["dD"] = "20"
+	expectedResult["aa"] = "20"
+	expectedResult["cC"] = "20"
+	expectedResult["DD"] = "20"
+	expectedResult["BB"] = "20"
+	expectedResult["Dd"] = "20"
+	expectedResult["CC"] = "20"
+	expectedResult["bB"] = "20"
+	expectedResult["aA"] = "20"
+	expectedResult["Ee"] = "20"
+	res := tk.MustQuery("select k, sum(v) from parallel_hash_agg group by k;")
+	tk.RequireEqual(true, checkResults(res.Rows(), expectedResult))
+}
