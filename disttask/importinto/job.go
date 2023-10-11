@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
@@ -116,23 +115,11 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 	var result importer.JobImportResult
 	taskMeta, err := getTaskMeta(ti.jobID)
 	if err != nil {
-		result.Msg = err.Error()
 		return result
 	}
 
-	var (
-		numWarnings uint64
-		numRecords  uint64
-		numDeletes  uint64
-		numSkipped  uint64
-	)
-	numRecords = taskMeta.Result.ReadRowCnt
-	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
-	// we can have it when there's duplicate detection.
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	return importer.JobImportResult{
-		Msg:        msg,
-		Affected:   taskMeta.Result.ReadRowCnt,
+		Affected:   taskMeta.Result.LoadedRowCnt,
 		ColSizeMap: taskMeta.Result.ColSizeMap,
 	}
 }
@@ -245,7 +232,7 @@ func getTaskMeta(jobID int64) (*TaskMeta, error) {
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return &taskMeta, nil
 }
@@ -267,7 +254,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 	}
 	taskMeta := TaskMeta{}
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
-		return 0, err
+		return 0, errors.Trace(err)
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
@@ -278,7 +265,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 		for _, subtask := range subtasks {
 			var subtaskMeta ImportStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, err2
+				return 0, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
@@ -290,7 +277,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 		for _, subtask := range subtasks {
 			var subtaskMeta WriteIngestStepMeta
 			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-				return 0, err2
+				return 0, errors.Trace(err2)
 			}
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}

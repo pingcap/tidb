@@ -44,7 +44,6 @@ go_test(
         "ranger_test.go",
         "types_test.go",
     ],
-    data = glob(["testdata/**"]),
     flaky = True,
     shard_count = 26,
     deps = [
@@ -58,9 +57,7 @@ go_test(
         "//planner/core",
         "//session",
         "//sessionctx",
-        "//sessionctx/variable",
         "//testkit",
-        "//testkit/testdata",
         "//testkit/testsetup",
         "//types",
         "//util/collate",

@@ -136,6 +136,10 @@ func (e *SQLBindExec) createSQLBind() error {
 	// is necessary to avoid 'create binding' been recorded as 'explain'.
 	saveStmtCtx := e.Ctx().GetSessionVars().StmtCtx
 	defer func() {
+		// But we need to restore the SET_VAR's setting.
+		for name, val := range e.Ctx().GetSessionVars().StmtCtx.SetVarHintRestore {
+			saveStmtCtx.AddSetVarHintRestore(name, val)
+		}
 		e.Ctx().GetSessionVars().StmtCtx = saveStmtCtx
 	}()
 

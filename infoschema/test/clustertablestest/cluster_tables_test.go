@@ -1283,27 +1283,6 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	tk.MustGetErrMsg("set binding disabled for sql digest ''", "sql digest is empty")
 }
 
-func TestCreateBindingWhenCloseStmtSummaryTable(t *testing.T) {
-	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	defer s.httpServer.Close()
-	defer s.rpcserver.Stop()
-	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, a int, key(a))")
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("select /*+ ignore_index(t, a) */ * from t where a = 1")
-
-	tk.MustGetErrMsg("create binding from history using plan digest '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'",
-		"can't find any plans for '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'")
-}
-
 func TestCreateBindingForNotSupportedStmt(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

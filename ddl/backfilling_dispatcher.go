@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/store/helper"
 	"github.com/pingcap/tidb/table"
@@ -80,12 +79,6 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 
 	job := &gTaskMeta.Job
 	useExtStore := len(gTaskMeta.CloudStorageURI) > 0
-	defer func() {
-		// Only redact when the task is complete.
-		if len(taskMeta) == 0 && useExtStore {
-			redactCloudStorageURI(ctx, gTask, &gTaskMeta)
-		}
-	}()
 
 	tblInfo, err := getTblInfo(h.d, job)
 	if err != nil {
@@ -141,7 +134,7 @@ func (*backfillingDispatcherExt) GetNextStep(
 			}
 			multiStats = append(multiStats, subtask.MultipleFilesStats...)
 		}
-		if external.GetMaxOverlappingTotal(multiStats) > 1000 {
+		if external.GetMaxOverlappingTotal(multiStats) > external.MergeSortOverlapThreshold {
 			return proto.StepTwo
 		}
 		return proto.StepThree
@@ -180,7 +173,7 @@ func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *
 	return serverInfos, nil
 }
 
-// IsRetryableErr implements TaskFlowHandle.IsRetryableErr interface.
+// IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
 func (*backfillingDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
@@ -398,7 +391,7 @@ func generateMergePlan(
 	}
 
 	start := 0
-	step := 1000
+	step := external.MergeSortFileCountStep
 	metaArr := make([][]byte, 0, 16)
 	for start < len(dataFiles) {
 		end := start + step
@@ -433,7 +426,7 @@ func getRangeSplitter(
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.New(ctx, backend, &storage.ExternalStorageOptions{})
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
@@ -491,18 +484,4 @@ func getSummaryFromLastStep(
 		}
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
-}
-
-func redactCloudStorageURI(
-	ctx context.Context,
-	gTask *proto.Task,
-	origin *BackfillGlobalMeta,
-) {
-	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
-	metaBytes, err := json.Marshal(origin)
-	if err != nil {
-		logutil.Logger(ctx).Warn("fail to marshal task meta", zap.Error(err))
-		return
-	}
-	gTask.Meta = metaBytes
 }

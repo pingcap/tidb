@@ -27,6 +27,7 @@ go_test(
         "//sessionctx/variable",
         "//statistics",
         "//statistics/handle",
+        "//statistics/handle/autoanalyze",
         "//store/mockstore",
         "//tablecodec",
         "//testkit",

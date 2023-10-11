@@ -19,10 +19,11 @@ import (
 	"context"
 	"encoding/hex"
 	"path/filepath"
-	"slices"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -31,12 +32,26 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
 )
 
-var multiFileStatNum = 500
+var (
+	multiFileStatNum = 500
+
+	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
+	// if the overlap ratio is greater than this threshold, we will merge the files.
+	MergeSortOverlapThreshold int64 = 1000
+	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
+	MergeSortFileCountStep = 1000
+)
+
+const (
+	// DefaultMemSizeLimit is the default memory size limit for writer.
+	DefaultMemSizeLimit = 256 * size.MB
+)
 
 // rangePropertiesCollector collects range properties for each range. The zero
 // value of rangePropertiesCollector is not ready to use, should call reset()
@@ -61,8 +76,11 @@ func (rc *rangePropertiesCollector) encode() []byte {
 
 // WriterSummary is the summary of a writer.
 type WriterSummary struct {
-	WriterID           string
-	Seq                int
+	WriterID string
+	Seq      int
+	// Min and Max are the min and max key written by this writer, both are
+	// inclusive, i.e. [Min, Max].
+	// will be empty if no key is written.
 	Min                tidbkv.Key
 	Max                tidbkv.Key
 	TotalSize          uint64
@@ -83,6 +101,8 @@ type WriterBuilder struct {
 	propKeysDist    uint64
 	onClose         OnCloseFunc
 	keyDupeEncoding bool
+	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
+	mu *sync.Mutex
 
 	bufferPool *membuf.Pool
 }
@@ -90,7 +110,7 @@ type WriterBuilder struct {
 // NewWriterBuilder creates a WriterBuilder.
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
-		memSizeLimit:    256 * size.MB,
+		memSizeLimit:    DefaultMemSizeLimit,
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
@@ -145,6 +165,12 @@ func (b *WriterBuilder) SetKeyDuplicationEncoding(val bool) *WriterBuilder {
 	return b
 }
 
+// SetMutex sets the mutex of the writer.
+func (b *WriterBuilder) SetMutex(mu *sync.Mutex) *WriterBuilder {
+	b.mu = mu
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -182,6 +208,7 @@ func (b *WriterBuilder) Build(
 		multiFileStats: make([]MultipleFilesStat, 1),
 		fileMinKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
+		shareMu:        b.mu,
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
 	return ret
@@ -267,6 +294,8 @@ type Writer struct {
 	minKey    tidbkv.Key
 	maxKey    tidbkv.Key
 	totalSize uint64
+	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
+	shareMu *sync.Mutex
 }
 
 // WriteRow implements ingest.Writer.
@@ -344,6 +373,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if len(w.writeBatch) == 0 {
 		return nil
 	}
+	if w.shareMu != nil {
+		w.shareMu.Lock()
+		defer w.shareMu.Unlock()
+	}
 
 	logger := logutil.Logger(ctx)
 	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
@@ -376,11 +409,18 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
 
-	slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) int {
-		return bytes.Compare(i.Key, j.Key)
+	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
+	sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
+		if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
+			if r != s {
+				w.writeBatch[r], w.writeBatch[s] = w.writeBatch[s], w.writeBatch[r]
+			}
+			return true
+		}
+		return false
 	})
 
-	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.currentSeq)
+	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return err
 	}
@@ -448,6 +488,9 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 
 // EngineWriter implements backend.EngineWriter interface.
 type EngineWriter struct {
+	// Only 1 writer is used for some kv group(data or some index), no matter
+	// how many routines are encoding data, so need to sync write to it.
+	sync.Mutex
 	w *Writer
 }
 
@@ -458,6 +501,8 @@ func NewEngineWriter(w *Writer) *EngineWriter {
 
 // AppendRows implements backend.EngineWriter interface.
 func (e *EngineWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
+	e.Lock()
+	defer e.Unlock()
 	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil
@@ -479,5 +524,7 @@ func (e *EngineWriter) IsSynced() bool {
 
 // Close implements backend.EngineWriter interface.
 func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
+	e.Lock()
+	defer e.Unlock()
 	return nil, e.w.Close(ctx)
 }

@@ -420,33 +420,39 @@ type BackendConfig struct {
 	ResourceGroupName         string
 	TaskType                  string
 	RaftKV2SwitchModeDuration time.Duration
+	// whether disable automatic compactions of pebble db of engine.
+	// deduplicate pebble db is not affected by this option.
+	// see DisableAutomaticCompactions of pebble.Options for more details.
+	// default true.
+	DisableAutomaticCompactions bool
 }
 
 // NewBackendConfig creates a new BackendConfig.
 func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
 	return BackendConfig{
-		PDAddr:                    cfg.TiDB.PdAddr,
-		LocalStoreDir:             cfg.TikvImporter.SortedKVDir,
-		MaxConnPerStore:           cfg.TikvImporter.RangeConcurrency,
-		ConnCompressType:          cfg.TikvImporter.CompressKVPairs,
-		WorkerConcurrency:         cfg.TikvImporter.RangeConcurrency * 2,
-		KVWriteBatchSize:          int64(cfg.TikvImporter.SendKVSize),
-		RegionSplitBatchSize:      cfg.TikvImporter.RegionSplitBatchSize,
-		RegionSplitConcurrency:    cfg.TikvImporter.RegionSplitConcurrency,
-		CheckpointEnabled:         cfg.Checkpoint.Enable,
-		MemTableSize:              int(cfg.TikvImporter.EngineMemCacheSize),
-		LocalWriterMemCacheSize:   int64(cfg.TikvImporter.LocalWriterMemCacheSize),
-		ShouldCheckTiKV:           cfg.App.CheckRequirements,
-		DupeDetectEnabled:         cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
-		DuplicateDetectOpt:        common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
-		StoreWriteBWLimit:         int(cfg.TikvImporter.StoreWriteBWLimit),
-		ShouldCheckWriteStall:     cfg.Cron.SwitchMode.Duration == 0,
-		MaxOpenFiles:              maxOpenFiles,
-		KeyspaceName:              keyspaceName,
-		PausePDSchedulerScope:     cfg.TikvImporter.PausePDSchedulerScope,
-		ResourceGroupName:         resourceGroupName,
-		TaskType:                  taskType,
-		RaftKV2SwitchModeDuration: raftKV2SwitchModeDuration,
+		PDAddr:                      cfg.TiDB.PdAddr,
+		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:      cfg.TikvImporter.RegionSplitConcurrency,
+		CheckpointEnabled:           cfg.Checkpoint.Enable,
+		MemTableSize:                int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize:     int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:             cfg.App.CheckRequirements,
+		DupeDetectEnabled:           cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:           int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:       cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:                maxOpenFiles,
+		KeyspaceName:                keyspaceName,
+		PausePDSchedulerScope:       cfg.TikvImporter.PausePDSchedulerScope,
+		ResourceGroupName:           resourceGroupName,
+		TaskType:                    taskType,
+		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
+		DisableAutomaticCompactions: true,
 	}
 }
 
@@ -477,6 +483,8 @@ type Backend struct {
 	metrics      *metric.Common
 	writeLimiter StoreWriteLimiter
 	logger       log.Logger
+	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
+	mu sync.Mutex
 }
 
 var _ DiskUsage = (*Backend)(nil)
@@ -856,6 +864,7 @@ func (local *Backend) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble
 		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
 			newRangePropertiesCollector,
 		},
+		DisableAutomaticCompactions: local.DisableAutomaticCompactions,
 	}
 	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
 	opt.Levels = []pebble.LevelOptions{
@@ -939,7 +948,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		store, err := storage.New(ctx, storeBackend, nil)
+		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
 		if err != nil {
 			return err
 		}
@@ -1206,11 +1215,11 @@ func (local *Backend) generateAndSendJob(
 				return err
 			}
 			for _, job := range jobs {
-				jobWg.Add(1)
+				job.ref(jobWg)
 				select {
 				case <-egCtx.Done():
 					// this job is not put into jobToWorkerCh
-					jobWg.Done()
+					job.done(jobWg)
 					// if the context is canceled, it means worker has error, the first error can be
 					// found by worker's error group LATER. if this function returns an error it will
 					// seize the "first error".
@@ -1335,11 +1344,15 @@ func (local *Backend) startWorker(
 					// Don't need to put the job back to retry, because generateJobForRange
 					// has done the retry internally. Here just done for the "needRescan"
 					// job and exit directly.
-					jobWg.Done()
+					job.done(jobWg)
 					return err2
 				}
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
-				jobWg.Add(len(jobs) - 1)
+				newJobCnt := len(jobs) - 1
+				for newJobCnt > 0 {
+					job.ref(jobWg)
+					newJobCnt--
+				}
 				for _, j := range jobs {
 					j.lastRetryableErr = job.lastRetryableErr
 					jobOutCh <- j
@@ -1552,6 +1565,11 @@ func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 }
 
+// GetMutex returns the mutex of the backend.
+func (local *Backend) GetMutex() *sync.Mutex {
+	return &local.mu
+}
+
 // expose these variables to unit test.
 var (
 	testJobToWorkerCh = make(chan *regionJob)
@@ -1615,7 +1633,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 				if job.retryCount > maxWriteAndIngestRetryTimes {
 					firstErr.Set(job.lastRetryableErr)
 					workerCancel()
-					jobWg.Done()
+					job.done(&jobWg)
 					continue
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
@@ -1632,10 +1650,10 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 					zap.Time("waitUntil", job.waitUntil))
 				if !retryer.push(job) {
 					// retryer is closed by worker error
-					jobWg.Done()
+					job.done(&jobWg)
 				}
 			case ingested:
-				jobWg.Done()
+				job.done(&jobWg)
 			case needRescan:
 				panic("should not reach here")
 			}
@@ -1696,7 +1714,7 @@ func (local *Backend) GetExternalEngineKVStatistics(engineUUID uuid.UUID) (
 	if !ok {
 		return 0, 0
 	}
-	return v.KVStatistics()
+	return v.ImportedStatistics()
 }
 
 // ResetEngine reset the engine and reclaim the space.

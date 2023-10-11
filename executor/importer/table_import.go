@@ -22,7 +22,6 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -45,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/syncutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/multierr"
@@ -202,30 +200,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		return nil, errors.Trace(err)
 	}
 
-	backendConfig := local.BackendConfig{
-		PDAddr:                 tidbCfg.Path,
-		LocalStoreDir:          dir,
-		MaxConnPerStore:        config.DefaultRangeConcurrency,
-		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
-		KVWriteBatchSize:       config.KVWriteBatchSize,
-		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
-		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
-		// enable after we support checkpoint
-		CheckpointEnabled:       false,
-		MemTableSize:            config.DefaultEngineMemCacheSize,
-		LocalWriterMemCacheSize: int64(config.DefaultLocalWriterMemCacheSize),
-		ShouldCheckTiKV:         true,
-		DupeDetectEnabled:       false,
-		DuplicateDetectOpt:      common.DupDetectOpt{ReportErrOnDup: false},
-		StoreWriteBWLimit:       int(e.MaxWriteSpeed),
-		MaxOpenFiles:            int(util.GenRLimit("table_import")),
-		KeyspaceName:            tidb.GetGlobalKeyspaceName(),
-		PausePDSchedulerScope:   config.PausePDSchedulerScopeTable,
-	}
-	if e.IsRaftKV2 {
-		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
-	}
+	backendConfig := e.getLocalBackendCfg(tidbCfg.Path, dir)
 
 	// todo: use a real region size getter
 	regionSizeGetter := &local.TableRegionSizeGetterImpl{}
@@ -309,7 +284,7 @@ func (ti *TableImporter) getParser(ctx context.Context, chunk *checkpoints.Chunk
 	return parser, nil
 }
 
-func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEncoder, error) {
+func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (KVEncoder, error) {
 	cfg := &encode.EncodingConfig{
 		SessionOptions: encode.SessionOptions{
 			SQLMode:        ti.SQLMode,
@@ -321,7 +296,7 @@ func (ti *TableImporter) getKVEncoder(chunk *checkpoints.ChunkCheckpoint) (kvEnc
 		Table:  ti.encTable,
 		Logger: log.Logger{Logger: ti.logger.With(zap.String("path", chunk.FileMeta.Path))},
 	}
-	return newTableKVEncoder(cfg, ti)
+	return NewTableKVEncoder(cfg, ti)
 }
 
 func (e *LoadDataController) getAdjustedMaxEngineSize() int64 {
@@ -467,6 +442,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 		TableInfo: ti.tableInfo,
 	}
 	// todo: support checking IsRowOrdered later.
+	// also see test result here: https://github.com/pingcap/tidb/pull/47147
 	//if ti.tableMeta.IsRowOrdered {
 	//	dataEngineCfg.Local.Compact = true
 	//	dataEngineCfg.Local.CompactConcurrency = 4

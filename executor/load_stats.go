@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/executor/internal/exec"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/util/chunk"
 )
 
@@ -79,7 +79,7 @@ func (*LoadStatsExec) Open(context.Context) error {
 
 // Update updates the stats of the corresponding table according to the data.
 func (e *LoadStatsInfo) Update(data []byte) error {
-	jsonTbl := &handle.JSONTable{}
+	jsonTbl := &storage.JSONTable{}
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
 		return errors.Trace(err)
 	}
@@ -88,5 +88,5 @@ func (e *LoadStatsInfo) Update(data []byte) error {
 	if h == nil {
 		return errors.New("Load Stats: handle is nil")
 	}
-	return h.LoadStatsFromJSON(e.Ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl)
+	return h.LoadStatsFromJSON(context.Background(), e.Ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }

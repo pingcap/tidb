@@ -1207,6 +1207,10 @@ func (m mockIngestData) NewIter(ctx context.Context, lowerBound, upperBound []by
 
 func (m mockIngestData) GetTS() uint64 { return 0 }
 
+func (m mockIngestData) IncRef() {}
+
+func (m mockIngestData) DecRef() {}
+
 func (m mockIngestData) Finish(_, _ int64) {}
 
 func TestCheckPeersBusy(t *testing.T) {
@@ -2254,4 +2258,14 @@ func TestExternalEngine(t *testing.T) {
 		require.NoError(t, iter.Close())
 	}
 	require.Equal(t, 100, kvIdx)
+}
+
+func TestGetExternalEngineKVStatistics(t *testing.T) {
+	b := Backend{
+		externalEngine: map[uuid.UUID]common.Engine{},
+	}
+	// non existent uuid
+	size, count := b.GetExternalEngineKVStatistics(uuid.New())
+	require.Zero(t, size)
+	require.Zero(t, count)
 }

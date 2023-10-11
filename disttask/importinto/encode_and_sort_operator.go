@@ -20,20 +20,30 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/disttask/operator"
 	"github.com/pingcap/tidb/executor/importer"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 const (
 	maxWaitDuration = 30 * time.Second
+
+	// We limit the memory usage of KV deliver to 1GB per concurrency, and data
+	// KV deliver has external.DefaultMemSizeLimit, the rest of memory is for
+	// all index KV deliver.
+	// Note: this size is the memory taken by KV, not the size of taken by golang,
+	// each KV has additional 24*2 bytes overhead for golang slice.
+	indexKVTotalBufSize = size.GB - external.DefaultMemSizeLimit
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -54,13 +64,17 @@ type encodeAndSortOperator struct {
 	sharedVars        *SharedVars
 	logger            *zap.Logger
 	errCh             chan error
+
+	dataWriter  *external.EngineWriter
+	indexWriter *importer.IndexRouteWriter
 }
 
 var _ operator.Operator = (*encodeAndSortOperator)(nil)
 var _ operator.WithSource[*importStepMinimalTask] = (*encodeAndSortOperator)(nil)
 var _ operator.WithSink[workerpool.None] = (*encodeAndSortOperator)(nil)
 
-func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor, sharedVars *SharedVars, subtaskID int64) *encodeAndSortOperator {
+func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
+	sharedVars *SharedVars, subtaskID int64, indexMemorySizeLimit uint64) *encodeAndSortOperator {
 	subCtx, cancel := context.WithCancel(ctx)
 	op := &encodeAndSortOperator{
 		ctx:           subCtx,
@@ -72,16 +86,62 @@ func newEncodeAndSortOperator(ctx context.Context, executor *importStepExecutor,
 		logger:        executor.logger,
 		errCh:         make(chan error),
 	}
+
+	if op.tableImporter.IsGlobalSort() {
+		op.initWriters(executor, indexMemorySizeLimit)
+	}
+
 	pool := workerpool.NewWorkerPool(
 		"encodeAndSortOperator",
 		util.ImportInto,
 		int(executor.taskMeta.Plan.ThreadCnt),
 		func() workerpool.Worker[*importStepMinimalTask, workerpool.None] {
-			return newChunkWorker(ctx, op)
+			return newChunkWorker(subCtx, op)
 		},
 	)
 	op.AsyncOperator = operator.NewAsyncOperator(subCtx, pool)
 	return op
+}
+
+// with current design of global sort writer, we only create one writer for
+// each kv group, and all chunks shares the same writers.
+// the writer itself will sort and upload data concurrently.
+func (op *encodeAndSortOperator) initWriters(executor *importStepExecutor, indexMemorySizeLimit uint64) {
+	totalDataKVMemSizeLimit := external.DefaultMemSizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt)
+	totalMemSizeLimitPerIndexWriter := indexMemorySizeLimit * uint64(executor.taskMeta.Plan.ThreadCnt)
+	op.logger.Info("init global sort writer with mem limit",
+		zap.String("data-limit", units.BytesSize(float64(totalDataKVMemSizeLimit))),
+		zap.String("per-index-limit", units.BytesSize(float64(totalMemSizeLimitPerIndexWriter))))
+
+	// in case on network partition, 2 nodes might run the same subtask.
+	// so use uuid to make sure the path is unique.
+	workerUUID := uuid.New().String()
+	// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
+	indexWriterFn := func(indexID int64) *external.Writer {
+		builder := external.NewWriterBuilder().
+			SetOnCloseFunc(func(summary *external.WriterSummary) {
+				op.sharedVars.mergeIndexSummary(indexID, summary)
+			}).SetMemorySizeLimit(totalMemSizeLimitPerIndexWriter).
+			SetMutex(&op.sharedVars.ShareMu)
+		prefix := subtaskPrefix(op.taskID, op.subtaskID)
+		// writer id for index: index/{indexID}/{workerID}
+		writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
+		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+		return writer
+	}
+
+	// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
+	builder := external.NewWriterBuilder().
+		SetOnCloseFunc(op.sharedVars.mergeDataSummary).
+		SetMemorySizeLimit(totalDataKVMemSizeLimit).
+		SetMutex(&op.sharedVars.ShareMu)
+	prefix := subtaskPrefix(op.taskID, op.subtaskID)
+	// writer id for data: data/{workerID}
+	writerID := path.Join("data", workerUUID)
+	writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
+
+	op.dataWriter = external.NewEngineWriter(writer)
+	op.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
 }
 
 func (op *encodeAndSortOperator) Open() error {
@@ -104,9 +164,33 @@ func (op *encodeAndSortOperator) Close() error {
 	// right now AsyncOperator.Close always returns nil, ok to ignore it.
 	// nolint:errcheck
 	op.AsyncOperator.Close()
+
+	closeCtx := op.ctx
+	if closeCtx.Err() != nil {
+		op.logger.Info("context canceled when closing, create a new one with timeout",
+			zap.Duration("timeout", maxWaitDuration))
+		// in case of context canceled, we need to create a new context to close writers.
+		newCtx, cancel := context.WithTimeout(context.Background(), maxWaitDuration)
+		closeCtx = newCtx
+		defer cancel()
+	}
+	if op.dataWriter != nil {
+		// Note: we cannot ignore close error as we're writing to S3 or GCS.
+		// ignore error might cause data loss. below too.
+		if _, err := op.dataWriter.Close(closeCtx); err != nil {
+			op.onError(errors.Trace(err))
+		}
+	}
+	if op.indexWriter != nil {
+		if _, err := op.indexWriter.Close(closeCtx); err != nil {
+			op.onError(errors.Trace(err))
+		}
+	}
+
 	op.cancel()
 	close(op.errCh)
 	op.wg.Wait()
+
 	// see comments on interface definition, this Close is actually WaitAndClose.
 	return op.firstErr.Load()
 }
@@ -130,40 +214,12 @@ func (op *encodeAndSortOperator) Done() <-chan struct{} {
 type chunkWorker struct {
 	ctx context.Context
 	op  *encodeAndSortOperator
-
-	dataWriter  *external.EngineWriter
-	indexWriter *importer.IndexRouteWriter
 }
 
 func newChunkWorker(ctx context.Context, op *encodeAndSortOperator) *chunkWorker {
 	w := &chunkWorker{
 		ctx: ctx,
 		op:  op,
-	}
-	if op.tableImporter.IsGlobalSort() {
-		// in case on network partition, 2 nodes might run the same subtask.
-		workerUUID := uuid.New().String()
-		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
-		indexWriterFn := func(indexID int64) *external.Writer {
-			builder := external.NewWriterBuilder().
-				SetOnCloseFunc(func(summary *external.WriterSummary) {
-					op.sharedVars.mergeIndexSummary(indexID, summary)
-				})
-			prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
-			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
-			writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
-			return writer
-		}
-
-		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
-		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
-		prefix := path.Join(strconv.Itoa(int(op.taskID)), strconv.Itoa(int(op.subtaskID)))
-		writerID := path.Join("data", workerUUID)
-		writer := builder.Build(op.tableImporter.GlobalSortStore, prefix, writerID)
-		w.dataWriter = external.NewEngineWriter(writer)
-
-		w.indexWriter = importer.NewIndexRouteWriter(op.logger, indexWriterFn)
 	}
 	return w
 }
@@ -175,29 +231,47 @@ func (w *chunkWorker) HandleTask(task *importStepMinimalTask, _ func(workerpool.
 	// we don't use the input send function, it makes workflow more complex
 	// we send result to errCh and handle it here.
 	executor := newImportMinimalTaskExecutor(task)
-	if err := executor.Run(w.ctx, w.dataWriter, w.indexWriter); err != nil {
+	if err := executor.Run(w.ctx, w.op.dataWriter, w.op.indexWriter); err != nil {
 		w.op.onError(err)
 	}
 }
 
-func (w *chunkWorker) Close() {
-	closeCtx := w.ctx
-	if closeCtx.Err() != nil {
-		// in case of context canceled, we need to create a new context to close writers.
-		newCtx, cancel := context.WithTimeout(context.Background(), maxWaitDuration)
-		closeCtx = newCtx
-		defer cancel()
+func (*chunkWorker) Close() {
+}
+
+func subtaskPrefix(taskID, subtaskID int64) string {
+	return path.Join(strconv.Itoa(int(taskID)), strconv.Itoa(int(subtaskID)))
+}
+
+func getWriterMemorySizeLimit(plan *importer.Plan) uint64 {
+	// min(external.DefaultMemSizeLimit, indexKVTotalBufSize / num-of-index-that-gen-kv)
+	cnt := getNumOfIndexGenKV(plan.DesiredTableInfo)
+	limit := indexKVTotalBufSize
+	if cnt > 0 {
+		limit = limit / uint64(cnt)
 	}
-	if w.dataWriter != nil {
-		// Note: we cannot ignore close error as we're writing to S3 or GCS.
-		// ignore error might cause data loss. below too.
-		if _, err := w.dataWriter.Close(closeCtx); err != nil {
-			w.op.onError(errors.Trace(err))
+	if limit > external.DefaultMemSizeLimit {
+		limit = external.DefaultMemSizeLimit
+	}
+	return limit
+}
+
+func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
+	var count int
+	var nonClusteredPK bool
+	for _, idxInfo := range tblInfo.Indices {
+		// all public non-primary index generates index KVs
+		if idxInfo.State != model.StatePublic {
+			continue
 		}
-	}
-	if w.indexWriter != nil {
-		if _, err := w.indexWriter.Close(closeCtx); err != nil {
-			w.op.onError(errors.Trace(err))
+		if idxInfo.Primary && !tblInfo.HasClusteredIndex() {
+			nonClusteredPK = true
+			continue
 		}
+		count++
 	}
+	if nonClusteredPK {
+		count++
+	}
+	return count
 }
