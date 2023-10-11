@@ -243,89 +243,26 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 			err = errors.New(fmt.Sprint(r))
 		}
 	}()
-	func() {
-		for {
-			select {
-			case fms, ok := <-a.fmsketch:
-				if !ok {
-					return
-				}
-				if a.globalStats.Fms[fms.idx] == nil {
-					a.globalStats.Fms[fms.idx] = fms.item
-				} else {
-					a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
-				}
-			case <-a.exitWhenErrChan:
-				return
+	a.dealFMSketch()
+	select {
+	case <-a.exitWhenErrChan:
+		return nil
+	default:
+		for i := 0; i < a.globalStats.Num; i++ {
+			// Update the global NDV.
+			globalStatsNDV := a.globalStats.Fms[i].NDV()
+			if globalStatsNDV > a.globalStats.Count {
+				globalStatsNDV = a.globalStats.Count
 			}
+			a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
+			a.globalStats.Fms[i].DestroyAndPutToPool()
 		}
-	}()
-	for i := 0; i < a.globalStats.Num; i++ {
-		// Update the global NDV.
-		globalStatsNDV := a.globalStats.Fms[i].NDV()
-		if globalStatsNDV > a.globalStats.Count {
-			globalStatsNDV = a.globalStats.Count
-		}
-		a.globalStatsNDV = append(a.globalStatsNDV, globalStatsNDV)
-		a.globalStats.Fms[i].DestroyAndPutToPool()
 	}
-	err = func() error {
-		for {
-			select {
-			case cms, ok := <-a.cmsketch:
-				if !ok {
-					return nil
-				}
-				if a.globalStats.Cms[cms.idx] == nil {
-					a.globalStats.Cms[cms.idx] = cms.item
-				} else {
-					err := a.globalStats.Cms[cms.idx].MergeCMSketch(cms.item)
-					if err != nil {
-						return err
-					}
-				}
-			case <-a.exitWhenErrChan:
-				return nil
-			}
-		}
-	}()
+	err = a.dealCMSketch()
 	if err != nil {
 		return err
 	}
-	err = func() error {
-		for {
-			select {
-			case item, ok := <-a.histogramAndTopn:
-				if !ok {
-					return nil
-				}
-				var err error
-				var poppedTopN []statistics.TopNMeta
-				var allhg []*statistics.Histogram
-				wrapper := item.item
-				a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.gpool, sctx, wrapper,
-					tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
-				if err != nil {
-					return err
-				}
-
-				// Merge histogram.
-				a.globalStats.Hg[item.idx], err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
-					int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
-				if err != nil {
-					return err
-				}
-
-				// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-				for j := range a.globalStats.Hg[item.idx].Buckets {
-					a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
-				}
-				a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
-			case <-a.exitWhenErrChan:
-				return nil
-			}
-		}
-	}()
+	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 	if err != nil {
 		return err
 	}
@@ -447,6 +384,80 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 		}
 	}
 	return nil
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
+	for {
+		select {
+		case fms, ok := <-a.fmsketch:
+			if !ok {
+				return
+			}
+			if a.globalStats.Fms[fms.idx] == nil {
+				a.globalStats.Fms[fms.idx] = fms.item
+			} else {
+				a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
+			}
+		case <-a.exitWhenErrChan:
+			return
+		}
+	}
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
+	for {
+		select {
+		case cms, ok := <-a.cmsketch:
+			if !ok {
+				return nil
+			}
+			if a.globalStats.Cms[cms.idx] == nil {
+				a.globalStats.Cms[cms.idx] = cms.item
+			} else {
+				err := a.globalStats.Cms[cms.idx].MergeCMSketch(cms.item)
+				if err != nil {
+					return err
+				}
+			}
+		case <-a.exitWhenErrChan:
+			return nil
+		}
+	}
+}
+
+func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
+	for {
+		select {
+		case item, ok := <-a.histogramAndTopn:
+			if !ok {
+				return nil
+			}
+			var err error
+			var poppedTopN []statistics.TopNMeta
+			var allhg []*statistics.Histogram
+			wrapper := item.item
+			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.gpool, sctx, wrapper,
+				tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
+			if err != nil {
+				return err
+			}
+
+			// Merge histogram.
+			a.globalStats.Hg[item.idx], err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
+				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
+			if err != nil {
+				return err
+			}
+
+			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
+			for j := range a.globalStats.Hg[item.idx].Buckets {
+				a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
+			}
+			a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
+		case <-a.exitWhenErrChan:
+			return nil
+		}
+	}
 }
 
 func skipPartiton(sctx sessionctx.Context, partitionID int64, isIndex bool) error {
