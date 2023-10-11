@@ -54,6 +54,20 @@ func toSQLIndex(isIndex bool) int {
 }
 
 // AsyncMergePartitionStats2GlobalStats is used to merge partition stats to global stats.
+// it divides the merge task into two parts.
+// - IOWorker: load stats from storage. it will load fmsketch, cmsketch, histogram and topn. and send them to cpuWorker.
+// - CPUWorker: merge the stats from IOWorker and generate global stats.
+//
+// ┌────────────────────────┐        ┌───────────────────────┐
+// │                        │        │                       │
+// │                        │        │                       │
+// │                        │        │                       │
+// │    IOWorker            │        │   CPUWorker           │
+// │                        │  ────► │                       │
+// │                        │        │                       │
+// │                        │        │                       │
+// │                        │        │                       │
+// └────────────────────────┘        └───────────────────────┘
 type AsyncMergePartitionStats2GlobalStats struct {
 	is                  infoschema.InfoSchema
 	globalStats         *GlobalStats
