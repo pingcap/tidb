@@ -64,6 +64,12 @@ type Handle struct {
 	// StatsUsage is used to track the usage of column / index statistics.
 	util.StatsUsage
 
+	// StatsHistory is used to manage historical stats.
+	util.StatsHistory
+
+	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+	util.StatsAnalyze
+
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
 
@@ -75,9 +81,6 @@ type Handle struct {
 	// ddlEventCh is a channel to notify a ddl operation has happened.
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
 	ddlEventCh chan *ddlUtil.Event
-
-	// idxUsageListHead contains all the index usage collectors required by session.
-	idxUsageListHead *usage.SessionIndexUsageCollector
 
 	// SessionStatsList contains all the stats collector required by session.
 	*usage.SessionStatsList
@@ -122,13 +125,13 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
 		SessionStatsList:        usage.NewSessionStatsList(),
-		idxUsageListHead:        usage.NewSessionIndexUsageCollector(nil),
 		pool:                    pool,
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
 		InitStatsDone:           make(chan struct{}),
 		TableInfoGetter:         util.NewTableInfoGetter(),
 		StatsUsage:              usage.NewStatsUsageImpl(pool),
+		StatsAnalyze:            autoanalyze.NewStatsAnalyze(pool),
 	}
 	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
 
@@ -139,6 +142,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		return nil, err
 	}
 	handle.statsCache = statsCache
+	handle.StatsHistory = history.NewStatsHistory(pool, statsCache)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -420,7 +424,7 @@ func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isI
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.recordHistoricalStatsMeta(tableID, statsVer, source)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, source)
 	}
 	return
 }
@@ -433,7 +437,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.recordHistoricalStatsMeta(tableID, statsVer, source)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, source)
 	}
 	return
 }
@@ -446,7 +450,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -459,7 +463,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -505,7 +509,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.recordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -547,28 +551,6 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, err
 }
 
-// CheckHistoricalStatsEnable is used to check whether TiDBEnableHistoricalStats is enabled.
-func (h *Handle) CheckHistoricalStatsEnable() (enable bool, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		enable = sctx.GetSessionVars().EnableHistoricalStats
-		return nil
-	})
-	return
-}
-
-// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func (h *Handle) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return autoanalyze.InsertAnalyzeJob(sctx, job, instance, procID)
-	})
-}
-
-// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
-func (h *Handle) DeleteAnalyzeJobs(updateTime time.Time) error {
-	_, _, err := h.execRows("DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
-	return err
-}
-
 // SetStatsCacheCapacity sets capacity
 func (h *Handle) SetStatsCacheCapacity(c int64) {
 	if h == nil {
@@ -601,29 +583,3 @@ const (
 	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
 	StatsMetaHistorySourceExtendedStats = "extended stats"
 )
-
-func (h *Handle) recordHistoricalStatsMeta(tableID int64, version uint64, source string) {
-	v := h.statsCache.Load()
-	if v == nil {
-		return
-	}
-	sc := v
-	tbl, ok := sc.Get(tableID)
-	if !ok {
-		return
-	}
-	if !tbl.IsInitialized() {
-		return
-	}
-	err := h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return history.RecordHistoricalStatsMeta(sctx, tableID, version, source)
-	})
-	if err != nil {
-		logutil.BgLogger().Error("record historical stats meta failed",
-			zap.Int64("table-id", tableID),
-			zap.Uint64("version", version),
-			zap.String("source", source),
-			zap.Error(err))
-		return
-	}
-}

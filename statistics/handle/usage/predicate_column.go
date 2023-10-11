@@ -33,11 +33,17 @@ import (
 // statsUsageImpl implements utilstats.StatsUsage.
 type statsUsageImpl struct {
 	pool utilstats.SessionPool
+
+	// idxUsageListHead contains all the index usage collectors required by session.
+	idxUsageListHead *SessionIndexUsageCollector
 }
 
 // NewStatsUsageImpl creates a utilstats.StatsUsage.
 func NewStatsUsageImpl(pool utilstats.SessionPool) utilstats.StatsUsage {
-	return &statsUsageImpl{pool: pool}
+	return &statsUsageImpl{
+		pool:             pool,
+		idxUsageListHead: newSessionIndexUsageCollector(nil),
+	}
 }
 
 // LoadColumnStatsUsage returns all columns' usage information.
