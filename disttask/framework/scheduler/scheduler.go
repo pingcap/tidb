@@ -273,7 +273,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 		s.onError(err)
 	}
 
-	finished := s.markTaskCancelOrFailed(ctx, subtask)
+	finished := s.markSubTaskCanceledOrFailed(ctx, subtask)
 	if finished {
 		return
 	}
@@ -343,14 +343,14 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 		}
 	})
 
-	finished := s.markTaskCancelOrFailed(ctx, subtask)
+	finished := s.markSubTaskCanceledOrFailed(ctx, subtask)
 	if finished {
 		return
 	}
 
 	s.finishSubtaskAndUpdateState(ctx, subtask)
 
-	finished = s.markTaskCancelOrFailed(ctx, subtask)
+	finished = s.markSubTaskCanceledOrFailed(ctx, subtask)
 	if finished {
 		return
 	}
@@ -574,7 +574,7 @@ func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask
 	metrics.IncDistTaskSubTaskCnt(subtask)
 }
 
-func (s *BaseScheduler) markTaskCancelOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
+func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
 	if err := s.getError(); err != nil {
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
