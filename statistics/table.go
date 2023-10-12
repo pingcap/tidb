@@ -60,7 +60,7 @@ var (
 type Table struct {
 	ExtendedStats *ExtendedStatsColl
 
-	ColAndIndexExistenceMap *ColAndIndexExistenceMap
+	ColAndIndexExistenceMap *ColAndIdxExistenceMap
 	Name                    string
 	HistColl
 	Version uint64
@@ -74,19 +74,18 @@ type Table struct {
 	IsPkIsHandle bool
 }
 
-// ColAndIndexExistenceMap is the meta map for statistics.Table.
+// ColAndIdxExistenceMap is the meta map for statistics.Table.
 // It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
-type ColAndIndexExistenceMap struct {
+type ColAndIdxExistenceMap struct {
 	m1            map[int64]*model.ColumnInfo
 	colAnalyzed   map[int64]bool
 	m2            map[int64]*model.IndexInfo
 	indexAnalyzed map[int64]bool
-	someAnalyzed  bool
 }
 
 // SomeAnalyzed checks whether some part of the table is analyzed.
-// The newly added column/index might not be has its stats.
-func (m *ColAndIndexExistenceMap) SomeAnalyzed() bool {
+// The newly added column/index might not have its stats.
+func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
 	if m == nil {
 		return false
 	}
@@ -104,7 +103,7 @@ func (m *ColAndIndexExistenceMap) SomeAnalyzed() bool {
 }
 
 // Has checks whether a column/index stats exists.
-func (m *ColAndIndexExistenceMap) Has(id int64, isIndex bool) bool {
+func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
 	if isIndex {
 		_, ok := m.m2[id]
 		return ok
@@ -115,7 +114,7 @@ func (m *ColAndIndexExistenceMap) Has(id int64, isIndex bool) bool {
 
 // HasAnalyzed checks whether a column/index stats exists and it has stats.
 // TODO: the map should only keep the analyzed cols.
-func (m *ColAndIndexExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
+func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 	if isIndex {
 		analyzed, ok := m.indexAnalyzed[id]
 		return ok && analyzed
@@ -125,34 +124,34 @@ func (m *ColAndIndexExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
 }
 
 // InsertCol inserts a column with its meta into the map.
-func (m *ColAndIndexExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
+func (m *ColAndIdxExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
 	m.m1[id] = info
 	m.colAnalyzed[id] = analyzed
 }
 
 // GetCol gets the meta data of the given column.
-func (m *ColAndIndexExistenceMap) GetCol(id int64) *model.ColumnInfo {
+func (m *ColAndIdxExistenceMap) GetCol(id int64) *model.ColumnInfo {
 	return m.m1[id]
 }
 
 // InsertIndex inserts an index with its meta into the map.
-func (m *ColAndIndexExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
+func (m *ColAndIdxExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
 	m.m2[id] = info
 	m.indexAnalyzed[id] = analyzed
 }
 
 // GetIndex gets the meta data of the given index.
-func (m *ColAndIndexExistenceMap) GetIndex(id int64) *model.IndexInfo {
+func (m *ColAndIdxExistenceMap) GetIndex(id int64) *model.IndexInfo {
 	return m.m2[id]
 }
 
 // IsEmpty checks whether the map is empty.
-func (m *ColAndIndexExistenceMap) IsEmpty() bool {
+func (m *ColAndIdxExistenceMap) IsEmpty() bool {
 	return len(m.m1)+len(m.m2) == 0
 }
 
 // Clone deeply copies the map.
-func (m *ColAndIndexExistenceMap) Clone() *ColAndIndexExistenceMap {
+func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
 	mm := NewColAndIndexExistenceMap(len(m.m1), len(m.m2))
 	for k, v := range m.m1 {
 		mm.m1[k] = v
@@ -170,8 +169,8 @@ func (m *ColAndIndexExistenceMap) Clone() *ColAndIndexExistenceMap {
 }
 
 // NewColAndIndexExistenceMap return a new object with the given capcity.
-func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIndexExistenceMap {
-	return &ColAndIndexExistenceMap{
+func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
 		m1:            make(map[int64]*model.ColumnInfo, colCap),
 		colAnalyzed:   make(map[int64]bool, colCap),
 		m2:            make(map[int64]*model.IndexInfo, idxCap),

@@ -229,7 +229,6 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
 	}
-	logutil.BgLogger().Warn("?")
 	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {

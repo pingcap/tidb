@@ -41,7 +41,6 @@ go_library(
         "//util/dbterror",
         "//util/fastrand",
         "//util/hack",
-        "//util/logutil",
         "//util/mathutil",
         "//util/memory",
         "//util/ranger",
@@ -53,7 +52,6 @@ go_library(
         "@com_github_twmb_murmur3//:murmur3",
         "@org_golang_x_exp//maps",
         "@org_uber_go_atomic//:atomic",
-        "@org_uber_go_zap//:zap",
     ],
 )
 

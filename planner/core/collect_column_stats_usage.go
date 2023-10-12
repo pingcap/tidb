@@ -18,7 +18,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/types"
 	"github.com/pingcap/tidb/planner/funcdep"
 )
 
@@ -42,7 +41,7 @@ type columnStatsUsageCollector struct {
 	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
 	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
 	colMap map[int64]map[model.TableItemID]struct{}
-	// histNeededCols records histogram-needed columns
+	// histNeededCols records histogram-needed columns. The value field of the map indicates that whether we need to load the full stats of the time or not.
 	histNeededCols map[model.TableItemID]bool
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
@@ -180,14 +179,11 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		if tblStats.ColAndIndexExistenceMap.Has(col.ID, false) {
 			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 			colIDSet.Insert(int(col.ID))
-			if fullLoad, ok := c.histNeededCols[tblColID]; ok && fullLoad {
-				continue
-			}
 			c.histNeededCols[tblColID] = true
 		}
 	}
 	for _, col := range ds.Columns {
-		if tblStats.ColAndIndexExistenceMap.Has(col.ID, false) && !colIDSet.Has(int(col.ID)) && col.FieldType.EvalType() != types.ETJson {
+		if tblStats.ColAndIndexExistenceMap.HasAnalyzed(col.ID, false) && !colIDSet.Has(int(col.ID)) {
 			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; ok {
 				continue
