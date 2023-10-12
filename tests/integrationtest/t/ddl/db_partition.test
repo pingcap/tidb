@@ -1496,7 +1496,6 @@ create global temporary table partition_list_table (id int) partition by list  (
     partition p3 values in (5,null)
 ) ON COMMIT DELETE ROWS;
 drop table if exists partition_list_table;
-use test;
 drop table if exists local_partition_table;
 -- error 1562
 create temporary table local_partition_table (a int, b int) partition by hash(a) partitions 3;
