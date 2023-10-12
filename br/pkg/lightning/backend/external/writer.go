@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -379,8 +380,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	ts := time.Now()
-	var savedBytes uint64
+	var (
+		savedBytes                  uint64
+		sortDuration, writeDuration time.Duration
+		writeStartTime              time.Time
+	)
 
 	defer func() {
 		w.currentSeq++
@@ -398,15 +402,29 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			err = err2
 			return
 		}
+
+		getSpeed := func(bytes uint64, dur float64) string {
+			if dur == 0 {
+				return "-"
+			}
+			return units.BytesSize(float64(bytes) / dur)
+		}
+		writeDuration = time.Since(writeStartTime)
 		logger.Info("flush kv",
-			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", savedBytes),
-			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
+			zap.Duration("sort-time", sortDuration),
+			zap.Duration("write-time", writeDuration),
+			zap.String("sort-speed(/s)", getSpeed(savedBytes, sortDuration.Seconds())),
+			zap.String("write-speed(/s)", getSpeed(savedBytes, writeDuration.Seconds())),
+		)
 	}()
+	sortStart := time.Now()
 	slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
+	sortDuration = time.Since(sortStart)
 
+	writeStartTime = time.Now()
 	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return err
