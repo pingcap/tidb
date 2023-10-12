@@ -3273,3 +3273,22 @@ Error 1526 (HY000): Table has no partition for value from column_list
 insert into t values ('2023-08-31', 'c', "FAIL");
 alter table rcp EXCHANGE PARTITION p20230829 WITH TABLE t;
 Error 1737 (HY000): Found a row that does not match the partition
+set @@session.tidb_enable_table_partition = 1;
+drop table if exists t1, t2, t3, t4, t5;
+create table t1 ( time_recorded datetime )
+partition by range(TO_DAYS(time_recorded)) (
+partition p0 values less than (1));
+create table t2 ( time_recorded date )
+partition by range(TO_DAYS(time_recorded)) (
+partition p0 values less than (1));
+create table t3 ( time_recorded date )
+partition by range(TO_SECONDS(time_recorded)) (
+partition p0 values less than (1));
+create table t4 ( time_recorded date )
+partition by range(TO_SECONDS(time_recorded)) (
+partition p0 values less than (1));
+create table t5 ( time_recorded timestamp )
+partition by range(unix_timestamp(time_recorded)) (
+partition p1 values less than (1559192604)
+);
+set @@session.tidb_enable_table_partition = default;

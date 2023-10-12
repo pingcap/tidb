@@ -2732,19 +2732,18 @@ func TestTruncatePartitionAndDropTable(t *testing.T) {
 	}
 }
 
-func TestPartitionDropPrimaryKey(t *testing.T) {
+func TestPartitionDropPrimaryKeyAndDropIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	// Drop Primary Key
 	idxName := "primary"
 	addIdxSQL := "alter table partition_drop_idx add primary key idx1 (c1);"
 	dropIdxSQL := "alter table partition_drop_idx drop primary key;"
 	testPartitionDropIndex(t, store, 50*time.Millisecond, idxName, addIdxSQL, dropIdxSQL)
-}
 
-func TestPartitionDropIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	idxName := "idx1"
-	addIdxSQL := "alter table partition_drop_idx add index idx1 (c1);"
-	dropIdxSQL := "alter table partition_drop_idx drop index idx1;"
+	// Drop Index
+	idxName = "idx1"
+	addIdxSQL = "alter table partition_drop_idx add index idx1 (c1);"
+	dropIdxSQL = "alter table partition_drop_idx drop index idx1;"
 	testPartitionDropIndex(t, store, 50*time.Millisecond, idxName, addIdxSQL, dropIdxSQL)
 }
 
@@ -2797,20 +2796,18 @@ LOOP:
 	tk.MustExec("drop table partition_drop_idx;")
 }
 
-func TestPartitionAddPrimaryKey(t *testing.T) {
+func TestPartitionAddPrimaryKeyAndAddIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	// Add Primary Key
 	testPartitionAddIndexOrPK(t, tk, "primary key")
-}
-
-func TestPartitionAddIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+	// Add Index
 	testPartitionAddIndexOrPK(t, tk, "index")
 }
 
 func testPartitionAddIndexOrPK(t *testing.T, tk *testkit.TestKit, key string) {
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists partition_add_idx")
 	tk.MustExec(`create table partition_add_idx (
 	id int not null,
 	hired date not null
@@ -3037,37 +3034,6 @@ func TestPartitionErrorCode(t *testing.T) {
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t truncate partition p0;")
 	tk1.MustExec("commit")
-}
-
-func TestConstAndTimezoneDepent2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	// add partition
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec("drop database if exists test_db_with_partition_const")
-	tk.MustExec("create database test_db_with_partition_const")
-	tk.MustExec("use test_db_with_partition_const")
-
-	tk.MustExec(`create table t1 ( time_recorded datetime )
-	partition by range(TO_DAYS(time_recorded)) (
-	partition p0 values less than (1));`)
-
-	tk.MustExec(`create table t2 ( time_recorded date )
-	partition by range(TO_DAYS(time_recorded)) (
-	partition p0 values less than (1));`)
-
-	tk.MustExec(`create table t3 ( time_recorded date )
-	partition by range(TO_SECONDS(time_recorded)) (
-	partition p0 values less than (1));`)
-
-	tk.MustExec(`create table t4 ( time_recorded date )
-	partition by range(TO_SECONDS(time_recorded)) (
-	partition p0 values less than (1));`)
-
-	tk.MustExec(`create table t5 ( time_recorded timestamp )
-	partition by range(unix_timestamp(time_recorded)) (
-		partition p1 values less than (1559192604)
-	);`)
 }
 
 func TestCommitWhenSchemaChange(t *testing.T) {
