@@ -18,3 +18,11 @@ package intest
 
 // InTest checks if the code is running in test.
 const InTest = false
+
+// Assert is a stub function in release build.
+// See the same function in `util/intest/assert.go` for the real implement in test.
+func Assert(_ any, _ ...any) {}
+
+// AssertFunc is a stub function in release build.
+// See the same function `util/intest/assert.go` for the real implement in test.
+func AssertFunc(_ func() bool, _ ...any) {}

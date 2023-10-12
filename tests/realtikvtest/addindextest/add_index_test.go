@@ -164,6 +164,11 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("split table t1 between (3) and (8646911284551352360) regions 50;")
 	tk.MustExec("alter table t1 add index idx(a);")
 	tk.MustExec("admin check index t1 idx;")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskContextCanceled", "1*return(true)"))
+	tk.MustExec("alter table t1 add index idx1(a);")
+	tk.MustExec("admin check index t1 idx1;")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskContextCanceled"))
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 

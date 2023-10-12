@@ -30,6 +30,7 @@ go_library(
         "//util/compress",
         "//util/logutil",
         "//util/mathutil",
+        "//util/memory",
         "//util/sqlexec",
         "@com_github_klauspost_compress//gzip",
         "@com_github_pingcap_errors//:errors",

@@ -93,3 +93,40 @@ type StatsAnalyze interface {
 
 	// TODO: HandleAutoAnalyze
 }
+
+// StatsCache is used to manage all table statistics in memory
+type StatsCache interface {
+	// Close closes this cache.
+	Close()
+
+	// Clear clears this cache.
+	Clear()
+
+	// MemConsumed returns its memory usage.
+	MemConsumed() (size int64)
+
+	// Get returns the specified table's stats.
+	Get(tableID int64) (*statistics.Table, bool)
+
+	// Put puts this table stats into the cache.
+	Put(tableID int64, t *statistics.Table)
+
+	// UpdateStatsCache updates the cache.
+	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
+
+	// MaxTableStatsVersion returns the version of the current cache, which is defined as
+	// the max table stats version the cache has in its lifecycle.
+	MaxTableStatsVersion() uint64
+
+	// Values returns all values in this cache.
+	Values() []*statistics.Table
+
+	// Len returns the length of this cache.
+	Len() int
+
+	// SetStatsCacheCapacity sets the cache's capacity.
+	SetStatsCacheCapacity(capBytes int64)
+
+	// Replace replaces this cache.
+	Replace(cache StatsCache)
+}

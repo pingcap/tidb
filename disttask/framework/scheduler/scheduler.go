@@ -21,11 +21,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/disttask/framework/handle"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/scheduler/execute"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/util/backoff"
 	"github.com/pingcap/tidb/util/logutil"
 	"go.uber.org/zap"
 )
@@ -35,8 +39,17 @@ const (
 	DefaultCheckSubtaskCanceledInterval = 2 * time.Second
 )
 
-// TestSyncChan is used to sync the test.
-var TestSyncChan = make(chan struct{})
+var (
+	// ErrCancelSubtask is the cancel cause when cancelling subtasks.
+	ErrCancelSubtask = errors.New("cancel subtasks")
+	// ErrFinishSubtask is the cancel cause when scheduler successfully processed subtasks.
+	ErrFinishSubtask = errors.New("finish subtasks")
+	// ErrFinishRollback is the cancel cause when scheduler rollback successfully.
+	ErrFinishRollback = errors.New("finish rollback")
+
+	// TestSyncChan is used to sync the test.
+	TestSyncChan = make(chan struct{})
+)
 
 // BaseScheduler is the base implementation of Scheduler.
 type BaseScheduler struct {
@@ -53,7 +66,7 @@ type BaseScheduler struct {
 		// handled indicates whether the error has been updated to one of the subtask.
 		handled bool
 		// runtimeCancel is used to cancel the Run/Rollback when error occurs.
-		runtimeCancel context.CancelFunc
+		runtimeCancel context.CancelCauseFunc
 	}
 }
 
@@ -68,7 +81,7 @@ func NewBaseScheduler(_ context.Context, id string, taskID int64, taskTable Task
 	return schedulerImpl
 }
 
-func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelFunc) {
+func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup, cancelFn context.CancelCauseFunc) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -87,7 +100,9 @@ func (s *BaseScheduler) startCancelCheck(ctx context.Context, wg *sync.WaitGroup
 				if canceled {
 					logutil.Logger(s.logCtx).Info("scheduler canceled")
 					if cancelFn != nil {
-						cancelFn()
+						// subtask transferred to other tidb, don't mark subtask as canceled.
+						// Should not change the subtask's state.
+						cancelFn(nil)
 					}
 				}
 			}
@@ -106,7 +121,7 @@ func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("BaseScheduler panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := errors.Errorf("%v", r)
-			err1 := s.taskTable.UpdateErrorToSubtask(s.id, task.ID, err4Panic)
+			err1 := s.updateErrorToSubtask(ctx, task.ID, err4Panic)
 			if err == nil {
 				err = err1
 			}
@@ -116,7 +131,10 @@ func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	if s.mu.handled {
 		return err
 	}
-	return s.taskTable.UpdateErrorToSubtask(s.id, task.ID, err)
+	if err == nil {
+		return nil
+	}
+	return s.updateErrorToSubtask(ctx, task.ID, err)
 }
 
 func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
@@ -124,8 +142,8 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		s.onError(ctx.Err())
 		return s.getError()
 	}
-	runCtx, runCancel := context.WithCancel(ctx)
-	defer runCancel()
+	runCtx, runCancel := context.WithCancelCause(ctx)
+	defer runCancel(ErrFinishSubtask)
 	s.registerCancelFunc(runCancel)
 	s.resetError()
 	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
@@ -168,6 +186,10 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 		proto.TaskStatePending, proto.TaskStateRunning)
 	if err != nil {
 		s.onError(err)
+		if common.IsRetryableError(err) {
+			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
+			return nil
+		}
 		return s.getError()
 	}
 	for _, subtask := range subtasks {
@@ -212,7 +234,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			}
 		} else {
 			// subtask.State == proto.TaskStatePending
-			s.startSubtaskAndUpdateState(subtask)
+			s.startSubtaskAndUpdateState(ctx, subtask)
 			if err := s.getError(); err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
 				continue
@@ -237,19 +259,25 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 	err := executor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
+			err = ErrCancelSubtask
+		}
+	})
+
+	failpoint.Inject("MockRunSubtaskContextCanceled", func(val failpoint.Value) {
+		if val.(bool) {
 			err = context.Canceled
 		}
 	})
+
 	if err != nil {
 		s.onError(err)
-		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, s.getError())
-		} else {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
-		}
-		s.markErrorHandled()
+	}
+
+	finished := s.markSubTaskCanceledOrFailed(ctx, subtask)
+	if finished {
 		return
 	}
+
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
@@ -311,19 +339,22 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 	}
 	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
 		if val.(bool) {
-			s.onError(context.Canceled)
+			s.onError(ErrCancelSubtask)
 		}
 	})
-	if err := s.getError(); err != nil {
-		if errors.Cause(err) == context.Canceled {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
-		} else {
-			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, s.getError())
-		}
-		s.markErrorHandled()
+
+	finished := s.markSubTaskCanceledOrFailed(ctx, subtask)
+	if finished {
 		return
 	}
-	s.finishSubtaskAndUpdateState(subtask)
+
+	s.finishSubtaskAndUpdateState(ctx, subtask)
+
+	finished = s.markSubTaskCanceledOrFailed(ctx, subtask)
+	if finished {
+		return
+	}
+
 	failpoint.Inject("syncAfterSubtaskFinish", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -332,8 +363,8 @@ func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.
 
 // Rollback rollbacks the scheduler task.
 func (s *BaseScheduler) Rollback(ctx context.Context, task *proto.Task) error {
-	rollbackCtx, rollbackCancel := context.WithCancel(ctx)
-	defer rollbackCancel()
+	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
+	defer rollbackCancel(ErrFinishRollback)
 	s.registerCancelFunc(rollbackCancel)
 
 	s.resetError()
@@ -429,7 +460,7 @@ func runSummaryCollectLoop(
 	return nil, func() {}, nil
 }
 
-func (s *BaseScheduler) registerCancelFunc(cancel context.CancelFunc) {
+func (s *BaseScheduler) registerCancelFunc(cancel context.CancelCauseFunc) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.mu.runtimeCancel = cancel
@@ -450,7 +481,7 @@ func (s *BaseScheduler) onError(err error) {
 	}
 
 	if s.mu.runtimeCancel != nil {
-		s.mu.runtimeCancel()
+		s.mu.runtimeCancel(err)
 	}
 }
 
@@ -473,25 +504,61 @@ func (s *BaseScheduler) resetError() {
 	s.mu.handled = false
 }
 
-func (s *BaseScheduler) startSubtaskAndUpdateState(subtask *proto.Subtask) {
+func (s *BaseScheduler) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	err := s.taskTable.StartSubtask(subtask.ID)
-	if err != nil {
-		s.onError(err)
-	}
+	s.startSubtask(ctx, subtask.ID)
 	subtask.State = proto.TaskStateRunning
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	metrics.StartDistTaskSubTask(subtask)
 }
 
-func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {
-	metrics.DecDistTaskSubTaskCnt(subtask)
-	metrics.EndDistTaskSubTask(subtask)
-	err := s.taskTable.UpdateSubtaskStateAndError(subtask.ID, state, subTaskErr)
+func (s *BaseScheduler) updateSubtaskStateAndErrorImpl(subtaskID int64, state string, subTaskErr error) {
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
+	logger := logutil.Logger(s.logCtx)
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	ctx := context.Background()
+	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, s.taskTable.UpdateSubtaskStateAndError(subtaskID, state, subTaskErr)
+		},
+	)
 	if err != nil {
 		s.onError(err)
 	}
+}
+
+func (s *BaseScheduler) startSubtask(ctx context.Context, subtaskID int64) {
+	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
+	logger := logutil.Logger(s.logCtx)
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, s.taskTable.StartSubtask(subtaskID)
+		},
+	)
+	if err != nil {
+		s.onError(err)
+	}
+}
+
+func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtask) {
+	logger := logutil.Logger(s.logCtx)
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, s.taskTable.FinishSubtask(subtask.ID, subtask.Meta)
+		},
+	)
+	if err != nil {
+		s.onError(err)
+	}
+}
+
+func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
+	s.updateSubtaskStateAndErrorImpl(subtask.ID, state, subTaskErr)
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	if !subtask.IsFinished() {
@@ -499,12 +566,44 @@ func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state
 	}
 }
 
-func (s *BaseScheduler) finishSubtaskAndUpdateState(subtask *proto.Subtask) {
+func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	if err := s.taskTable.FinishSubtask(subtask.ID, subtask.Meta); err != nil {
-		s.onError(err)
-	}
+	s.finishSubtask(ctx, subtask)
 	subtask.State = proto.TaskStateSucceed
 	metrics.IncDistTaskSubTaskCnt(subtask)
+}
+
+// markSubTaskCanceledOrFailed check the error type and decide the subtasks' state.
+// 1. Only cancel subtasks when meet ErrCancelSubtask.
+// 2. Only fail subtasks when meet non retryable error.
+// 3. When meet other errors, don't change subtasks' state.
+func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
+	if err := s.getError(); err != nil {
+		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
+			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
+		} else if common.IsRetryableError(err) {
+			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
+		} else if errors.Cause(err) != context.Canceled {
+			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
+			s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, err)
+		} else {
+			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+		}
+		s.markErrorHandled()
+		return true
+	}
+	return false
+}
+
+func (s *BaseScheduler) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
+	logger := logutil.Logger(s.logCtx)
+	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
+	err1 := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, s.taskTable.UpdateErrorToSubtask(s.id, taskID, err)
+		},
+	)
+	return err1
 }

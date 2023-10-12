@@ -143,10 +143,9 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
 func (h *Handle) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []model.StatsLoadItem {
-	statsCache := h.statsCache.Load()
 	remainedItems := make([]model.StatsLoadItem, 0, len(neededItems))
 	for _, item := range neededItems {
-		tbl, ok := statsCache.Get(item.TableID)
+		tbl, ok := h.Get(item.TableID)
 		if !ok {
 			continue
 		}
@@ -225,8 +224,7 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (*NeededItemTask, error) {
 	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
 	item := result.Item
-	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(item.TableID)
+	tbl, ok := h.Get(item.TableID)
 	if !ok {
 		h.writeToResultChan(task.ResultCh, result)
 		return nil, nil
@@ -459,8 +457,7 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	defer h.StatsLoad.Unlock()
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache := h.statsCache.Load()
-	tbl, ok := oldCache.Get(item.TableID)
+	tbl, ok := h.Get(item.TableID)
 	if !ok {
 		return true
 	}
@@ -479,7 +476,8 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
 	}
-	return h.updateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
+	h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	return true
 }
 
 func (h *Handle) setWorking(item model.TableItemID, resultCh chan stmtctx.StatsLoadResult) bool {
