@@ -55,10 +55,14 @@ var (
 	MinDistSQLScanConcurrency = 4
 
 	// DefaultBackoffWeight is the default value of tidb_backoff_weight for checksum.
-	// when TiKV client encounters an error of "region not leader", it will keep retrying every 500 ms.
-	// If it still fails after 2 * 20 = 40 seconds, it will return "region unavailable".
-	// If we increase the BackOffWeight to 6, then the TiKV client will keep retrying for 120 seconds.
-	DefaultBackoffWeight = 3 * tikvstore.DefBackOffWeight
+	// RegionRequestSender will retry within a maxSleep time, default is 2 * 20 = 40 seconds.
+	// When TiKV client encounters an error of "region not leader", it will keep
+	// retrying every 500 ms, if it still fails after maxSleep, it will return "region unavailable".
+	// When there are many pending compaction bytes, TiKV might not respond within 1m,
+	// and report "rpcError:wait recvLoop timeout,timeout:1m0s", and retry might
+	// time out again.
+	// so we enlarge it to 30 * 20 = 10 minutes.
+	DefaultBackoffWeight = 15 * tikvstore.DefBackOffWeight
 )
 
 // RemoteChecksum represents a checksum result got from tidb.
