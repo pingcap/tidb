@@ -19,11 +19,8 @@ import (
 	"errors"
 	"fmt"
 	"math"
-<<<<<<< HEAD
 	"strconv"
-=======
 	"strings"
->>>>>>> bc80772052f (planner: Adjust the log level and returned value when `cacheableChecker` check `*ast.TableName` nodes (#46831))
 	"sync"
 
 	"github.com/pingcap/tidb/expression"
