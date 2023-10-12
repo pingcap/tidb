@@ -432,7 +432,6 @@ const updateStatsCacheRetryCnt = 5
 // TODO: move this method to the `extstats` package.
 func (h *Handle) ReloadExtendedStatistics() error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
 			tables := make([]*statistics.Table, 0, h.Len())
 			for _, tbl := range h.Values() {
 				t, err := storage.ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
@@ -443,8 +442,6 @@ func (h *Handle) ReloadExtendedStatistics() error {
 			}
 			h.UpdateStatsCache(tables, nil)
 			return nil
-		}
-		return fmt.Errorf("update stats cache failed for %d attempts", updateStatsCacheRetryCnt)
 	}, util.FlagWrapTxn)
 }
 
