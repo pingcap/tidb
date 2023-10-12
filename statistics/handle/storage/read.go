@@ -134,7 +134,7 @@ func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID i
 	if err != nil || len(rows) == 0 {
 		return nil, err
 	}
-	return statistics.DecodeTopN(rows)
+	return statistics.DecodeTopN(rows), nil
 }
 
 // FMSketchFromStorage reads FMSketch from storage
