@@ -2784,7 +2784,6 @@ LOOP:
 			require.NoError(t, err)
 		case <-ticker.C:
 			step := 10
-			rand.Seed(time.Now().Unix())
 			for i := num; i < num+step; i++ {
 				n := rand.Intn(num)
 				tk.MustExec("update partition_drop_idx set c2 = 1 where c1 = ?", n)
