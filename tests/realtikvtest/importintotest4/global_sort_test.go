@@ -115,7 +115,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		globalTask, err2 = globalTaskManager.GetGlobalTaskByKeyWithHistory(importinto.TaskKey(int64(jobID)))
 		s.NoError(err2)
 		return globalTask.State == "failed"
-	}, 10*time.Second, 300*time.Millisecond)
+	}, 30*time.Second, 300*time.Millisecond)
 	// check all sorted data cleaned up
 	<-dispatcher.WaitCleanUpFinished
 

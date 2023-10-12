@@ -56,3 +56,9 @@ type ForwardIter interface {
 	// Error return current error on this iter.
 	Error() error
 }
+
+// DataAndRange is a pair of IngestData and Range.
+type DataAndRange struct {
+	Data  IngestData
+	Range Range
+}

@@ -150,11 +150,15 @@ func (dsp *ImportDispatcherExt) OnTick(ctx context.Context, task *proto.Task) {
 	dsp.registerTask(ctx, task)
 }
 
+func (*ImportDispatcherExt) isImporting2TiKV(task *proto.Task) bool {
+	return task.Step == StepImport || task.Step == StepWriteAndIngest
+}
+
 func (dsp *ImportDispatcherExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
 	dsp.updateCurrentTask(task)
 	// only import step need to switch to IMPORT mode,
 	// If TiKV is in IMPORT mode during checksum, coprocessor will time out.
-	if dsp.disableTiKVImportMode.Load() || task.Step != StepImport {
+	if dsp.disableTiKVImportMode.Load() || !dsp.isImporting2TiKV(task) {
 		return
 	}
 
@@ -579,7 +583,6 @@ func updateResult(handle dispatcher.TaskHandle, gTask *proto.Task, taskMeta *Tas
 	}
 	columnSizeMap := make(map[int64]int64)
 	for _, subtaskMeta := range subtaskMetas {
-		taskMeta.Result.ReadRowCnt += subtaskMeta.Result.ReadRowCnt
 		taskMeta.Result.LoadedRowCnt += subtaskMeta.Result.LoadedRowCnt
 		for key, val := range subtaskMeta.Result.ColSizeMap {
 			columnSizeMap[key] += val

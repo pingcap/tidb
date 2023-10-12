@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/internal"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -100,7 +101,7 @@ func TestColumnIDs(t *testing.T) {
 func TestDurationToTS(t *testing.T) {
 	tests := []time.Duration{time.Millisecond, time.Second, time.Minute, time.Hour}
 	for _, test := range tests {
-		ts := handle.DurationToTS(test)
+		ts := util.DurationToTS(test)
 		require.Equal(t, int64(test), oracle.ExtractPhysical(ts)*int64(time.Millisecond))
 	}
 }

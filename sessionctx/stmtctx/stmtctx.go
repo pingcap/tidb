@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	typectx "github.com/pingcap/tidb/types/context"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -149,6 +150,9 @@ type StatementContext struct {
 	// Set the following variables before execution
 	StmtHints
 
+	// TypeConvContext is used to indicate how make the type conversation.
+	TypeConvContext typectx.Context
+
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue               bool
@@ -181,9 +185,6 @@ type StatementContext struct {
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool
-	SkipUTF8Check                 bool
-	SkipASCIICheck                bool
-	SkipUTF8MB4Check              bool
 	MultiSchemaInfo               *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness

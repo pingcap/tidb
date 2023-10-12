@@ -77,9 +77,11 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 		case <-ticker.C:
 			found, err := globalTaskManager.GetTaskByIDWithHistory(globalTask.ID)
 			if err != nil {
-				return errors.Errorf("cannot get global task with ID %d, err %s", globalTask.ID, err.Error())
+				logutil.Logger(ctx).Error("cannot get global task during waiting",
+					zap.Int64("task-id", globalTask.ID),
+					zap.Error(err))
+				continue
 			}
-
 			if found == nil {
 				return errors.Errorf("cannot find global task with ID %d", globalTask.ID)
 			}
@@ -90,6 +92,9 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 			case proto.TaskStateReverted:
 				logutil.BgLogger().Error("global task reverted", zap.Int64("task-id", globalTask.ID), zap.Error(found.Error))
 				return found.Error
+			case proto.TaskStatePaused:
+				logutil.BgLogger().Error("global task paused", zap.Int64("task-id", globalTask.ID))
+				return nil
 			case proto.TaskStateFailed, proto.TaskStateCanceled:
 				return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
 			}

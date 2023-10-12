@@ -32,8 +32,7 @@ import (
 )
 
 var (
-	schedulerPoolSize       int32 = 4
-	subtaskExecutorPoolSize int32 = 10
+	schedulerPoolSize int32 = 4
 	// same as dispatcher
 	checkTime        = 300 * time.Millisecond
 	retrySQLTimes    = 3
@@ -65,9 +64,9 @@ type Manager struct {
 	schedulerPool Pool
 	mu            struct {
 		sync.RWMutex
-		// taskID -> cancelFunc.
-		// cancelFunc is used to fast cancel the scheduler.Run.
-		handlingTasks map[int64]context.CancelFunc
+		// taskID -> CancelCauseFunc.
+		// CancelCauseFunc is used to fast cancel the scheduler.Run.
+		handlingTasks map[int64]context.CancelCauseFunc
 	}
 	// id, it's the same as server id now, i.e. host:port.
 	id      string
@@ -87,7 +86,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		newPool:   b.newPool,
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.mu.handlingTasks = make(map[int64]context.CancelFunc)
+	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
 
 	schedulerPool, err := m.newPool("scheduler_pool", schedulerPoolSize, util.DistTask)
 	if err != nil {
@@ -149,7 +148,7 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 		case <-ticker.C:
 			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
 			if err != nil {
-				m.onError(err)
+				m.logErr(err)
 				continue
 			}
 			m.onRunnableTasks(ctx, tasks)
@@ -169,7 +168,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 		case <-ticker.C:
 			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateReverting)
 			if err != nil {
-				m.onError(err)
+				m.logErr(err)
 				continue
 			}
 			m.onCanceledTasks(ctx, tasks)
@@ -177,11 +176,11 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 			// cancel pending/running subtasks, and mark them as paused.
 			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStatePausing)
 			if err != nil {
-				m.onError(err)
+				m.logErr(err)
 				continue
 			}
 			if err := m.onPausingTasks(pausingTasks); err != nil {
-				m.onError(err)
+				m.logErr(err)
 				continue
 			}
 		}
@@ -198,7 +197,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 			proto.TaskStateRunning, proto.TaskStateReverting)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
-			m.onError(err)
+			m.logErr(err)
 			continue
 		}
 		if !exist {
@@ -214,7 +213,7 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 		// pool closed.
 		if err != nil {
 			m.removeHandlingTask(task.ID)
-			m.onError(err)
+			m.logErr(err)
 			return
 		}
 	}
@@ -227,7 +226,8 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 	for _, task := range tasks {
 		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Int64("task-id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-			cancel()
+			// subtask needs to change its state to canceled.
+			cancel(ErrCancelSubtask)
 		}
 	}
 }
@@ -239,7 +239,9 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 	for _, task := range tasks {
 		logutil.Logger(m.logCtx).Info("onPausingTasks", zap.Any("task_id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-			cancel()
+			// Pause all running subtasks, don't mark subtasks as canceled.
+			// Should not change the subtask's state.
+			cancel(nil)
 		}
 		if err := m.taskTable.PauseSubtasks(m.id, task.ID); err != nil {
 			return err
@@ -255,7 +257,9 @@ func (m *Manager) cancelAllRunningTasks() {
 	for id, cancel := range m.mu.handlingTasks {
 		logutil.Logger(m.logCtx).Info("cancelAllRunningTasks", zap.Int64("task-id", id))
 		if cancel != nil {
-			cancel()
+			// tidb shutdown, don't mark subtask as canceled.
+			// Should not change the subtask's state.
+			cancel(nil)
 		}
 	}
 }
@@ -289,13 +293,14 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := getSchedulerFactory(task.Type)
 	if factory == nil {
-		m.onError(errors.Errorf("task type %s not found", task.Type))
+		err := errors.Errorf("task type %s not found", task.Type)
+		m.logErrAndPersist(err, task.ID)
 		return
 	}
 	scheduler := factory(ctx, m.id, task, m.taskTable)
 	err := scheduler.Init(ctx)
 	if err != nil {
-		m.onError(err)
+		m.logErrAndPersist(err, task.ID)
 		return
 	}
 	defer scheduler.Close()
@@ -318,7 +323,10 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		})
 		task, err := m.taskTable.GetGlobalTaskByID(task.ID)
 		if err != nil {
-			m.onError(err)
+			m.logErr(err)
+			return
+		}
+		if task == nil {
 			return
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
@@ -330,17 +338,17 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 			proto.TaskStatePending, proto.TaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
 			proto.TaskStateRunning, proto.TaskStateReverting); err != nil {
-			m.onError(err)
+			m.logErr(err)
 			return
 		} else if !exist {
 			continue
 		}
 		switch task.State {
 		case proto.TaskStateRunning:
-			runCtx, runCancel := context.WithCancel(ctx)
+			runCtx, runCancel := context.WithCancelCause(ctx)
 			m.registerCancelFunc(task.ID, runCancel)
 			err = scheduler.Run(runCtx, task)
-			runCancel()
+			runCancel(nil)
 		case proto.TaskStatePausing:
 			err = scheduler.Pause(ctx, task)
 		case proto.TaskStateReverting:
@@ -360,7 +368,7 @@ func (m *Manager) addHandlingTask(id int64) {
 }
 
 // registerCancelFunc registers a cancel function for a task.
-func (m *Manager) registerCancelFunc(id int64, cancel context.CancelFunc) {
+func (m *Manager) registerCancelFunc(id int64, cancel context.CancelCauseFunc) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.mu.handlingTasks[id] = cancel
@@ -373,11 +381,14 @@ func (m *Manager) removeHandlingTask(id int64) {
 	delete(m.mu.handlingTasks, id)
 }
 
-// onError handles the error.
-func (m *Manager) onError(err error) {
-	if err == nil {
-		return
-	}
+func (m *Manager) logErr(err error) {
+	logutil.Logger(m.logCtx).Error("task manager error", zap.Error(err), zap.Stack("stack"))
+}
 
-	logutil.Logger(m.logCtx).Error("task manager error", zap.Error(err))
+func (m *Manager) logErrAndPersist(err error, taskID int64) {
+	m.logErr(err)
+	err1 := m.taskTable.UpdateErrorToSubtask(m.id, taskID, err)
+	if err1 != nil {
+		logutil.Logger(m.logCtx).Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
+	}
 }

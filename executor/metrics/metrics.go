@@ -64,10 +64,6 @@ var (
 	// and it takes effect (which is determined according to whether lock-with-conflict has occurred during execution).
 	FairLockingStmtEffectiveCount prometheus.Counter
 
-	FastAnalyzeHistogramSample        prometheus.Observer
-	FastAnalyzeHistogramAccessRegions prometheus.Observer
-	FastAnalyzeHistogramScanKeys      prometheus.Observer
-
 	ExecutorCounterMergeJoinExec            prometheus.Counter
 	ExecutorCountHashJoinExec               prometheus.Counter
 	ExecutorCounterHashAggExec              prometheus.Counter
@@ -159,10 +155,6 @@ func InitMetricsVars() {
 	FairLockingStmtUsedCount = metrics.FairLockingUsageCount.WithLabelValues(metrics.LblFairLockingStmtUsed)
 	FairLockingTxnEffectiveCount = metrics.FairLockingUsageCount.WithLabelValues(metrics.LblFairLockingTxnEffective)
 	FairLockingStmtEffectiveCount = metrics.FairLockingUsageCount.WithLabelValues(metrics.LblFairLockingStmtEffective)
-
-	FastAnalyzeHistogramSample = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "sample")
-	FastAnalyzeHistogramAccessRegions = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "access_regions")
-	FastAnalyzeHistogramScanKeys = metrics.FastAnalyzeHistogram.WithLabelValues(metrics.LblGeneral, "scan_keys")
 
 	ExecutorCounterMergeJoinExec = metrics.ExecutorCounter.WithLabelValues("MergeJoinExec")
 	ExecutorCountHashJoinExec = metrics.ExecutorCounter.WithLabelValues("HashJoinExec")

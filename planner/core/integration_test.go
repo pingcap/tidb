@@ -1093,34 +1093,6 @@ func TestCreateViewIsolationRead(t *testing.T) {
 	tk.MustQuery("select * from v0;").Check(testkit.Rows())
 }
 
-func TestIncrementalAnalyzeStatsVer2(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int primary key, b int, index idx_b(b))")
-	tk.MustExec("insert into t values(1,1),(2,2),(3,3)")
-	tk.MustExec("set @@session.tidb_analyze_version = 2")
-	tk.MustExec("analyze table t")
-	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblID := tbl.Meta().ID
-	rows := tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "3", rows[0][0])
-	tk.MustExec("insert into t values(4,4),(5,5),(6,6)")
-	tk.MustExec("analyze incremental table t index idx_b")
-	warns := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
-	require.Len(t, warns, 3)
-	require.EqualError(t, warns[0].Err, "The version 2 would collect all statistics not only the selected indexes")
-	require.EqualError(t, warns[1].Err, "The version 2 stats would ignore the INCREMENTAL keyword and do full sampling")
-	require.EqualError(t, warns[2].Err, "Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"")
-	rows = tk.MustQuery(fmt.Sprintf("select distinct_count from mysql.stats_histograms where table_id = %d and is_index = 1", tblID)).Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "6", rows[0][0])
-}
-
 func TestConflictReadFromStorage(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
