@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -294,6 +295,9 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		break
 	}
 	if idx != nil {
+		if sctx.GetSessionVars().MemTracker != nil {
+			sctx.GetSessionVars().MemTracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Indices[histID] = idx
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
@@ -397,6 +401,9 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		break
 	}
 	if col != nil {
+		if sctx.GetSessionVars().MemTracker != nil {
+			sctx.GetSessionVars().MemTracker.Consume(col.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Columns[col.ID] = col
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
@@ -409,6 +416,8 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 
 // TableStatsFromStorage loads table stats info from storage.
 func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
+	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
