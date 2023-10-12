@@ -168,7 +168,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 		}
 	})
 	if preSpillError != nil {
-		c.m.records.spillError = err
+		c.m.records.spillError = preSpillError
 		return
 	}
 	for i := 0; i < n; i++ {
@@ -349,8 +349,9 @@ func (c *RowContainer) Close() (err error) {
 func (c *RowContainer) ActionSpill() *SpillDiskAction {
 	if c.actionSpill == nil {
 		c.actionSpill = &SpillDiskAction{
-			c:    c,
-			cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled}}
+			c:                   c,
+			baseSpillDiskAction: &baseSpillDiskAction{cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled}},
+		}
 	}
 	return c.actionSpill
 }
@@ -359,13 +360,15 @@ func (c *RowContainer) ActionSpill() *SpillDiskAction {
 func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 	c.actionSpill = &SpillDiskAction{
 		c: c,
-		testSyncInputFunc: func() {
-			c.actionSpill.testWg.Add(1)
+		baseSpillDiskAction: &baseSpillDiskAction{
+			testSyncInputFunc: func() {
+				c.actionSpill.testWg.Add(1)
+			},
+			testSyncOutputFunc: func() {
+				c.actionSpill.testWg.Done()
+			},
+			cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled},
 		},
-		testSyncOutputFunc: func() {
-			c.actionSpill.testWg.Done()
-		},
-		cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled},
 	}
 	return c.actionSpill
 }
@@ -373,9 +376,8 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 // SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, SpillDiskAction.Action is
 // triggered.
-type SpillDiskAction struct {
+type baseSpillDiskAction struct {
 	memory.BaseOOMAction
-	c    *RowContainer
 	m    sync.Mutex
 	once sync.Once
 	cond spillStatusCond
@@ -384,6 +386,17 @@ type SpillDiskAction struct {
 	testSyncInputFunc  func()
 	testSyncOutputFunc func()
 	testWg             sync.WaitGroup
+}
+
+type SpillDiskAction struct {
+	c *RowContainer
+	*baseSpillDiskAction
+}
+
+// Action sends a signal to trigger spillToDisk method of RowContainer
+// and if it is already triggered before, call its fallbackAction.
+func (a *SpillDiskAction) Action(t *memory.Tracker) {
+	a.action(t, a.c)
 }
 
 type spillStatusCond struct {
@@ -403,25 +416,19 @@ const (
 	spilledYet
 )
 
-func (a *SpillDiskAction) setStatus(status spillStatus) {
+func (a *baseSpillDiskAction) setStatus(status spillStatus) {
 	a.cond.L.Lock()
 	defer a.cond.L.Unlock()
 	a.cond.status = status
 }
 
-func (a *SpillDiskAction) getStatus() spillStatus {
+func (a *baseSpillDiskAction) getStatus() spillStatus {
 	a.cond.L.Lock()
 	defer a.cond.L.Unlock()
 	return a.cond.status
 }
 
-// Action sends a signal to trigger spillToDisk method of RowContainer
-// and if it is already triggered before, call its fallbackAction.
-func (a *SpillDiskAction) Action(t *memory.Tracker) {
-	a.action(t, a.c)
-}
-
-func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper spillHelper) {
+func (a *baseSpillDiskAction) action(t *memory.Tracker, spillHelper spillHelper) {
 	a.m.Lock()
 	defer a.m.Unlock()
 
@@ -432,12 +439,12 @@ func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper spillHelper) {
 			if a.testSyncInputFunc != nil {
 				a.testSyncInputFunc()
 				go func() {
-					a.c.SpillToDisk()
+					spillHelper.SpillToDisk()
 					a.testSyncOutputFunc()
 				}()
 				return
 			}
-			go a.c.SpillToDisk()
+			go spillHelper.SpillToDisk()
 		})
 		return
 	}
@@ -457,7 +464,7 @@ func (a *SpillDiskAction) action(t *memory.Tracker, spillHelper spillHelper) {
 }
 
 // Reset resets the status for SpillDiskAction.
-func (a *SpillDiskAction) Reset() {
+func (a *baseSpillDiskAction) Reset() {
 	a.m.Lock()
 	defer a.m.Unlock()
 	a.setStatus(notSpilled)
@@ -465,12 +472,12 @@ func (a *SpillDiskAction) Reset() {
 }
 
 // GetPriority get the priority of the Action.
-func (*SpillDiskAction) GetPriority() int64 {
+func (*baseSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
 // WaitForTest waits all goroutine have gone.
-func (a *SpillDiskAction) WaitForTest() {
+func (a *baseSpillDiskAction) WaitForTest() {
 	a.testWg.Wait()
 }
 
@@ -495,7 +502,7 @@ type SortedRowContainer struct {
 	keyCmpFuncs []CompareFunc
 
 	actionSpill *SortAndSpillDiskAction
-	memTracker  *memory.Tracker
+	//memTracker  *memory.Tracker
 
 	// Sort is a time-consuming operation, we need to set a checkpoint to detect
 	// the outside signal periodically.
@@ -635,8 +642,8 @@ func (c *SortedRowContainer) GetSortedRowAndAlwaysAppendToChunk(idx int, chk *Ch
 func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 	if c.actionSpill == nil {
 		c.actionSpill = &SortAndSpillDiskAction{
-			c:               c,
-			SpillDiskAction: c.RowContainer.ActionSpill(),
+			c:                   c,
+			baseSpillDiskAction: &baseSpillDiskAction{cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled}},
 		}
 	}
 	return c.actionSpill
@@ -645,8 +652,16 @@ func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 // ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
 func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
 	c.actionSpill = &SortAndSpillDiskAction{
-		c:               c,
-		SpillDiskAction: c.RowContainer.ActionSpillForTest(),
+		c: c,
+		baseSpillDiskAction: &baseSpillDiskAction{
+			testSyncInputFunc: func() {
+				c.actionSpill.testWg.Add(1)
+			},
+			testSyncOutputFunc: func() {
+				c.actionSpill.testWg.Done()
+			},
+			cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled},
+		},
 	}
 	return c.actionSpill
 }
@@ -661,7 +676,7 @@ func (c *SortedRowContainer) GetMemTracker() *memory.Tracker {
 // triggered.
 type SortAndSpillDiskAction struct {
 	c *SortedRowContainer
-	*SpillDiskAction
+	*baseSpillDiskAction
 }
 
 // Action sends a signal to trigger sortAndSpillToDisk method of RowContainer
