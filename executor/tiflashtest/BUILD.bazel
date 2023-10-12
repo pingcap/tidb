@@ -9,11 +9,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD:executor/tiflashtest/BUILD.bazel
-    shard_count = 37,
-=======
-    shard_count = 39,
->>>>>>> 4facc136b5e (planner: fix wrong result when pushing Agg down through Union in MPP plans (#46310)):executor/test/tiflashtest/BUILD.bazel
+    shard_count = 38,
     deps = [
         "//config",
         "//domain",
