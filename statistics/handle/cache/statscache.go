@@ -15,6 +15,8 @@
 package cache
 
 import (
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/config"
@@ -71,7 +73,12 @@ func (s *StatsCacheImpl) Close() {
 
 // Clear clears this cache.
 func (s *StatsCacheImpl) Clear() {
-	// TODO
+	cache, err := NewStatsCache()
+	if err != nil {
+		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
+		return
+	}
+	s.replace(cache)
 }
 
 // MemConsumed returns its memory usage.

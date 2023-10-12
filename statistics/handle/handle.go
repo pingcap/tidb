@@ -16,7 +16,6 @@ package handle
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"math"
 	"time"
 
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
+	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/extstats"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/history"
@@ -276,12 +276,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	return
 }
 
-//// GetMemConsumed returns the mem size of statscache consumed
-//func (h *Handle) GetMemConsumed() (size int64) {
-//	size = h.statsCache.Load().Cost()
-//	return
-//}
-
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
@@ -516,7 +510,6 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 // Close stops the background
 func (h *Handle) Close() {
 	h.gpool.Close()
-	//h.statsCache.Load().Close()
 	h.StatsCache.Close()
 }
 
