@@ -11,7 +11,7 @@ aliases:
   sig-approvers-autoid-service: # approvers for auto-id service
     - bb7133
     - tiancaiamao
-  sig-approvers-br: # approvers for br pkg
+  sig-approvers-br: # approvers for br module
     - BornChanger
     - 3pointer
     - YuJuncen
@@ -30,3 +30,10 @@ aliases:
     - windtalker
     - XuHuaiyu
     - zanmato1984
+  sig-approvers-lightning: # approvers for lightning module
+    - Benjamin20372
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
+    - lichunzhu
+    - okJiang

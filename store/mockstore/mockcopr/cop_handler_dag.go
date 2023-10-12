@@ -104,7 +104,7 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	}
 
 	sc := flagsToStatementContext(dagReq.Flags)
-	tz, err := constructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
