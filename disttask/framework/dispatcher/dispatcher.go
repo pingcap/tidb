@@ -387,7 +387,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
 			}
 		}
-		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes")
+		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
 		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
 			return err
 		}
