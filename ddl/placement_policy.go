@@ -328,7 +328,7 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 	if err != nil {
 		return err
 	}
-	return CheckPlacementPolicyNotInUseFromRange(policy)
+	return checkPlacementPolicyNotInUseFromRange(policy)
 }
 
 // CheckPlacementPolicyNotInUseFromInfoSchema export for test.
@@ -348,8 +348,8 @@ func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 	return nil
 }
 
-// CheckPlacementPolicyNotInUseFromRange checks whether the placement policy is used by the special range.
-func CheckPlacementPolicyNotInUseFromRange(policy *model.PolicyInfo) error {
+// checkPlacementPolicyNotInUseFromRange checks whether the placement policy is used by the special range.
+func checkPlacementPolicyNotInUseFromRange(policy *model.PolicyInfo) error {
 	checkFn := func(rangeName string) error {
 		bundle, err := infosync.GetRuleBundle(context.TODO(), rangeName)
 		if err != nil {

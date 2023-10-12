@@ -2836,8 +2836,8 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 
 // executeAlterRange is used to alter range configuration. currently, only config placement policy.
 func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
-	if s.RangeName.L == "" {
-		return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(s.RangeName.O)
+	if s.RangeName.L != placement.KeyRangeGlobal && s.RangeName.L != placement.KeyRangeMeta {
+		return errors.New("range name is not supported")
 	}
 	if s.PlacementOption.Tp != ast.PlacementOptionPolicy {
 		return errors.New("only support alter range policy")

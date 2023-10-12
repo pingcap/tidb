@@ -21,10 +21,6 @@ import (
 const (
 	// TiFlashRuleGroupID is the rule group id of tiflash
 	TiFlashRuleGroupID = "tiflash"
-	// TiDBBundleRangePrefixForGlobal is the bundle prefix of system global range.
-	TiDBBundleRangePrefixForGlobal = "TiDB_GLOBAL"
-	// TiDBBundleRangePrefixForMeta is the bundle prefix of system meta range.
-	TiDBBundleRangePrefixForMeta = "TiDB_META"
 	// BundleIDPrefix is the bundle prefix of all rule bundles from TiDB_DDL statements.
 	BundleIDPrefix = "TiDB_DDL_"
 	// PDBundleID is the bundle name of pd, the default bundle for all regions.
@@ -32,10 +28,14 @@ const (
 
 	// DefaultKwd is used to reset the default rule (remove bundle).
 	DefaultKwd = "default"
-
-	// ranges
-	keyRangeGlobal = "global"
-	keyRangeMeta   = "meta"
+	// TiDBBundleRangePrefixForGlobal is the bundle prefix of system global range.
+	TiDBBundleRangePrefixForGlobal = "TiDB_GLOBAL"
+	// TiDBBundleRangePrefixForMeta is the bundle prefix of system meta range.
+	TiDBBundleRangePrefixForMeta = "TiDB_META"
+	// KeyRangeGlobal is the key range for system global range.
+	KeyRangeGlobal = "global"
+	// KeyRangeMeta is the key range for system meta range.
+	KeyRangeMeta = "meta"
 )
 
 var metaPrefix = []byte("m")

@@ -467,10 +467,10 @@ func (b *Bundle) RebuildForRange(rangeName string, policyName string) *Bundle {
 	startKey := ""
 	endKey := ""
 	switch rangeName {
-	case keyRangeGlobal:
+	case KeyRangeGlobal:
 		b.ID = TiDBBundleRangePrefixForGlobal
 		b.Index = RuleIndexKeyRangeForGlobal
-	case keyRangeMeta:
+	case KeyRangeMeta:
 		// change range
 		startKey = hex.EncodeToString(metaPrefix)
 		endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(0)))
