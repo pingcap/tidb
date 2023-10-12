@@ -234,8 +234,8 @@ select a from t1 where exists(select 1 from t2 where t1.a = t2.a);
 
 # TestMemTableScan
 set session tidb_enable_cascades_planner = 1;
-explain select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist;
-select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist;
+explain select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration";
+select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration";
 
 # TestTopN
 drop table if exists t;

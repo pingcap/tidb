@@ -890,13 +890,14 @@ a
 2
 3
 set session tidb_enable_cascades_planner = 1;
-explain select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist;
+explain select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration";
 id	estRows	task	access object	operator info
-Projection_3	10000.00	root		Column#2, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9
-└─MemTableScan_4	10000.00	root	table:PROCESSLIST	
-select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist;
+Projection_4	8000.00	root		Column#2, Column#4, Column#5, Column#6, Column#7, Column#8, Column#9
+└─Selection_5	8000.00	root		eq(Column#4, "planner__cascades__integration")
+  └─MemTableScan_6	10000.00	root	table:PROCESSLIST	
+select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration";
 USER	DB	COMMAND	TIME	STATE	INFO	DIGEST
-root	planner__cascades__integration	Query	0	autocommit	select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist	78f1c0b2fcd082b6504b8ba48706391f13aad730a9efb7ec295688010bfec477
+root	planner__cascades__integration	Query	0	autocommit	select USER, DB, COMMAND, TIME, STATE, INFO, `DIGEST` from information_schema.processlist where DB = "planner__cascades__integration"	769773ab56dd2977858c3c36e76e503323bbbc62257bb2e18e0e10cd9df43973
 drop table if exists t;
 create table t(a int primary key, b int);
 insert into t values (1, 11), (4, 44), (2, 22), (3, 33);

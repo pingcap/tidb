@@ -36,8 +36,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const testLease = 5 * time.Millisecond
-
 // DDLForTest exports for testing.
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.

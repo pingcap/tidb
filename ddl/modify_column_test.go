@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -436,33 +435,22 @@ func TestModifyColumnCharset(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
 
-func TestModifyColumnTime_TimeToYear(t *testing.T) {
-	outOfRangeCode := uint16(1264)
-	tests := []testModifyColumnTimeCase{
-		// time to year, it's reasonable to return current year and discard the time (even if MySQL may get data out of range error).
-		{"time", `"30 20:00:12"`, "year", "", outOfRangeCode},
-		{"time", `"30 20:00"`, "year", "", outOfRangeCode},
-		{"time", `"30 20"`, "year", "", outOfRangeCode},
-		{"time", `"20:00:12"`, "year", "", outOfRangeCode},
-		{"time", `"20:00"`, "year", "", outOfRangeCode},
-		{"time", `"12"`, "year", "2012", 0},
-		{"time", `"200012"`, "year", "", outOfRangeCode},
-		{"time", `200012`, "year", "", outOfRangeCode},
-		{"time", `0012`, "year", "2012", 0},
-		{"time", `12`, "year", "2012", 0},
-		{"time", `"30 20:00:12.498"`, "year", "", outOfRangeCode},
-		{"time", `"20:00:12.498"`, "year", "", outOfRangeCode},
-		{"time", `"200012.498"`, "year", "", outOfRangeCode},
-		{"time", `200012.498`, "year", "", outOfRangeCode},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_TimeToDate(t *testing.T) {
+func TestModifyColumnTime(t *testing.T) {
 	now := time.Now().UTC()
 	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	timeToDate1 := now.Format("2006-01-02")
 	timeToDate2 := now.AddDate(0, 0, 30).Format("2006-01-02")
+	timeToDatetime1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToDatetime3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToDatetime5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToTimestamp1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+	timeToTimestamp3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
+	timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
+
 	tests := []testModifyColumnTimeCase{
 		// time to date
 		{"time", `"30 20:00:12"`, "date", timeToDate2, 0},
@@ -479,19 +467,6 @@ func TestModifyColumnTime_TimeToDate(t *testing.T) {
 		{"time", `"20:00:12.498"`, "date", timeToDate1, 0},
 		{"time", `"200012.498"`, "date", timeToDate1, 0},
 		{"time", `200012.498`, "date", timeToDate1, 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_TimeToDatetime(t *testing.T) {
-	now := time.Now().UTC()
-	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	timeToDatetime1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToDatetime2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	timeToDatetime3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToDatetime4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToDatetime5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	tests := []testModifyColumnTimeCase{
 		// time to datetime
 		{"time", `"30 20:00:12"`, "datetime", timeToDatetime4, 0},
 		{"time", `"30 20:00"`, "datetime", timeToDatetime5, 0},
@@ -507,19 +482,6 @@ func TestModifyColumnTime_TimeToDatetime(t *testing.T) {
 		{"time", `"20:00:12.498"`, "datetime", timeToDatetime1, 0},
 		{"time", `"200012.498"`, "datetime", timeToDatetime1, 0},
 		{"time", `200012.498`, "datetime", timeToDatetime1, 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_TimeToTimestamp(t *testing.T) {
-	now := time.Now().UTC()
-	now = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
-	timeToTimestamp1 := now.Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToTimestamp2 := now.Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	timeToTimestamp3 := now.Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToTimestamp4 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Add(12 * time.Second).Format("2006-01-02 15:04:05")
-	timeToTimestamp5 := now.AddDate(0, 0, 30).Add(20 * time.Hour).Format("2006-01-02 15:04:05")
-	tests := []testModifyColumnTimeCase{
 		// time to timestamp
 		{"time", `"30 20:00:12"`, "timestamp", timeToTimestamp4, 0},
 		{"time", `"30 20:00"`, "timestamp", timeToTimestamp5, 0},
@@ -539,247 +501,6 @@ func TestModifyColumnTime_TimeToTimestamp(t *testing.T) {
 	testModifyColumnTime(t, tests)
 }
 
-func TestModifyColumnTime_DateToTime(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// date to time
-		{"date", `"2019-01-02"`, "time", "00:00:00", 0},
-		{"date", `"19-01-02"`, "time", "00:00:00", 0},
-		{"date", `"20190102"`, "time", "00:00:00", 0},
-		{"date", `"190102"`, "time", "00:00:00", 0},
-		{"date", `20190102`, "time", "00:00:00", 0},
-		{"date", `190102`, "time", "00:00:00", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_DateToYear(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// date to year
-		{"date", `"2019-01-02"`, "year", "2019", 0},
-		{"date", `"19-01-02"`, "year", "2019", 0},
-		{"date", `"20190102"`, "year", "2019", 0},
-		{"date", `"190102"`, "year", "2019", 0},
-		{"date", `20190102`, "year", "2019", 0},
-		{"date", `190102`, "year", "2019", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_DateToDatetime(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// date to datetime
-		{"date", `"2019-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
-		{"date", `"19-01-02"`, "datetime", "2019-01-02 00:00:00", 0},
-		{"date", `"20190102"`, "datetime", "2019-01-02 00:00:00", 0},
-		{"date", `"190102"`, "datetime", "2019-01-02 00:00:00", 0},
-		{"date", `20190102`, "datetime", "2019-01-02 00:00:00", 0},
-		{"date", `190102`, "datetime", "2019-01-02 00:00:00", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_DateToTimestamp(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// date to timestamp
-		{"date", `"2019-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
-		{"date", `"19-01-02"`, "timestamp", "2019-01-02 00:00:00", 0},
-		{"date", `"20190102"`, "timestamp", "2019-01-02 00:00:00", 0},
-		{"date", `"190102"`, "timestamp", "2019-01-02 00:00:00", 0},
-		{"date", `20190102`, "timestamp", "2019-01-02 00:00:00", 0},
-		{"date", `190102`, "timestamp", "2019-01-02 00:00:00", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_TimestampToYear(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// timestamp to year
-		{"timestamp", `"2006-01-02 15:04:05"`, "year", "2006", 0},
-		{"timestamp", `"06-01-02 15:04:05"`, "year", "2006", 0},
-		{"timestamp", `"20060102150405"`, "year", "2006", 0},
-		{"timestamp", `"060102150405"`, "year", "2006", 0},
-		{"timestamp", `20060102150405`, "year", "2006", 0},
-		{"timestamp", `060102150405`, "year", "2006", 0},
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_TimestampToTime(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// timestamp to time
-		{"timestamp", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
-		{"timestamp", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
-		{"timestamp", `"20060102150405"`, "time", "15:04:05", 0},
-		{"timestamp", `"060102150405"`, "time", "15:04:05", 0},
-		{"timestamp", `20060102150405`, "time", "15:04:05", 0},
-		{"timestamp", `060102150405`, "time", "15:04:05", 0},
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_TimestampToDate(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// timestamp to date
-		{"timestamp", `"2006-01-02 15:04:05"`, "date", "2006-01-02", 0},
-		{"timestamp", `"06-01-02 15:04:05"`, "date", "2006-01-02", 0},
-		{"timestamp", `"20060102150405"`, "date", "2006-01-02", 0},
-		{"timestamp", `"060102150405"`, "date", "2006-01-02", 0},
-		{"timestamp", `20060102150405`, "date", "2006-01-02", 0},
-		{"timestamp", `060102150405`, "date", "2006-01-02", 0},
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_TimestampToDatetime(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// timestamp to datetime
-		{"timestamp", `"2006-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
-		{"timestamp", `"06-01-02 15:04:05"`, "datetime", "2006-01-02 15:04:05", 0},
-		{"timestamp", `"20060102150405"`, "datetime", "2006-01-02 15:04:05", 0},
-		{"timestamp", `"060102150405"`, "datetime", "2006-01-02 15:04:05", 0},
-		{"timestamp", `20060102150405`, "datetime", "2006-01-02 15:04:05", 0},
-		{"timestamp", `060102150405`, "datetime", "2006-01-02 15:04:05", 0},
-		{"timestamp", `"2006-01-02 23:59:59.506"`, "datetime", "2006-01-03 00:00:00", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_DatetimeToYear(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// datetime to year
-		{"datetime", `"2006-01-02 15:04:05"`, "year", "2006", 0},
-		{"datetime", `"06-01-02 15:04:05"`, "year", "2006", 0},
-		{"datetime", `"20060102150405"`, "year", "2006", 0},
-		{"datetime", `"060102150405"`, "year", "2006", 0},
-		{"datetime", `20060102150405`, "year", "2006", 0},
-		{"datetime", `060102150405`, "year", "2006", 0},
-		{"datetime", `"2006-01-02 23:59:59.506"`, "year", "2006", 0},
-		{"datetime", `"1000-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
-		{"datetime", `"9999-01-02 23:59:59"`, "year", "", errno.ErrWarnDataOutOfRange},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_DatetimeToTime(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// datetime to time
-		{"datetime", `"2006-01-02 15:04:05"`, "time", "15:04:05", 0},
-		{"datetime", `"06-01-02 15:04:05"`, "time", "15:04:05", 0},
-		{"datetime", `"20060102150405"`, "time", "15:04:05", 0},
-		{"datetime", `"060102150405"`, "time", "15:04:05", 0},
-		{"datetime", `20060102150405`, "time", "15:04:05", 0},
-		{"datetime", `060102150405`, "time", "15:04:05", 0},
-		{"datetime", `"2006-01-02 23:59:59.506"`, "time", "00:00:00", 0},
-		{"datetime", `"1000-01-02 23:59:59"`, "time", "23:59:59", 0},
-		{"datetime", `"9999-01-02 23:59:59"`, "time", "23:59:59", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_DatetimeToDate(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// datetime to date
-		{"datetime", `"2006-01-02 15:04:05"`, "date", "2006-01-02", 0},
-		{"datetime", `"06-01-02 15:04:05"`, "date", "2006-01-02", 0},
-		{"datetime", `"20060102150405"`, "date", "2006-01-02", 0},
-		{"datetime", `"060102150405"`, "date", "2006-01-02", 0},
-		{"datetime", `20060102150405`, "date", "2006-01-02", 0},
-		{"datetime", `060102150405`, "date", "2006-01-02", 0},
-		{"datetime", `"2006-01-02 23:59:59.506"`, "date", "2006-01-03", 0},
-		{"datetime", `"1000-01-02 23:59:59"`, "date", "1000-01-02", 0},
-		{"datetime", `"9999-01-02 23:59:59"`, "date", "9999-01-02", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_DatetimeToTimestamp(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// datetime to timestamp
-		{"datetime", `"2006-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
-		{"datetime", `"06-01-02 15:04:05"`, "timestamp", "2006-01-02 15:04:05", 0},
-		{"datetime", `"20060102150405"`, "timestamp", "2006-01-02 15:04:05", 0},
-		{"datetime", `"060102150405"`, "timestamp", "2006-01-02 15:04:05", 0},
-		{"datetime", `20060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
-		{"datetime", `060102150405`, "timestamp", "2006-01-02 15:04:05", 0},
-		{"datetime", `"2006-01-02 23:59:59.506"`, "timestamp", "2006-01-03 00:00:00", 0},
-		{"datetime", `"1971-01-02 23:59:59"`, "timestamp", "1971-01-02 23:59:59", 0},
-		{"datetime", `"2009-01-02 23:59:59"`, "timestamp", "2009-01-02 23:59:59", 0},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_YearToTime(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// year to time
-		// failed cases are not handled by TiDB
-		{"year", `"2019"`, "time", "00:20:19", 0},
-		{"year", `2019`, "time", "00:20:19", 0},
-		{"year", `"00"`, "time", "00:20:00", 0},
-		{"year", `"69"`, "time", "", errno.ErrTruncatedWrongValue},
-		{"year", `"70"`, "time", "", errno.ErrTruncatedWrongValue},
-		{"year", `"99"`, "time", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "time", "00:00:00", 0},
-		{"year", `69`, "time", "", errno.ErrTruncatedWrongValue},
-		{"year", `70`, "time", "", errno.ErrTruncatedWrongValue},
-		{"year", `99`, "time", "", errno.ErrTruncatedWrongValue},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_YearToDate(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// year to date
-		{"year", `"2019"`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `2019`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `"00"`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `"69"`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `"70"`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `"99"`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `69`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `70`, "date", "", errno.ErrTruncatedWrongValue},
-		{"year", `99`, "date", "", errno.ErrTruncatedWrongValue},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_YearToDatetime(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// year to datetime
-		{"year", `"2019"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `2019`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `"00"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `"69"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `"70"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `"99"`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `69`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `70`, "datetime", "", errno.ErrTruncatedWrongValue},
-		{"year", `99`, "datetime", "", errno.ErrTruncatedWrongValue},
-	}
-	testModifyColumnTime(t, tests)
-}
-
-func TestModifyColumnTime_YearToTimestamp(t *testing.T) {
-	tests := []testModifyColumnTimeCase{
-		// year to timestamp
-		{"year", `"2019"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `2019`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `"00"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `"69"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `"70"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `"99"`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `00`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `69`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `70`, "timestamp", "", errno.ErrTruncatedWrongValue},
-		{"year", `99`, "timestamp", "", errno.ErrTruncatedWrongValue},
-	}
-	testModifyColumnTime(t, tests)
-}
-
 type testModifyColumnTimeCase struct {
 	from   string
 	value  string
@@ -789,19 +510,15 @@ type testModifyColumnTimeCase struct {
 }
 
 func testModifyColumnTime(t *testing.T, tests []testModifyColumnTimeCase) {
-	limit := variable.GetDDLErrorCountLimit()
-
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 3")
+	tk.MustExec("set @@time_zone=UTC")
 
-	// Set time zone to UTC.
-	originalTz := tk.Session().GetSessionVars().TimeZone
-	tk.Session().GetSessionVars().TimeZone = time.UTC
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", limit))
-		tk.Session().GetSessionVars().TimeZone = originalTz
+		tk.MustExec("set @@global.tidb_ddl_error_count_limit = default")
+		tk.MustExec("set @@time_zone=default")
 	}()
 
 	for _, test := range tests {
@@ -818,35 +535,6 @@ func testModifyColumnTime(t *testing.T, tests []testModifyColumnTimeCase) {
 		require.NoError(t, err, comment)
 		tk.MustQuery("select a from t_mc").Check(testkit.Rows(test.expect))
 	}
-}
-
-func TestModifyColumnTypeWithWarnings(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// Test normal warnings.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a decimal(5,2))")
-	tk.MustExec("insert into t values(111.22),(111.22),(111.22),(111.22),(333.4)")
-	// 111.22 will be truncated the fraction .22 as .2 with truncated warning for each row.
-	tk.MustExec("alter table t modify column a decimal(4,1)")
-	// there should 4 rows of warnings corresponding to the origin rows.
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '111.22'"))
-
-	// Test the strict warnings is treated as errors under the strict mode.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a decimal(5,2))")
-	tk.MustExec("insert into t values(111.22),(111.22),(111.22),(33.4)")
-	// Since modify column a from decimal(5,2) to decimal(3,1), the first three rows with 111.22 will overflows the target types.
-	err := tk.ExecToErr("alter table t modify column a decimal(3,1)")
-	require.EqualError(t, err, "[types:1690]DECIMAL value is out of range in '(3, 1)'")
-
-	// Test the strict warnings is treated as warnings under the non-strict mode.
-	tk.MustExec("set @@sql_mode=\"\"")
-	tk.MustExec("alter table t modify column a decimal(3,1)")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1690 3 warnings with this error code, first warning: DECIMAL value is out of range in '(3, 1)'"))
 }
 
 // TestModifyColumnTypeWhenInterception is to test modifying column type with warnings intercepted by
@@ -879,14 +567,4 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 	}()
 	tk.MustExec("alter table t modify column b decimal(3,1)")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 4096 warnings with this error code, first warning: Truncated incorrect DECIMAL value: '11.22'"))
-}
-
-func TestModifyColumnAutoIncrementWithDefaultValue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a bigint auto_increment primary key)")
-
-	tk.MustGetErrMsg("alter table t modify column a bigint auto_increment default 3", "[ddl:1067]Invalid default value for 'a'")
 }

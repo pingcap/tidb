@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -35,84 +34,6 @@ import (
 )
 
 const tableModifyLease = 600 * time.Millisecond
-
-func TestCreateTable(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
-	tk.MustExec("CREATE TABLE IF NOT EXISTS `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );")
-	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-
-	cols := tbl.Cols()
-	require.Len(t, cols, 1)
-	col := cols[0]
-	require.Equal(t, "a", col.Name.L)
-	d, ok := col.DefaultValue.(string)
-	require.True(t, ok)
-	require.Equal(t, "2", d)
-
-	tk.MustExec("drop table t")
-	tk.MustGetErrCode("CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg", errno.ErrUnknownCharacterSet)
-
-	tk.MustExec("CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci")
-	expects := "collateTest CREATE TABLE `collateTest` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
-	tk.MustQuery("show create table collateTest").Check(testkit.Rows(expects))
-
-	tk.MustGetErrCode("CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci", errno.ErrCollationCharsetMismatch)
-	tk.MustGetErrCode("CREATE TABLE `collateTest3` (`a` int) COLLATE utf8mb4_unicode_ci CHARSET utf8", errno.ErrConflictingDeclarations)
-
-	tk.MustExec("CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci")
-	expects = "collateTest4 CREATE TABLE `collateTest4` (\n  `a` int(11) DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci"
-	tk.MustQuery("show create table collateTest4").Check(testkit.Rows(expects))
-
-	tk.MustExec("create database test2 default charset utf8 collate utf8_general_ci")
-	tk.MustExec("use test2")
-	tk.MustExec("create table dbCollateTest (a varchar(10))")
-	expects = "dbCollateTest CREATE TABLE `dbCollateTest` (\n  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci"
-	tk.MustQuery("show create table dbCollateTest").Check(testkit.Rows(expects))
-
-	// test for enum column
-	tk.MustExec("use test")
-	tk.MustGetErrCode("create table t_enum (a enum('e','e'));", errno.ErrDuplicatedValueInType)
-
-	tk = testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustGetErrCode("create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_general_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrCode("create table t_enum (a enum('abc','Abc')) charset=utf8 collate=utf8_general_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrCode("create table t_enum (a enum('e','E')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrCode("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrCode("create table t_enum (a enum('æ','ae')) charset=utf8mb4 collate=utf8mb4_0900_ai_ci;", errno.ErrDuplicatedValueInType)
-	// test for set column
-	tk.MustGetErrCode("create table t_enum (a set('e','e'));", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrCode("create table t_enum (a set('e','E')) charset=utf8 collate=utf8_general_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrCode("create table t_enum (a set('abc','Abc')) charset=utf8 collate=utf8_general_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrMsg("create table t_enum (a enum('B','b')) charset=utf8 collate=utf8_general_ci;", "[types:1291]Column 'a' has duplicated value 'b' in ENUM")
-	tk.MustGetErrCode("create table t_enum (a set('e','E')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrCode("create table t_enum (a set('ss','ß')) charset=utf8 collate=utf8_unicode_ci;", errno.ErrDuplicatedValueInType)
-	tk.MustGetErrMsg("create table t_enum (a enum('ss','ß')) charset=utf8 collate=utf8_unicode_ci;", "[types:1291]Column 'a' has duplicated value 'ß' in ENUM")
-	tk.MustGetErrCode("create table t_enum (a set('æ','ae')) charset=utf8mb4 collate=utf8mb4_0900_ai_ci;", errno.ErrDuplicatedValueInType)
-
-	// test for table option "union" not supported
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
-	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	tk.MustGetErrCode("CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);", errno.ErrTableOptionUnionUnsupported)
-	tk.MustGetErrCode("ALTER TABLE x UNION = (y);", errno.ErrTableOptionUnionUnsupported)
-	tk.MustExec("drop table x;")
-	tk.MustExec("drop table y;")
-
-	// test for table option "insert method" not supported
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE x (a INT) ENGINE = MyISAM;")
-	tk.MustExec("CREATE TABLE y (a INT) ENGINE = MyISAM;")
-	tk.MustGetErrCode("CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;", errno.ErrTableOptionInsertMethodUnsupported)
-	tk.MustGetErrCode("ALTER TABLE x INSERT_METHOD=LAST;", errno.ErrTableOptionInsertMethodUnsupported)
-	tk.MustExec("drop table x;")
-	tk.MustExec("drop table y;")
-}
 
 func TestLockTableReadOnly(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
@@ -265,12 +186,4 @@ func testParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql
 
 	wg.Wait()
 	f(t, err1, err2)
-}
-
-func TestUnsupportedAlterTableOption(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, tableModifyLease)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a char(10) not null,b char(20)) shard_row_id_bits=6")
-	tk.MustGetErrCode("alter table t pre_split_regions=6", errno.ErrUnsupportedDDLOperation)
 }
