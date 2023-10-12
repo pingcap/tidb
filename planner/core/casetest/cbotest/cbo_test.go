@@ -49,7 +49,7 @@ func loadTableStats(fileName string, dom *domain.Domain) error {
 		return err
 	}
 	statsHandle := dom.StatsHandle()
-	err = statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), statsTbl, 0)
+	err = statsHandle.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), statsTbl, 0, false)
 	if err != nil {
 		return err
 	}
