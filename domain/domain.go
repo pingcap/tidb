@@ -1518,7 +1518,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 			stopDispatchIfNeeded()
 			return
 		case <-ticker.C:
-			if do.ddl.OwnerManager().IsOwner() {
+			if do.ddl.OwnerManager().IsOwner() && variable.EnableDistTask.Load() {
 				startDispatchIfNeeded()
 			} else {
 				stopDispatchIfNeeded()

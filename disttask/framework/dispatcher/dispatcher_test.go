@@ -488,7 +488,7 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 		{proto.TaskStateCanceled, proto.TaskStateRunning, false},
 	}
 	for _, tc := range testCases {
-		require.Equal(t, tc.expect, dispatcher.VerifyTaskStateTransform(tc.oldState, tc.newState))
+		require.Equal(t, tc.expect, dispatcher.VerifyTaskStateTransformImpl(tc.oldState, tc.newState))
 	}
 }
 

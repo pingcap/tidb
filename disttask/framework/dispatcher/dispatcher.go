@@ -341,7 +341,7 @@ func (d *BaseDispatcher) onRunning() error {
 
 func (d *BaseDispatcher) onFinished() error {
 	metrics.UpdateMetricsForFinishTask(d.Task)
-	logutil.Logger(d.logCtx).Debug("schedule task, task is finished", zap.String("state", d.Task.State))
+	logutil.Logger(d.logCtx).Info("schedule task, task is finished", zap.String("state", d.Task.State))
 	return d.taskMgr.TransferSubTasks2History(d.Task.ID)
 }
 
@@ -390,6 +390,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
 			return err
 		}
+		logutil.Logger(d.logCtx).Info("replace some nodes' subtasks", zap.Int("node-cnt", len(replaceNodes)))
 		// replace local cache.
 		for k, v := range replaceNodes {
 			for m, n := range d.taskNodes {
@@ -407,7 +408,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.Task.State
 	d.Task.State = taskState
-	if !VerifyTaskStateTransform(prevState, taskState) {
+	if !d.VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 
@@ -697,7 +698,12 @@ func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.C
 }
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
-func VerifyTaskStateTransform(from, to string) bool {
+func (d *BaseDispatcher) VerifyTaskStateTransform(from, to string) bool {
+	logutil.Logger(d.logCtx).Info("task state transform", zap.String("from", from), zap.String("to", to))
+	return VerifyTaskStateTransformImpl(from, to)
+}
+
+func VerifyTaskStateTransformImpl(from, to string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {
 			proto.TaskStateRunning,
@@ -739,7 +745,6 @@ func VerifyTaskStateTransform(from, to string) bool {
 		proto.TaskStateRevertPending: {},
 		proto.TaskStateReverted:      {},
 	}
-	logutil.BgLogger().Info("task state transform", zap.String("from", from), zap.String("to", to))
 
 	if from == to {
 		return true
