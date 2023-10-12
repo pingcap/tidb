@@ -695,16 +695,10 @@ func (sr *SchemasReplace) restoreFromHistory(job *model.Job, isSubJob bool) erro
 			model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			return sr.deleteRange(job)
 		case model.ActionMultiSchemaChange:
-<<<<<<< HEAD
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
 				proxyJob := sub.ToProxyJob(job)
-				if err := sr.restoreFromHistory(&proxyJob); err != nil {
-=======
-			for i, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := sub.ToProxyJob(job, i)
 				// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
 				if err := sr.restoreFromHistory(&proxyJob, true); err != nil {
->>>>>>> 04c63ce4c4a (br: fix add ingest index as sub job (#47484))
 					return err
 				}
 			}
