@@ -1223,7 +1223,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask, ch
 	if task.meetLockFallback {
 		req.DisableStaleReadMeetLock()
 	} else if worker.req.IsStaleness {
-		req.EnableStaleRead()
+		req.EnableStaleWithMixedReplicaRead()
 	}
 	staleRead := req.GetStaleRead()
 	ops := make([]tikv.StoreSelectorOption, 0, 2)
