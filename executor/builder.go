@@ -2604,11 +2604,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 	if opts[ast.AnalyzeOptNumSamples] == 0 {
 		*sampleRate = math.Float64frombits(opts[ast.AnalyzeOptSampleRate])
 		if *sampleRate < 0 {
-<<<<<<< HEAD
-			*sampleRate = b.getAdjustedSampleRate(b.ctx, task)
-=======
 			*sampleRate, sampleRateReason = b.getAdjustedSampleRate(task)
->>>>>>> 6fb20c9d306 (planner: log the reason why the sample-rate is chosen when analyzing table (#45938))
 			if task.PartitionName != "" {
 				sc.AppendNote(errors.Errorf(
 					`Analyze use auto adjusted sample rate %f for table %s.%s's partition %s, reason to use this rate is "%s"`,
@@ -2690,13 +2686,8 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(task plannercore.AnalyzeC
 // If we take n = 1e12, a 300*k sample still gives <= 0.66 bin size error with probability 0.99.
 // So if we don't consider the top-n values, we can keep the sample size at 300*256.
 // But we may take some top-n before building the histogram, so we increase the sample a little.
-<<<<<<< HEAD
-func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) float64 {
-	statsHandle := domain.GetDomain(sctx).StatsHandle()
-=======
-func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
+func (b *executorBuilder) getAdjustedSampleRate(sctx sessionctx.Context, task plannercore.AnalyzeColumnsTask) (sampleRate float64, reason string) {
 	statsHandle := domain.GetDomain(b.ctx).StatsHandle()
->>>>>>> 6fb20c9d306 (planner: log the reason why the sample-rate is chosen when analyzing table (#45938))
 	defaultRate := 0.001
 	if statsHandle == nil {
 		return defaultRate, fmt.Sprintf("statsHandler is nil, use the default-rate=%v", defaultRate)
