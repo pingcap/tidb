@@ -23,6 +23,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -130,4 +131,83 @@ func TestParseTimeZone(t *testing.T) {
 		_, offset := Zone(loc)
 		require.Equal(t, c.offset, offset, c.name)
 	}
+}
+
+func TestConstructTimeZone(t *testing.T) {
+	secondsEastOfUTC := int((8 * time.Hour).Seconds())
+	loc, err := ConstructTimeZone("", secondsEastOfUTC)
+	require.NoError(t, err)
+	timeInLoc := time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC := time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	secondsEastOfUTC = int((-8 * time.Hour).Seconds())
+	loc, err = ConstructTimeZone("", secondsEastOfUTC)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 20, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	secondsEastOfUTC = 0
+	loc, err = ConstructTimeZone("", secondsEastOfUTC)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 20, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	// test the seconds east of UTC is ignored by the function
+	// ConstructTimeZone().
+	secondsEastOfUTC = int((23 * time.Hour).Seconds())
+	loc, err = ConstructTimeZone("UTC", secondsEastOfUTC)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	// test the seconds east of UTC is ignored by the function
+	// ConstructTimeZone().
+	secondsEastOfUTC = int((-23 * time.Hour).Seconds())
+	loc, err = ConstructTimeZone("UTC", secondsEastOfUTC)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	// test the seconds east of UTC is ignored by the function
+	// ConstructTimeZone().
+	loc, err = ConstructTimeZone("UTC", 0)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 12, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	// test the seconds east of UTC is ignored by the function
+	// ConstructTimeZone().
+	secondsEastOfUTC = int((-23 * time.Hour).Seconds())
+	loc, err = ConstructTimeZone("Asia/Shanghai", secondsEastOfUTC)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	// test the seconds east of UTC is ignored by the function
+	// ConstructTimeZone().
+	secondsEastOfUTC = int((23 * time.Hour).Seconds())
+	loc, err = ConstructTimeZone("Asia/Shanghai", secondsEastOfUTC)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	// test the seconds east of UTC is ignored by the function
+	// ConstructTimeZone().
+	loc, err = ConstructTimeZone("Asia/Shanghai", 0)
+	require.NoError(t, err)
+	timeInLoc = time.Date(2018, 8, 15, 20, 0, 0, 0, loc)
+	timeInUTC = time.Date(2018, 8, 15, 12, 0, 0, 0, time.UTC)
+	require.True(t, timeInLoc.Equal(timeInUTC))
+
+	// test the timezone name is not existed.
+	_, err = ConstructTimeZone("asia/not-exist", 0)
+	require.EqualError(t, err, "invalid name for timezone asia/not-exist")
 }
