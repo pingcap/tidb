@@ -39,6 +39,16 @@ func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
 	return int(c), err
 }
 
+func getBuildSamplingStatsConcurrency(ctx sessionctx.Context) (int, error) {
+	sessionVars := ctx.GetSessionVars()
+	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.TiDBBuildSamplingStatsConcurrency)
+	if err != nil {
+		return 0, err
+	}
+	c, err := strconv.ParseInt(concurrency, 10, 64)
+	return int(c), err
+}
+
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
 var errAnalyzeOOM = errors.Errorf("analyze panic due to memory quota exceeds, please try with smaller samplerate(refer to %d/count)", config.DefRowsForSampleRate)
 

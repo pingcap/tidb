@@ -264,14 +264,14 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	}
 
 	sc := e.ctx.GetSessionVars().StmtCtx
-	statsConcurrency, err := getBuildStatsConcurrency(e.ctx)
+	SamplingStatsConcurrency, err := getBuildSamplingStatsConcurrency(e.ctx)
 	if err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
 
 	// Start workers to merge the result from collectors.
-	mergeResultCh := make(chan *samplingMergeResult, statsConcurrency)
-	mergeTaskCh := make(chan []byte, statsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, SamplingStatsConcurrency)
+	mergeTaskCh := make(chan []byte, SamplingStatsConcurrency)
 	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
@@ -283,8 +283,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		return readDataAndSendTask(e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
 	})
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
-	e.samplingMergeWg.Add(statsConcurrency)
-	for i := 0; i < statsConcurrency; i++ {
+	e.samplingMergeWg.Add(SamplingStatsConcurrency)
+	for i := 0; i < SamplingStatsConcurrency; i++ {
 		go e.subMergeWorker(mergeResultCh, mergeTaskCh, l, i)
 	}
 	// Merge the result from collectors.
@@ -296,7 +296,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 				err = getAnalyzePanicErr(r)
 			}
 		}()
-		for mergeWorkerPanicCnt < statsConcurrency {
+		for mergeWorkerPanicCnt < SamplingStatsConcurrency {
 			mergeResult, ok := <-mergeResultCh
 			if !ok {
 				break
