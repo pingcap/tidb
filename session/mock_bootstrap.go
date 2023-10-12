@@ -22,17 +22,18 @@ import (
 	"flag"
 	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/logutil"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 // WithMockUpgrade is a flag identify whether tests run with mock upgrading.
-var WithMockUpgrade = flag.Bool("with-mock-upgrade", false, "whether tests run with mock upgrade")
+var WithMockUpgrade bool
+
+// RegisterMockUpgradeFlag registers the mock upgrade flag.
+func RegisterMockUpgradeFlag(fSet *flag.FlagSet) {
+	WithMockUpgrade = *(fSet.Bool("with-mock-upgrade", false, "whether tests run with mock upgrade"))
+}
 
 var allDDLs = []string{
 	"create unique index c3_index on mock_sys_partition (c1)",
@@ -130,29 +131,15 @@ func mockSimpleUpgradeToVerLatest(s Session, ver int64) {
 // TestHook is exported for testing.
 var TestHook = TestCallback{}
 
-// modifyBootstrapVersionForTest is used to get the bootstrap version from the SQL, i.e. skipping the mBootstrapKey method.
-// This makes it easy to modify the bootstrap version through SQL for easy testing.
-func modifyBootstrapVersionForTest(store kv.Storage, ver int64) int64 {
-	if !*WithMockUpgrade {
-		return ver
+// modifyBootstrapVersionForTest is used to test SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++.
+func modifyBootstrapVersionForTest(ver int64) {
+	if !WithMockUpgrade {
+		return
 	}
 
-	s, err := createSession(store)
-	var tmpVer int64
-	if err == nil {
-		tmpVer, err = getBootstrapVersion(s)
+	if ver == SupportUpgradeHTTPOpVer && currentBootstrapVersion == SupportUpgradeHTTPOpVer {
+		currentBootstrapVersion = mockLatestVer
 	}
-	if err == nil {
-		return tmpVer
-	}
-
-	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*terror.Error)
-	// If the error is ErrTableNotExists(mysql.global_variables), we can't replace the bootstrap version.
-	if !ok || tErr.Code() != mysql.ErrNoSuchTable {
-		logutil.BgLogger().Fatal("mock upgrade, check bootstrapped failed", zap.Error(err))
-	}
-	return ver
 }
 
 const (
@@ -165,7 +152,7 @@ const (
 var MockUpgradeToVerLatestKind = defaultMockUpgradeToVerLatest
 
 func addMockBootstrapVersionForTest(s Session) {
-	if !*WithMockUpgrade {
+	if !WithMockUpgrade {
 		return
 	}
 
@@ -175,7 +162,7 @@ func addMockBootstrapVersionForTest(s Session) {
 	} else {
 		bootstrapVersion = append(bootstrapVersion, mockSimpleUpgradeToVerLatest)
 	}
-	currentBootstrapVersion++
+	currentBootstrapVersion = mockLatestVer
 }
 
 // Callback is used for Test.

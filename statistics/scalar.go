@@ -195,7 +195,8 @@ func calcFraction4Datums(lower, upper, value *types.Datum) float64 {
 
 const maxNumStep = 10
 
-func enumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []types.Datum {
+// EnumRangeValues generates enum values between low and high.
+func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []types.Datum {
 	if low.Kind() != high.Kind() {
 		return nil
 	}

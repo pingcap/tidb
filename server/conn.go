@@ -92,7 +92,6 @@ import (
 	"github.com/pingcap/tidb/sessiontxn"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/tablecodec"
-	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/arena"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -191,7 +190,10 @@ func (cc *clientConn) SetCtx(ctx *TiDBContext) {
 }
 
 func (cc *clientConn) String() string {
-	collationStr := mysql.Collations[cc.collation]
+	// MySQL converts a collation from u32 to char in the protocol, so the value could be wrong. It works fine for the
+	// default parameters (and libmysql seems not to provide any way to specify the collation other than the default
+	// one), so it's not a big problem.
+	collationStr := mysql.Collations[uint16(cc.collation)]
 	return fmt.Sprintf("id:%d, addr:%s status:%b, collation:%s, user:%s",
 		cc.connectionID, cc.bufReadConn.RemoteAddr(), cc.ctx.Status(), collationStr, cc.user,
 	)
@@ -2519,10 +2521,10 @@ func (cc getLastStmtInConn) String() string {
 		if cc.ctx.GetSessionVars().EnableRedactLog {
 			sql = parser.Normalize(sql)
 		}
-		return tidbutil.QueryStrForLog(sql)
+		return executor.FormatSQL(sql).String()
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return tidbutil.QueryStrForLog(cc.preparedStmt2String(stmtID))
+		return executor.FormatSQL(cc.preparedStmt2String(stmtID)).String()
 	case mysql.ComStmtClose, mysql.ComStmtReset:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
 		return mysql.Command2Str[cmd] + " " + strconv.Itoa(int(stmtID))
@@ -2550,10 +2552,10 @@ func (cc getLastStmtInConn) PProfLabel() string {
 	case mysql.ComStmtReset:
 		return "ResetStmt"
 	case mysql.ComQuery, mysql.ComStmtPrepare:
-		return parser.Normalize(tidbutil.QueryStrForLog(string(hack.String(data))))
+		return parser.Normalize(executor.FormatSQL(string(hack.String(data))).String())
 	case mysql.ComStmtExecute, mysql.ComStmtFetch:
 		stmtID := binary.LittleEndian.Uint32(data[0:4])
-		return tidbutil.QueryStrForLog(cc.preparedStmt2StringNoArgs(stmtID))
+		return executor.FormatSQL(cc.preparedStmt2StringNoArgs(stmtID)).String()
 	default:
 		return ""
 	}

@@ -295,7 +295,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.Require().Eventually(func() bool {
 		rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 		return rows[0][5] == "finished"
-	}, 20*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 	rows := s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID1)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "finished"
@@ -329,7 +329,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.Require().Eventually(func() bool {
 		rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 		return rows[0][5] == "failed"
-	}, 10*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID2)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "failed"
@@ -362,7 +362,7 @@ func (s *mockGCSSuite) TestShowDetachedJob() {
 	s.Require().Eventually(func() bool {
 		rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID3)).Rows()
 		return rows[0][5] == "failed"
-	}, 10*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 	rows = s.tk.MustQuery(fmt.Sprintf("show import job %d", jobID3)).Rows()
 	s.Len(rows, 1)
 	jobInfo.Status = "failed"
@@ -401,7 +401,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		globalTaskManager, err := storage.GetTaskManager()
 		s.NoError(err)
 		taskKey := importinto.TaskKey(jobID)
-		globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		globalTask, err := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 		s.NoError(err)
 		return globalTask
 	}
@@ -442,7 +442,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.Require().Eventually(func() bool {
 		task := getTask(int64(jobID1))
 		return task.State == proto.TaskStateReverted
-	}, 10*time.Second, 500*time.Millisecond)
+	}, maxWaitTime, 500*time.Millisecond)
 
 	// cancel again, should fail
 	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)
@@ -493,9 +493,9 @@ func (s *mockGCSSuite) TestCancelJob() {
 	taskKey := importinto.TaskKey(int64(jobID2))
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 		s.NoError(err2)
-		subtasks, err2 := globalTaskManager.GetSubtasksByStep(globalTask.ID, importinto.StepPostProcess)
+		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(globalTask.ID, importinto.StepPostProcess)
 		s.NoError(err2)
 		s.Len(subtasks, 2) // framework will generate a subtask when canceling
 		var cancelled bool
@@ -506,7 +506,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 			}
 		}
 		return globalTask.State == proto.TaskStateReverted && cancelled
-	}, 5*time.Second, 1*time.Second)
+	}, maxWaitTime, 1*time.Second)
 
 	// todo: enable it when https://github.com/pingcap/tidb/issues/44443 fixed
 	//// cancel a pending job created by test_cancel_job2 using root
@@ -622,8 +622,8 @@ func (s *mockGCSSuite) TestKillBeforeFinish() {
 	taskKey := importinto.TaskKey(jobID)
 	s.NoError(err)
 	s.Require().Eventually(func() bool {
-		globalTask, err2 := globalTaskManager.GetGlobalTaskByKey(taskKey)
+		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 		s.NoError(err2)
 		return globalTask.State == proto.TaskStateReverted
-	}, 5*time.Second, 1*time.Second)
+	}, maxWaitTime, 1*time.Second)
 }

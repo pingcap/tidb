@@ -89,8 +89,6 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 		// check duplicated hints
 		checkInsertStmtHintDuplicated(node, sctx)
 		return x.TableHints
-	case *ast.ExplainStmt:
-		return ExtractTableHintsFromStmtNode(x.Stmt, sctx)
 	default:
 		return nil
 	}
@@ -597,8 +595,10 @@ func (p *BlockHintProcessor) GetCurrentStmtHints(hints []*ast.TableOptimizerHint
 		}
 		offset := p.GetHintOffset(hint.QBName, currentOffset)
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
-			hintStr := RestoreTableOptimizerHint(hint)
-			p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
+			if p.Ctx != nil {
+				hintStr := RestoreTableOptimizerHint(hint)
+				p.Ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
+			}
 			continue
 		}
 		p.QbHints[offset] = append(p.QbHints[offset], hint)

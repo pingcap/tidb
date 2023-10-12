@@ -20,27 +20,18 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"go.uber.org/goleak"
 )
-
-var testDataMap = make(testdata.BookKeeper, 1)
-var rangerSuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
 
-	testDataMap.LoadTestSuiteData("testdata", "ranger_suite")
-	rangerSuiteData = testDataMap["ranger_suite"]
-
 	if exitCode := m.Run(); exitCode != 0 {
 		os.Exit(exitCode)
 	}
-
-	testDataMap.GenerateOutputIfNeeded()
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

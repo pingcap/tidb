@@ -15,13 +15,11 @@
 package statistics
 
 import (
-	"encoding/json"
 	"slices"
 
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/ranger"
 	"golang.org/x/exp/maps"
 )
 
@@ -173,75 +171,6 @@ func TraceStatsTbl(statsTbl *Table) *StatsTblTraceInfo {
 }
 
 /*
- Below is debug trace for the estimation for each single range inside GetRowCountByXXX().
-*/
-
-type startEstimateRangeInfo struct {
-	Range            string
-	LowValueEncoded  []byte
-	HighValueEncoded []byte
-	CurrentRowCount  float64
-}
-
-func debugTraceStartEstimateRange(
-	s sessionctx.Context,
-	r *ranger.Range,
-	lowBytes, highBytes []byte,
-	currentCount float64,
-) {
-	root := debugtrace.GetOrInitDebugTraceRoot(s)
-	traceInfo := &startEstimateRangeInfo{
-		CurrentRowCount:  currentCount,
-		Range:            r.String(),
-		LowValueEncoded:  lowBytes,
-		HighValueEncoded: highBytes,
-	}
-	root.AppendStepWithNameToCurrentContext(traceInfo, "Start estimate range")
-}
-
-type debugTraceAddRowCountType int8
-
-const (
-	debugTraceUnknownTypeAddRowCount debugTraceAddRowCountType = iota
-	debugTraceImpossible
-	debugTraceUniquePoint
-	debugTracePoint
-	debugTraceRange
-	debugTraceVer1SmallRange
-)
-
-var addRowCountTypeToString = map[debugTraceAddRowCountType]string{
-	debugTraceUnknownTypeAddRowCount: "Unknown",
-	debugTraceImpossible:             "Impossible",
-	debugTraceUniquePoint:            "Unique point",
-	debugTracePoint:                  "Point",
-	debugTraceRange:                  "Range",
-	debugTraceVer1SmallRange:         "Small range in ver1 stats",
-}
-
-func (d debugTraceAddRowCountType) MarshalJSON() ([]byte, error) {
-	return json.Marshal(addRowCountTypeToString[d])
-}
-
-type endEstimateRangeInfo struct {
-	RowCount float64
-	Type     debugTraceAddRowCountType
-}
-
-func debugTraceEndEstimateRange(
-	s sessionctx.Context,
-	count float64,
-	addType debugTraceAddRowCountType,
-) {
-	root := debugtrace.GetOrInitDebugTraceRoot(s)
-	traceInfo := &endEstimateRangeInfo{
-		RowCount: count,
-		Type:     addType,
-	}
-	root.AppendStepWithNameToCurrentContext(traceInfo, "End estimate range")
-}
-
-/*
  Below is debug trace for (*Histogram).locateBucket().
 */
 
@@ -282,7 +211,8 @@ type bucketInfo struct {
 	Repeat int64
 }
 
-func debugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
+// DebugTraceBuckets is used to trace the buckets used in the histogram.
+func DebugTraceBuckets(s sessionctx.Context, hg *Histogram, bucketIdxs []int) {
 	root := debugtrace.GetOrInitDebugTraceRoot(s)
 	buckets := make([]bucketInfo, len(bucketIdxs))
 	for i := range buckets {

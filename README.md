@@ -28,6 +28,8 @@
     &nbsp;
     <a href="https://ask.pingcap.com/"><img src="https://img.shields.io/badge/- Forum -red?style=social&logo=discourse" height=25></a>
     &nbsp;
+    <a href="https://discord.gg/KVRZBR2DrG?utm_source=github"><img src="https://img.shields.io/badge/- Discord -red?style=social&logo=discord" height=25></a>
+    &nbsp;
     <a href="https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb"><img src="https://img.shields.io/badge/-Slack-red?style=social&logo=slack" height=25></a>
     &nbsp;
     <a href="https://stackoverflow.com/questions/tagged/tidb"><img src="https://img.shields.io/badge/-Stack Overflow-red?style=social&logo=stackoverflow" height=25></a>
@@ -75,6 +77,7 @@ You can join the following groups or channels to discuss or ask questions about 
 
 - Seek help when you use TiDB
   - TiDB Forum: [English](https://ask.pingcap.com/), [Chinese](https://asktug.com)
+  - [Discord](https://discord.gg/KVRZBR2DrG?utm_source=github)
   - Slack channels: [#everyone](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb) (English), [#tidb-japan](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb) (Japanese)
   - [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb) (questions tagged with #tidb)
 - Discuss TiDB's implementation and design
@@ -94,6 +97,13 @@ Contributions are welcomed and greatly appreciated. You can get started with one
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
 Every contributor is welcome to claim your contribution swag by filling in and submitting this [form](https://forms.pingcap.com/f/tidb-contribution-swag).
+
+<a href="https://next.ossinsight.io/widgets/official/compose-activity-trends?repo_id=41986369" target="_blank" style="display: block" align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://next.ossinsight.io/widgets/official/compose-activity-trends/thumbnail.png?repo_id=41986369&image_size=auto&color_scheme=dark" width="822" height="auto">
+    <img alt="Activity Trends of pingcap/tidb - Last 28 days" src="https://next.ossinsight.io/widgets/official/compose-activity-trends/thumbnail.png?repo_id=41986369&image_size=auto&color_scheme=light" width="822" height="auto">
+  </picture>
+</a>
 
 ## Case studies
 

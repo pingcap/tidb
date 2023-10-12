@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/util/intest"
@@ -1269,6 +1270,10 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		TableRegions: task.PartitionTableRegions,
 	}
 
+	rgName := b.req.ResourceGroupName
+	if !variable.EnableResourceControl.Load() {
+		rgName = ""
+	}
 	req := tikvrpc.NewRequest(task.cmdType, &copReq, kvrpcpb.Context{
 		IsolationLevel: isolationLevelToPB(b.req.IsolationLevel),
 		Priority:       priorityToPB(b.req.Priority),
@@ -1276,6 +1281,9 @@ func (b *batchCopIterator) handleTaskOnce(ctx context.Context, bo *backoff.Backo
 		RecordTimeStat: true,
 		RecordScanStat: true,
 		TaskId:         b.req.TaskID,
+		ResourceControlContext: &kvrpcpb.ResourceControlContext{
+			ResourceGroupName: rgName,
+		},
 	})
 	if b.req.ResourceGroupTagger != nil {
 		b.req.ResourceGroupTagger(req)

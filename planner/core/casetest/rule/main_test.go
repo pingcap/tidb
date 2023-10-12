@@ -31,7 +31,6 @@ func TestMain(m *testing.M) {
 	flag.Parse()
 	testDataMap.LoadTestSuiteData("testdata", "derive_topn_from_window")
 	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
-	testDataMap.LoadTestSuiteData("testdata", "ordered_result_mode_suite")
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
@@ -51,10 +50,6 @@ func TestMain(m *testing.M) {
 
 func GetDerivedTopNSuiteData() testdata.TestData {
 	return testDataMap["derive_topn_from_window"]
-}
-
-func GetOrderedResultModeSuiteData() testdata.TestData {
-	return testDataMap["ordered_result_mode_suite"]
 }
 
 func GetJoinReorderSuiteData() testdata.TestData {

@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/planner/core/internal/base"
 	fd "github.com/pingcap/tidb/planner/funcdep"
 	"github.com/pingcap/tidb/planner/property"
@@ -142,7 +143,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	for _, item := range pp.PartitionBy {
 		partitionBy = append(partitionBy, item.Col)
 	}
-	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -183,7 +184,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 			partitionBy = append(partitionBy, col)
 		}
 	}
-	ndv, _ := getColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
+	ndv, _ := cardinality.EstimateColsNDVWithMatchedLen(partitionBy, dataSource.Schema(), dataSource.StatsInfo())
 	if ndv <= 1 {
 		return nil
 	}
@@ -280,6 +281,12 @@ type LogicalPlan interface {
 
 	// predicateSimplification consolidates different predcicates on a column and its equivalence classes.
 	predicateSimplification(opt *logicalOptimizeOp) LogicalPlan
+
+	// constantPropagation generate new constant predicate according to column equivalence relation
+	constantPropagation(parentPlan LogicalPlan, currentChildIdx int, opt *logicalOptimizeOp) (newRoot LogicalPlan)
+
+	// pullUpConstantPredicates recursive find constant predicate, used for the constant propagation rule
+	pullUpConstantPredicates() []expression.Expression
 
 	// recursiveDeriveStats derives statistic info between plans.
 	recursiveDeriveStats(colGroups [][]*expression.Column) (*property.StatsInfo, error)

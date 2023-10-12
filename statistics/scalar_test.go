@@ -257,7 +257,7 @@ func TestEnumRangeValues(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		vals := enumRangeValues(test.low, test.high, test.lowExclude, test.highExclude)
+		vals := EnumRangeValues(test.low, test.high, test.lowExclude, test.highExclude)
 		str, err := types.DatumsToString(vals, true)
 		require.NoError(t, err)
 		require.Equal(t, test.res, str)

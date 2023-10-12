@@ -99,8 +99,10 @@ func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%d/%d", tt.totalSize, tt.maxEngineSize), func(t *testing.T) {
 			e := &LoadDataController{
-				TotalFileSize: tt.totalSize,
-				Plan:          &Plan{MaxEngineSize: tt.maxEngineSize},
+				Plan: &Plan{
+					MaxEngineSize: tt.maxEngineSize,
+					TotalFileSize: tt.totalSize,
+				},
 			}
 			if got := e.getAdjustedMaxEngineSize(); got != tt.want {
 				t.Errorf("getAdjustedMaxEngineSize() = %v, want %v", got, tt.want)

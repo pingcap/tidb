@@ -16,11 +16,11 @@ package executor
 
 import (
 	"context"
+	"slices"
 
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
-	"golang.org/x/exp/slices"
 )
 
 type inspectionRuleRetriever struct {

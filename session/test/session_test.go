@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
@@ -285,19 +287,6 @@ func TestPrimaryKeyAutoIncrement(t *testing.T) {
 	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
 }
 
-// TestTruncateAlloc tests that the auto_increment ID does not reuse the old table's allocator.
-func TestTruncateAlloc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table truncate_id (a int primary key auto_increment)")
-	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	tk.MustExec("truncate table truncate_id")
-	tk.MustExec("insert truncate_id values (), (), (), (), (), (), (), (), (), ()")
-	tk.MustQuery("select a from truncate_id where a > 11").Check(testkit.Rows())
-}
-
 func TestParseWithParams(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -379,18 +368,6 @@ func TestProcessInfoIssue22068(t *testing.T) {
 	require.Equal(t, "select 1 from t where a = (select sleep(5));", pi.Info)
 	require.Nil(t, pi.Plan)
 	wg.Wait()
-}
-
-func TestIssue19127(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists issue19127")
-	tk.MustExec("create table issue19127 (c_int int, c_str varchar(40), primary key (c_int, c_str) ) partition by hash (c_int) partitions 4;")
-	tk.MustExec("insert into issue19127 values (9, 'angry williams'), (10, 'thirsty hugle');")
-	_, _ = tk.Exec("update issue19127 set c_int = c_int + 10, c_str = 'adoring stonebraker' where c_int in (10, 9);")
-	require.Equal(t, uint64(2), tk.Session().AffectedRows())
 }
 
 func TestPerStmtTaskID(t *testing.T) {
@@ -491,28 +468,6 @@ func TestStmtHints(t *testing.T) {
 	require.Equal(t, kv.ReplicaReadFollower, tk.Session().GetSessionVars().GetReplicaRead())
 }
 
-func TestLoadClientInteractive(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.RefreshSession()
-	tk.Session().GetSessionVars().ClientCapability = tk.Session().GetSessionVars().ClientCapability | mysql.ClientInteractive
-	tk.MustQuery("select @@wait_timeout").Check(testkit.Rows("28800"))
-}
-
-func TestHostLengthMax(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	host1 := strings.Repeat("a", 65)
-	host2 := strings.Repeat("a", 256)
-
-	tk.MustExec(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host1))
-	tk.MustGetErrMsg(fmt.Sprintf(`CREATE USER 'abcddfjakldfjaldddds'@'%s'`, host2), "[ddl:1470]String 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' is too long for host name (should be no longer than 255)")
-}
-
 func TestRollbackOnCompileError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -546,121 +501,6 @@ func TestRollbackOnCompileError(t *testing.T) {
 		}
 	}
 	require.True(t, recoverErr)
-}
-
-func TestDeletePanic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (c int)")
-	tk.MustExec("insert into t values (1), (2), (3)")
-	tk.MustExec("delete from `t` where `c` = ?", 1)
-	tk.MustExec("delete from `t` where `c` = ?", 2)
-}
-
-func TestSpecifyIndexPrefixLength(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	_, err := tk.Exec("create table t (c1 char, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	require.Error(t, err)
-
-	_, err = tk.Exec("create table t (c1 int, index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	require.Error(t, err)
-
-	_, err = tk.Exec("create table t (c1 bit(10), index(c1(3)));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	require.Error(t, err)
-
-	tk.MustExec("create table t (c1 char, c2 int, c3 bit(10));")
-
-	_, err = tk.Exec("create index idx_c1 on t (c1(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	require.Error(t, err)
-
-	_, err = tk.Exec("create index idx_c1 on t (c2(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	require.Error(t, err)
-
-	_, err = tk.Exec("create index idx_c1 on t (c3(3));")
-	// ERROR 1089 (HY000): Incorrect prefix key; the used key part isn't a string, the used length is longer than the key part, or the storage engine doesn't support unique prefix keys
-	require.Error(t, err)
-
-	tk.MustExec("drop table if exists t;")
-
-	_, err = tk.Exec("create table t (c1 int, c2 blob, c3 varchar(64), index(c2));")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	require.Error(t, err)
-
-	tk.MustExec("create table t (c1 int, c2 blob, c3 varchar(64));")
-	_, err = tk.Exec("create index idx_c1 on t (c2);")
-	// ERROR 1170 (42000): BLOB/TEXT column 'c2' used in key specification without a key length
-	require.Error(t, err)
-
-	_, err = tk.Exec("create index idx_c1 on t (c2(555555));")
-	// ERROR 1071 (42000): Specified key was too long; max key length is 3072 bytes
-	require.Error(t, err)
-
-	_, err = tk.Exec("create index idx_c1 on t (c1(5))")
-	// ERROR 1089 (HY000): Incorrect prefix key;
-	// the used key part isn't a string, the used length is longer than the key part,
-	// or the storage engine doesn't support unique prefix keys
-	require.Error(t, err)
-
-	tk.MustExec("create index idx_c1 on t (c1);")
-	tk.MustExec("create index idx_c2 on t (c2(3));")
-	tk.MustExec("create unique index idx_c3 on t (c3(5));")
-
-	tk.MustExec("insert into t values (3, 'abc', 'def');")
-	tk.MustQuery("select c2 from t where c2 = 'abc';").Check(testkit.Rows("abc"))
-
-	tk.MustExec("insert into t values (4, 'abcd', 'xxx');")
-	tk.MustExec("insert into t values (4, 'abcf', 'yyy');")
-	tk.MustQuery("select c2 from t where c2 = 'abcf';").Check(testkit.Rows("abcf"))
-	tk.MustQuery("select c2 from t where c2 = 'abcd';").Check(testkit.Rows("abcd"))
-
-	tk.MustExec("insert into t values (4, 'ignore', 'abcdeXXX');")
-	_, err = tk.Exec("insert into t values (5, 'ignore', 'abcdeYYY');")
-	// ERROR 1062 (23000): Duplicate entry 'abcde' for key 'idx_c3'
-	require.Error(t, err)
-	tk.MustQuery("select c3 from t where c3 = 'abcde';").Check(testkit.Rows())
-
-	tk.MustExec("delete from t where c3 = 'abcdeXXX';")
-	tk.MustExec("delete from t where c2 = 'abc';")
-
-	tk.MustQuery("select c2 from t where c2 > 'abcd';").Check(testkit.Rows("abcf"))
-	tk.MustQuery("select c2 from t where c2 < 'abcf';").Check(testkit.Rows("abcd"))
-	tk.MustQuery("select c2 from t where c2 >= 'abcd';").Check(testkit.Rows("abcd", "abcf"))
-	tk.MustQuery("select c2 from t where c2 <= 'abcf';").Check(testkit.Rows("abcd", "abcf"))
-	tk.MustQuery("select c2 from t where c2 != 'abc';").Check(testkit.Rows("abcd", "abcf"))
-	tk.MustQuery("select c2 from t where c2 != 'abcd';").Check(testkit.Rows("abcf"))
-
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (a int, b char(255), key(a, b(20)));")
-	tk.MustExec("insert into t1 values (0, '1');")
-	tk.MustExec("update t1 set b = b + 1 where a = 0;")
-	tk.MustQuery("select b from t1 where a = 0;").Check(testkit.Rows("2"))
-
-	// test union index.
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a text, b text, c int, index (a(3), b(3), c));")
-	tk.MustExec("insert into t values ('abc', 'abcd', 1);")
-	tk.MustExec("insert into t values ('abcx', 'abcf', 2);")
-	tk.MustExec("insert into t values ('abcy', 'abcf', 3);")
-	tk.MustExec("insert into t values ('bbc', 'abcd', 4);")
-	tk.MustExec("insert into t values ('bbcz', 'abcd', 5);")
-	tk.MustExec("insert into t values ('cbck', 'abd', 6);")
-	tk.MustQuery("select c from t where a = 'abc' and b <= 'abc';").Check(testkit.Rows())
-	tk.MustQuery("select c from t where a = 'abc' and b <= 'abd';").Check(testkit.Rows("1"))
-	tk.MustQuery("select c from t where a < 'cbc' and b > 'abcd';").Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select c from t where a <= 'abd' and b > 'abc';").Check(testkit.Rows("1", "2", "3"))
-	tk.MustQuery("select c from t where a < 'bbcc' and b = 'abcd';").Check(testkit.Rows("1", "4"))
-	tk.MustQuery("select c from t where a > 'bbcf';").Check(testkit.Rows("5", "6"))
 }
 
 func TestResultField(t *testing.T) {
@@ -822,54 +662,6 @@ func TestMatchIdentity(t *testing.T) {
 	require.Equal(t, "%", identity.Hostname)
 }
 
-func TestLastInsertID(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	// insert
-	tk.MustExec("create table t (c1 int not null auto_increment, c2 int, PRIMARY KEY (c1))")
-	tk.MustExec("insert into t set c2 = 11")
-	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("1"))
-
-	tk.MustExec("insert into t (c2) values (22), (33), (44)")
-	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
-
-	tk.MustExec("insert into t (c1, c2) values (10, 55)")
-	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("2"))
-
-	// replace
-	tk.MustExec("replace t (c2) values(66)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 11", "2 22", "3 33", "4 44", "10 55", "11 66"))
-	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("11"))
-
-	// update
-	tk.MustExec("update t set c1=last_insert_id(c1 + 100)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("101 11", "102 22", "103 33", "104 44", "110 55", "111 66"))
-	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("111"))
-	tk.MustExec("insert into t (c2) values (77)")
-	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
-
-	// drop
-	tk.MustExec("drop table t")
-	tk.MustQuery("select last_insert_id()").Check(testkit.Rows("112"))
-
-	tk.MustExec("create table t (c2 int, c3 int, c1 int not null auto_increment, PRIMARY KEY (c1))")
-	tk.MustExec("insert into t set c2 = 30")
-
-	// insert values
-	lastInsertID := tk.Session().LastInsertID()
-	tk.MustExec("prepare stmt1 from 'insert into t (c2) values (?)'")
-	tk.MustExec("set @v1=10")
-	tk.MustExec("set @v2=20")
-	tk.MustExec("execute stmt1 using @v1")
-	tk.MustExec("execute stmt1 using @v2")
-	tk.MustExec("deallocate prepare stmt1")
-	currLastInsertID := tk.Session().GetSessionVars().StmtCtx.PrevLastInsertID
-	tk.MustQuery("select c1 from t where c2 = 20").Check(testkit.Rows(fmt.Sprint(currLastInsertID)))
-	require.Equal(t, currLastInsertID, lastInsertID+2)
-}
-
 func TestBinaryReadOnly(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -967,19 +759,23 @@ func TestRequestSource(t *testing.T) {
 		return interceptor.NewRPCInterceptor("kv-request-source-verify", func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				requestSource := ""
+				readType := ""
 				switch r := req.Req.(type) {
 				case *kvrpcpb.PrewriteRequest:
 					requestSource = r.GetContext().GetRequestSource()
 				case *kvrpcpb.CommitRequest:
 					requestSource = r.GetContext().GetRequestSource()
 				case *coprocessor.Request:
+					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
 				case *kvrpcpb.GetRequest:
+					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
 				case *kvrpcpb.BatchGetRequest:
+					readType = "leader_" // read request will be attached with read type
 					requestSource = r.GetContext().GetRequestSource()
 				}
-				require.Equal(t, source, requestSource)
+				require.Equal(t, readType+source, requestSource)
 				return next(target, req)
 			}
 		})
@@ -995,4 +791,256 @@ func TestRequestSource(t *testing.T) {
 	tk.MustExecWithContext(selectCtx, "select count(*) from t;")
 	tk.MustQueryWithContext(selectCtx, "select b from t where a = 1;")
 	tk.MustQueryWithContext(selectCtx, "select b from t where a in (1, 2, 3);")
+}
+
+func TestEmptyInitSQLFile(t *testing.T) {
+	// A non-existent sql file would stop the bootstrap of the tidb cluster
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	dom, err := session.BootstrapSession(store)
+	require.Nil(t, dom)
+	require.Error(t, err)
+}
+
+func TestInitSystemVariable(t *testing.T) {
+	// We create an initialize-sql-file and then bootstrap the server with it.
+	// The observed behavior should be that tidb_enable_noop_variables is now
+	// disabled, and the feature works as expected.
+	initializeSQLFile, err := os.CreateTemp("", "init.sql")
+	require.NoError(t, err)
+	defer func() {
+		path := initializeSQLFile.Name()
+		err = initializeSQLFile.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+	// Implicitly test multi-line init files
+	_, err = initializeSQLFile.WriteString(
+		"CREATE DATABASE initsqlfiletest;\n" +
+			"SET GLOBAL tidb_enable_noop_variables = OFF;\n")
+	require.NoError(t, err)
+
+	// Create a mock store
+	// Set the config parameter for initialize sql file
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the InitializeSQLFile config option
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer dom.Close()
+	se := session.CreateSessionAndSetID(t, store)
+	ctx := context.Background()
+	r := session.MustExecToRecodeSet(t, se, `SHOW VARIABLES LIKE 'query_cache_type'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows()) // not shown in noopvariables mode
+	require.NoError(t, r.Close())
+
+	r = session.MustExecToRecodeSet(t, se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, []byte("OFF"), row.GetBytes(1))
+	require.NoError(t, r.Close())
+}
+
+func TestInitUsers(t *testing.T) {
+	// Two sql files are set to 'initialize-sql-file' one after another,
+	// and only the first one is executed.
+	var err error
+	sqlFiles := make([]*os.File, 2)
+	for i, name := range []string{"1.sql", "2.sql"} {
+		sqlFiles[i], err = os.CreateTemp("", name)
+		require.NoError(t, err)
+	}
+	defer func() {
+		for _, sqlFile := range sqlFiles {
+			path := sqlFile.Name()
+			err = sqlFile.Close()
+			require.NoError(t, err)
+			err = os.Remove(path)
+			require.NoError(t, err)
+		}
+	}()
+	_, err = sqlFiles[0].WriteString(`
+CREATE USER cloud_admin;
+GRANT BACKUP_ADMIN, RESTORE_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT DASHBOARD_CLIENT on *.* TO 'cloud_admin'@'%';
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT CONNECTION_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_CONNECTION_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_USER_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT RESTRICTED_REPLICA_WRITER_ADMIN ON *.* TO 'cloud_admin'@'%';
+GRANT CREATE USER ON *.* TO 'cloud_admin'@'%';
+GRANT RELOAD ON *.* TO 'cloud_admin'@'%';
+GRANT PROCESS ON *.* TO 'cloud_admin'@'%';
+GRANT SELECT, INSERT, UPDATE, DELETE ON mysql.* TO 'cloud_admin'@'%';
+GRANT SELECT ON information_schema.* TO 'cloud_admin'@'%';
+GRANT SELECT ON performance_schema.* TO 'cloud_admin'@'%';
+GRANT SHOW DATABASES on *.* TO 'cloud_admin'@'%';
+GRANT REFERENCES ON *.* TO 'cloud_admin'@'%';
+GRANT SELECT ON *.* TO 'cloud_admin'@'%';
+GRANT INDEX ON *.* TO 'cloud_admin'@'%';
+GRANT INSERT ON *.* TO 'cloud_admin'@'%';
+GRANT UPDATE ON *.* TO 'cloud_admin'@'%';
+GRANT DELETE ON *.* TO 'cloud_admin'@'%';
+GRANT CREATE ON *.* TO 'cloud_admin'@'%';
+GRANT DROP ON *.* TO 'cloud_admin'@'%';
+GRANT ALTER ON *.* TO 'cloud_admin'@'%';
+GRANT CREATE VIEW ON *.* TO 'cloud_admin'@'%';
+GRANT SHUTDOWN, CONFIG ON *.* TO 'cloud_admin'@'%';
+REVOKE SHUTDOWN, CONFIG ON *.* FROM root;
+
+DROP USER root;
+`)
+	require.NoError(t, err)
+	_, err = sqlFiles[1].WriteString("drop user cloud_admin;")
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
+	defer func() {
+		require.NoError(t, store.Close())
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the first sql file
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	ctx := context.Background()
+	// 'cloud_admin' has been created successfully
+	r := session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'cloud_admin'`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "cloud_admin", row.GetString(0))
+	require.NoError(t, r.Close())
+	// 'root' has been deleted successfully
+	r = session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'root'`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
+	require.NoError(t, r.Close())
+	dom.Close()
+
+	session.DisableRunBootstrapSQLFileInTest()
+
+	// Bootstrap with the second sql file, which would not been executed.
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	se = session.CreateSessionAndSetID(t, store)
+	r = session.MustExecToRecodeSet(t, se, `select user from mysql.user where user = 'cloud_admin'`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row = req.GetRow(0)
+	require.Equal(t, "cloud_admin", row.GetString(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}
+
+func TestErrorHappenWhileInit(t *testing.T) {
+	// 1. parser error in sql file (1.sql) makes the bootstrap panic
+	// 2. other errors in sql file (2.sql) will be ignored
+	var err error
+	sqlFiles := make([]*os.File, 2)
+	for i, name := range []string{"1.sql", "2.sql"} {
+		sqlFiles[i], err = os.CreateTemp("", name)
+		require.NoError(t, err)
+	}
+	defer func() {
+		for _, sqlFile := range sqlFiles {
+			path := sqlFile.Name()
+			err = sqlFile.Close()
+			require.NoError(t, err)
+			err = os.Remove(path)
+			require.NoError(t, err)
+		}
+	}()
+	_, err = sqlFiles[0].WriteString("create table test.t (c in);")
+	require.NoError(t, err)
+	_, err = sqlFiles[1].WriteString(`
+create table test.t (c int);
+insert into test.t values ("abc"); -- invalid statement
+`)
+	require.NoError(t, err)
+
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
+	defer func() {
+		config.GetGlobalConfig().InitializeSQLFile = ""
+	}()
+
+	// Bootstrap with the first sql file
+	dom, err := session.BootstrapSession(store)
+	require.Nil(t, dom)
+	require.Error(t, err)
+	require.NoError(t, store.Close())
+
+	session.DisableRunBootstrapSQLFileInTest()
+
+	// Bootstrap with the second sql file, which would not been executed.
+	store, err = mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
+	dom, err = session.BootstrapSession(store)
+	require.NoError(t, err)
+	se := session.CreateSessionAndSetID(t, store)
+	ctx := context.Background()
+	_ = session.MustExecToRecodeSet(t, se, `use test;`)
+	require.NoError(t, err)
+	// Table t has been created.
+	r := session.MustExecToRecodeSet(t, se, `show tables;`)
+	require.NoError(t, err)
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	row := req.GetRow(0)
+	require.Equal(t, "t", row.GetString(0))
+	require.NoError(t, r.Close())
+	// But data is failed to inserted since the error
+	r = session.MustExecToRecodeSet(t, se, `select * from test.t`)
+	require.NoError(t, err)
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 0, req.NumRows())
+	require.NoError(t, r.Close())
+	dom.Close()
 }

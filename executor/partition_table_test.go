@@ -206,30 +206,30 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 		// select a from t where a={x}; // the result is {x}
 		x := rand.Intn(100) + 1
 		queryRange1 := fmt.Sprintf("select a from trange1 where a=%v", x)
-		require.True(t, tk.HasPlan(queryRange1, "Point_Get")) // check if PointGet is used
+		tk.MustHavePlan(queryRange1, "Point_Get") // check if PointGet is used
 		tk.MustQuery(queryRange1).Check(testkit.Rows(fmt.Sprintf("%v", x)))
 
 		queryRange2 := fmt.Sprintf("select a from trange1 where a=%v", x)
-		require.True(t, tk.HasPlan(queryRange2, "Point_Get")) // check if PointGet is used
+		tk.MustHavePlan(queryRange2, "Point_Get") // check if PointGet is used
 		tk.MustQuery(queryRange2).Check(testkit.Rows(fmt.Sprintf("%v", x)))
 
 		y := rand.Intn(12) + 1
 		queryList := fmt.Sprintf("select a from tlist where a=%v", y)
-		require.True(t, tk.HasPlan(queryList, "Point_Get")) // check if PointGet is used
+		tk.MustHavePlan(queryList, "Point_Get") // check if PointGet is used
 		tk.MustQuery(queryList).Check(testkit.Rows(fmt.Sprintf("%v", y)))
 	}
 
 	// test table dual
 	queryRange1 := "select a from trange1 where a=200"
-	require.True(t, tk.HasPlan(queryRange1, "TableDual")) // check if TableDual is used
+	tk.MustHavePlan(queryRange1, "TableDual") // check if TableDual is used
 	tk.MustQuery(queryRange1).Check(testkit.Rows())
 
 	queryRange2 := "select a from trange2 where a=200"
-	require.True(t, tk.HasPlan(queryRange2, "TableDual")) // check if TableDual is used
+	tk.MustHavePlan(queryRange2, "TableDual") // check if TableDual is used
 	tk.MustQuery(queryRange2).Check(testkit.Rows())
 
 	queryList := "select a from tlist where a=200"
-	require.True(t, tk.HasPlan(queryList, "TableDual")) // check if TableDual is used
+	tk.MustHavePlan(queryList, "TableDual") // check if TableDual is used
 	tk.MustQuery(queryList).Check(testkit.Rows())
 
 	// test PointGet for one partition
@@ -237,14 +237,14 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY RANGE (a) (partition p0 values less than(1))")
 	tk.MustExec("insert into t values (-1, 1), (-2, 1)")
 	tk.MustExec("analyze table t")
-	require.True(t, tk.HasPlan(queryOnePartition, "Point_Get"))
+	tk.MustHavePlan(queryOnePartition, "Point_Get")
 	tk.MustQuery(queryOnePartition).Check(testkit.Rows(fmt.Sprintf("%v", -1)))
 
 	tk.MustExec("drop table t")
 	tk.MustExec("create table t(a int primary key, b int) PARTITION BY list (a) (partition p0 values in (-1, -2))")
 	tk.MustExec("insert into t values (-1, 1), (-2, 1)")
 	tk.MustExec("analyze table t")
-	require.True(t, tk.HasPlan(queryOnePartition, "Point_Get"))
+	tk.MustHavePlan(queryOnePartition, "Point_Get")
 	tk.MustQuery(queryOnePartition).Check(testkit.Rows(fmt.Sprintf("%v", -1)))
 }
 
@@ -543,7 +543,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		y := rand.Intn(500) + 1
 		queryPartition := fmt.Sprintf("select * from trange use index(idx_a) where a > %v order by a, b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular use index(idx_a) where a > %v order by a, b limit %v;", x, y)
-		require.True(t, tk.HasPlan(queryPartition, "IndexLookUp")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition, "IndexLookUp") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
@@ -568,17 +568,17 @@ func TestOrderByAndLimit(t *testing.T) {
 
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		if len(regularResult) > 0 {
-			require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "Limit"))
-			require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "IndexLookUp"))
-			require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "Limit"))
-			require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
-			require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
-			require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
+			tk.MustHavePlan(queryRangePartitionWithLimitHint, "Limit")
+			tk.MustHavePlan(queryRangePartitionWithLimitHint, "IndexLookUp")
+			tk.MustHavePlan(queryHashPartitionWithLimitHint, "Limit")
+			tk.MustHavePlan(queryHashPartitionWithLimitHint, "IndexLookUp")
+			tk.MustHavePlan(queryListPartitionWithLimitHint, "Limit")
+			tk.MustHavePlan(queryListPartitionWithLimitHint, "IndexLookUp")
 		}
 		if i%2 != 0 {
-			require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
-			require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
-			require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+			tk.MustNotHavePlan(queryRangePartitionWithLimitHint, "TopN") // fully pushed
+			tk.MustNotHavePlan(queryHashPartitionWithLimitHint, "TopN")
+			tk.MustNotHavePlan(queryListPartitionWithLimitHint, "TopN")
 		}
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
@@ -604,17 +604,17 @@ func TestOrderByAndLimit(t *testing.T) {
 
 		regularResult := tk.MustQuery(queryRegular).Sort().Rows()
 		if len(regularResult) > 0 {
-			require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "Limit"))
-			require.True(t, tk.HasPlan(queryRangePartitionWithLimitHint, "IndexLookUp"))
-			require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "Limit"))
-			require.True(t, tk.HasPlan(queryHashPartitionWithLimitHint, "IndexLookUp"))
-			require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "Limit"))
-			require.True(t, tk.HasPlan(queryListPartitionWithLimitHint, "IndexLookUp"))
+			tk.MustHavePlan(queryRangePartitionWithLimitHint, "Limit")
+			tk.MustHavePlan(queryRangePartitionWithLimitHint, "IndexLookUp")
+			tk.MustHavePlan(queryHashPartitionWithLimitHint, "Limit")
+			tk.MustHavePlan(queryHashPartitionWithLimitHint, "IndexLookUp")
+			tk.MustHavePlan(queryListPartitionWithLimitHint, "Limit")
+			tk.MustHavePlan(queryListPartitionWithLimitHint, "IndexLookUp")
 		}
 		if i%2 != 0 {
-			require.False(t, tk.HasPlan(queryRangePartitionWithLimitHint, "TopN")) // fully pushed
-			require.False(t, tk.HasPlan(queryHashPartitionWithLimitHint, "TopN"))
-			require.False(t, tk.HasPlan(queryListPartitionWithLimitHint, "TopN"))
+			tk.MustNotHavePlan(queryRangePartitionWithLimitHint, "TopN") // fully pushed
+			tk.MustNotHavePlan(queryHashPartitionWithLimitHint, "TopN")
+			tk.MustNotHavePlan(queryListPartitionWithLimitHint, "TopN")
 		}
 		tk.MustQuery(queryRangePartitionWithLimitHint).Sort().Check(regularResult)
 		tk.MustQuery(queryHashPartitionWithLimitHint).Sort().Check(regularResult)
@@ -631,7 +631,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		y := rand.Intn(500) + 1
 		queryPartition := fmt.Sprintf("select * from trange ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
-		require.True(t, tk.HasPlan(queryPartition, "TableReader")) // check if tableReader is used
+		tk.MustHavePlan(queryPartition, "TableReader") // check if tableReader is used
 		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
@@ -645,12 +645,12 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
 		queryListPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from tlist ignore index(idx_a, idx_ab) where a > %v order by a, b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select * from tregular ignore index(idx_a) where a > %v order by a, b limit %v;", x, y)
-		require.True(t, tk.HasPlan(queryRangePartition, "TableReader")) // check if tableReader is used
-		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
-		require.True(t, tk.HasPlan(queryListPartition, "TableReader"))
-		require.False(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is not pushed
-		require.False(t, tk.HasPlan(queryHashPartition, "Limit"))
-		require.False(t, tk.HasPlan(queryListPartition, "Limit"))
+		tk.MustHavePlan(queryRangePartition, "TableReader") // check if tableReader is used
+		tk.MustHavePlan(queryHashPartition, "TableReader")
+		tk.MustHavePlan(queryListPartition, "TableReader")
+		tk.MustNotHavePlan(queryRangePartition, "Limit") // check if order property is not pushed
+		tk.MustNotHavePlan(queryHashPartition, "Limit")
+		tk.MustNotHavePlan(queryListPartition, "Limit")
 		regularResult := tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
@@ -662,15 +662,15 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryHashPartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash_intpk use index(primary) where a > %v order by a limit %v", x, y)
 		queryListPartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from tlist_intpk use index(primary) where a > %v order by a limit %v", x, y)
 		queryRegular = fmt.Sprintf("select a from tregular_intpk where a > %v order by a limit %v", x, y)
-		require.True(t, tk.HasPlan(queryRangePartition, "TableReader"))
-		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
-		require.True(t, tk.HasPlan(queryListPartition, "TableReader"))
-		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
-		require.False(t, tk.HasPlan(queryRangePartition, "TopN")) // and is fully pushed
-		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
-		require.False(t, tk.HasPlan(queryHashPartition, "TopN"))
-		require.True(t, tk.HasPlan(queryListPartition, "Limit"))
-		require.False(t, tk.HasPlan(queryListPartition, "TopN"))
+		tk.MustHavePlan(queryRangePartition, "TableReader")
+		tk.MustHavePlan(queryHashPartition, "TableReader")
+		tk.MustHavePlan(queryListPartition, "TableReader")
+		tk.MustHavePlan(queryRangePartition, "Limit")   // check if order property is pushed
+		tk.MustNotHavePlan(queryRangePartition, "TopN") // and is fully pushed
+		tk.MustHavePlan(queryHashPartition, "Limit")
+		tk.MustNotHavePlan(queryHashPartition, "TopN")
+		tk.MustHavePlan(queryListPartition, "Limit")
+		tk.MustNotHavePlan(queryListPartition, "TopN")
 		regularResult = tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
@@ -681,15 +681,15 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryHashPartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from thash_clustered use index(primary) where a > %v order by a, b limit %v;", x, y)
 		queryListPartition = fmt.Sprintf("select /*+ LIMIT_TO_COP() */ * from tlist_clustered use index(primary) where a > %v order by a, b limit %v;", x, y)
 		queryRegular = fmt.Sprintf("select * from tregular_clustered where a > %v order by a, b limit %v;", x, y)
-		require.True(t, tk.HasPlan(queryRangePartition, "TableReader")) // check if tableReader is used
-		require.True(t, tk.HasPlan(queryHashPartition, "TableReader"))
-		require.True(t, tk.HasPlan(queryListPartition, "TableReader"))
-		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
-		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
-		require.True(t, tk.HasPlan(queryListPartition, "Limit"))
-		require.False(t, tk.HasPlan(queryRangePartition, "TopN")) // could fully pushed for TableScan executor
-		require.False(t, tk.HasPlan(queryHashPartition, "TopN"))
-		require.False(t, tk.HasPlan(queryListPartition, "TopN"))
+		tk.MustHavePlan(queryRangePartition, "TableReader") // check if tableReader is used
+		tk.MustHavePlan(queryHashPartition, "TableReader")
+		tk.MustHavePlan(queryListPartition, "TableReader")
+		tk.MustHavePlan(queryRangePartition, "Limit") // check if order property is pushed
+		tk.MustHavePlan(queryHashPartition, "Limit")
+		tk.MustHavePlan(queryListPartition, "Limit")
+		tk.MustNotHavePlan(queryRangePartition, "TopN") // could fully pushed for TableScan executor
+		tk.MustNotHavePlan(queryHashPartition, "TopN")
+		tk.MustNotHavePlan(queryListPartition, "TopN")
 		regularResult = tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
@@ -701,12 +701,12 @@ func TestOrderByAndLimit(t *testing.T) {
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
 		// but order is not pushed
-		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustNotHavePlan(queryPartitionWithTiFlash, "Limit")
 		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_intpk]) */ /*+ LIMIT_TO_COP() */ * from trange_intpk where a > %v order by a limit %v", x, y)
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
 		// but order is not pushed
-		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustNotHavePlan(queryPartitionWithTiFlash, "Limit")
 		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[trange_clustered]) */ * from trange_clustered where a > %v order by a limit %v", x, y)
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
@@ -714,7 +714,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
 		// but order is not pushed
-		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustNotHavePlan(queryPartitionWithTiFlash, "Limit")
 		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_intpk]) */ * from thash_intpk where a > %v order by a limit %v", x, y)
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
@@ -722,7 +722,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
 		// but order is not pushed
-		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustNotHavePlan(queryPartitionWithTiFlash, "Limit")
 		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[thash_clustered]) */ * from thash_clustered where a > %v order by a limit %v", x, y)
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
@@ -730,7 +730,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
 		// but order is not pushed
-		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustNotHavePlan(queryPartitionWithTiFlash, "Limit")
 		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[tlist_intpk]) */ * from tlist_intpk where a > %v order by a limit %v", x, y)
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
@@ -738,7 +738,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
 		// but order is not pushed
-		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustNotHavePlan(queryPartitionWithTiFlash, "Limit")
 		queryPartitionWithTiFlash = fmt.Sprintf("select /*+ read_from_storage(tiflash[tlist_clustered]) */ * from tlist_clustered where a > %v order by a limit %v", x, y)
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
@@ -746,7 +746,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		// check if tiflash is used
 		require.True(t, tk.HasTiFlashPlan(queryPartitionWithTiFlash))
 		// but order is not pushed
-		require.False(t, tk.HasPlan(queryPartitionWithTiFlash, "Limit"), fmt.Sprintf("%v", tk.MustQuery("explain "+queryPartitionWithTiFlash).Rows()))
+		tk.MustNotHavePlan(queryPartitionWithTiFlash, "Limit")
 		tk.MustExec(" set @@tidb_allow_mpp=0;")
 		tk.MustExec("set @@session.tidb_isolation_read_engines=\"tikv\"")
 	}
@@ -759,7 +759,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		y := rand.Intn(500) + 1
 		queryPartition := fmt.Sprintf("select a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
-		require.True(t, tk.HasPlan(queryPartition, "IndexReader")) // check if indexReader is used
+		tk.MustHavePlan(queryPartition, "IndexReader") // check if indexReader is used
 		tk.MustQuery(queryPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
@@ -772,12 +772,12 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryRangePartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash use index(idx_a) where a > %v order by a limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_a) where a > %v order by a limit %v;", x, y)
-		require.True(t, tk.HasPlan(queryRangePartition, "IndexReader")) // check if indexReader is used
-		require.True(t, tk.HasPlan(queryHashPartition, "IndexReader"))
-		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
-		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
-		require.False(t, tk.HasPlan(queryRangePartition, "TopN")) // fully pushed limit
-		require.False(t, tk.HasPlan(queryHashPartition, "TopN"))
+		tk.MustHavePlan(queryRangePartition, "IndexReader") // check if indexReader is used
+		tk.MustHavePlan(queryHashPartition, "IndexReader")
+		tk.MustHavePlan(queryRangePartition, "Limit") // check if order property is pushed
+		tk.MustHavePlan(queryHashPartition, "Limit")
+		tk.MustNotHavePlan(queryRangePartition, "TopN") // fully pushed limit
+		tk.MustNotHavePlan(queryHashPartition, "TopN")
 		regularResult := tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
@@ -791,15 +791,15 @@ func TestOrderByAndLimit(t *testing.T) {
 		queryHashPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from thash use index(idx_ab) where a = %v order by b limit %v;", x, y)
 		queryListPartition := fmt.Sprintf("select /*+ LIMIT_TO_COP() */ a from tlist use index(idx_ab) where a = %v order by b limit %v;", x, y)
 		queryRegular := fmt.Sprintf("select a from tregular use index(idx_ab) where a = %v order by b limit %v;", x, y)
-		require.True(t, tk.HasPlan(queryRangePartition, "IndexReader")) // check if indexReader is used
-		require.True(t, tk.HasPlan(queryHashPartition, "IndexReader"))
-		require.True(t, tk.HasPlan(queryListPartition, "IndexReader"))
-		require.True(t, tk.HasPlan(queryRangePartition, "Limit")) // check if order property is pushed
-		require.True(t, tk.HasPlan(queryHashPartition, "Limit"))
-		require.True(t, tk.HasPlan(queryListPartition, "Limit"))
-		require.False(t, tk.HasPlan(queryRangePartition, "TopN")) // fully pushed limit
-		require.False(t, tk.HasPlan(queryHashPartition, "TopN"))
-		require.False(t, tk.HasPlan(queryListPartition, "TopN"))
+		tk.MustHavePlan(queryRangePartition, "IndexReader") // check if indexReader is used
+		tk.MustHavePlan(queryHashPartition, "IndexReader")
+		tk.MustHavePlan(queryListPartition, "IndexReader")
+		tk.MustHavePlan(queryRangePartition, "Limit") // check if order property is pushed
+		tk.MustHavePlan(queryHashPartition, "Limit")
+		tk.MustHavePlan(queryListPartition, "Limit")
+		tk.MustNotHavePlan(queryRangePartition, "TopN") // fully pushed limit
+		tk.MustNotHavePlan(queryHashPartition, "TopN")
+		tk.MustNotHavePlan(queryListPartition, "TopN")
 		regularResult := tk.MustQuery(queryRegular).Rows()
 		tk.MustQuery(queryRangePartition).Check(regularResult)
 		tk.MustQuery(queryHashPartition).Check(regularResult)
@@ -813,7 +813,7 @@ func TestOrderByAndLimit(t *testing.T) {
 		y := rand.Intn(500) + 1
 		queryHashPartition := fmt.Sprintf("select /*+ use_index_merge(thash) */ * from thash where a > 2 or b < 5 order by a, b limit %v;", y)
 		queryRegular := fmt.Sprintf("select * from tregular where a > 2 or b < 5 order by a, b limit %v;", y)
-		require.True(t, tk.HasPlan(queryHashPartition, "IndexMerge")) // check if indexMerge is used
+		tk.MustHavePlan(queryHashPartition, "IndexMerge") // check if indexMerge is used
 		tk.MustQuery(queryHashPartition).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
@@ -971,13 +971,13 @@ func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 		x := rand.Intn(100) + 1
 		queryHash := fmt.Sprintf("select a from thash where a=%v", x)
 		queryRegular := fmt.Sprintf("select a from tregular where a=%v", x)
-		require.True(t, tk.HasPlan(queryHash, "Point_Get")) // check if PointGet is used
+		tk.MustHavePlan(queryHash, "Point_Get") // check if PointGet is used
 		tk.MustQuery(queryHash).Check(tk.MustQuery(queryRegular).Rows())
 	}
 
 	// test empty PointGet
 	queryHash := "select a from thash where a=200"
-	require.True(t, tk.HasPlan(queryHash, "Point_Get")) // check if PointGet is used
+	tk.MustHavePlan(queryHash, "Point_Get") // check if PointGet is used
 	tk.MustQuery(queryHash).Check(testkit.Rows())
 
 	// test BatchGet
@@ -992,7 +992,7 @@ func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
 
 		queryHash := fmt.Sprintf("select a from thash where a in (%v)", strings.Join(points, ","))
 		queryRegular := fmt.Sprintf("select a from tregular where a in (%v)", strings.Join(points, ","))
-		require.True(t, tk.HasPlan(queryHash, "Point_Get")) // check if PointGet is used
+		tk.MustHavePlan(queryHash, "Point_Get") // check if PointGet is used
 		tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	}
 }
@@ -1361,11 +1361,11 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 		queryRegular1 := fmt.Sprintf("select a from tregular1 where a in (%v)", strings.Join(points, ","))
 
 		queryHash := fmt.Sprintf("select a from thash where a in (%v)", strings.Join(points, ","))
-		require.True(t, tk.HasPlan(queryHash, "Batch_Point_Get")) // check if BatchGet is used
+		tk.MustHavePlan(queryHash, "Batch_Point_Get") // check if BatchGet is used
 		tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		queryRange := fmt.Sprintf("select a from trange where a in (%v)", strings.Join(points, ","))
-		require.True(t, tk.HasPlan(queryRange, "Batch_Point_Get")) // check if BatchGet is used
+		tk.MustHavePlan(queryRange, "Batch_Point_Get") // check if BatchGet is used
 		tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		points = make([]string, 0, 10)
@@ -1375,7 +1375,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 		}
 		queryRegular2 := fmt.Sprintf("select a from tregular2 where a in (%v)", strings.Join(points, ","))
 		queryList := fmt.Sprintf("select a from tlist where a in (%v)", strings.Join(points, ","))
-		require.True(t, tk.HasPlan(queryList, "Batch_Point_Get")) // check if BatchGet is used
+		tk.MustHavePlan(queryList, "Batch_Point_Get") // check if BatchGet is used
 		tk.MustQuery(queryList).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 	}
 
@@ -1405,7 +1405,7 @@ func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	}
 	queryRegular := fmt.Sprintf("select a from tregular3 where a in (%v)", strings.Join(points, ","))
 	queryRange := fmt.Sprintf("select a from trange3 where a in (%v)", strings.Join(points, ","))
-	require.True(t, tk.HasPlan(queryRange, "Batch_Point_Get")) // check if BatchGet is used
+	tk.MustHavePlan(queryRange, "Batch_Point_Get") // check if BatchGet is used
 	tk.MustQuery(queryRange).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
@@ -1453,17 +1453,17 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	tk.MustExec("insert into tlist values " + strings.Join(listVals, ","))
 
 	// before analyzing, the planner will choose TableScan to access the 1% of records
-	require.True(t, tk.HasPlan("select * from thash where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from trange where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from tlist where a<1", "TableFullScan"))
+	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 
 	tk.MustExec("analyze table thash")
 	tk.MustExec("analyze table trange")
 	tk.MustExec("analyze table tlist")
 
-	require.True(t, tk.HasPlan("select * from thash where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from trange where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from tlist where a<1", "TableFullScan"))
+	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 
 	// create SQL bindings
 	tk.MustExec("create session binding for select * from thash where a<100 using select * from thash ignore index(a) where a<100")
@@ -1471,18 +1471,18 @@ func TestGlobalStatsAndSQLBinding(t *testing.T) {
 	tk.MustExec("create session binding for select * from tlist where a<100 using select * from tlist ignore index(a) where a<100")
 
 	// use TableScan again since the Index(a) is ignored
-	require.True(t, tk.HasPlan("select * from thash where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from trange where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from tlist where a<1", "TableFullScan"))
+	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 
 	// drop SQL bindings
 	tk.MustExec("drop session binding for select * from thash where a<100")
 	tk.MustExec("drop session binding for select * from trange where a<100")
 	tk.MustExec("drop session binding for select * from tlist where a<100")
 
-	require.True(t, tk.HasPlan("select * from thash where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from trange where a<100", "TableFullScan"))
-	require.True(t, tk.HasPlan("select * from tlist where a<1", "TableFullScan"))
+	tk.MustHavePlan("select * from thash where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from trange where a<100", "TableFullScan")
+	tk.MustHavePlan("select * from tlist where a<1", "TableFullScan")
 }
 
 func TestPartitionTableWithDifferentJoin(t *testing.T) {
@@ -1532,78 +1532,78 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	// hash_join range partition and hash partition
 	queryHash := fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.b=thash.b and thash.a = %v and trange.a > %v;", x1, x2)
 	queryRegular := fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.b=tregular1.b and tregular1.a = %v and tregular2.a > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "HashJoin"))
+	tk.MustHavePlan(queryHash, "HashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a > %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a > %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "HashJoin"))
+	tk.MustHavePlan(queryHash, "HashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.a=thash.a and trange.b = thash.b and thash.a > %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.b = tregular2.b and tregular1.a > %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "HashJoin"))
+	tk.MustHavePlan(queryHash, "HashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ hash_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a = %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a = %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "HashJoin"))
+	tk.MustHavePlan(queryHash, "HashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// group 2
 	// hash_join range partition and regular table
 	queryHash = fmt.Sprintf("select /*+ hash_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a >= %v and tregular1.a > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a >= %v and tregular1.a > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "HashJoin"))
+	tk.MustHavePlan(queryHash, "HashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ hash_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a in (%v, %v, %v);", x1, x2, x3)
 	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a in (%v, %v, %v);", x1, x2, x3)
-	require.True(t, tk.HasPlan(queryHash, "HashJoin"))
+	tk.MustHavePlan(queryHash, "HashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ hash_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and tregular1.a >= %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ hash_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular1.a >= %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "HashJoin"))
+	tk.MustHavePlan(queryHash, "HashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// group 3
 	// merge_join range partition and hash partition
 	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.b=thash.b and thash.a = %v and trange.a > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.b=tregular1.b and tregular1.a = %v and tregular2.a > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "MergeJoin"))
+	tk.MustHavePlan(queryHash, "MergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a > %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a > %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "MergeJoin"))
+	tk.MustHavePlan(queryHash, "MergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.a=thash.a and trange.b = thash.b and thash.a > %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.b = tregular2.b and tregular1.a > %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "MergeJoin"))
+	tk.MustHavePlan(queryHash, "MergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ merge_join(trange, thash) */ * from trange, thash where trange.a=thash.a and thash.a = %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a=tregular1.a and tregular1.a = %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "MergeJoin"))
+	tk.MustHavePlan(queryHash, "MergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// group 4
 	// merge_join range partition and regular table
 	queryHash = fmt.Sprintf("select /*+ merge_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a >= %v and tregular1.a > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a >= %v and tregular1.a > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "MergeJoin"))
+	tk.MustHavePlan(queryHash, "MergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ merge_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and trange.a in (%v, %v, %v);", x1, x2, x3)
 	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular2.a in (%v, %v, %v);", x1, x2, x3)
-	require.True(t, tk.HasPlan(queryHash, "MergeJoin"))
+	tk.MustHavePlan(queryHash, "MergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ merge_join(trange, tregular1) */ * from trange, tregular1 where trange.a = tregular1.a and tregular1.a >= %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ merge_join(tregular2, tregular1) */ * from tregular2, tregular1 where tregular2.a = tregular1.a and tregular1.a >= %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "MergeJoin"))
+	tk.MustHavePlan(queryHash, "MergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// new table instances
@@ -1637,28 +1637,28 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	// Currently don't support index merge join on two partition tables. Only test warning.
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v;", x1)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v;", x1)
-	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
+	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.a > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.a > %v;", x1, x2)
-	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
+	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange.b > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular2.b > %v;", x1, x2)
-	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
+	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, trange2) */ * from trange, trange2 where trange.a=trange2.a and trange.a > %v and trange2.b > %v;", x1, x2)
 	// queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.b > %v;", x1, x2)
-	// require.True(t,tk.HasPlan(queryHash, "IndexMergeJoin"))
+	// tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	// tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 	tk.MustQuery(queryHash)
 	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1815|Optimizer Hint /*+ INL_MERGE_JOIN(trange, trange2) */ is inapplicable"))
@@ -1667,56 +1667,56 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	// index_merge_join range partition and regualr table
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v;", x1)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v;", x1)
-	require.True(t, tk.HasPlan(queryHash, "IndexMergeJoin"))
+	tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and tregular4.a > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.a > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "IndexMergeJoin"))
+	tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and trange.b > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular2.b > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "IndexMergeJoin"))
+	tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_merge_join(trange, tregular4) */ * from trange, tregular4 where trange.a=tregular4.a and trange.a > %v and tregular4.b > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_merge_join(tregular2, tregular4) */ * from tregular2, tregular4 where tregular2.a=tregular4.a and tregular2.a > %v and tregular4.b > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "IndexMergeJoin"))
+	tk.MustHavePlan(queryHash, "IndexMergeJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// group 7
 	// index_hash_join hash partition and hash partition
 	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, thash2) */ * from thash, thash2 where thash.a = thash2.a and thash.a in (%v, %v);", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v);", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "IndexHashJoin"))
+	tk.MustHavePlan(queryHash, "IndexHashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, thash2) */ * from thash, thash2 where thash.a = thash2.a and thash.a in (%v, %v) and thash2.a in (%v, %v);", x1, x2, x3, x4)
 	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v) and tregular3.a in (%v, %v);", x1, x2, x3, x4)
-	require.True(t, tk.HasPlan(queryHash, "IndexHashJoin"))
+	tk.MustHavePlan(queryHash, "IndexHashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, thash2) */ * from thash, thash2 where thash.a = thash2.a and thash.a > %v and thash2.b > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a > %v and tregular3.b > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "IndexHashJoin"))
+	tk.MustHavePlan(queryHash, "IndexHashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	// group 8
 	// index_hash_join hash partition and hash partition
 	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, tregular3) */ * from thash, tregular3 where thash.a = tregular3.a and thash.a in (%v, %v);", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v);", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "IndexHashJoin"))
+	tk.MustHavePlan(queryHash, "IndexHashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, tregular3) */ * from thash, tregular3 where thash.a = tregular3.a and thash.a in (%v, %v) and tregular3.a in (%v, %v);", x1, x2, x3, x4)
 	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a in (%v, %v) and tregular3.a in (%v, %v);", x1, x2, x3, x4)
-	require.True(t, tk.HasPlan(queryHash, "IndexHashJoin"))
+	tk.MustHavePlan(queryHash, "IndexHashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 
 	queryHash = fmt.Sprintf("select /*+ inl_hash_join(thash, tregular3) */ * from thash, tregular3 where thash.a = tregular3.a and thash.a > %v and tregular3.b > %v;", x1, x2)
 	queryRegular = fmt.Sprintf("select /*+ inl_hash_join(tregular1, tregular3) */ * from tregular1, tregular3 where tregular1.a = tregular3.a and tregular1.a > %v and tregular3.b > %v;", x1, x2)
-	require.True(t, tk.HasPlan(queryHash, "IndexHashJoin"))
+	tk.MustHavePlan(queryHash, "IndexHashJoin")
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
@@ -2819,7 +2819,7 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 			var result [][]interface{}
 			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
 				q := fmt.Sprintf(sql, tb)
-				tk.HasPlan(q, `UnionScan`)
+				tk.MustHavePlan(q, `UnionScan`)
 				if result == nil {
 					result = tk.MustQuery(q).Sort().Rows()
 				} else {
@@ -2907,7 +2907,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 		for tid, tbl := range []string{"tnormal_pk", "trange_pk", "thash_pk"} {
 			// unsigned + TableReader
 			scanSQL := fmt.Sprintf("select * from %v use index(primary) where %v", tbl, scanCond)
-			require.True(t, tk.HasPlan(scanSQL, "TableReader"))
+			tk.MustHavePlan(scanSQL, "TableReader")
 			r := tk.MustQuery(scanSQL).Sort()
 			if tid == 0 {
 				rScan = r.Rows()
@@ -2927,7 +2927,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 
 			// unsigned + BatchGet on PK
 			batchSQL := fmt.Sprintf("select * from %v where %v", tbl, batchCond)
-			require.True(t, tk.HasPlan(batchSQL, "Batch_Point_Get"))
+			tk.MustHavePlan(batchSQL, "Batch_Point_Get")
 			r = tk.MustQuery(batchSQL).Sort()
 			if tid == 0 {
 				rBatch = r.Rows()
@@ -2941,7 +2941,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 		for tid, tbl := range []string{"tnormal_uniq", "trange_uniq", "thash_uniq"} {
 			// unsigned + IndexReader
 			scanSQL := fmt.Sprintf("select a from %v use index(a) where %v", tbl, scanCond)
-			require.True(t, tk.HasPlan(scanSQL, "IndexReader"))
+			tk.MustHavePlan(scanSQL, "IndexReader")
 			r := tk.MustQuery(scanSQL).Sort()
 			if tid == 0 {
 				rScan = r.Rows()
@@ -2971,7 +2971,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 
 			// unsigned + BatchGet on UniqueIndex
 			batchSQL := fmt.Sprintf("select * from %v where %v", tbl, batchCond)
-			require.True(t, tk.HasPlan(batchSQL, "Batch_Point_Get"))
+			tk.MustHavePlan(batchSQL, "Batch_Point_Get")
 			r = tk.MustQuery(batchSQL).Sort()
 			if tid == 0 {
 				rBatch = r.Rows()
@@ -3038,12 +3038,12 @@ func TestDirectReadingWithAgg(t *testing.T) {
 
 		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from trange where a > %v group by a;", x)
 		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
-		require.True(t, tk.HasPlan(queryPartition1, "StreamAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition1, "StreamAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from trange where a > %v group by a;", x)
 		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
-		require.True(t, tk.HasPlan(queryPartition2, "HashAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition2, "HashAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 
 		y := rand.Intn(1099)
@@ -3051,12 +3051,12 @@ func TestDirectReadingWithAgg(t *testing.T) {
 
 		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from trange where a in(%v, %v, %v) group by a;", x, y, z)
 		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
-		require.True(t, tk.HasPlan(queryPartition3, "StreamAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition3, "StreamAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
 
 		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from trange where a in (%v, %v, %v) group by a;", x, y, z)
 		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
-		require.True(t, tk.HasPlan(queryPartition4, "HashAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition4, "HashAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
 	}
 
@@ -3070,12 +3070,12 @@ func TestDirectReadingWithAgg(t *testing.T) {
 
 		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from thash where a > %v group by a;", x)
 		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
-		require.True(t, tk.HasPlan(queryPartition1, "StreamAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition1, "StreamAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from thash where a > %v group by a;", x)
 		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a > %v group by a;", x)
-		require.True(t, tk.HasPlan(queryPartition2, "HashAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition2, "HashAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 
 		y := rand.Intn(1099)
@@ -3083,12 +3083,12 @@ func TestDirectReadingWithAgg(t *testing.T) {
 
 		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from thash where a in(%v, %v, %v) group by a;", x, y, z)
 		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular1 where a in(%v, %v, %v) group by a;", x, y, z)
-		require.True(t, tk.HasPlan(queryPartition3, "StreamAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition3, "StreamAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
 
 		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from thash where a in (%v, %v, %v) group by a;", x, y, z)
 		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular1 where a in (%v, %v, %v) group by a;", x, y, z)
-		require.True(t, tk.HasPlan(queryPartition4, "HashAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition4, "HashAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
 	}
 
@@ -3102,12 +3102,12 @@ func TestDirectReadingWithAgg(t *testing.T) {
 
 		queryPartition1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tlist where a > %v group by a;", x)
 		queryRegular1 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular2 where a > %v group by a;", x)
-		require.True(t, tk.HasPlan(queryPartition1, "StreamAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition1, "StreamAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		queryPartition2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tlist where a > %v group by a;", x)
 		queryRegular2 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular2 where a > %v group by a;", x)
-		require.True(t, tk.HasPlan(queryPartition2, "HashAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition2, "HashAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 
 		y := rand.Intn(12) + 1
@@ -3115,12 +3115,12 @@ func TestDirectReadingWithAgg(t *testing.T) {
 
 		queryPartition3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tlist where a in(%v, %v, %v) group by a;", x, y, z)
 		queryRegular3 := fmt.Sprintf("select /*+ stream_agg() */ count(*), sum(b), max(b), a from tregular2 where a in(%v, %v, %v) group by a;", x, y, z)
-		require.True(t, tk.HasPlan(queryPartition3, "StreamAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition3, "StreamAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition3).Sort().Check(tk.MustQuery(queryRegular3).Sort().Rows())
 
 		queryPartition4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tlist where a in (%v, %v, %v) group by a;", x, y, z)
 		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular2 where a in (%v, %v, %v) group by a;", x, y, z)
-		require.True(t, tk.HasPlan(queryPartition4, "HashAgg")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition4, "HashAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
 	}
 }
@@ -3242,12 +3242,12 @@ func TestIdexMerge(t *testing.T) {
 
 		queryPartition1 := fmt.Sprintf("select /*+ use_index_merge(trange) */ * from trange where a > %v or b < %v;", x1, x2)
 		queryRegular1 := fmt.Sprintf("select /*+ use_index_merge(tregular1) */ * from tregular1 where a > %v or b < %v;", x1, x2)
-		require.True(t, tk.HasPlan(queryPartition1, "IndexMerge")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition1, "IndexMerge") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		queryPartition2 := fmt.Sprintf("select /*+ use_index_merge(trange) */ * from trange where a > %v or b > %v;", x1, x2)
 		queryRegular2 := fmt.Sprintf("select /*+ use_index_merge(tregular1) */ * from tregular1 where a > %v or b > %v;", x1, x2)
-		require.True(t, tk.HasPlan(queryPartition2, "IndexMerge")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition2, "IndexMerge") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 	}
 
@@ -3258,12 +3258,12 @@ func TestIdexMerge(t *testing.T) {
 
 		queryPartition1 := fmt.Sprintf("select /*+ use_index_merge(thash) */ * from thash where a > %v or b < %v;", x1, x2)
 		queryRegular1 := fmt.Sprintf("select /*+ use_index_merge(tregualr1) */ * from tregular1 where a > %v or b < %v;", x1, x2)
-		require.True(t, tk.HasPlan(queryPartition1, "IndexMerge")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition1, "IndexMerge") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		queryPartition2 := fmt.Sprintf("select /*+ use_index_merge(thash) */ * from thash where a > %v or b > %v;", x1, x2)
 		queryRegular2 := fmt.Sprintf("select /*+ use_index_merge(tregular1) */ * from tregular1 where a > %v or b > %v;", x1, x2)
-		require.True(t, tk.HasPlan(queryPartition2, "IndexMerge")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition2, "IndexMerge") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 	}
 
@@ -3273,12 +3273,12 @@ func TestIdexMerge(t *testing.T) {
 		x2 := rand.Intn(12) + 1
 		queryPartition1 := fmt.Sprintf("select /*+ use_index_merge(tlist) */ * from tlist where a > %v or b < %v;", x1, x2)
 		queryRegular1 := fmt.Sprintf("select /*+ use_index_merge(tregular2) */ * from tregular2 where a > %v or b < %v;", x1, x2)
-		require.True(t, tk.HasPlan(queryPartition1, "IndexMerge")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition1, "IndexMerge") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition1).Sort().Check(tk.MustQuery(queryRegular1).Sort().Rows())
 
 		queryPartition2 := fmt.Sprintf("select /*+ use_index_merge(tlist) */ * from tlist where a > %v or b > %v;", x1, x2)
 		queryRegular2 := fmt.Sprintf("select /*+ use_index_merge(tregular2) */ * from tregular2 where a > %v or b > %v;", x1, x2)
-		require.True(t, tk.HasPlan(queryPartition2, "IndexMerge")) // check if IndexLookUp is used
+		tk.MustHavePlan(queryPartition2, "IndexMerge") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition2).Sort().Check(tk.MustQuery(queryRegular2).Sort().Rows())
 	}
 }

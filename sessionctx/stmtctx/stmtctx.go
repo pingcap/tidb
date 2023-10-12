@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/terror"
+	typectx "github.com/pingcap/tidb/types/context"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/pingcap/tidb/util/memory"
@@ -149,6 +150,9 @@ type StatementContext struct {
 	// Set the following variables before execution
 	StmtHints
 
+	// TypeConvContext is used to indicate how make the type conversation.
+	TypeConvContext typectx.Context
+
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
 	IsDDLJobInQueue               bool
@@ -181,9 +185,6 @@ type StatementContext struct {
 	AllowInvalidDate              bool
 	IgnoreNoPartition             bool
 	IgnoreExplainIDSuffix         bool
-	SkipUTF8Check                 bool
-	SkipASCIICheck                bool
-	SkipUTF8MB4Check              bool
 	MultiSchemaInfo               *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
@@ -304,6 +305,8 @@ type StatementContext struct {
 	// Will clean up at the end of the execution.
 	CTEStorageMap interface{}
 
+	SetVarHintRestore map[string]string
+
 	// If the statement read from table cache, this flag is set.
 	ReadFromTableCache bool
 
@@ -422,7 +425,6 @@ type StmtHints struct {
 	// Hint Information
 	MemQuotaQuery           int64
 	MaxExecutionTime        uint64
-	TidbKvReadTimeout       uint64
 	ReplicaRead             byte
 	AllowInSubqToJoinAndAgg bool
 	NoIndexMergeHint        bool
@@ -439,7 +441,6 @@ type StmtHints struct {
 	HasMemQuotaHint                bool
 	HasReplicaReadHint             bool
 	HasMaxExecutionTime            bool
-	HasTidbKvReadTimeout           bool
 	HasEnableCascadesPlannerHint   bool
 	HasResourceGroup               bool
 	SetVars                        map[string]string
@@ -472,7 +473,6 @@ func (sh *StmtHints) Clone() *StmtHints {
 	return &StmtHints{
 		MemQuotaQuery:                  sh.MemQuotaQuery,
 		MaxExecutionTime:               sh.MaxExecutionTime,
-		TidbKvReadTimeout:              sh.TidbKvReadTimeout,
 		ReplicaRead:                    sh.ReplicaRead,
 		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
 		NoIndexMergeHint:               sh.NoIndexMergeHint,
@@ -484,7 +484,6 @@ func (sh *StmtHints) Clone() *StmtHints {
 		HasMemQuotaHint:                sh.HasMemQuotaHint,
 		HasReplicaReadHint:             sh.HasReplicaReadHint,
 		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
-		HasTidbKvReadTimeout:           sh.HasTidbKvReadTimeout,
 		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
 		HasResourceGroup:               sh.HasResourceGroup,
 		SetVars:                        vars,
@@ -1272,6 +1271,14 @@ func (sc *StatementContext) GetStaleTSO() (uint64, error) {
 	}
 	sc.StaleTSOProvider.value = &tso
 	return tso, nil
+}
+
+// AddSetVarHintRestore records the variables which are affected by SET_VAR hint. And restore them to the old value later.
+func (sc *StatementContext) AddSetVarHintRestore(name, val string) {
+	if sc.SetVarHintRestore == nil {
+		sc.SetVarHintRestore = make(map[string]string)
+	}
+	sc.SetVarHintRestore[name] = val
 }
 
 // CopTasksDetails collects some useful information of cop-tasks during execution.

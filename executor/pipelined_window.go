@@ -207,8 +207,8 @@ func (e *PipelinedWindowExec) getRowsInPartition(ctx context.Context) (err error
 
 func (e *PipelinedWindowExec) fetchChild(ctx context.Context) (eof bool, err error) {
 	// TODO: reuse chunks
-	childResult := tryNewCacheChunk(e.Children(0))
-	err = Next(ctx, e.Children(0), childResult)
+	childResult := exec.TryNewCacheChunk(e.Children(0))
+	err = exec.Next(ctx, e.Children(0), childResult)
 	if err != nil {
 		return false, errors.Trace(err)
 	}
@@ -264,7 +264,7 @@ func (e *PipelinedWindowExec) getStart(ctx sessionctx.Context) (uint64, error) {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
-				res, _, err = e.start.CmpFuncs[i](ctx, e.orderByCols[i], e.start.CalcFuncs[i], e.getRow(start), e.getRow(e.curRowIdx))
+				res, _, err = e.start.CmpFuncs[i](ctx, e.start.CompareCols[i], e.start.CalcFuncs[i], e.getRow(start), e.getRow(e.curRowIdx))
 				if err != nil {
 					return 0, err
 				}
@@ -304,7 +304,7 @@ func (e *PipelinedWindowExec) getEnd(ctx sessionctx.Context) (uint64, error) {
 			var res int64
 			var err error
 			for i := range e.orderByCols {
-				res, _, err = e.end.CmpFuncs[i](ctx, e.end.CalcFuncs[i], e.orderByCols[i], e.getRow(e.curRowIdx), e.getRow(end))
+				res, _, err = e.end.CmpFuncs[i](ctx, e.end.CalcFuncs[i], e.end.CompareCols[i], e.getRow(e.curRowIdx), e.getRow(end))
 				if err != nil {
 					return 0, err
 				}

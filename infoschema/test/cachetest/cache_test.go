@@ -137,12 +137,14 @@ func TestGetByTimestamp(t *testing.T) {
 	ic := infoschema.NewCache(16)
 	require.NotNil(t, ic)
 	require.Nil(t, ic.GetLatest())
+	require.Equal(t, 0, ic.Len())
 
 	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
 	ic.Insert(is1, 1)
 	require.Nil(t, ic.GetBySnapshotTS(0))
 	require.Equal(t, is1, ic.GetBySnapshotTS(1))
 	require.Equal(t, is1, ic.GetBySnapshotTS(2))
+	require.Equal(t, 1, ic.Len())
 
 	is3 := infoschema.MockInfoSchemaWithSchemaVer(nil, 3)
 	ic.Insert(is3, 3)
@@ -152,6 +154,7 @@ func TestGetByTimestamp(t *testing.T) {
 	require.Nil(t, ic.GetBySnapshotTS(2))
 	require.Equal(t, is3, ic.GetBySnapshotTS(3))
 	require.Equal(t, is3, ic.GetBySnapshotTS(4))
+	require.Equal(t, 2, ic.Len())
 
 	is2 := infoschema.MockInfoSchemaWithSchemaVer(nil, 2)
 	// schema version 2 doesn't have timestamp set
@@ -164,4 +167,47 @@ func TestGetByTimestamp(t *testing.T) {
 	require.Nil(t, ic.GetBySnapshotTS(2))
 	require.Equal(t, is3, ic.GetBySnapshotTS(3))
 	require.Equal(t, is3, ic.GetBySnapshotTS(4))
+	require.Equal(t, 3, ic.Len())
+
+	// insert is2 again with correct timestamp, to correct previous wrong timestamp
+	ic.Insert(is2, 2)
+	require.Equal(t, is3, ic.GetLatest())
+	require.Equal(t, is1, ic.GetBySnapshotTS(1))
+	require.Equal(t, is2, ic.GetBySnapshotTS(2))
+	require.Equal(t, is3, ic.GetBySnapshotTS(3))
+	require.Equal(t, 3, ic.Len())
+}
+
+func TestReSize(t *testing.T) {
+	ic := infoschema.NewCache(2)
+	require.NotNil(t, ic)
+	is1 := infoschema.MockInfoSchemaWithSchemaVer(nil, 1)
+	ic.Insert(is1, 1)
+	is2 := infoschema.MockInfoSchemaWithSchemaVer(nil, 2)
+	ic.Insert(is2, 2)
+
+	ic.ReSize(3)
+	require.Equal(t, 2, ic.Size())
+	require.Equal(t, is1, ic.GetByVersion(1))
+	require.Equal(t, is2, ic.GetByVersion(2))
+	is3 := infoschema.MockInfoSchemaWithSchemaVer(nil, 3)
+	require.True(t, ic.Insert(is3, 3))
+	require.Equal(t, is1, ic.GetByVersion(1))
+	require.Equal(t, is2, ic.GetByVersion(2))
+	require.Equal(t, is3, ic.GetByVersion(3))
+
+	ic.ReSize(1)
+	require.Equal(t, 1, ic.Size())
+	require.Nil(t, ic.GetByVersion(1))
+	require.Nil(t, ic.GetByVersion(2))
+	require.Equal(t, is3, ic.GetByVersion(3))
+	require.False(t, ic.Insert(is2, 2))
+	require.Equal(t, 1, ic.Size())
+	is4 := infoschema.MockInfoSchemaWithSchemaVer(nil, 4)
+	require.True(t, ic.Insert(is4, 4))
+	require.Equal(t, 1, ic.Size())
+	require.Nil(t, ic.GetByVersion(1))
+	require.Nil(t, ic.GetByVersion(2))
+	require.Nil(t, ic.GetByVersion(3))
+	require.Equal(t, is4, ic.GetByVersion(4))
 }

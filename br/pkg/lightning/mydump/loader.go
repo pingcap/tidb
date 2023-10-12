@@ -22,6 +22,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -32,7 +33,11 @@ import (
 )
 
 // sampleCompressedFileSize represents how many bytes need to be sampled for compressed files
-const sampleCompressedFileSize = 4 * 1024
+const (
+	sampleCompressedFileSize = 4 * 1024
+	maxSampleParquetDataSize = 8 * 1024
+	maxSampleParquetRowCount = 500
+)
 
 // MDDatabaseMeta contains some parsed metadata for a database in the source by MyDumper Loader.
 type MDDatabaseMeta struct {
@@ -472,7 +477,7 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 		s.tableSchemas = append(s.tableSchemas, info)
 	case SourceTypeViewSchema:
 		s.viewSchemas = append(s.viewSchemas, info)
-	case SourceTypeSQL, SourceTypeCSV, SourceTypeParquet:
+	case SourceTypeSQL, SourceTypeCSV:
 		if info.FileMeta.Compression != CompressionNone {
 			compressRatio, err2 := SampleFileCompressRatio(ctx, info.FileMeta, s.loader.GetStore())
 			if err2 != nil {
@@ -481,6 +486,15 @@ func (s *mdLoaderSetup) constructFileInfo(ctx context.Context, path string, size
 			} else {
 				info.FileMeta.RealSize = int64(compressRatio * float64(info.FileMeta.FileSize))
 			}
+		}
+		s.tableDatas = append(s.tableDatas, info)
+	case SourceTypeParquet:
+		parquestDataSize, err2 := SampleParquetDataSize(ctx, info.FileMeta, s.loader.GetStore())
+		if err2 != nil {
+			logger.Error("fail to sample parquet data size", zap.String("category", "loader"),
+				zap.String("schema", res.Schema), zap.String("table", res.Name), zap.Stringer("type", res.Type), zap.Error(err2))
+		} else {
+			info.FileMeta.RealSize = parquestDataSize
 		}
 		s.tableDatas = append(s.tableDatas, info)
 	}
@@ -685,13 +699,13 @@ func calculateFileBytes(ctx context.Context,
 	store storage.ExternalStorage,
 	offset int64) (tot int, pos int64, err error) {
 	bytes := make([]byte, sampleCompressedFileSize)
-	reader, err := store.Open(ctx, dataFile)
+	reader, err := store.Open(ctx, dataFile, nil)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
 	defer reader.Close()
 
-	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, offset)
+	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, storage.DecompressConfig{}, offset)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -731,6 +745,14 @@ func calculateFileBytes(ctx context.Context,
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file.
 func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (float64, error) {
+	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case string:
+			failpoint.Return(1.0, errors.New(v))
+		case int:
+			failpoint.Return(float64(v)/100, nil)
+		}
+	})
 	if fileMeta.Compression == CompressionNone {
 		return 1, nil
 	}
@@ -755,4 +777,48 @@ func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store
 		return 0, err
 	}
 	return float64(tot) / float64(pos), nil
+}
+
+// SampleParquetDataSize samples the data size of the parquet file.
+func SampleParquetDataSize(ctx context.Context, fileMeta SourceFileMeta, store storage.ExternalStorage) (int64, error) {
+	totalRowCount, err := ReadParquetFileRowCountByFile(ctx, store, fileMeta)
+	if err != nil {
+		return 0, err
+	}
+
+	reader, err := store.Open(ctx, fileMeta.Path, nil)
+	if err != nil {
+		return 0, err
+	}
+	parser, err := NewParquetParser(ctx, store, reader, fileMeta.Path)
+	if err != nil {
+		//nolint: errcheck
+		reader.Close()
+		return 0, err
+	}
+	//nolint: errcheck
+	defer parser.Close()
+
+	var (
+		rowSize  int64
+		rowCount int64
+	)
+	for {
+		err = parser.ReadRow()
+		if err != nil {
+			if errors.Cause(err) == io.EOF {
+				break
+			}
+			return 0, err
+		}
+		lastRow := parser.LastRow()
+		rowCount++
+		rowSize += int64(lastRow.Length)
+		parser.RecycleRow(lastRow)
+		if rowSize > maxSampleParquetDataSize || rowCount > maxSampleParquetRowCount {
+			break
+		}
+	}
+	size := int64(float64(totalRowCount) / float64(rowCount) * float64(rowSize))
+	return size, nil
 }

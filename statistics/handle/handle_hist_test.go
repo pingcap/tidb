@@ -21,11 +21,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -201,11 +200,10 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		stmtCtx2 := &stmtctx.StatementContext{}
 		h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
-		readerCtx := &handle.StatsReaderContext{}
 		exitCh := make(chan struct{})
 		require.NoError(t, failpoint.Enable(fp.failPath, fp.inTerms))
 
-		task1, err1 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
 		list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
@@ -213,7 +211,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.Len(t, list, 1)
 		require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
 
-		task2, err2 := h.HandleOneTask(nil, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		task2, err2 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Nil(t, err2)
 		require.Nil(t, task2)
 		list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
@@ -222,7 +220,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
-		task3, err3 := h.HandleOneTask(task1, readerCtx, testKit.Session().(sqlexec.RestrictedSQLExecutor), exitCh)
+		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)
 		require.NoError(t, err3)
 		require.Nil(t, task3)
 

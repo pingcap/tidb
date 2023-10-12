@@ -111,20 +111,6 @@ func TestSplitTableRegion(t *testing.T) {
 	tk.MustQuery("split region for partition table t partition (p3,p4) between (100000000) and (1000000000) regions 5;").Check(testkit.Rows("8 1"))
 }
 
-func TestSplitRegionEdgeCase(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a bigint(20) auto_increment primary key);")
-	tk.MustExec("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;")
-
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t(a int(20) auto_increment primary key);")
-	tk.MustGetErrCode("split table t between (-9223372036854775808) and (9223372036854775807) regions 16;", errno.ErrDataOutOfRange)
-}
-
 func TestClusterIndexSplitTableIntegration(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -177,6 +163,10 @@ func TestClusterIndexSplitTableIntegration(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b decimal, c int, primary key (a, b));")
 	errMsg = "[types:1265]Incorrect value: '' for column 'b'"
 	tk.MustGetErrMsg("split table t by ('aaa', '')", errMsg)
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);")
+	tk.MustGetErrCode("split table t index `primary` between (0) and (1000) regions 2;", errno.ErrKeyDoesNotExist)
 }
 
 func TestClusterIndexShowTableRegion(t *testing.T) {

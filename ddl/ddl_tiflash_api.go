@@ -351,7 +351,8 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	return nil
 }
 
-func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
+// PollAvailableTableProgress will poll and check availability of available tables.
+func PollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Context, pollTiFlashContext *TiFlashManagementContext) {
 	pollMaxCount := RefreshProgressMaxTableCount
 	failpoint.Inject("PollAvailableTableProgressMaxCount", func(val failpoint.Value) {
 		pollMaxCount = uint64(val.(int))
@@ -381,7 +382,6 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 				continue
 			}
 		}
-
 		tableInfo := table.Meta()
 		if tableInfo.TiFlashReplica == nil {
 			logutil.BgLogger().Info("table has no TiFlash replica",
@@ -392,20 +392,18 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 			element = element.Next()
 			continue
 		}
+
 		progress, err := infosync.CalculateTiFlashProgress(availableTableID.ID, tableInfo.TiFlashReplica.Count, pollTiFlashContext.TiFlashStores)
 		if err != nil {
-			logutil.BgLogger().Error("get tiflash sync progress failed",
-				zap.Error(err),
-				zap.Int64("tableID", availableTableID.ID),
-				zap.Bool("IsPartition", availableTableID.IsPartition),
-			)
-			if intest.InTest {
+			if intest.InTest && err.Error() != "EOF" {
 				// In the test, the server cannot start up because the port is occupied.
 				// Although the port is random. so we need to quickly return when to
 				// fail to get tiflash sync.
 				// https://github.com/pingcap/tidb/issues/39949
 				panic(err)
 			}
+			pollTiFlashContext.UpdatingProgressTables.Remove(element)
+			element = element.Next()
 			continue
 		}
 		err = infosync.UpdateTiFlashProgressCache(availableTableID.ID, progress)
@@ -416,6 +414,8 @@ func pollAvailableTableProgress(schemas infoschema.InfoSchema, _ sessionctx.Cont
 				zap.Bool("IsPartition", availableTableID.IsPartition),
 				zap.Float64("progress", progress),
 			)
+			pollTiFlashContext.UpdatingProgressTables.Remove(element)
+			element = element.Next()
 			continue
 		}
 		next := element.Next()
@@ -448,7 +448,7 @@ func (d *ddl) refreshTiFlashTicker(ctx sessionctx.Context, pollTiFlashContext *T
 		return errors.New("Schema is nil")
 	}
 
-	pollAvailableTableProgress(schema, ctx, pollTiFlashContext)
+	PollAvailableTableProgress(schema, ctx, pollTiFlashContext)
 
 	var tableList = make([]TiFlashReplicaStatus, 0)
 

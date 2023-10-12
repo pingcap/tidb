@@ -40,6 +40,7 @@ go_library(
         "//util/cpuprofile",
         "//util/deadlockhistory",
         "//util/disk",
+        "//util/distrole",
         "//util/domainutil",
         "//util/kvcache",
         "//util/logutil",

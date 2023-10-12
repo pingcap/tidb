@@ -154,6 +154,7 @@ type MPPDispatchRequest struct {
 	CoordinatorAddress     string
 	ReportExecutionSummary bool
 	State                  MppTaskStates
+	ResourceGroupName      string
 }
 
 // CancelMPPTasksParam represents parameter for MPPClient's CancelMPPTasks

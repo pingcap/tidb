@@ -662,12 +662,16 @@ func (fb *FrameBound) ToPB(ctx sessionctx.Context) (*tipb.WindowFrameBound, erro
 	offset := fb.Num
 	pbBound.Offset = &offset
 
-	calcFuncs, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, fb.CalcFuncs, ctx.GetClient())
-	if err != nil {
-		return nil, err
+	if fb.IsExplicitRange {
+		rangeFrame, err := expression.ExpressionsToPBList(ctx.GetSessionVars().StmtCtx, fb.CalcFuncs, ctx.GetClient())
+		if err != nil {
+			return nil, err
+		}
+
+		pbBound.FrameRange = rangeFrame[0]
+		pbBound.CmpDataType = &fb.CmpDataType
 	}
 
-	pbBound.CalcFuncs = calcFuncs
 	return pbBound, nil
 }
 

@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"bytes"
+	"cmp"
 	"sort"
 
 	"github.com/pingcap/tidb/parser/mysql"
@@ -71,7 +72,7 @@ func cmpInt64(l Row, lCol int, r Row, rCol int) int {
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareInt64(l.GetInt64(lCol), r.GetInt64(rCol))
+	return cmp.Compare(l.GetInt64(lCol), r.GetInt64(rCol))
 }
 
 func cmpUint64(l Row, lCol int, r Row, rCol int) int {
@@ -79,7 +80,7 @@ func cmpUint64(l Row, lCol int, r Row, rCol int) int {
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareUint64(l.GetUint64(lCol), r.GetUint64(rCol))
+	return cmp.Compare(l.GetUint64(lCol), r.GetUint64(rCol))
 }
 
 func genCmpStringFunc(collation string) func(l Row, lCol int, r Row, rCol int) int {
@@ -101,7 +102,7 @@ func cmpFloat32(l Row, lCol int, r Row, rCol int) int {
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareFloat64(float64(l.GetFloat32(lCol)), float64(r.GetFloat32(rCol)))
+	return cmp.Compare(float64(l.GetFloat32(lCol)), float64(r.GetFloat32(rCol)))
 }
 
 func cmpFloat64(l Row, lCol int, r Row, rCol int) int {
@@ -109,7 +110,7 @@ func cmpFloat64(l Row, lCol int, r Row, rCol int) int {
 	if lNull || rNull {
 		return cmpNull(lNull, rNull)
 	}
-	return types.CompareFloat64(l.GetFloat64(lCol), r.GetFloat64(rCol))
+	return cmp.Compare(l.GetFloat64(lCol), r.GetFloat64(rCol))
 }
 
 func cmpMyDecimal(l Row, lCol int, r Row, rCol int) int {
@@ -136,7 +137,7 @@ func cmpDuration(l Row, lCol int, r Row, rCol int) int {
 		return cmpNull(lNull, rNull)
 	}
 	lDur, rDur := l.GetDuration(lCol, 0).Duration, r.GetDuration(rCol, 0).Duration
-	return types.CompareInt64(int64(lDur), int64(rDur))
+	return cmp.Compare(int64(lDur), int64(rDur))
 }
 
 func cmpNameValue(l Row, lCol int, r Row, rCol int) int {
@@ -146,7 +147,7 @@ func cmpNameValue(l Row, lCol int, r Row, rCol int) int {
 	}
 	_, lVal := l.getNameValue(lCol)
 	_, rVal := r.getNameValue(rCol)
-	return types.CompareUint64(lVal, rVal)
+	return cmp.Compare(lVal, rVal)
 }
 
 func cmpBit(l Row, lCol int, r Row, rCol int) int {
@@ -185,13 +186,13 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 	case types.KindMaxValue:
 		return -1
 	case types.KindInt64:
-		return types.CompareInt64(row.GetInt64(colIdx), ad.GetInt64())
+		return cmp.Compare(row.GetInt64(colIdx), ad.GetInt64())
 	case types.KindUint64:
-		return types.CompareUint64(row.GetUint64(colIdx), ad.GetUint64())
+		return cmp.Compare(row.GetUint64(colIdx), ad.GetUint64())
 	case types.KindFloat32:
-		return types.CompareFloat64(float64(row.GetFloat32(colIdx)), float64(ad.GetFloat32()))
+		return cmp.Compare(float64(row.GetFloat32(colIdx)), float64(ad.GetFloat32()))
 	case types.KindFloat64:
-		return types.CompareFloat64(row.GetFloat64(colIdx), ad.GetFloat64())
+		return cmp.Compare(row.GetFloat64(colIdx), ad.GetFloat64())
 	case types.KindString:
 		return types.CompareString(row.GetString(colIdx), ad.GetString(), ad.Collation())
 	case types.KindBytes, types.KindBinaryLiteral, types.KindMysqlBit:
@@ -201,13 +202,13 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 		return l.Compare(r)
 	case types.KindMysqlDuration:
 		l, r := row.GetDuration(colIdx, 0).Duration, ad.GetMysqlDuration().Duration
-		return types.CompareInt64(int64(l), int64(r))
+		return cmp.Compare(int64(l), int64(r))
 	case types.KindMysqlEnum:
 		l, r := row.GetEnum(colIdx).Value, ad.GetMysqlEnum().Value
-		return types.CompareUint64(l, r)
+		return cmp.Compare(l, r)
 	case types.KindMysqlSet:
 		l, r := row.GetSet(colIdx).Value, ad.GetMysqlSet().Value
-		return types.CompareUint64(l, r)
+		return cmp.Compare(l, r)
 	case types.KindMysqlJSON:
 		l, r := row.GetJSON(colIdx), ad.GetMysqlJSON()
 		return types.CompareBinaryJSON(l, r)
@@ -222,6 +223,9 @@ func Compare(row Row, colIdx int, ad *types.Datum) int {
 // LowerBound searches on the non-decreasing Column colIdx,
 // returns the smallest index i such that the value at row i is not less than `d`.
 func (c *Chunk) LowerBound(colIdx int, d *types.Datum) (index int, match bool) {
+	if Compare(c.GetRow(c.NumRows()-1), colIdx, d) < 0 {
+		return c.NumRows(), false
+	}
 	index = sort.Search(c.NumRows(), func(i int) bool {
 		cmp := Compare(c.GetRow(i), colIdx, d)
 		if cmp == 0 {

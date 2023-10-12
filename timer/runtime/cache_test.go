@@ -20,6 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util/timeutil"
+	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,13 +37,14 @@ func newTestTimer(id string, policyExpr string, watermark time.Time) *api.TimerR
 			Watermark:       watermark,
 			Enable:          true,
 		},
+		Location:    watermark.Location(),
 		EventStatus: api.SchedEventIdle,
 		Version:     1,
 	}
 }
 
 func TestCacheUpdate(t *testing.T) {
-	now := time.Now()
+	now := time.Now().In(time.UTC)
 	nowFunc := func() time.Time {
 		return now
 	}
@@ -57,11 +60,30 @@ func TestCacheUpdate(t *testing.T) {
 	require.Equal(t, 1, len(cache.items))
 
 	// dup update with same version
-	require.False(t, cache.updateTimer(t1))
+	require.False(t, cache.updateTimer(t1.Clone()))
 	checkSortedCache(t, cache, [][]any{{t1, now.Add(10 * time.Minute)}})
 	require.Equal(t, 1, len(cache.items))
 
+	// policy changed
+	t1.SchedPolicyType = api.SchedEventCron
+	t1.SchedPolicyExpr = "* 1 * * *"
+	t1.Version++
+	require.True(t, cache.updateTimer(t1))
+	require.NotSame(t, t1, cache.items[t1.ID].timer)
+	c, err := cron.ParseStandard(t1.SchedPolicyExpr)
+	require.NoError(t, err)
+	checkSortedCache(t, cache, [][]any{{t1, c.Next(now)}})
+	require.Equal(t, 1, len(cache.items))
+
+	// update with same version but loc changed
+	t1.Location = time.FixedZone("name1", 2*60*60)
+	require.True(t, cache.updateTimer(t1))
+	checkSortedCache(t, cache, [][]any{{t1, c.Next(now.In(t1.Location))}})
+	require.Equal(t, 1, len(cache.items))
+
 	// invalid policy
+	t1.Location = now.Location()
+	t1.SchedPolicyType = api.SchedEventInterval
 	t1.SchedPolicyExpr = "invalid"
 	t1.Version++
 	require.True(t, cache.updateTimer(t1))
@@ -165,7 +187,7 @@ func TestCacheUpdate(t *testing.T) {
 }
 
 func TestCacheSort(t *testing.T) {
-	now := time.Now()
+	now := time.Now().In(time.UTC)
 	nowFunc := func() time.Time {
 		return now
 	}
@@ -317,7 +339,7 @@ func TestCacheSort(t *testing.T) {
 }
 
 func TestFullUpdateCache(t *testing.T) {
-	now := time.Now()
+	now := time.Now().In(time.UTC)
 	cache := newTimersCache()
 	cache.nowFunc = func() time.Time {
 		return now
@@ -366,12 +388,13 @@ func checkSortedCache(t *testing.T, cache *timersCache, sorted [][]any) {
 		if timer.IsManualRequesting() {
 			require.Equal(t, tryTriggerTime, *nextEventTime)
 		} else {
-			if p, err := timer.CreateSchedEventPolicy(); err == nil && timer.Enable {
-				require.NotNil(t, nextEventTime)
-				tm, ok := p.NextEventTime(timer.Watermark)
-				if !ok {
-					require.Nil(t, nextEventTime)
+			if tm, ok, err := timer.NextEventTime(); err == nil {
+				if !timer.Enable {
+					require.True(t, tm.IsZero())
+					require.False(t, ok)
 				} else {
+					require.True(t, ok)
+					require.NotNil(t, nextEventTime)
 					require.Equal(t, tm, *nextEventTime)
 				}
 			} else {
@@ -384,4 +407,71 @@ func checkSortedCache(t *testing.T, cache *timersCache, sorted [][]any) {
 		return true
 	})
 	require.Equal(t, len(sorted), i)
+}
+
+func TestLocationChanged(t *testing.T) {
+	loc1, _ := time.LoadLocation("America/New_York")
+	loc2, _ := time.LoadLocation("America/Los_Angeles")
+	loc3, _ := time.LoadLocation("America/New_York")
+	loc4 := time.FixedZone("name1", 2*60*60)
+	loc5 := time.FixedZone("name2", 2*60*60)
+	loc6 := time.FixedZone("name1", 60*60)
+
+	testCases := []struct {
+		a       *time.Location
+		b       *time.Location
+		changed bool
+	}{
+		{
+			a:       nil,
+			b:       nil,
+			changed: false,
+		},
+		{
+			a:       loc1,
+			b:       nil,
+			changed: true,
+		},
+		{
+			a:       nil,
+			b:       loc1,
+			changed: true,
+		},
+		{
+			a:       loc1,
+			b:       loc2,
+			changed: true,
+		},
+		{
+			a:       loc1,
+			b:       loc3,
+			changed: false,
+		},
+		{
+			a:       loc4,
+			b:       loc5,
+			changed: false,
+		},
+		{
+			a:       loc4,
+			b:       loc6,
+			changed: true,
+		},
+	}
+
+	for i, tc := range testCases {
+		result := locationChanged(tc.a, tc.b)
+		a, b := "<nil>", "<nil>"
+		if tc.a != nil {
+			n, offset := timeutil.Zone(tc.a)
+			a = fmt.Sprintf("%s(%d)", n, offset)
+		}
+
+		if tc.b != nil {
+			n, offset := timeutil.Zone(tc.b)
+			b = fmt.Sprintf("%s(%d)", n, offset)
+		}
+
+		require.Equalf(t, tc.changed, result, "%d: compare %q and %q", i, a, b)
+	}
 }

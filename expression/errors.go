@@ -41,9 +41,9 @@ var (
 	ErrInvalidJSONForFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrInvalidJSONValueForFuncIndex)
 	ErrDataOutOfRangeFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrDataOutOfRangeFunctionalIndex)
 	ErrFuncIndexDataIsTooLong      = dbterror.ClassExpression.NewStd(mysql.ErrFunctionalIndexDataIsTooLong)
+	ErrFunctionNotExists           = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
 
 	// All the un-exported errors are defined here:
-	errFunctionNotExists             = dbterror.ClassExpression.NewStd(mysql.ErrSpDoesNotExist)
 	errZlibZData                     = dbterror.ClassExpression.NewStd(mysql.ErrZlibZData)
 	errZlibZBuf                      = dbterror.ClassExpression.NewStd(mysql.ErrZlibZBuf)
 	errIncorrectArgs                 = dbterror.ClassExpression.NewStd(mysql.ErrWrongArguments)

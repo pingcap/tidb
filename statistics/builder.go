@@ -166,9 +166,10 @@ func buildHist(sc *stmtctx.StatementContext, hg *Histogram, samples []*SampleIte
 			memTracker.Release(bufferedReleaseSize)
 		}
 	}()
+	var upper = new(types.Datum)
 	for i := int64(1); i < sampleNum; i++ {
 		corrXYSum += float64(i) * float64(samples[i].Ordinal)
-		upper := hg.GetUpper(bucketIdx)
+		hg.UpperToDatum(bucketIdx, upper)
 		if memTracker != nil {
 			// tmp memory usage
 			deltaSize := upper.MemUsage()

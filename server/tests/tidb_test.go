@@ -511,7 +511,7 @@ func TestSocketAndIp(t *testing.T) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.CheckRows(t, rows, "user1@127.0.0.1")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
 			rows = dbt.MustQuery("select host from information_schema.processlist where user = 'user1'")
 			records := cli.Rows(t, rows)
 			require.Contains(t, records[0], ":", "Missing :<port> in is.processlist")
@@ -527,7 +527,7 @@ func TestSocketAndIp(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			cli.CheckRows(t, rows, "user1@localhost")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@127.0.0.1 for loop back network interface access
@@ -554,7 +554,7 @@ func TestSocketAndIp(t *testing.T) {
 			// NOTICE: this is not compatible with MySQL! (MySQL would report user1@localhost also for 127.0.0.1)
 			cli.CheckRows(t, rows, "user1@127.0.0.1")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON `test`.* TO 'user1'@'127.0.0.1'")
 		})
 	// Test with unix domain socket file connection with all hosts
 	cli.RunTests(t, func(config *mysql.Config) {
@@ -567,7 +567,7 @@ func TestSocketAndIp(t *testing.T) {
 			rows := dbt.MustQuery("select user()")
 			cli.CheckRows(t, rows, "user1@localhost")
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
 		})
 
 	// Setup user1@localhost for socket (and if MySQL compatible; loop back network interface access)
@@ -596,7 +596,7 @@ func TestSocketAndIp(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@127.0.0.1")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON test.* TO 'user1'@'127.0.0.1'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'127.0.0.1'\nGRANT SELECT,INSERT ON `test`.* TO 'user1'@'127.0.0.1'")
 			require.NoError(t, rows.Close())
 		})
 	// Test with unix domain socket file connection with all hosts
@@ -611,7 +611,7 @@ func TestSocketAndIp(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON `test`.* TO 'user1'@'localhost'")
 			require.NoError(t, rows.Close())
 		})
 }
@@ -699,7 +699,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
 			require.NoError(t, rows.Close())
 		})
 
@@ -733,7 +733,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON test.* TO 'user1'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'%'\nGRANT SELECT ON `test`.* TO 'user1'@'%'")
 			require.NoError(t, rows.Close())
 		})
 
@@ -766,7 +766,7 @@ func TestOnlySocket(t *testing.T) {
 			cli.CheckRows(t, rows, "user1@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON test.* TO 'user1'@'localhost'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'user1'@'localhost'\nGRANT SELECT,INSERT,UPDATE,DELETE ON `test`.* TO 'user1'@'localhost'")
 			require.NoError(t, rows.Close())
 		})
 }
@@ -2563,7 +2563,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 			cli.CheckRows(t, rows, "localhostuser@127.0.0.1")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'localhost'\nGRANT SELECT,UPDATE ON test.* TO 'localhostuser'@'localhost'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'localhost'\nGRANT SELECT,UPDATE ON `test`.* TO 'localhostuser'@'localhost'")
 			require.NoError(t, rows.Close())
 		})
 
@@ -2582,7 +2582,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 			cli.CheckRows(t, rows, "localhostuser@localhost")
 			require.NoError(t, rows.Close())
 			rows = dbt.MustQuery("show grants")
-			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'%'\nGRANT SELECT ON test.* TO 'localhostuser'@'%'")
+			cli.CheckRows(t, rows, "GRANT USAGE ON *.* TO 'localhostuser'@'%'\nGRANT SELECT ON `test`.* TO 'localhostuser'@'%'")
 			require.NoError(t, rows.Close())
 		})
 

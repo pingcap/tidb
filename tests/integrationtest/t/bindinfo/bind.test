@@ -1,0 +1,143 @@
+# TestBindingInListEffect
+drop table if exists t;
+create table t (a int, b int, c int, d int);
+# binding created with `in (?)` can work for `in (?,?,?)`
+begin;
+select a from t where a in (1, 2, 3);
+select @@last_plan_from_binding;
+create binding for select a from t where a in (1) using select a from t where a in (1);
+select a from t where a in (1, 2, 3);
+select @@last_plan_from_binding;
+select a from t where a in (1, 2);
+select @@last_plan_from_binding;
+select a from t where a in (1);
+select @@last_plan_from_binding;
+# binding created with `in (?,?,?)` can work for `in (?)`
+select b from t where b in (1);
+select @@last_plan_from_binding;
+create binding for select b from t where b in (1,2,3) using select b from t where b in (1,2,3);
+select b from t where b in (1);
+select @@last_plan_from_binding;
+# bindings with multiple in-lists can take effect
+select * from t where a in (1) and b in (1) and c in (1);
+select @@last_plan_from_binding;
+create binding for select * from t where a in (1) and b in (1,2) and c in (1,2,3) using
+select * from t where a in (1,2,3) and b in (1,2) and c in (1);
+select * from t where a in (1) and b in (1) and c in (1);
+select @@last_plan_from_binding;
+select * from t where a in (1) and b in (1,2) and c in (1,2,3);
+select @@last_plan_from_binding;
+select * from t where a in (1,2,3) and b in (1,2) and c in (1);
+select @@last_plan_from_binding;
+commit;
+
+# TestExplain
+set tidb_cost_model_version=2;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+explain format='brief' SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
+create index index_id on t1(id);
+explain format='brief' SELECT * from t1 union SELECT * from t1;
+explain format='brief' SELECT * from t1 use index(index_id) union SELECT * from t1;
+create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1;
+explain format='brief' SELECT * from t1 union SELECT * from t1;
+drop global binding for SELECT * from t1 union SELECT * from t1;
+set tidb_cost_model_version=default;
+
+# TestBindSemiJoinRewrite
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain format='brief' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+explain format='brief' select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+create global binding for
+	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+explain format='brief' select * from t1 where exists(select 1 from t2 where t1.id=t2.id);
+drop global binding for
+	select * from t1 where exists(select 1 from t2 where t1.id=t2.id)
+using
+	select * from t1 where exists(select /*+ SEMI_JOIN_REWRITE() */ 1 from t2 where t1.id=t2.id);
+
+# TestBindCTEMerge
+drop table if exists t1;
+create table t1(id int);
+explain format='brief' with cte as (select * from t1) select * from cte a, cte b;
+explain format='brief' with cte as (select /*+ MERGE() */ * from t1) select * from cte a, cte b;
+create global binding for
+	with cte as (select * from t1) select * from cte
+using
+	with cte as (select /*+ MERGE() */ * from t1) select * from cte;
+explain format='brief' with cte as (select * from t1) select * from cte;
+drop global binding for
+	with cte as (select * from t1) select * from cte
+using
+	with cte as (select /*+ MERGE() */ * from t1) select * from cte;
+
+# TestBindNoDecorrelate
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='brief' select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+create global binding for
+	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
+using
+	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+explain format='brief' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
+drop global binding for
+	select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1
+using
+	select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
+
+# TestDefaultSessionVars
+-- sorted_result
+show variables like "%baselines%";
+-- sorted_result
+show global variables like "%baselines%";
+
+# TestSPMHitInfo
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int);
+create table t2(id int);
+explain SELECT * from t1,t2 where t1.id = t2.id;
+explain SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+begin;
+SELECT * from t1,t2 where t1.id = t2.id;
+select @@last_plan_from_binding;
+create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id;
+explain format='brief' SELECT * from t1,t2 where t1.id = t2.id;
+SELECT * from t1,t2 where t1.id = t2.id;
+select @@last_plan_from_binding;
+set binding disabled for SELECT * from t1,t2 where t1.id = t2.id;
+SELECT * from t1,t2 where t1.id = t2.id;
+select @@last_plan_from_binding;
+commit;
+drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
+
+# TestExplainShowBindSQL
+drop table if exists t;
+create table t(a int, b int, key(a));
+create global binding for select * from t using select * from t use index(a);
+select original_sql, bind_sql from mysql.bind_info where bind_sql = 'SELECT * FROM `bindinfo__bind`.`t` USE INDEX (`a`)';
+--enable_warnings;
+explain format = 'verbose' select * from t;
+--disable_warnings;
+drop global binding for select * from t using select * from t use index(a);
+
+# TestExplainTableStmts
+drop table if exists t;
+create table t(id int, value decimal(5,2));
+table t;
+explain table t;
+desc table t;

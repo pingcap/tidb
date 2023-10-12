@@ -33,11 +33,9 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type kvEncoder interface {
+// KVEncoder encodes a row of data into a KV pair.
+type KVEncoder interface {
 	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
-	// GetLastInsertID returns the first auto-generated ID in the current encoder.
-	// if there's no auto-generated id column or the column value is not auto-generated, it will be 0.
-	GetLastInsertID() uint64
 	// GetColumnSize returns the size of each column in the current encoder.
 	GetColumnSize() map[int64]int64
 	io.Closer
@@ -53,12 +51,14 @@ type tableKVEncoder struct {
 	insertColumns      []*table.Column
 }
 
-var _ kvEncoder = &tableKVEncoder{}
+var _ KVEncoder = &tableKVEncoder{}
 
-func newTableKVEncoder(
+// NewTableKVEncoder creates a new tableKVEncoder.
+// exported for test.
+func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	ti *TableImporter,
-) (*tableKVEncoder, error) {
+) (KVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func newTableKVEncoder(
 	}, nil
 }
 
-// Encode implements the kvEncoder interface.
+// Encode implements the KVEncoder interface.
 func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.
@@ -92,11 +92,6 @@ func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, err
 	}
 
 	return en.Record2KV(record, row, rowID)
-}
-
-// GetLastInsertID implements the kvEncoder interface.
-func (en *tableKVEncoder) GetLastInsertID() uint64 {
-	return en.LastInsertID
 }
 
 func (en *tableKVEncoder) GetColumnSize() map[int64]int64 {
@@ -203,7 +198,6 @@ func (en *tableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 	}
 
 	if common.TableHasAutoRowID(en.Table.Meta()) {
-		// todo: we assume there's no such column in input data, will handle it later
 		rowValue := rowID
 		newRowID := en.AutoIDFn(rowID)
 		value = types.NewIntDatum(newRowID)

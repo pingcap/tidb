@@ -18,6 +18,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/internal/session"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -27,17 +28,15 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-var NewCopContext4Test = newCopContext
-
 type resultChanForTest struct {
-	ch chan idxRecResult
+	ch chan IndexRecordChunk
 }
 
-func (r *resultChanForTest) AddTask(rs idxRecResult) {
+func (r *resultChanForTest) AddTask(rs IndexRecordChunk) {
 	r.ch <- rs
 }
 
-func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
+func FetchChunk4Test(copCtx copr.CopContext, tbl table.PhysicalTable, startKey, endKey kv.Key, store kv.Storage,
 	batchSize int) *chunk.Chunk {
 	variable.SetDDLReorgBatchSize(int32(batchSize))
 	task := &reorgBackfillTask{
@@ -47,7 +46,7 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 		physicalTable: tbl,
 	}
 	taskCh := make(chan *reorgBackfillTask, 5)
-	resultCh := make(chan idxRecResult, 5)
+	resultCh := make(chan IndexRecordChunk, 5)
 	sessPool := session.NewSessionPool(nil, store)
 	pool := newCopReqSenderPool(context.Background(), copCtx, store, taskCh, sessPool, nil)
 	pool.chunkSender = &resultChanForTest{ch: resultCh}
@@ -56,12 +55,14 @@ func FetchChunk4Test(copCtx *copContext, tbl table.PhysicalTable, startKey, endK
 	rs := <-resultCh
 	close(taskCh)
 	pool.close(false)
-	return rs.chunk
+	return rs.Chunk
 }
 
-func ConvertRowToHandleAndIndexDatum(row chunk.Row, copCtx *copContext) (kv.Handle, []types.Datum, error) {
-	idxData := extractDatumByOffsets(row, copCtx.idxColOutputOffsets, copCtx.expColInfos, nil)
-	handleData := extractDatumByOffsets(row, copCtx.handleOutputOffsets, copCtx.expColInfos, nil)
-	handle, err := buildHandle(handleData, copCtx.tblInfo, copCtx.pkInfo, &stmtctx.StatementContext{TimeZone: time.Local})
+func ConvertRowToHandleAndIndexDatum(
+	row chunk.Row, copCtx copr.CopContext, idxID int64) (kv.Handle, []types.Datum, error) {
+	c := copCtx.GetBase()
+	idxData := extractDatumByOffsets(row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, nil)
+	handleData := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, nil)
+	handle, err := buildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, &stmtctx.StatementContext{TimeZone: time.Local})
 	return handle, idxData, err
 }

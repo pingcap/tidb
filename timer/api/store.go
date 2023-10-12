@@ -168,6 +168,8 @@ type TimerUpdate struct {
 	Tags OptionalVal[[]string]
 	// Enable indicates to set the timer's `Enable` field.
 	Enable OptionalVal[bool]
+	// TimeZone indicates to set the timer's `TimeZone` field.
+	TimeZone OptionalVal[string]
 	// SchedPolicyType indicates to set the timer's `SchedPolicyType` field.
 	SchedPolicyType OptionalVal[SchedPolicyType]
 	// SchedPolicyExpr indicates to set the timer's `SchedPolicyExpr` field.
@@ -194,8 +196,8 @@ type TimerUpdate struct {
 	CheckEventID OptionalVal[string]
 }
 
-// Apply applies the update to a timer.
-func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
+// apply applies the update to a timer.
+func (u *TimerUpdate) apply(record *TimerRecord) (*TimerRecord, error) {
 	if v, ok := u.CheckVersion.Get(); ok && record.Version != v {
 		return nil, errors.Trace(ErrVersionNotMatch)
 	}
@@ -214,6 +216,11 @@ func (u *TimerUpdate) Apply(record *TimerRecord) (*TimerRecord, error) {
 
 	if v, ok := u.Enable.Get(); ok {
 		record.Enable = v
+	}
+
+	if v, ok := u.TimeZone.Get(); ok {
+		record.TimeZone = v
+		record.Location = getMemStoreTimeZoneLoc(record.TimeZone)
 	}
 
 	if v, ok := u.SchedPolicyType.Get(); ok {

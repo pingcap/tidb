@@ -24,7 +24,7 @@ var (
 	LoadSchemaCounter *prometheus.CounterVec
 
 	// LoadSchemaDuration records the duration of load schema.
-	LoadSchemaDuration prometheus.Histogram
+	LoadSchemaDuration *prometheus.HistogramVec
 
 	// InfoCacheCounters are the counters of get/hit.
 	InfoCacheCounters *prometheus.CounterVec
@@ -59,14 +59,14 @@ func InitDomainMetrics() {
 			Help:      "Counter of load schema",
 		}, []string{LblType})
 
-	LoadSchemaDuration = NewHistogram(
+	LoadSchemaDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "domain",
 			Name:      "load_schema_duration_seconds",
 			Help:      "Bucketed histogram of processing time (s) in load schema.",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
-		})
+		}, []string{LblAction})
 
 	InfoCacheCounters = NewCounterVec(
 		prometheus.CounterOpts{

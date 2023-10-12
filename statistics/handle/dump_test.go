@@ -15,15 +15,20 @@
 package handle_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/internal"
+	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
 	"github.com/stretchr/testify/require"
@@ -92,25 +97,24 @@ func TestConversion(t *testing.T) {
 	require.NoError(t, err)
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	require.NoError(t, err)
 
 	tbl := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTbl, tbl)
-
 	cleanStats(tk, dom)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		require.Nil(t, h.Update(is))
 	})
-	err = h.LoadStatsFromJSON(is, jsonTbl)
+	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
 	require.NoError(t, err)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTblInStorage, tbl)
 }
 
-func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handle.JSONTable {
+func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *storage.JSONTable {
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.Nil(t, h.Update(is))
@@ -137,7 +141,7 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats := getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.Nil(t, stats.Partitions["global"])
+	require.Nil(t, stats.Partitions[globalstats.TiDBGlobalStats])
 
 	// global-stats is existed
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
@@ -145,7 +149,7 @@ func TestDumpGlobalStats(t *testing.T) {
 	stats = getStatsJSON(t, dom, "test", "t")
 	require.NotNil(t, stats.Partitions["p0"])
 	require.NotNil(t, stats.Partitions["p1"])
-	require.NotNil(t, stats.Partitions["global"])
+	require.NotNil(t, stats.Partitions[globalstats.TiDBGlobalStats])
 }
 
 func TestLoadGlobalStats(t *testing.T) {
@@ -169,9 +173,88 @@ func TestLoadGlobalStats(t *testing.T) {
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
 	// load global-stats back
-	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(dom.InfoSchema(), globalStats))
+	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
 	loadedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
+}
+
+func TestLoadPartitionStats(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 8")
+	vals := make([]string, 0, 5000)
+	for i := 0; i < 5000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i))
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table t")
+
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	jsonTbl, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
+	require.NoError(t, err)
+	pi := tableInfo.GetPartitionInfo()
+	originPartStats := make([]*statistics.Table, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		originPartStats = append(originPartStats, dom.StatsHandle().GetPartitionStats(tableInfo, def.ID))
+	}
+	originGlobalStats := dom.StatsHandle().GetTableStats(tableInfo)
+
+	// remove all statistics
+	tk.MustExec("delete from mysql.stats_meta")
+	tk.MustExec("delete from mysql.stats_histograms")
+	tk.MustExec("delete from mysql.stats_buckets")
+	dom.StatsHandle().Clear()
+	clearedStats := getStatsJSON(t, dom, "test", "t")
+	require.Equal(t, 0, len(clearedStats.Partitions))
+
+	// load stats back
+	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
+
+	// compare
+	for i, def := range pi.Definitions {
+		newPartStats := dom.StatsHandle().GetPartitionStats(tableInfo, def.ID)
+		requireTableEqual(t, originPartStats[i], newPartStats)
+	}
+	requireTableEqual(t, originGlobalStats, dom.StatsHandle().GetTableStats(tableInfo))
+}
+
+func TestLoadPartitionStatsErrPanic(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 8")
+	vals := make([]string, 0, 5000)
+	for i := 0; i < 5000; i++ {
+		vals = append(vals, fmt.Sprintf("(%v)", i))
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	tk.MustExec("analyze table t")
+
+	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := table.Meta()
+	jsonTbl, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
+	require.NoError(t, err)
+
+	ctx := context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+		return errors.New("ERROR")
+	})
+	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)
+	require.ErrorContains(t, err, "ERROR")
+	ctx = context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+		panic("PANIC")
+	})
+	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)
+	require.ErrorContains(t, err, "PANIC") // recover panic as an error
 }
 
 func TestDumpPartitions(t *testing.T) {
@@ -211,7 +294,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_buckets")
 	h.Clear()
 
-	err = h.LoadStatsFromJSON(dom.InfoSchema(), jsonTbl)
+	err = h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0)
 	require.NoError(t, err)
 	for i, def := range pi.Definitions {
 		tt := h.GetPartitionStats(tableInfo, def.ID)
@@ -272,7 +355,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 
 	jsonTable, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
 	require.NoError(t, err)
-	err = h.LoadStatsFromJSON(is, jsonTable)
+	err = h.LoadStatsFromJSON(context.Background(), is, jsonTable, 0)
 	require.NoError(t, err)
 	stat = h.GetTableStats(tableInfo)
 	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
@@ -315,7 +398,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	tbl := h.GetTableStats(tableInfo.Meta())
 	jsonTbl, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, jsonTbl)
 	require.NoError(t, err)
 	requireTableEqual(t, loadTbl, tbl)
 
@@ -324,7 +407,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	wg.Run(func() {
 		require.Nil(t, h.Update(is))
 	})
-	err = h.LoadStatsFromJSON(is, jsonTbl)
+	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
 	require.NoError(t, err)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
@@ -359,11 +442,11 @@ func TestDumpVer2Stats(t *testing.T) {
 	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
 	require.NoError(t, err)
 
-	loadJSONTable := &handle.JSONTable{}
+	loadJSONTable := &storage.JSONTable{}
 	err = json.Unmarshal(jsonBytes, loadJSONTable)
 	require.NoError(t, err)
 
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
 	require.NoError(t, err)
 
 	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
@@ -373,7 +456,7 @@ func TestDumpVer2Stats(t *testing.T) {
 	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTbl, statsCacheTbl)
 
-	err = h.LoadStatsFromJSON(is, loadJSONTable)
+	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
@@ -411,11 +494,11 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
 	require.NoError(t, err)
 
-	loadJSONTable := &handle.JSONTable{}
+	loadJSONTable := &storage.JSONTable{}
 	err = json.Unmarshal(jsonBytes, loadJSONTable)
 	require.NoError(t, err)
 
-	loadTbl, err := handle.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
+	loadTbl, err := storage.TableStatsFromJSON(tableInfo.Meta(), tableInfo.Meta().ID, loadJSONTable)
 	require.NoError(t, err)
 
 	// assert that a statistics.Table from storage dumped into JSON text and then unmarshalled into a statistics.Table keeps unchanged
@@ -425,7 +508,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTbl, statsCacheTbl)
 
-	err = h.LoadStatsFromJSON(is, loadJSONTable)
+	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
@@ -460,9 +543,9 @@ func TestJSONTableToBlocks(t *testing.T) {
 	blockSize := 30
 	js, err := h.DumpStatsToJSON("test", tableInfo.Meta(), nil, true)
 	require.NoError(t, err)
-	dumpJSONBlocks, err := handle.JSONTableToBlocks(js, blockSize)
+	dumpJSONBlocks, err := storage.JSONTableToBlocks(js, blockSize)
 	require.NoError(t, err)
-	jsConverted, err := handle.BlocksToJSONTable(dumpJSONBlocks)
+	jsConverted, err := storage.BlocksToJSONTable(dumpJSONBlocks)
 	require.NoError(t, err)
 	jsonStr, err := json.Marshal(jsConverted)
 	require.NoError(t, err)
@@ -521,9 +604,9 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
  "modify_count": 256,
  "partitions": null
 }`
-	jsonTbl := &handle.JSONTable{}
+	jsonTbl := &storage.JSONTable{}
 	require.NoError(t, json.Unmarshal([]byte(statsJSONFromOldVersion), jsonTbl))
-	require.NoError(t, h.LoadStatsFromJSON(is, jsonTbl))
+	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(tbl.Meta())

@@ -19,7 +19,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/parser/terror"
 	"github.com/pingcap/tidb/util/gctuner"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -128,6 +132,47 @@ func TestTiFlashMaxBytes(t *testing.T) {
 	}
 }
 
+func TestTiFlashMemQuotaQueryPerNode(t *testing.T) {
+	// test TiFlash query memory threshold
+	sv := GetSysVar(TiFlashMemQuotaQueryPerNode)
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "-1", val)
+	val, err = sv.Validate(vars, "-10", ScopeGlobal)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "-1", val)
+	val, err = sv.Validate(vars, "100", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "100", val)
+	_, err = sv.Validate(vars, strconv.FormatUint(uint64(math.MaxInt64)+1, 10), ScopeSession)
+	// can not autoconvert because the input is out of the range of Int64
+	require.Error(t, err)
+	require.Nil(t, sv.SetSessionFromHook(vars, "10000")) // sets
+	require.Equal(t, int64(10000), vars.TiFlashMaxQueryMemoryPerNode)
+}
+
+func TestTiFlashQuerySpillRatio(t *testing.T) {
+	// test TiFlash auto spill ratio
+	sv := GetSysVar(TiFlashQuerySpillRatio)
+	vars := NewSessionVars(nil)
+	val, err := sv.Validate(vars, "-10", ScopeSession)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "0", val)
+	val, err = sv.Validate(vars, "-10", ScopeGlobal)
+	require.NoError(t, err) // it has been auto converted if out of range
+	require.Equal(t, "0", val)
+	_, err = sv.Validate(vars, "100", ScopeSession)
+	require.Error(t, err)
+	_, err = sv.Validate(vars, "0.9", ScopeSession)
+	require.Error(t, err)
+	val, err = sv.Validate(vars, "0.85", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "0.85", val)
+	require.Nil(t, sv.SetSessionFromHook(vars, "0.75")) // sets
+	require.Equal(t, 0.75, vars.TiFlashQuerySpillRatio)
+}
+
 func TestCollationServer(t *testing.T) {
 	sv := GetSysVar(CollationServer)
 	vars := NewSessionVars(nil)
@@ -144,6 +189,31 @@ func TestCollationServer(t *testing.T) {
 
 	require.Nil(t, sv.SetSessionFromHook(vars, "utf8mb4_bin"))
 	require.Equal(t, "utf8mb4", vars.systems[CharacterSetServer]) // check it also changes charset.
+}
+
+func TestDefaultCollationForUTF8MB4(t *testing.T) {
+	sv := GetSysVar(DefaultCollationForUTF8MB4)
+	vars := NewSessionVars(nil)
+
+	// test normalization
+	val, err := sv.Validate(vars, "utf8mb4_BIN", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_bin", val)
+	warn := vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1681]Updating 'default_collation_for_utf8mb4' is deprecated. It will be made read-only in a future release.", warn.Error())
+	val, err = sv.Validate(vars, "utf8mb4_GENeral_CI", ScopeGlobal)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_general_ci", val)
+	warn = vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1681]Updating 'default_collation_for_utf8mb4' is deprecated. It will be made read-only in a future release.", warn.Error())
+	val, err = sv.Validate(vars, "utf8mb4_0900_AI_CI", ScopeSession)
+	require.NoError(t, err)
+	require.Equal(t, "utf8mb4_0900_ai_ci", val)
+	warn = vars.StmtCtx.GetWarnings()[0].Err
+	require.Equal(t, "[variable:1681]Updating 'default_collation_for_utf8mb4' is deprecated. It will be made read-only in a future release.", warn.Error())
+	// test set variable failed
+	_, err = sv.Validate(vars, "LATIN1_bin", ScopeSession)
+	require.EqualError(t, err, ErrInvalidDefaultUTF8MB4Collation.GenWithStackByArgs("latin1_bin").Error())
 }
 
 func TestTimeZone(t *testing.T) {
@@ -173,7 +243,7 @@ func TestTimeZone(t *testing.T) {
 	require.Equal(t, "+00:00", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, "UTC")) // sets
-	tz, err := parseTimeZone("UTC")
+	tz, err := timeutil.ParseTimeZone("UTC")
 	require.NoError(t, err)
 	require.Equal(t, tz, vars.TimeZone)
 }
@@ -1102,6 +1172,17 @@ func TestTiDBServerMemoryLimitGCTrigger(t *testing.T) {
 	require.Error(t, err)
 	err = mock.SetGlobalSysVar(context.Background(), TiDBServerMemoryLimitGCTrigger, "51%")
 	require.NoError(t, err)
+
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMaxValue, "50")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "200")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "1000")
+	require.Error(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMinValue, "100")
+	require.NoError(t, err)
+	err = mock.SetGlobalSysVar(context.Background(), TiDBGOGCTunerMaxValue, "200")
+	require.NoError(t, err)
 }
 
 func TestSetAggPushDownGlobally(t *testing.T) {
@@ -1288,4 +1369,59 @@ func TestTiDBTiFlashReplicaRead(t *testing.T) {
 	val, err = mock.GetGlobalSysVar(TiFlashReplicaRead)
 	require.NoError(t, err)
 	require.Equal(t, DefTiFlashReplicaRead, val)
+}
+
+func TestSetTiDBCloudStorageURI(t *testing.T) {
+	vars := NewSessionVars(nil)
+	mock := NewMockGlobalAccessor4Tests()
+	mock.SessionVars = vars
+	vars.GlobalVarsAccessor = mock
+	cloudStorageURI := GetSysVar(TiDBCloudStorageURI)
+	require.Len(t, CloudStorageURI.Load(), 0)
+	defer func() {
+		CloudStorageURI.Store("")
+	}()
+
+	// Default empty
+	require.Len(t, cloudStorageURI.Value, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Set to noop
+	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
+	err := mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, noopURI)
+	require.NoError(t, err)
+	val, err1 := mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Equal(t, noopURI, val)
+	require.Equal(t, noopURI, CloudStorageURI.Load())
+
+	// Set to s3, should fail
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "s3://blackhole")
+	require.ErrorContains(t, err, "bucket blackhole")
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer s.Close()
+
+	// Set to s3, should return uri without variable
+	s3URI := "s3://tiflow-test/?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, s3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "s3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, s3URI, CloudStorageURI.Load())
+
+	// Set to empty, should return no error
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "")
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.Len(t, val, 0)
+	cancel()
 }

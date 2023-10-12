@@ -410,10 +410,11 @@ const (
 	// TiDBMaxBytesBeforeTiFlashExternalSort is the maximum bytes used by a TiFlash sort/TopN before spill to disk
 	TiDBMaxBytesBeforeTiFlashExternalSort = "tidb_max_bytes_before_tiflash_external_sort"
 
-	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
-	// Default value is `true`, means never use pipeline model in tiflash.
-	// Value set to `true` means try to execute query with pipeline model in tiflash.
-	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
+	// TiFlashMemQuotaQueryPerNode is the maximum bytes used by a TiFlash Query on each TiFlash node
+	TiFlashMemQuotaQueryPerNode = "tiflash_mem_quota_query_per_node"
+
+	// TiFlashQuerySpillRatio is the threshold that TiFlash will trigger auto spill when the memory usage is above this percentage
+	TiFlashQuerySpillRatio = "tiflash_query_spill_ratio"
 
 	// TiDBMPPStoreFailTTL is the unavailable time when a store is detected failed. During that time, tidb will not send any task to
 	// TiFlash even though the failed TiFlash node has been recovered.
@@ -553,6 +554,7 @@ const (
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
@@ -904,6 +906,13 @@ const (
 
 	// TiDBEnableCheckConstraint indicates whether to enable check constraint feature.
 	TiDBEnableCheckConstraint = "tidb_enable_check_constraint"
+
+	// TiDBOptEnableHashJoin indicates whether to enable hash join.
+	TiDBOptEnableHashJoin = "tidb_opt_enable_hash_join"
+
+	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
+	// Please see comments of SessionVars.OptObjective for details.
+	TiDBOptObjective = "tidb_opt_objective"
 )
 
 // TiDB vars that have only global scope
@@ -972,6 +981,8 @@ const (
 	TiDBDDLEnableFastReorg = "tidb_ddl_enable_fast_reorg"
 	// TiDBDDLDiskQuota used to set disk quota for lightning add index.
 	TiDBDDLDiskQuota = "tidb_ddl_disk_quota"
+	// TiDBCloudStorageURI used to set a cloud storage uri for ddl add index and import into.
+	TiDBCloudStorageURI = "tidb_cloud_storage_uri"
 	// TiDBAutoBuildStatsConcurrency is used to set the build concurrency of auto-analyze.
 	TiDBAutoBuildStatsConcurrency = "tidb_auto_build_stats_concurrency"
 	// TiDBSysProcScanConcurrency is used to set the scan concurrency of for backend system processes, like auto-analyze.
@@ -986,6 +997,10 @@ const (
 	TiDBEnableGOGCTuner = "tidb_enable_gogc_tuner"
 	// TiDBGOGCTunerThreshold is to control the threshold of GOGC tuner.
 	TiDBGOGCTunerThreshold = "tidb_gogc_tuner_threshold"
+	// TiDBGOGCTunerMaxValue is the max value of GOGC that GOGC tuner can change to.
+	TiDBGOGCTunerMaxValue = "tidb_gogc_tuner_max_value"
+	// TiDBGOGCTunerMinValue is the min value of GOGC that GOGC tuner can change to.
+	TiDBGOGCTunerMinValue = "tidb_gogc_tuner_min_value"
 	// TiDBExternalTS is the ts to read through when the `TiDBEnableExternalTsRead` is on
 	TiDBExternalTS = "tidb_external_ts"
 	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
@@ -1085,6 +1100,13 @@ const (
 	TiDBSkipMissingPartitionStats = "tidb_skip_missing_partition_stats"
 	// TiDBSessionAlias indicates the alias of a session which is used for tracing.
 	TiDBSessionAlias = "tidb_session_alias"
+	// TiDBServiceScope indicates the role for tidb for distributed task framework.
+	TiDBServiceScope = "tidb_service_scope"
+	// TiDBSchemaVersionCacheLimit defines the capacity size of domain infoSchema cache.
+	TiDBSchemaVersionCacheLimit = "tidb_schema_version_cache_limit"
+	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
+	// It's deprecated and setting it will not have any effect.
+	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
 )
 
 // TiDB intentional limits
@@ -1172,6 +1194,8 @@ const (
 	DefTiFlashMaxBytesBeforeExternalJoin           = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy        = -1
 	DefTiFlashMaxBytesBeforeExternalSort           = -1
+	DefTiFlashMemQuotaQueryPerNode                 = 0
+	DefTiFlashQuerySpillRatio                      = 0.7
 	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
 	DefTiDBTxnMode                                 = ""
@@ -1310,7 +1334,7 @@ const (
 	DefTiDBEnableFastReorg                         = true
 	DefTiDBDDLDiskQuota                            = 100 * 1024 * 1024 * 1024 // 100GB
 	DefExecutorConcurrency                         = 5
-	DefTiDBEnableNonPreparedPlanCache              = true
+	DefTiDBEnableNonPreparedPlanCache              = false
 	DefTiDBEnableNonPreparedPlanCacheForDML        = false
 	DefTiDBNonPreparedPlanCacheSize                = 100
 	DefTiDBPlanCacheMaxPlanSize                    = 2 * size.MB
@@ -1324,7 +1348,7 @@ const (
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
 	DefTiDBOptAdvancedJoinHint                   = true
-	DefTiDBAnalyzePartitionConcurrency           = 1
+	DefTiDBAnalyzePartitionConcurrency           = 2
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
 	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20
@@ -1333,6 +1357,8 @@ const (
 	DefTiDBEnableGOGCTuner                       = true
 	// DefTiDBGOGCTunerThreshold is to limit TiDBGOGCTunerThreshold.
 	DefTiDBGOGCTunerThreshold                 float64 = 0.6
+	DefTiDBGOGCMaxValue                               = 500
+	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
@@ -1389,6 +1415,9 @@ const (
 	DefTiDBLockUnchangedKeys                          = true
 	DefTiDBEnableCheckConstraint                      = false
 	DefTiDBSkipMissingPartitionStats                  = true
+	DefTiDBOptEnableHashJoin                          = true
+	DefTiDBOptObjective                               = OptObjectiveModerate
+	DefTiDBSchemaVersionCacheLimit                    = 16
 )
 
 // Process global variables.
@@ -1484,6 +1513,10 @@ var (
 	EnableResourceControl     = atomic.NewBool(false)
 	EnableCheckConstraint     = atomic.NewBool(DefTiDBEnableCheckConstraint)
 	SkipMissingPartitionStats = atomic.NewBool(DefTiDBSkipMissingPartitionStats)
+	TiFlashEnablePipelineMode = atomic.NewBool(DefTiDBEnableTiFlashPipelineMode)
+	ServiceScope              = atomic.NewString("")
+	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
+	CloudStorageURI           = atomic.NewString("")
 )
 
 var (
@@ -1507,6 +1540,8 @@ var (
 	GetExternalTimestamp func(ctx context.Context) (uint64, error)
 	// SetGlobalResourceControl is the func registered by domain to set cluster resource control.
 	SetGlobalResourceControl atomic.Pointer[func(bool)]
+	// ValidateCloudStorageURI validates the cloud storage URI.
+	ValidateCloudStorageURI func(ctx context.Context, uri string) error
 )
 
 // Hooks functions for Cluster Resource Control.

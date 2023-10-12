@@ -233,28 +233,3 @@ func TestIssue9805(t *testing.T) {
 	// Test when both tables are empty, EXPLAIN ANALYZE for IndexLookUp would not panic.
 	tk.MustQuery("explain analyze select /*+ TIDB_INLJ(t2) */ t1.id, t2.a from t1 join t2 on t1.a = t2.d where t1.b = 't2' and t1.d = 4")
 }
-
-func TestUpdateProjEliminate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int)")
-	tk.MustExec("explain update t t1, (select distinct b from t) t2 set t1.b = t2.b")
-
-	tk.MustExec("drop table if exists tb1, tb2")
-	tk.MustExec("create table tb1(a int, b int, primary key(a))")
-	tk.MustExec("create table tb2 (a int, b int, c int, d datetime, primary key(c),key idx_u(a));")
-	tk.MustExec("update tb1 set tb1.b=(select tb2.b from tb2 where tb2.a=tb1.a order by c desc limit 1);")
-}
-
-// TestAppendIntPkToIndexTailForRangeBuilding tests for issue25219 https://github.com/pingcap/tidb/issues/25219.
-func TestAppendIntPkToIndexTailForRangeBuilding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t25219(a int primary key, col3 int, col1 int, index idx(col3))")
-	tk.MustExec("insert into t25219 values(1, 1, 1)")
-	tk.MustExec("analyze table t25219")
-	tk.MustQuery("select * from t25219 WHERE (col3 IS NULL OR col1 IS NOT NULL AND col3 <= 6659) AND col3 = 1;").Check(testkit.Rows("1 1 1"))
-}

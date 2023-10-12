@@ -15,7 +15,12 @@
 package placement
 
 import (
+	"cmp"
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -43,6 +48,29 @@ func NewConstraints(labels []string) (Constraints, error) {
 		}
 	}
 	return constraints, nil
+}
+
+// preCheckDictConstraintStr will check the label string, and return the new labels and role.
+// role maybe be override by the label string, eg `#evict-leader`.
+func preCheckDictConstraintStr(labelStr string, role PeerRoleType) ([]string, PeerRoleType, error) {
+	innerLabels := strings.Split(labelStr, ",")
+	overrideRole := role
+	newLabels := make([]string, 0, len(innerLabels))
+	for _, str := range innerLabels {
+		if strings.HasPrefix(str, attributePrefix) {
+			switch str[1:] {
+			case attributeEvictLeader:
+				if role == Voter {
+					overrideRole = Follower
+				}
+			default:
+				return newLabels, overrideRole, fmt.Errorf("%w: unsupported attribute '%s'", ErrUnsupportedConstraint, str)
+			}
+			continue
+		}
+		newLabels = append(newLabels, str)
+	}
+	return newLabels, overrideRole, nil
 }
 
 // NewConstraintsFromYaml will transform parse the raw 'array' constraints and call NewConstraints.
@@ -109,4 +137,35 @@ func (constraints *Constraints) Add(label Constraint) error {
 		*constraints = append(*constraints, label)
 	}
 	return nil
+}
+
+// FingerPrint returns a unique string for the constraints.
+func (constraints *Constraints) FingerPrint() string {
+	copied := make(Constraints, len(*constraints))
+	copy(copied, *constraints)
+	slices.SortStableFunc(copied, func(i, j Constraint) int {
+		a, b := constraintToString(&i), constraintToString(&j)
+		return cmp.Compare(a, b)
+	})
+	var combinedConstraints string
+	for _, constraint := range copied {
+		combinedConstraints += constraintToString(&constraint)
+	}
+
+	// Calculate the SHA256 hash of the concatenated constraints
+	hash := sha256.Sum256([]byte(combinedConstraints))
+
+	// Encode the hash as a base64 string
+	hashStr := base64.StdEncoding.EncodeToString(hash[:])
+
+	return hashStr
+}
+
+func constraintToString(c *Constraint) string {
+	// Sort the values in the constraint
+	sortedValues := make([]string, len(c.Values))
+	copy(sortedValues, c.Values)
+	sort.Strings(sortedValues)
+	sortedValuesStr := strings.Join(sortedValues, ",")
+	return c.Key + "|" + string(c.Op) + "|" + sortedValuesStr
 }

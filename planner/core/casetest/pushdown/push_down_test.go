@@ -24,36 +24,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestPushLimitDownIndexLookUpReader(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("set @@session.tidb_executor_concurrency = 4;")
-	tk.MustExec("set @@session.tidb_hash_join_concurrency = 5;")
-	tk.MustExec("set @@session.tidb_distsql_scan_concurrency = 15;")
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tbl")
-	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
-	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
-	tk.MustExec("analyze table tbl")
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
 func TestPushDownToTiFlashWithKeepOrder(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -167,33 +137,6 @@ func TestPushDownProjectionForTiFlash(t *testing.T) {
 			}
 		}
 	}
-
-	var input []string
-	var output []struct {
-		SQL  string
-		Plan []string
-	}
-	integrationSuiteData := GetIntegrationSuiteData()
-	integrationSuiteData.LoadTestCases(t, &input, &output)
-	for i, tt := range input {
-		testdata.OnRecord(func() {
-			output[i].SQL = tt
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-		})
-		res := tk.MustQuery(tt)
-		res.Check(testkit.Rows(output[i].Plan...))
-	}
-}
-
-func TestPushDownProjectionForTiKV(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b real, i int, id int, value decimal(6,3), name char(128), d decimal(6,3), s char(128), t datetime, c bigint as ((a+1)) virtual, e real as ((b+a)))")
-	tk.MustExec("analyze table t")
-	tk.MustExec("set session tidb_opt_projection_push_down=1")
 
 	var input []string
 	var output []struct {

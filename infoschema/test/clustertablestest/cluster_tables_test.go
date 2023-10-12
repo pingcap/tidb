@@ -222,7 +222,17 @@ func TestSelectClusterTable(t *testing.T) {
 	// setup suite
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", &testkit.MockSessionManager{
+		PS: []*util.ProcessInfo{
+			{
+				ID:           1,
+				User:         "root",
+				Host:         "127.0.0.1",
+				Command:      mysql.ComQuery,
+				SessionAlias: "alias456",
+			},
+		},
+	})
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	defer s.httpServer.Close()
@@ -242,7 +252,7 @@ func TestSelectClusterTable(t *testing.T) {
 	tk.MustQuery("select time from `CLUSTER_SLOW_QUERY` where time='2019-02-12 19:33:56.571953'").Check(testkit.RowsWithSep("|", "2019-02-12 19:33:56.571953"))
 	tk.MustQuery("select count(*) from `CLUSTER_PROCESSLIST`").Check(testkit.Rows("1"))
 	// skip instance and host column because it now includes the TCP socket details (unstable)
-	tk.MustQuery("select id, user, db, command, time, state, info, digest, mem, disk, txnstart from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf("1 root <nil> Query 9223372036 %s <nil>  0 0 ", "")))
+	tk.MustQuery("select id, user, db, command, time, state, info, digest, mem, disk, txnstart, session_alias from `CLUSTER_PROCESSLIST`").Check(testkit.Rows(fmt.Sprintf("1 root <nil> Query 9223372036 %s <nil>  0 0  alias456", "")))
 	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time limit 1").Check(testkit.Rows("4.895492 6 "))
 	tk.MustQuery("select query_time, conn_id, session_alias from `CLUSTER_SLOW_QUERY` order by time desc limit 1").Check(testkit.Rows("25.571605962 40507 alias123"))
 	tk.MustQuery("select count(*) from `CLUSTER_SLOW_QUERY` group by digest").Check(testkit.Rows("1", "1"))
@@ -1271,27 +1281,6 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	tk.MustGetErrMsg("set binding enabled for sql digest '2'", "can't find any binding for '2'")
 	tk.MustGetErrMsg("set binding enabled for sql digest ''", "sql digest is empty")
 	tk.MustGetErrMsg("set binding disabled for sql digest ''", "sql digest is empty")
-}
-
-func TestCreateBindingWhenCloseStmtSummaryTable(t *testing.T) {
-	s := new(clusterTablesSuite)
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
-	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	s.startTime = time.Now()
-	defer s.httpServer.Close()
-	defer s.rpcserver.Stop()
-	tk := s.newTestKitWithRoot(t)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(id int primary key, a int, key(a))")
-	tk.MustExec("set global tidb_enable_stmt_summary = 0")
-	tk.MustExec("select /*+ ignore_index(t, a) */ * from t where a = 1")
-
-	tk.MustGetErrMsg("create binding from history using plan digest '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'",
-		"can't find any plans for '4e3159169cc63c14b139a4e7d72eae1759875c9a9581f94bb2079aae961189cb'")
 }
 
 func TestCreateBindingForNotSupportedStmt(t *testing.T) {

@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "testkit",
@@ -20,6 +20,7 @@ go_library(
         "//expression",
         "//kv",
         "//parser/ast",
+        "//parser/auth",
         "//parser/terror",
         "//planner/core",
         "//resourcemanager",
@@ -30,6 +31,7 @@ go_library(
         "//store/driver",
         "//store/mockstore",
         "//testkit/testenv",
+        "//types",
         "//util",
         "//util/breakpoint",
         "//util/chunk",
@@ -39,12 +41,23 @@ go_library(
         "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_client_go_v2//tikvrpc",
         "@io_opencensus_go//stats/view",
+        "@org_golang_google_grpc//:grpc",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "testkit_test",
+    timeout = "short",
+    srcs = ["testkit_test.go"],
+    embed = [":testkit"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
 )

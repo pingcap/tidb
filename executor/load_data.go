@@ -153,7 +153,7 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2)
+			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{})
 		}}}
 	return e.load(ctx, readers)
 }
@@ -322,6 +322,9 @@ func (w *encodeWorker) processStream(
 			if err != nil {
 				return err
 			}
+			if err = w.controller.HandleSkipNRows(dataParser); err != nil {
+				return err
+			}
 			err = w.processOneStream(ctx, dataParser, outCh)
 			terror.Log(dataParser.Close())
 			if err != nil {
@@ -342,7 +345,7 @@ func (w *encodeWorker) processOneStream(
 		r := recover()
 		if r != nil {
 			logutil.Logger(ctx).Error("process routine panicked",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack"))
 			err = errors.Errorf("%v", r)
 		}
@@ -523,7 +526,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 		r := recover()
 		if r != nil {
 			logutil.Logger(ctx).Error("commitWork panicked",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack"))
 			err = errors.Errorf("%v", r)
 		}
@@ -717,6 +720,11 @@ func (s *SimpleSeekerOnReadCloser) Seek(offset int64, whence int) (int64, error)
 // Close implements io.Closer.
 func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
+}
+
+// GetFileSize implements storage.ExternalFileReader.
+func (*SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
+	return 0, errors.Errorf("unsupported GetFileSize on SimpleSeekerOnReadCloser")
 }
 
 // loadDataVarKeyType is a dummy type to avoid naming collision in context.

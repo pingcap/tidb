@@ -57,7 +57,7 @@ func benchPutGet(b *testing.B, c *StatsCachePointer) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c.Load().GetFromUser(int64(i))
+			c.Load().Get(int64(i))
 		}(i)
 	}
 	wg.Wait()
@@ -82,7 +82,7 @@ func benchGet(b *testing.B, c *StatsCachePointer) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c.Load().GetFromUser(int64(i))
+			c.Load().Get(int64(i))
 		}(i)
 	}
 	wg.Wait()

@@ -59,7 +59,7 @@ func TestNoNumLimit(t *testing.T) {
 	sql += ");"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	sql = "create table test.t_too_many_indexes ("
@@ -84,7 +84,7 @@ func TestCreateTableLongIndex(t *testing.T) {
 	sql := "create table test.t (c1 int, c2 blob, c3 varchar(64), index idx_c2(c2(555555)));"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 }
 
@@ -108,7 +108,7 @@ func TestAlterPK(t *testing.T) {
 	sql := "create table test.t (c1 int primary key, c2 blob);"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	tblInfo := mustTableByName(t, tracker, "test", "t")
@@ -136,7 +136,7 @@ func TestDropColumn(t *testing.T) {
 	sql := "create table test.t(a int, b int auto_increment, c int, key(b))"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	tblInfo := mustTableByName(t, tracker, "test", "t")
@@ -163,7 +163,7 @@ func TestFullTextIndex(t *testing.T) {
 	sql := "create table test.t (a text, fulltext key (a))"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 }
 
@@ -181,7 +181,7 @@ func TestIndexLength(t *testing.T) {
 	sql := "create table test.t(a text, b text charset ascii, c blob, index(a(768)), index (b(3072)), index (c(3072)));"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	tblInfo := mustTableByName(t, tracker, "test", "t")
@@ -218,7 +218,7 @@ func TestIssue5092(t *testing.T) {
 	sql := "create table test.t (a int)"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add column (b int, c int)"
@@ -295,7 +295,7 @@ func TestBitDefaultValues(t *testing.T) {
 	);`
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 }
 
@@ -303,7 +303,7 @@ func TestAddExpressionIndex(t *testing.T) {
 	sql := "create table test.t (a int, b real);"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add index idx((a+b))"
@@ -410,7 +410,7 @@ func TestAtomicMultiSchemaChange(t *testing.T) {
 	sql := "create table test.t (a int);"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t add b int, add c int;"
@@ -437,7 +437,7 @@ func TestImmutableTableInfo(t *testing.T) {
 	sql := "create table test.t (a varchar(20)) charset latin1;"
 
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	tblInfo := mustTableByName(t, tracker, "test", "t")
@@ -489,7 +489,7 @@ func (m mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts [
 func TestModifyFromNullToNotNull(t *testing.T) {
 	sql := "create table test.t (a int, b int);"
 	tracker := schematracker.NewSchemaTracker(2)
-	tracker.CreateTestDB()
+	tracker.CreateTestDB(nil)
 	execCreate(t, tracker, sql)
 
 	sql = "alter table test.t modify column a int not null;"

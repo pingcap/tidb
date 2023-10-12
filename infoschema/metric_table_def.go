@@ -78,6 +78,17 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL: "rate(process_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
 		Labels: []string{"instance", "job"},
 	},
+	"tiflash_process_cpu_usage": {
+		PromQL: "rate(tiflash_proxy_process_cpu_seconds_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
+		Labels: []string{"instance", "job"},
+	},
+	"tiflash_cpu_quota": {
+		PromQL: "tiflash_system_current_metric_LogicalCPUCores{$LABEL_CONDITIONS}",
+		Labels: []string{"instance"},
+	},
+	"tiflash_resource_manager_resource_unit": {
+		PromQL: "sum(rate(tiflash_compute_request_unit[$RANGE_DURATION]))",
+	},
 	"tidb_connection_count": {
 		PromQL:  "tidb_server_connections{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance"},
@@ -551,12 +562,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tidb_statistics_update_stats_total{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (type,instance)",
 		Labels:  []string{"instance", "type"},
 	},
-	"tidb_statistics_fast_analyze_status": {
-		Comment:  "The quantile of TiDB fast analyze statistics ",
-		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_statistics_fast_analyze_status_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, type,instance))",
-		Labels:   []string{"instance", "type"},
-		Quantile: 0.95,
-	},
 	"tidb_new_etcd_session_duration": {
 		Comment:  "The quantile of TiDB new session durations for new etcd sessions",
 		PromQL:   "histogram_quantile($QUANTILE, sum(rate(tidb_owner_new_session_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le,type,result, instance))",
@@ -866,7 +871,7 @@ var MetricTableMap = map[string]MetricTableDef{
 		Labels: []string{"instance", "type"},
 	},
 	"resource_manager_resource_unit": {
-		PromQL:  `sum(rate(resource_manager_resource_unit_read_request_unit_sum[$RANGE_DURATION])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum[$RANGE_DURATION]))`,
+		PromQL:  `sum(rate(resource_manager_resource_unit_read_request_unit_sum{type=~"|tp"}[$RANGE_DURATION])) + sum(rate(resource_manager_resource_unit_write_request_unit_sum{type=~"|tp"}[$RANGE_DURATION]))`,
 		Comment: "The Total RU consumption per second",
 	},
 	"tikv_engine_size": {
@@ -2972,16 +2977,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "sum(increase(tidb_tikvclient_txn_write_size_bytes_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",
 		Labels:  []string{"instance"},
 		Comment: "The total kv write size in transaction execution",
-	},
-	"tidb_statistics_fast_analyze_status_total_count": {
-		PromQL:  "sum(increase(tidb_statistics_fast_analyze_status_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
-		Labels:  []string{"instance", "type"},
-		Comment: "The total count of TiDB fast analyze statistics ",
-	},
-	"tidb_statistics_fast_analyze_total_status": {
-		PromQL:  "sum(increase(tidb_statistics_fast_analyze_status_sum{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance,type)",
-		Labels:  []string{"instance", "type"},
-		Comment: "The total time of TiDB fast analyze statistics ",
 	},
 	"tidb_statistics_stats_inaccuracy_rate_total_count": {
 		PromQL:  "sum(increase(tidb_statistics_stats_inaccuracy_rate_count{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (instance)",

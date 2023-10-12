@@ -273,23 +273,6 @@ func TestInconsistentIndex(t *testing.T) {
 	}
 }
 
-func TestPushLimitDownIndexLookUpReader(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tbl")
-	tk.MustExec("create table tbl(a int, b int, c int, key idx_b_c(b,c))")
-	tk.MustExec("insert into tbl values(1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5)")
-	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 limit 2,1").Check(testkit.Rows("4 4 4"))
-	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 4 limit 2,1").Check(testkit.Rows())
-	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 3 limit 2,1").Check(testkit.Rows())
-	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 2 limit 2,1").Check(testkit.Rows("5 5 5"))
-	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 limit 1").Check(testkit.Rows("2 2 2"))
-	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 order by b desc limit 2,1").Check(testkit.Rows("3 3 3"))
-	tk.MustQuery("select * from tbl use index(idx_b_c) where b > 1 and c > 1 limit 2,1").Check(testkit.Rows("4 4 4"))
-}
-
 func TestPartitionTableIndexLookUpReader(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
@@ -707,11 +690,11 @@ func TestIndexLookUpWithSelectForUpdateOnPartitionTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, index k(b)) PARTITION BY HASH(a) partitions 4")
 	tk.MustExec("insert into t(a, b) values (1,1),(2,2),(3,3),(4,4),(5,5),(6,6),(7,7),(8,8)")
-	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "UnionScan")
-	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
+	tk.MustHavePlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "PartitionUnion")
+	tk.MustHavePlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
 	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
 
 	tk.MustExec("analyze table t")
-	tk.HasPlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
+	tk.MustHavePlan("select b from t use index(k) where b > 2 order by b limit 1 for update", "IndexLookUp")
 	tk.MustQuery("select b from t use index(k) where b > 2 order by b limit 1 for update").Check(testkit.Rows("3"))
 }

@@ -17,6 +17,7 @@ package util_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/planner/util"
@@ -79,6 +80,10 @@ func TestCompareCol2Len(t *testing.T) {
 
 func TestOnlyPointRange(t *testing.T) {
 	sctx := core.MockContext()
+	defer func() {
+		do := domain.GetDomain(sctx)
+		do.StatsHandle().Close()
+	}()
 	nullDatum := types.MinNotNullDatum()
 	nullDatum.SetNull()
 	nullPointRange := ranger.Range{

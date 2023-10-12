@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/driver/backoff"
 	derr "github.com/pingcap/tidb/store/driver/error"
@@ -207,6 +208,10 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			return errors.Trace(err)
 		}
 
+		rgName := c.sessionCtx.GetSessionVars().ResourceGroupName
+		if !variable.EnableResourceControl.Load() {
+			rgName = ""
+		}
 		logutil.BgLogger().Info("Dispatch mpp task", zap.Uint64("timestamp", mppTask.StartTs),
 			zap.Int64("ID", mppTask.ID), zap.Uint64("QueryTs", mppTask.MppQueryID.QueryTs), zap.Uint64("LocalQueryId", mppTask.MppQueryID.LocalQueryID),
 			zap.Uint64("ServerID", mppTask.MppQueryID.ServerID), zap.String("address", mppTask.Meta.GetAddress()),
@@ -214,6 +219,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			zap.Int64("mpp-version", mppTask.MppVersion.ToInt64()),
 			zap.String("exchange-compression-mode", pf.ExchangeSender.CompressionMode.Name()),
 			zap.Uint64("GatherID", c.gatherID),
+			zap.String("resource_group", rgName),
 		)
 		req := &kv.MPPDispatchRequest{
 			Data:                   pbData,
@@ -229,6 +235,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			CoordinatorAddress:     c.coordinatorAddr,
 			ReportExecutionSummary: c.reportExecutionInfo,
 			State:                  kv.MppTaskReady,
+			ResourceGroupName:      rgName,
 		}
 		c.reqMap[req.ID] = &mppRequestReport{mppReq: req, receivedReport: false, errMsg: "", executionSummaries: nil}
 		c.mppReqs = append(c.mppReqs, req)
@@ -449,8 +456,9 @@ func (c *localMppCoordinator) handleDispatchReq(ctx context.Context, bo *backoff
 	}
 	// only root task should establish a stream conn with tiFlash to receive result.
 	taskMeta := &mpp.TaskMeta{StartTs: req.StartTs, GatherId: c.gatherID, QueryTs: req.MppQueryID.QueryTs, LocalQueryId: req.MppQueryID.LocalQueryID, TaskId: req.ID, ServerId: req.MppQueryID.ServerID,
-		Address:    req.Meta.GetAddress(),
-		MppVersion: req.MppVersion.ToInt64(),
+		Address:           req.Meta.GetAddress(),
+		MppVersion:        req.MppVersion.ToInt64(),
+		ResourceGroupName: req.ResourceGroupName,
 	}
 	c.receiveResults(req, taskMeta, bo)
 }

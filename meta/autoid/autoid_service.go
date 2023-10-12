@@ -41,6 +41,7 @@ type singlePointAlloc struct {
 	lastAllocated int64
 	isUnsigned    bool
 	clientDiscover
+	keyspaceID uint32
 }
 
 type clientDiscover struct {
@@ -133,6 +134,7 @@ retry:
 		Increment:  increment,
 		Offset:     offset,
 		IsUnsigned: sp.isUnsigned,
+		KeyspaceID: sp.keyspaceID,
 	})
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {

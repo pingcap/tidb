@@ -993,7 +993,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	}()
 	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
 	for i, col := range colInfos {
-		if col.IsGenerated() && !col.GeneratedStored {
+		if col.IsVirtualGenerated() {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)
 			if err != nil {
 				return nil, nil, errors.Trace(err)

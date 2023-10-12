@@ -112,10 +112,6 @@ type Context interface {
 	// now just for load data and batch insert.
 	RefreshTxnCtx(context.Context) error
 
-	// RefreshVars refreshes modified global variable to current session.
-	// only used to daemon session like `statsHandle` to detect global variable change.
-	RefreshVars(context.Context) error
-
 	// GetStore returns the store of session.
 	GetStore() kv.Storage
 

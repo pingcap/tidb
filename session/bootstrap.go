@@ -29,11 +29,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/syncer"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/expression"
@@ -586,6 +583,29 @@ const (
       	UNIQUE KEY task_key(task_key)
 	);`
 
+	// CreateGlobalTaskHistory is a table about history global task.
+	CreateGlobalTaskHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_global_task_history (
+		id BIGINT(20) NOT NULL AUTO_INCREMENT PRIMARY KEY,
+    	task_key VARCHAR(256) NOT NULL,
+		type VARCHAR(256) NOT NULL,
+		dispatcher_id VARCHAR(256),
+		state VARCHAR(64) NOT NULL,
+		start_time TIMESTAMP,
+		state_update_time TIMESTAMP,
+		meta LONGBLOB,
+		concurrency INT(11),
+		step INT(11),
+		error BLOB,
+		key(state),
+      	UNIQUE KEY task_key(task_key)
+	);`
+
+	// CreateDistFrameworkMeta create a system table that distributed task framework use to store meta information
+	CreateDistFrameworkMeta = `CREATE TABLE IF NOT EXISTS mysql.dist_framework_meta (
+        host VARCHAR(100) NOT NULL PRIMARY KEY,
+        role VARCHAR(64),
+        keyspace_id bigint(8) NOT NULL DEFAULT -1);`
+
 	// CreateLoadDataJobs is a table that LOAD DATA uses
 	CreateLoadDataJobs = `CREATE TABLE IF NOT EXISTS mysql.load_data_jobs (
        job_id bigint(64) NOT NULL AUTO_INCREMENT,
@@ -976,17 +996,38 @@ const (
 	//   create table `mysql.tidb_runaway_watch` and table `mysql.tidb_runaway_watch_done`
 	//   to persist runaway watch and deletion of runaway watch at 7.3.
 	version172 = 172
+	// version 173 add column `summary` to `mysql.tidb_background_subtask`.
+	version173 = 173
+	// version 174
+	//   add column `step`, `error`; delete unique key; and add key idx_state_update_time
+	//   to `mysql.tidb_background_subtask_history`.
+	version174 = 174
+
+	// version 175
+	//   update normalized bindings of `in (?)` to `in (...)` to solve #44298.
+	version175 = 175
+
+	// version 176
+	// add `mysql.tidb_global_task_history`.
+	version176 = 176
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version172
+var currentBootstrapVersion int64 = version176
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
 
 // whether to run the sql file in bootstrap.
 var runBootstrapSQLFile = false
+
+// DisableRunBootstrapSQLFileInTest only used for test
+func DisableRunBootstrapSQLFileInTest() {
+	if intest.InTest {
+		runBootstrapSQLFile = false
+	}
+}
 
 var (
 	bootstrapVersion = []func(Session, int64){
@@ -1121,6 +1162,10 @@ var (
 		upgradeToVer170,
 		upgradeToVer171,
 		upgradeToVer172,
+		upgradeToVer173,
+		upgradeToVer174,
+		upgradeToVer175,
+		upgradeToVer176,
 	}
 )
 
@@ -1178,8 +1223,11 @@ func getTiDBVar(s Session, name string) (sVal string, isNull bool, e error) {
 	return row.GetString(0), false, nil
 }
 
-// SupportUpgradeStateVer is exported for testing.
-var SupportUpgradeStateVer = version145
+var (
+	// SupportUpgradeHTTPOpVer is exported for testing.
+	// The minimum version of the upgrade by paused user DDL can be notified through the HTTP API.
+	SupportUpgradeHTTPOpVer int64 = version174
+)
 
 // upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
 // For example, add new system variables into mysql.global_variables table.
@@ -1190,6 +1238,8 @@ func upgrade(s Session) {
 		// It is already bootstrapped/upgraded by a higher version TiDB server.
 		return
 	}
+	printClusterState(s, ver)
+
 	// Only upgrade from under version92 and this TiDB is not owner set.
 	// The owner in older tidb does not support concurrent DDL, we should add the internal DDL to job queue.
 	if ver < version92 {
@@ -1209,9 +1259,6 @@ func upgrade(s Session) {
 		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
 	}
 
-	if ver >= int64(SupportUpgradeStateVer) {
-		terror.MustNil(SyncUpgradeState(s))
-	}
 	if isNull {
 		upgradeToVer99Before(s)
 	}
@@ -1223,9 +1270,6 @@ func upgrade(s Session) {
 	}
 	if isNull {
 		upgradeToVer99After(s)
-	}
-	if ver >= int64(SupportUpgradeStateVer) {
-		terror.MustNil(SyncNormalRunning(s))
 	}
 
 	variable.DDLForce2Queue.Store(false)
@@ -1252,83 +1296,6 @@ func upgrade(s Session) {
 			zap.Int64("to", currentBootstrapVersion),
 			zap.Error(err))
 	}
-}
-
-// SyncUpgradeState syncs upgrade state to etcd.
-func SyncUpgradeState(s Session) error {
-	totalInterval := time.Duration(internalSQLTimeout) * time.Second
-	ctx, cancelFunc := context.WithTimeout(context.Background(), totalInterval)
-	defer cancelFunc()
-	dom := domain.GetDomain(s)
-	err := dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateUpgrading))
-	if err != nil {
-		logutil.BgLogger().Error("update global state failed", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading), zap.Error(err))
-		return err
-	}
-
-	interval := 200 * time.Millisecond
-	retryTimes := int(totalInterval / interval)
-	for i := 0; i < retryTimes; i++ {
-		op, err := owner.GetOwnerOpValue(ctx, dom.EtcdClient(), ddl.DDLOwnerKey, "upgrade bootstrap")
-		if err == nil && op.String() == owner.OpGetUpgradingState.String() {
-			break
-		}
-		if i == retryTimes-1 {
-			logutil.BgLogger().Error("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
-			return err
-		}
-		if i%10 == 0 {
-			logutil.BgLogger().Warn("get owner op failed", zap.String("category", "upgrading"), zap.Stringer("state", op), zap.Error(err))
-		}
-		time.Sleep(interval)
-	}
-
-	logutil.BgLogger().Info("update global state to upgrading", zap.String("category", "upgrading"), zap.String("state", syncer.StateUpgrading))
-	return nil
-}
-
-// SyncNormalRunning syncs normal state to etcd.
-func SyncNormalRunning(s Session) error {
-	failpoint.Inject("mockResumeAllJobsFailed", func(val failpoint.Value) {
-		if val.(bool) {
-			dom := domain.GetDomain(s)
-			//nolint: errcheck
-			dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), syncer.NewStateInfo(syncer.StateNormalRunning))
-			failpoint.Return(nil)
-		}
-	})
-
-	jobErrs, err := ddl.ResumeAllJobsBySystem(s)
-	if err != nil {
-		logutil.BgLogger().Warn("resume all paused jobs failed", zap.String("category", "upgrading"), zap.Error(err))
-	}
-	for _, e := range jobErrs {
-		logutil.BgLogger().Warn("resume the job failed ", zap.String("category", "upgrading"), zap.Error(e))
-	}
-
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancelFunc()
-	dom := domain.GetDomain(s)
-	err = dom.DDL().StateSyncer().UpdateGlobalState(ctx, syncer.NewStateInfo(syncer.StateNormalRunning))
-	if err != nil {
-		logutil.BgLogger().Error("update global state to normal failed", zap.String("category", "upgrading"), zap.Error(err))
-		return err
-	}
-	logutil.BgLogger().Info("update global state to normal running finished", zap.String("category", "upgrading"))
-	return nil
-}
-
-// IsUpgradingClusterState checks whether the global state is upgrading.
-func IsUpgradingClusterState(s Session) (bool, error) {
-	dom := domain.GetDomain(s)
-	ctx, cancelFunc := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancelFunc()
-	stateInfo, err := dom.DDL().StateSyncer().GetGlobalState(ctx)
-	if err != nil {
-		return false, err
-	}
-
-	return stateInfo.State == syncer.StateUpgrading, nil
 }
 
 // checkOwnerVersion is used to wait the DDL owner to be elected in the cluster and check it is the same version as this TiDB.
@@ -2632,8 +2599,8 @@ func upgradeToVer136(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTask)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s DROP INDEX namespace", ddl.BackgroundSubtaskTable), dbterror.ErrCantDropFieldOrKey)
-	doReentrantDDL(s, fmt.Sprintf("ALTER TABLE mysql.%s ADD INDEX idx_task_key(task_key)", ddl.BackgroundSubtaskTable), dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX namespace", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_task_key(task_key)", dbterror.ErrDupKeyName)
 }
 
 func upgradeToVer137(_ Session, _ int64) {
@@ -2787,6 +2754,81 @@ func upgradeToVer172(s Session, ver int64) {
 	mustExecute(s, CreateDoneRunawayWatchTable)
 }
 
+func upgradeToVer173(s Session, ver int64) {
+	if ver >= version173 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer174(s Session, ver int64) {
+	if ver >= version174 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history DROP INDEX `namespace`", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_task_key`(`task_key`)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_state_update_time`(`state_update_time`)", dbterror.ErrDupKeyName)
+}
+
+// upgradeToVer175 updates normalized bindings of `in (?)` to `in (...)` to solve
+// the issue #44298 that bindings for `in (?)` can't work for `in (?, ?, ?)`.
+// After this update, multiple bindings may have the same `original_sql`, but it's OK, and
+// for safety, don't remove duplicated bindings when upgrading.
+func upgradeToVer175(s Session, ver int64) {
+	if ver >= version175 {
+		return
+	}
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT original_sql, bind_sql FROM mysql.bind_info WHERE source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < req.NumRows(); i++ {
+			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL)
+			// update `in (?)` to `in (...)`
+			if originalNormalizedSQL == newNormalizedSQL {
+				continue // no need to update
+			}
+			mustExecute(s, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+	}
+}
+
+func upgradeToVer176(s Session, ver int64) {
+	if ver >= version176 {
+		return
+	}
+	mustExecute(s, CreateGlobalTaskHistory)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -2900,6 +2942,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTTLJobHistory)
 	// Create tidb_global_task table
 	mustExecute(s, CreateGlobalTask)
+	// Create tidb_global_task_history table
+	mustExecute(s, CreateGlobalTaskHistory)
 	// Create load_data_jobs
 	mustExecute(s, CreateLoadDataJobs)
 	// Create tidb_import_jobs
@@ -2912,6 +2956,8 @@ func doDDLWorks(s Session) {
 	mustExecute(s, CreateTimers)
 	// create runaway_watch done
 	mustExecute(s, CreateDoneRunawayWatchTable)
+	// create dist_framework_meta
+	mustExecute(s, CreateDistFrameworkMeta)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.
@@ -3033,7 +3079,6 @@ func doDMLWorks(s Session) {
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES(%?, %?, "Bootstrap version. Do not delete.")`,
 		mysql.SystemDB, mysql.TiDBTable, tidbServerVersionVar, currentBootstrapVersion,
 	)
-
 	writeSystemTZ(s)
 
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)

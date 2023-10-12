@@ -195,7 +195,7 @@ func assertChannel[T any](t *testing.T, ch <-chan T, items ...T) {
 	select {
 	case item, ok := <-ch:
 		assert.False(t, ok, "channel not closed: more item %v", item)
-	default:
+	case <-time.After(50 * time.Microsecond):
 		t.Fatal("channel not closed: blocked")
 	}
 }

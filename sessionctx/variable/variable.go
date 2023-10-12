@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/types"
+	"golang.org/x/exp/maps"
 )
 
 // ScopeFlag is for system variable whether can be changed in global/session dynamically or not.
@@ -139,8 +140,8 @@ type SysVar struct {
 	SetSession func(*SessionVars, string) error
 	// SetGlobal is called after validation
 	SetGlobal func(context.Context, *SessionVars, string) error
-	// IsHintUpdatable indicate whether it's updatable via SET_VAR() hint (optional)
-	IsHintUpdatable bool
+	// IsHintUpdatableVerfied indicate whether we've confirmed that SET_VAR() hint is worked for this hint.
+	IsHintUpdatableVerfied bool
 	// Deprecated: Hidden previously meant that the variable still responds to SET but doesn't show up in SHOW VARIABLES
 	// However, this feature is no longer used. All variables are visble.
 	Hidden bool
@@ -636,6 +637,9 @@ func OrderByDependency(names map[string]string) []string {
 
 func init() {
 	sysVars = make(map[string]*SysVar)
+	setHintUpdatable(defaultSysVars)
+	// Destroy the map after init.
+	maps.Clear(isHintUpdatableVerified)
 	for _, v := range defaultSysVars {
 		RegisterSysVar(v)
 	}

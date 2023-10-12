@@ -37,10 +37,10 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 	now := time.Now()
 	sql1 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
 		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, FROM_UNIXTIME(%?), %?, JSON_MERGE_PATCH('{}', %?), %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
+		"VALUES (%?, %?, %?, %?, %?, %?, %?, FROM_UNIXTIME(%?), %?, JSON_MERGE_PATCH('{}', %?), %?, %?, FROM_UNIXTIME(%?), %?, %?, 1)"
 	sql2 := "INSERT INTO `db1`.`t1` (NAMESPACE, TIMER_KEY, TIMER_DATA, TIMEZONE, SCHED_POLICY_TYPE, SCHED_POLICY_EXPR, " +
 		"HOOK_CLASS, WATERMARK, ENABLE, TIMER_EXT, EVENT_ID, EVENT_STATUS, EVENT_START, EVENT_DATA, SUMMARY_DATA, VERSION) " +
-		"VALUES (%?, %?, %?, 'TIDB', %?, %?, %?, %?, %?, JSON_MERGE_PATCH('{}', %?), %?, %?, %?, %?, %?, 1)"
+		"VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?, JSON_MERGE_PATCH('{}', %?), %?, %?, %?, %?, %?, 1)"
 
 	cases := []struct {
 		sql    string
@@ -54,6 +54,7 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 					Namespace:       "n1",
 					Key:             "k1",
 					Data:            []byte("data1"),
+					TimeZone:        "Asia/Shanghai",
 					SchedPolicyType: api.SchedEventInterval,
 					SchedPolicyExpr: "1h",
 					HookClass:       "h1",
@@ -79,7 +80,7 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 				SummaryData: []byte("summary1"),
 			},
 			args: []any{
-				"n1", "k1", []byte("data1"), "INTERVAL", "1h", "h1", now.Unix(),
+				"n1", "k1", []byte("data1"), "Asia/Shanghai", "INTERVAL", "1h", "h1", now.Unix(),
 				true, json.RawMessage(`{"tags":["l1","l2"],` +
 					`"manual":{"request_id":"req1","request_time_unix":123,"timeout_sec":60,"processed":true,"event_id":"event1"},` +
 					`"event":{"manual_request_id":"req1","watermark_unix":456}}`),
@@ -97,7 +98,7 @@ func TestBuildInsertTimerSQL(t *testing.T) {
 				},
 			},
 			args: []any{
-				"n1", "k1", []byte(nil), "INTERVAL", "1h", "", nil,
+				"n1", "k1", []byte(nil), "", "INTERVAL", "1h", "", nil,
 				false, json.RawMessage("{}"), "", "IDLE", nil, []byte(nil), []byte(nil),
 			},
 		},
@@ -415,6 +416,7 @@ func TestBuildUpdateCriteria(t *testing.T) {
 			update: &api.TimerUpdate{
 				Enable:          api.NewOptionalVal(false),
 				Tags:            api.NewOptionalVal([]string{"l1", "l2"}),
+				TimeZone:        api.NewOptionalVal("Asia/Shanghai"),
 				SchedPolicyType: api.NewOptionalVal(api.SchedEventInterval),
 				SchedPolicyExpr: api.NewOptionalVal("1h"),
 				ManualRequest: api.NewOptionalVal(api.ManualRequest{
@@ -437,13 +439,13 @@ func TestBuildUpdateCriteria(t *testing.T) {
 				CheckEventID: api.NewOptionalVal("ee"),
 				CheckVersion: api.NewOptionalVal(uint64(1)),
 			},
-			criteria: "ENABLE = %?, SCHED_POLICY_TYPE = %?, SCHED_POLICY_EXPR = %?, EVENT_STATUS = %?, " +
+			criteria: "ENABLE = %?, TIMEZONE = %?, SCHED_POLICY_TYPE = %?, SCHED_POLICY_EXPR = %?, EVENT_STATUS = %?, " +
 				"EVENT_ID = %?, EVENT_DATA = %?, EVENT_START = FROM_UNIXTIME(%?), " +
 				"WATERMARK = FROM_UNIXTIME(%?), SUMMARY_DATA = %?, " +
 				"TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?), " +
 				"VERSION = VERSION + 1",
 			args: []any{
-				false, "INTERVAL", "1h", "TRIGGER", "event1", []byte("data1"), now.Unix(),
+				false, "Asia/Shanghai", "INTERVAL", "1h", "TRIGGER", "event1", []byte("data1"), now.Unix(),
 				now.Unix() + 1, []byte("summary"),
 				json.RawMessage(`{` +
 					`"event":{"manual_request_id":"req2","watermark_unix":456},` +
@@ -476,6 +478,7 @@ func TestBuildUpdateCriteria(t *testing.T) {
 		},
 		{
 			update: &api.TimerUpdate{
+				TimeZone:        api.NewOptionalVal(""),
 				SchedPolicyExpr: api.NewOptionalVal(""),
 				EventID:         api.NewOptionalVal(""),
 				EventData:       api.NewOptionalVal([]byte(nil)),
@@ -486,11 +489,11 @@ func TestBuildUpdateCriteria(t *testing.T) {
 				SummaryData:     api.NewOptionalVal([]byte(nil)),
 				Tags:            api.NewOptionalVal([]string(nil)),
 			},
-			criteria: "SCHED_POLICY_EXPR = %?, EVENT_ID = %?, EVENT_DATA = %?, " +
+			criteria: "TIMEZONE = %?, SCHED_POLICY_EXPR = %?, EVENT_ID = %?, EVENT_DATA = %?, " +
 				"EVENT_START = NULL, WATERMARK = NULL, SUMMARY_DATA = %?, " +
 				"TIMER_EXT = JSON_MERGE_PATCH(TIMER_EXT, %?), " +
 				"VERSION = VERSION + 1",
-			args: []any{"", "", []byte(nil), []byte(nil), json.RawMessage(`{"event":null,"manual":null,"tags":null}`)},
+			args: []any{"", "", "", []byte(nil), []byte(nil), json.RawMessage(`{"event":null,"manual":null,"tags":null}`)},
 		},
 		{
 			update: &api.TimerUpdate{

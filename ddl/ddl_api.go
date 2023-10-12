@@ -147,8 +147,17 @@ func (d *ddl) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabaseStmt)
 			}
 		}
 	}
+	if !explicitCollation && explicitCharset {
+		coll, err := getDefaultCollationForUTF8MB4(ctx.GetSessionVars(), charsetOpt.Chs)
+		if err != nil {
+			return err
+		}
+		if len(coll) != 0 {
+			charsetOpt.Col = coll
+		}
+	}
 	dbInfo := &model.DBInfo{Name: stmt.Name}
-	chs, coll, err := ResolveCharsetCollation(charsetOpt)
+	chs, coll, err := ResolveCharsetCollation(ctx.GetSessionVars(), charsetOpt)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -222,7 +231,7 @@ func (d *ddl) CreateSchemaWithInfo(
 
 func (d *ddl) ModifySchemaCharsetAndCollate(ctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, toCharset, toCollate string) (err error) {
 	if toCollate == "" {
-		if toCollate, err = charset.GetDefaultCollation(toCharset); err != nil {
+		if toCollate, err = GetDefaultCollation(ctx.GetSessionVars(), toCharset); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -759,11 +768,33 @@ func buildColumnsAndConstraints(
 	colMap := make(map[string]*table.Column, len(colDefs))
 
 	for i, colDef := range colDefs {
+		if field_types.TiDBStrictIntegerDisplayWidth {
+			switch colDef.Tp.GetType() {
+			case mysql.TypeTiny:
+				// No warning for BOOL-like tinyint(1)
+				if colDef.Tp.GetFlen() != types.UnspecifiedLength && colDef.Tp.GetFlen() != 1 {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(
+						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
+					)
+				}
+			case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+				if colDef.Tp.GetFlen() != types.UnspecifiedLength {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(
+						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
+					)
+				}
+			}
+		}
 		col, cts, err := buildColumnAndConstraint(ctx, i, colDef, outPriKeyConstraint, tblCharset, tblCollate)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		col.State = model.StatePublic
+		if mysql.HasZerofillFlag(col.GetFlag()) {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(
+				dbterror.ErrWarnDeprecatedZerofill.GenWithStackByArgs(),
+			)
+		}
 		constraints = append(constraints, cts...)
 		cols = append(cols, col)
 		colMap[colDef.Name.Name.L] = col
@@ -775,10 +806,38 @@ func buildColumnsAndConstraints(
 	return cols, constraints, nil
 }
 
+func getDefaultCollationForUTF8MB4(sessVars *variable.SessionVars, cs string) (string, error) {
+	if sessVars == nil || cs != charset.CharsetUTF8MB4 {
+		return "", nil
+	}
+	defaultCollation, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), variable.DefaultCollationForUTF8MB4)
+	if err != nil {
+		return "", err
+	}
+	return defaultCollation, nil
+}
+
+// GetDefaultCollation returns the default collation for charset and handle the default collation for UTF8MB4.
+func GetDefaultCollation(sessVars *variable.SessionVars, cs string) (string, error) {
+	coll, err := getDefaultCollationForUTF8MB4(sessVars, cs)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	if coll != "" {
+		return coll, nil
+	}
+
+	coll, err = charset.GetDefaultCollation(cs)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return coll, nil
+}
+
 // ResolveCharsetCollation will resolve the charset and collate by the order of parameters:
 // * If any given ast.CharsetOpt is not empty, the resolved charset and collate will be returned.
 // * If all ast.CharsetOpts are empty, the default charset and collate will be returned.
-func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (chs string, coll string, err error) {
+func ResolveCharsetCollation(sessVars *variable.SessionVars, charsetOpts ...ast.CharsetOpt) (chs string, coll string, err error) {
 	for _, v := range charsetOpts {
 		if v.Col != "" {
 			collation, err := collate.GetCollationByName(v.Col)
@@ -791,14 +850,21 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (chs string, coll st
 			return collation.CharsetName, v.Col, nil
 		}
 		if v.Chs != "" {
-			coll, err := charset.GetDefaultCollation(v.Chs)
+			coll, err := GetDefaultCollation(sessVars, v.Chs)
 			if err != nil {
 				return "", "", errors.Trace(err)
 			}
-			return v.Chs, coll, err
+			return v.Chs, coll, nil
 		}
 	}
 	chs, coll = charset.GetDefaultCharsetAndCollate()
+	utf8mb4Coll, err := getDefaultCollationForUTF8MB4(sessVars, chs)
+	if err != nil {
+		return "", "", errors.Trace(err)
+	}
+	if utf8mb4Coll != "" {
+		return chs, utf8mb4Coll, nil
+	}
 	return chs, coll, nil
 }
 
@@ -807,14 +873,14 @@ func ResolveCharsetCollation(charsetOpts ...ast.CharsetOpt) (chs string, coll st
 //	CREATE TABLE t (a VARCHAR(255) BINARY) CHARSET utf8 COLLATE utf8_general_ci;
 //
 // The 'BINARY' sets the column collation to *_bin according to the table charset.
-func OverwriteCollationWithBinaryFlag(colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
+func OverwriteCollationWithBinaryFlag(sessVars *variable.SessionVars, colDef *ast.ColumnDef, chs, coll string) (newChs string, newColl string) {
 	ignoreBinFlag := colDef.Tp.GetCharset() != "" && (colDef.Tp.GetCollate() != "" || containsColumnOption(colDef, ast.ColumnOptionCollate))
 	if ignoreBinFlag {
 		return chs, coll
 	}
 	needOverwriteBinColl := types.IsString(colDef.Tp.GetType()) && mysql.HasBinaryFlag(colDef.Tp.GetFlag())
 	if needOverwriteBinColl {
-		newColl, err := charset.GetDefaultCollation(chs)
+		newColl, err := GetDefaultCollation(sessVars, chs)
 		if err != nil {
 			return chs, coll
 		}
@@ -898,15 +964,15 @@ func buildColumnAndConstraint(
 	}
 
 	// specifiedCollate refers to the last collate specified in colDef.Options.
-	chs, coll, err := getCharsetAndCollateInColumnDef(colDef)
+	chs, coll, err := getCharsetAndCollateInColumnDef(ctx.GetSessionVars(), colDef)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	chs, coll, err = ResolveCharsetCollation(
+	chs, coll, err = ResolveCharsetCollation(ctx.GetSessionVars(),
 		ast.CharsetOpt{Chs: chs, Col: coll},
 		ast.CharsetOpt{Chs: tblCharset, Col: tblCollate},
 	)
-	chs, coll = OverwriteCollationWithBinaryFlag(colDef, chs, coll)
+	chs, coll = OverwriteCollationWithBinaryFlag(ctx.GetSessionVars(), colDef, chs, coll)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -1278,7 +1344,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 		if tp == mysql.TypeBit || tp == mysql.TypeString || tp == mysql.TypeVarchar ||
 			tp == mysql.TypeVarString || tp == mysql.TypeEnum || tp == mysql.TypeSet {
 			// For BinaryLiteral or bit fields, we decode the default value to utf8 string.
-			str, err := v.GetBinaryStringDecoded(nil, col.GetCharset())
+			str, err := v.GetBinaryStringDecoded(types.StrictFlags, col.GetCharset())
 			if err != nil {
 				// Overwrite the decoding error with invalid default value error.
 				err = dbterror.ErrInvalidDefaultValue.GenWithStackByArgs(col.Name.O)
@@ -2378,11 +2444,11 @@ func BuildSessionTemporaryTableInfo(ctx sessionctx.Context, is infoschema.InfoSc
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
 func BuildTableInfoWithStmt(ctx sessionctx.Context, s *ast.CreateTableStmt, dbCharset, dbCollate string, placementPolicyRef *model.PolicyRefInfo) (*model.TableInfo, error) {
 	colDefs := s.Cols
-	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options)
+	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(ctx.GetSessionVars(), 0, s.Options)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	tableCharset, tableCollate, err = ResolveCharsetCollation(
+	tableCharset, tableCollate, err = ResolveCharsetCollation(ctx.GetSessionVars(),
 		ast.CharsetOpt{Chs: tableCharset, Col: tableCollate},
 		ast.CharsetOpt{Chs: dbCharset, Col: dbCollate},
 	)
@@ -3386,11 +3452,11 @@ func isIgnorableSpec(tp ast.AlterTableType) bool {
 
 // getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
 // of column definition. If there's no collate in the option, the default collate of column's charset will be used.
-func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err error) {
+func getCharsetAndCollateInColumnDef(sessVars *variable.SessionVars, def *ast.ColumnDef) (chs, coll string, err error) {
 	chs = def.Tp.GetCharset()
 	coll = def.Tp.GetCollate()
 	if chs != "" && coll == "" {
-		if coll, err = charset.GetDefaultCollation(chs); err != nil {
+		if coll, err = GetDefaultCollation(sessVars, chs); err != nil {
 			return "", "", errors.Trace(err)
 		}
 	}
@@ -3414,7 +3480,7 @@ func getCharsetAndCollateInColumnDef(def *ast.ColumnDef) (chs, coll string, err 
 // GetCharsetAndCollateInTableOption will iterate the charset and collate in the options,
 // and returns the last charset and collate in options. If there is no charset in the options,
 // the returns charset will be "", the same as collate.
-func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
+func GetCharsetAndCollateInTableOption(sessVars *variable.SessionVars, startIdx int, options []*ast.TableOption) (chs, coll string, err error) {
 	for i := startIdx; i < len(options); i++ {
 		opt := options[i]
 		// we set the charset to the last option. example: alter table t charset latin1 charset utf8 collate utf8_bin;
@@ -3431,7 +3497,15 @@ func GetCharsetAndCollateInTableOption(startIdx int, options []*ast.TableOption)
 				return "", "", dbterror.ErrConflictingDeclarations.GenWithStackByArgs(chs, info.Name)
 			}
 			if len(coll) == 0 {
-				coll = info.DefaultCollation
+				defaultColl, err := getDefaultCollationForUTF8MB4(sessVars, chs)
+				if err != nil {
+					return "", "", errors.Trace(err)
+				}
+				if len(defaultColl) == 0 {
+					coll = info.DefaultCollation
+				} else {
+					coll = defaultColl
+				}
 			}
 		case ast.TableOptionCollate:
 			info, err := collate.GetCollationByName(opt.StrValue)
@@ -3702,7 +3776,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 						continue
 					}
 					var toCharset, toCollate string
-					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(i, spec.Options)
+					toCharset, toCollate, err = GetCharsetAndCollateInTableOption(sctx.GetSessionVars(), i, spec.Options)
 					if err != nil {
 						return err
 					}
@@ -4022,7 +4096,7 @@ func CreateNewColumn(ctx sessionctx.Context, schema *model.DBInfo, spec *ast.Alt
 		}
 	}
 
-	tableCharset, tableCollate, err := ResolveCharsetCollation(
+	tableCharset, tableCollate, err := ResolveCharsetCollation(ctx.GetSessionVars(),
 		ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
 		ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
 	)
@@ -4311,7 +4385,6 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	newPartInfo.NewTableID = newID[0]
 	newPartInfo.DDLType = piOld.Type
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
@@ -4320,12 +4393,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 		Type:       model.ActionAlterTablePartitioning,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partNames, newPartInfo},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4381,7 +4449,6 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
@@ -4390,12 +4457,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 		Type:       model.ActionReorganizePartition,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partNames, partInfo},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4451,7 +4513,6 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 	}
 	partInfo.NewTableID = partInfo.Definitions[0].ID
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    meta.ID,
@@ -4460,12 +4521,7 @@ func (d *ddl) RemovePartitioning(ctx sessionctx.Context, ident ast.Ident, spec *
 		Type:       model.ActionRemovePartitioning,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{partNames, partInfo},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
 	}
 
 	// No preSplitAndScatter here, it will be done by the worker in onReorganizePartition instead.
@@ -4847,7 +4903,7 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 	// Col compatible check
 	for i, sourceCol := range source.Cols() {
 		targetCol := target.Cols()[i]
-		if isVirtualGeneratedColumn(sourceCol) != isVirtualGeneratedColumn(targetCol) {
+		if sourceCol.IsVirtualGenerated() != targetCol.IsVirtualGenerated() {
 			return dbterror.ErrUnsupportedOnGeneratedColumn.GenWithStackByArgs("Exchanging partitions for non-generated columns")
 		}
 		// It should strictyle compare expressions for generated columns
@@ -4869,6 +4925,9 @@ func checkTableDefCompatible(source *model.TableInfo, target *model.TableInfo) e
 		return errors.Trace(dbterror.ErrTablesDifferentMetadata)
 	}
 	for _, sourceIdx := range source.Indices {
+		if sourceIdx.Global {
+			return dbterror.ErrPartitionExchangeDifferentOption.GenWithStackByArgs(fmt.Sprintf("global index: %s", sourceIdx.Name))
+		}
 		var compatIdx *model.IndexInfo
 		for _, targetIdx := range target.Indices {
 			if strings.EqualFold(sourceIdx.Name.L, targetIdx.Name.L) {
@@ -5212,8 +5271,8 @@ func setColumnComment(ctx sessionctx.Context, col *table.Column, option *ast.Col
 	return errors.Trace(err)
 }
 
-// processColumnOptions is only used in getModifiableColumnJob.
-func processColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// ProcessColumnOptions process column options.
+func ProcessColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
@@ -5343,6 +5402,39 @@ func checkModifyColumnWithGeneratedColumnsConstraint(allCols []*table.Column, ol
 	return nil
 }
 
+// ProcessColumnCharsetAndCollation process column charset and collation
+func ProcessColumnCharsetAndCollation(sctx sessionctx.Context, col *table.Column, newCol *table.Column, meta *model.TableInfo, specNewColumn *ast.ColumnDef, schema *model.DBInfo) error {
+	var chs, coll string
+	var err error
+	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
+	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
+	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
+	if len(newCol.FieldType.GetCharset()) == 0 && meta.Version < model.TableInfoVersion1 {
+		chs = col.FieldType.GetCharset()
+		coll = col.FieldType.GetCollate()
+	} else {
+		chs, coll, err = getCharsetAndCollateInColumnDef(sctx.GetSessionVars(), specNewColumn)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		chs, coll, err = ResolveCharsetCollation(sctx.GetSessionVars(),
+			ast.CharsetOpt{Chs: chs, Col: coll},
+			ast.CharsetOpt{Chs: meta.Charset, Col: meta.Collate},
+			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
+		)
+		chs, coll = OverwriteCollationWithBinaryFlag(sctx.GetSessionVars(), specNewColumn, chs, coll)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
+		return errors.Trace(err)
+	}
+	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
+	return nil
+}
+
 // GetModifiableColumnJob returns a DDL job of model.ActionModifyColumn.
 func GetModifiableColumnJob(
 	ctx context.Context,
@@ -5410,36 +5502,12 @@ func GetModifiableColumnJob(
 		Version:               col.Version,
 	})
 
-	var chs, coll string
-	// TODO: Remove it when all table versions are greater than or equal to TableInfoVersion1.
-	// If newCol's charset is empty and the table's version less than TableInfoVersion1,
-	// we will not modify the charset of the column. This behavior is not compatible with MySQL.
-	if len(newCol.FieldType.GetCharset()) == 0 && t.Meta().Version < model.TableInfoVersion1 {
-		chs = col.FieldType.GetCharset()
-		coll = col.FieldType.GetCollate()
-	} else {
-		chs, coll, err = getCharsetAndCollateInColumnDef(specNewColumn)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		chs, coll, err = ResolveCharsetCollation(
-			ast.CharsetOpt{Chs: chs, Col: coll},
-			ast.CharsetOpt{Chs: t.Meta().Charset, Col: t.Meta().Collate},
-			ast.CharsetOpt{Chs: schema.Charset, Col: schema.Collate},
-		)
-		chs, coll = OverwriteCollationWithBinaryFlag(specNewColumn, chs, coll)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
+	if err = ProcessColumnCharsetAndCollation(sctx, col, newCol, t.Meta(), specNewColumn, schema); err != nil {
+		return nil, err
 	}
-
-	if err = setCharsetCollationFlenDecimal(&newCol.FieldType, newCol.Name.O, chs, coll, sctx.GetSessionVars()); err != nil {
-		return nil, errors.Trace(err)
-	}
-	decodeEnumSetBinaryLiteralToUTF8(&newCol.FieldType, chs)
 
 	if err = checkModifyColumnWithForeignKeyConstraint(is, schema.Name.L, t.Meta(), col.ColumnInfo, newCol.ColumnInfo); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 
 	// Copy index related options to the new spec.
@@ -5450,7 +5518,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = processColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = ProcessColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -5610,7 +5678,6 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(sctx)
 	job := &model.Job{
 		SchemaID:   schema.ID,
 		TableID:    t.Meta().ID,
@@ -5618,14 +5685,9 @@ func GetModifiableColumnJob(
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       sctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		CtxVars: []interface{}{needChangeColData},
-		Args:    []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		ReorgMeta:  NewDDLReorgMeta(sctx),
+		CtxVars:    []interface{}{needChangeColData},
+		Args:       []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 	}
 	return job, nil
 }
@@ -5876,8 +5938,6 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		return errors.Trace(err)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-
 	newCol := oldCol.Clone()
 	newCol.Name = newColName
 	job := &model.Job{
@@ -5887,13 +5947,8 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		TableName:  tbl.Meta().Name.L,
 		Type:       model.ActionModifyColumn,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Args: []interface{}{&newCol, oldColName, spec.Position, 0, 0},
+		ReorgMeta:  NewDDLReorgMeta(ctx),
+		Args:       []interface{}{&newCol, oldColName, spec.Position, 0, 0},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -6070,8 +6125,8 @@ func (d *ddl) AlterTableCharsetAndCollate(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	if toCollate == "" {
-		// get the default collation of the charset.
-		toCollate, err = charset.GetDefaultCollation(toCharset)
+		// Get the default collation of the charset.
+		toCollate, err = GetDefaultCollation(ctx.GetSessionVars(), toCharset)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -6414,7 +6469,7 @@ func checkAlterTableCharset(tblInfo *model.TableInfo, dbInfo *model.DBInfo, toCh
 	}
 
 	// This DDL will update the table charset to default charset.
-	origCharset, origCollate, err = ResolveCharsetCollation(
+	origCharset, origCollate, err = ResolveCharsetCollation(nil,
 		ast.CharsetOpt{Chs: origCharset, Col: origCollate},
 		ast.CharsetOpt{Chs: dbInfo.Charset, Col: dbInfo.Collate},
 	)
@@ -7013,8 +7068,6 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		}
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
-
 	unique := true
 	sqlMode := ctx.GetSessionVars().SQLMode
 	job := &model.Job{
@@ -7024,14 +7077,9 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddPrimaryKey,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
-		Priority: ctx.GetSessionVars().DDLReorgPriority,
+		ReorgMeta:  NewDDLReorgMeta(ctx),
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, sqlMode, nil, global},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7118,6 +7166,12 @@ func BuildHiddenColumnInfo(ctx sessionctx.Context, indexPartSpecifications []*as
 			if colInfo.FieldType.GetDecimal() == types.UnspecifiedLength {
 				colInfo.FieldType.SetDecimal(types.MaxFsp)
 			}
+		}
+		// For an array, the collation is set to "binary". The collation has no effect on the array itself (as it's usually
+		// regarded as a JSON), but will influence how TiKV handles the index value.
+		if colInfo.FieldType.IsArray() {
+			colInfo.SetCharset("binary")
+			colInfo.SetCollate("binary")
 		}
 		checkDependencies := make(map[string]struct{})
 		for _, colName := range FindColumnNamesInExpr(idxPart.Expr) {
@@ -7265,7 +7319,6 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		return d.addHypoIndexIntoCtx(ctx, ti.Schema, ti.Name, indexInfo)
 	}
 
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
 	chs, coll := ctx.GetSessionVars().GetCharsetInfo()
 	job := &model.Job{
 		SchemaID:   schema.ID,
@@ -7274,16 +7327,11 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		TableName:  t.Meta().Name.L,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
-		Args:     []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
-		Priority: ctx.GetSessionVars().DDLReorgPriority,
-		Charset:  chs,
-		Collate:  coll,
+		ReorgMeta:  NewDDLReorgMeta(ctx),
+		Args:       []interface{}{unique, indexName, indexPartSpecifications, indexOption, hiddenCols, global},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+		Charset:    chs,
+		Collate:    coll,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -7762,7 +7810,7 @@ func checkAndGetColumnsTypeAndValuesMatch(ctx sessionctx.Context, colTypes []typ
 		switch colType.GetType() {
 		case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeDuration:
 			switch vkind {
-			case types.KindString, types.KindBytes:
+			case types.KindString, types.KindBytes, types.KindNull:
 			default:
 				return nil, dbterror.ErrWrongTypeColumnValue.GenWithStackByArgs()
 			}
@@ -8441,7 +8489,7 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 // AddResourceGroup implements the DDL interface, creates a resource group.
 func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
 	groupName := stmt.ResourceGroupName
-	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: &model.ResourceGroupSettings{}}
+	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: model.NewResourceGroupSettings()}
 	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
 	if err != nil {
 		return err
@@ -8934,4 +8982,16 @@ func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrN
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
+}
+
+// NewDDLReorgMeta create a DDL ReorgMeta.
+func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	return &model.DDLReorgMeta{
+		SQLMode:           ctx.GetSessionVars().SQLMode,
+		Warnings:          make(map[errors.ErrorID]*terror.Error),
+		WarningsCount:     make(map[errors.ErrorID]int64),
+		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		ResourceGroupName: ctx.GetSessionVars().ResourceGroupName,
+	}
 }

@@ -21,14 +21,11 @@ import (
 
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/testkit/testmain"
 	"github.com/pingcap/tidb/testkit/testsetup"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
-
-var testDataMap = make(testdata.BookKeeper, 1)
 
 func TestMain(m *testing.M) {
 	testmain.ShortCircuitForBench(m)
@@ -36,7 +33,6 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	flag.Parse()
-	testDataMap.LoadTestSuiteData("testdata", "clustered_index_suite")
 
 	session.SetSchemaLease(20 * time.Millisecond)
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -63,12 +59,7 @@ func TestMain(m *testing.M) {
 	callback := func(i int) int {
 		// wait for MVCCLevelDB to close, MVCCLevelDB will be closed in one second
 		time.Sleep(time.Second)
-		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
-}
-
-func GetClusteredIndexSuiteData() testdata.TestData {
-	return testDataMap["clustered_index_suite"]
 }

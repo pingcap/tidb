@@ -109,22 +109,6 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	require.True(t, ok)
 }
 
-func TestIssue15662(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-
-	tk.MustExec("create table V (id int primary key, col_int int)")
-	tk.MustExec("insert into V values (1, 8)")
-
-	tk.MustExec("create table F (id int primary key, col_int int)")
-	tk.MustExec("insert into F values (1, 8)")
-
-	tk.MustQuery("select table1.`col_int` as field1, table1.`col_int` as field2 from V as table1 left join F as table2 on table1.`col_int` = table2.`col_int` order by field1, field2 desc limit 2").
-		Check(testkit.Rows("8 8"))
-}
-
 func putMutations(kvpairs ...string) []*kvrpcpb.Mutation {
 	var mutations []*kvrpcpb.Mutation
 	for i := 0; i < len(kvpairs); i += 2 {

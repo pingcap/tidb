@@ -117,13 +117,13 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		case infoschema.TableStatistics:
 			e.setDataForStatistics(sctx, dbs)
 		case infoschema.TableTables:
-			err = e.setDataFromTables(ctx, sctx, dbs)
+			err = e.setDataFromTables(sctx, dbs)
 		case infoschema.TableReferConst:
 			err = e.setDataFromReferConst(sctx, dbs)
 		case infoschema.TableSequences:
 			e.setDataFromSequences(sctx, dbs)
 		case infoschema.TablePartitions:
-			err = e.setDataFromPartitions(ctx, sctx, dbs)
+			err = e.setDataFromPartitions(sctx, dbs)
 		case infoschema.TableClusterInfo:
 			err = e.dataForTiDBClusterInfo(sctx)
 		case infoschema.TableAnalyzeStatus:
@@ -194,6 +194,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromResourceGroups()
 		case infoschema.TableRunawayWatches:
 			err = e.setDataFromRunawayWatches(sctx)
+		case infoschema.TableCheckConstraints:
+			err = e.setDataFromCheckConstraints(sctx, dbs)
 		}
 		if err != nil {
 			return nil, err
@@ -485,8 +487,8 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := cache.TableRowStatsCache.Update(ctx, sctx)
+func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	err := cache.TableRowStatsCache.Update(sctx)
 	if err != nil {
 		return err
 	}
@@ -620,6 +622,34 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 				)
 				rows = append(rows, record)
+			}
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromCheckConstraints(sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	var rows [][]types.Datum
+	checker := privilege.GetPrivilegeManager(sctx)
+	for _, schema := range schemas {
+		for _, table := range schema.Tables {
+			if len(table.Constraints) > 0 {
+				if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.SelectPriv) {
+					continue
+				}
+				for _, constraint := range table.Constraints {
+					if constraint.State != model.StatePublic {
+						continue
+					}
+					record := types.MakeDatums(
+						infoschema.CatalogVal, // CONSTRAINT_CATALOG
+						schema.Name.O,         // CONSTRAINT_SCHEMA
+						constraint.Name.O,     // CONSTRAINT_NAME
+						fmt.Sprintf("(%s)", constraint.ExprString), // CHECK_CLAUSE
+					)
+					rows = append(rows, record)
+				}
 			}
 		}
 	}
@@ -869,9 +899,9 @@ func calcCharOctLength(lenInChar int, cs string) int {
 	return lenInBytes
 }
 
-func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sessionctx.Context, schemas []*model.DBInfo) error {
+func (e *memtableRetriever) setDataFromPartitions(sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	cache := cache.TableRowStatsCache
-	err := cache.Update(ctx, sctx)
+	err := cache.Update(sctx)
 	if err != nil {
 		return err
 	}

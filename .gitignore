@@ -9,11 +9,11 @@ coverage.out
 *.test.bin
 tags
 profile.coverprofile
-explain_test
-cmd/explaintest/explain-test.out
-cmd/explaintest/explaintest_tidb-server
-cmd/explaintest/portgenerator
-cmd/explaintest/s/
+mysql_tester
+tests/integrationtest/integration-test.out
+tests/integrationtest/integrationtest_tidb-server
+tests/integrationtest/portgenerator
+tests/integrationtest/s/
 *.fail.go
 tools/bin/
 vendor

@@ -24,7 +24,7 @@ import (
 //  2. remove remove the Version method.
 type StatsCacheInner interface {
 	// Get gets the cache.
-	Get(tid int64, moveFront bool) (*statistics.Table, bool)
+	Get(tid int64) (*statistics.Table, bool)
 	// Put puts a cache.
 	Put(tid int64, tbl *statistics.Table) bool
 	// Del deletes a cache.

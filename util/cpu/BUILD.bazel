@@ -31,6 +31,7 @@ go_test(
         "//resourcemanager/scheduler",
         "//resourcemanager/util",
         "//testkit/testsetup",
+        "//util/cgroup",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

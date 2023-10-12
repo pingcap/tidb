@@ -23,11 +23,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/disttask/framework/handle"
+	"github.com/pingcap/tidb/disttask/framework/planner"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
@@ -115,23 +115,11 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 	var result importer.JobImportResult
 	taskMeta, err := getTaskMeta(ti.jobID)
 	if err != nil {
-		result.Msg = err.Error()
 		return result
 	}
 
-	var (
-		numWarnings uint64
-		numRecords  uint64
-		numDeletes  uint64
-		numSkipped  uint64
-	)
-	numRecords = taskMeta.Result.ReadRowCnt
-	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
-	// we can have it when there's duplicate detection.
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	return importer.JobImportResult{
-		Msg:        msg,
-		Affected:   taskMeta.Result.ReadRowCnt,
+		Affected:   taskMeta.Result.LoadedRowCnt,
 		ColSizeMap: taskMeta.Result.ColSizeMap,
 	}
 }
@@ -175,19 +163,25 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 		if err2 != nil {
 			return err2
 		}
-		task := TaskMeta{
+
+		// TODO: use planner.Run to run the logical plan
+		// now creating import job and submitting distributed task should be in the same transaction.
+		logicalPlan := &LogicalPlan{
 			JobID:             jobID,
 			Plan:              *plan,
 			Stmt:              ti.stmt,
 			EligibleInstances: instances,
 			ChunkMap:          ti.chunkMap,
 		}
-		taskMeta, err2 := json.Marshal(task)
-		if err2 != nil {
-			return err2
+		planCtx := planner.PlanCtx{
+			Ctx:        ctx,
+			SessionCtx: se,
+			TaskKey:    TaskKey(jobID),
+			TaskType:   proto.ImportInto,
+			ThreadCnt:  int(plan.ThreadCnt),
 		}
-		taskID, err2 = globalTaskManager.AddGlobalTaskWithSession(se, TaskKey(jobID), proto.ImportInto,
-			int(plan.ThreadCnt), taskMeta)
+		p := planner.NewPlanner()
+		taskID, err2 = p.Run(planCtx, logicalPlan)
 		if err2 != nil {
 			return err2
 		}
@@ -208,7 +202,8 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	ti.taskID = taskID
 	ti.logger = ti.logger.With(zap.Int64("task-id", globalTask.ID))
 
-	ti.logger.Info("job submitted to global task queue", zap.Int64("job-id", jobID))
+	ti.logger.Info("job submitted to global task queue",
+		zap.Int64("job-id", jobID), zap.Int64("thread-cnt", plan.ThreadCnt))
 
 	return jobID, globalTask, nil
 }
@@ -238,7 +233,7 @@ func getTaskMeta(jobID int64) (*TaskMeta, error) {
 	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
-		return nil, err
+		return nil, errors.Trace(err)
 	}
 	return &taskMeta, nil
 }
@@ -251,24 +246,42 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
 	if err != nil {
 		return 0, err
 	}
-	if globalTask == nil {
+	if task == nil {
 		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
-	subtasks, err := globalTaskManager.GetSubtasksByStep(globalTask.ID, StepImport)
-	if err != nil {
-		return 0, err
+	taskMeta := TaskMeta{}
+	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
+		return 0, errors.Trace(err)
 	}
 	var importedRows uint64
-	for _, subtask := range subtasks {
-		var subtaskMeta ImportStepMeta
-		if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
-			return 0, err2
+	if taskMeta.Plan.CloudStorageURI == "" {
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepImport)
+		if err != nil {
+			return 0, err
 		}
-		importedRows += subtaskMeta.Result.LoadedRowCnt
+		for _, subtask := range subtasks {
+			var subtaskMeta ImportStepMeta
+			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
+				return 0, errors.Trace(err2)
+			}
+			importedRows += subtaskMeta.Result.LoadedRowCnt
+		}
+	} else {
+		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepWriteAndIngest)
+		if err != nil {
+			return 0, err
+		}
+		for _, subtask := range subtasks {
+			var subtaskMeta WriteIngestStepMeta
+			if err2 := json.Unmarshal(subtask.Meta, &subtaskMeta); err2 != nil {
+				return 0, errors.Trace(err2)
+			}
+			importedRows += subtaskMeta.Result.LoadedRowCnt
+		}
 	}
 	return importedRows, nil
 }

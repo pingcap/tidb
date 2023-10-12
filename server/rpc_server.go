@@ -48,7 +48,7 @@ import (
 func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Reflect("r", v),
+			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("r", v),
 				zap.Stack("stack trace"))
 		}
 	}()
@@ -95,7 +95,7 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Reflect("r", v),
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Any("r", v),
 				zap.Stack("stack trace"))
 			resp.OtherError = fmt.Sprintf("panic when RPC server handing coprocessor, stack:%v", v)
 		}
@@ -109,7 +109,7 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 	resp := &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Reflect("r", v),
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Any("r", v),
 				zap.Stack("stack trace"))
 			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor stream, stack:%v", v)
 			err = stream.Send(resp)
@@ -134,7 +134,7 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 func (s *rpcServer) BatchCommands(ss tikvpb.Tikv_BatchCommandsServer) error {
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Error("panic when RPC server handing batch commands", zap.Reflect("r", v),
+			logutil.BgLogger().Error("panic when RPC server handing batch commands", zap.Any("r", v),
 				zap.Stack("stack trace"))
 		}
 	}()

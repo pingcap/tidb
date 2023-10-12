@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -547,6 +548,8 @@ type Instance struct {
 	MaxConnections    uint32     `toml:"max_connections" json:"max_connections"`
 	TiDBEnableDDL     AtomicBool `toml:"tidb_enable_ddl" json:"tidb_enable_ddl"`
 	TiDBRCReadCheckTS bool       `toml:"tidb_rc_read_check_ts" json:"tidb_rc_read_check_ts"`
+	// TiDBServiceScope indicates the role for tidb for distributed task framework.
+	TiDBServiceScope string `toml:"tidb_service_scope" json:"tidb_service_scope"`
 }
 
 func (l *Log) getDisableTimestamp() bool {
@@ -957,6 +960,7 @@ var defaultConf = Config{
 		MaxConnections:              0,
 		TiDBEnableDDL:               *NewAtomicBool(true),
 		TiDBRCReadCheckTS:           false,
+		TiDBServiceScope:            "",
 	},
 	Status: Status{
 		ReportStatus:          true,
@@ -998,7 +1002,7 @@ var defaultConf = Config{
 		StatsLoadQueueSize:                1000,
 		AnalyzePartitionConcurrencyQuota:  16,
 		PlanReplayerDumpWorkerConcurrency: 1,
-		EnableStatsCacheMemQuota:          false,
+		EnableStatsCacheMemQuota:          true,
 		RunAutoAnalyze:                    true,
 		EnableLoadFMSketch:                false,
 		LiteInitStats:                     true,
@@ -1167,7 +1171,7 @@ func isAllRemovedConfigItems(items []string) bool {
 // The function enforceCmdArgs is used to merge the config file with command arguments:
 // For example, if you start TiDB by the command "./tidb-server --port=3000", the port number should be
 // overwritten to 3000 and ignore the port number in the config file.
-func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCmdArgs func(*Config)) {
+func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCmdArgs func(*Config, *flag.FlagSet), fset *flag.FlagSet) {
 	cfg := GetGlobalConfig()
 	var err error
 	if confPath != "" {
@@ -1205,7 +1209,7 @@ func InitializeConfig(confPath string, configCheck, configStrict bool, enforceCm
 			os.Exit(1)
 		}
 	}
-	enforceCmdArgs(cfg)
+	enforceCmdArgs(cfg, fset)
 
 	if err := cfg.Valid(); err != nil {
 		if !filepath.IsAbs(confPath) {

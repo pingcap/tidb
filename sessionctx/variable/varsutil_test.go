@@ -683,20 +683,6 @@ func TestHelperFuncs(t *testing.T) {
 	require.Equal(t, 5, TidbOptInt("bogus", 5))
 }
 
-func TestStmtVars(t *testing.T) {
-	vars := NewSessionVars(nil)
-	err := vars.SetStmtVar("bogussysvar", "1")
-	require.Equal(t, "[variable:1193]Unknown system variable 'bogussysvar'", err.Error())
-	err = vars.SetStmtVar(MaxExecutionTime, "ACDC")
-	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'max_execution_time'", err.Error())
-	err = vars.SetStmtVar(MaxExecutionTime, "100")
-	require.NoError(t, err)
-	err = vars.SetStmtVar(TidbKvReadTimeout, "ACDC")
-	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tidb_kv_read_timeout'", err.Error())
-	err = vars.SetStmtVar(TidbKvReadTimeout, "100")
-	require.NoError(t, err)
-}
-
 func TestSessionStatesSystemVar(t *testing.T) {
 	vars := NewSessionVars(nil)
 	err := vars.SetSystemVar("autocommit", "1")

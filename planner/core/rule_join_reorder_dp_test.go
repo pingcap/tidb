@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -162,6 +163,10 @@ func TestDPReorderTPCHQ5(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
 	ctx := MockContext()
+	defer func() {
+		do := domain.GetDomain(ctx)
+		do.StatsHandle().Close()
+	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
 	joinGroups := make([]LogicalPlan, 0, 6)
 	joinGroups = append(joinGroups, newDataSource(ctx, "lineitem", 59986052))
@@ -207,6 +212,9 @@ func TestDPReorderAllCartesian(t *testing.T) {
 	statsMap := makeStatsMapForTPCHQ5()
 
 	ctx := MockContext()
+	defer func() {
+		domain.GetDomain(ctx).StatsHandle().Close()
+	}()
 	ctx.GetSessionVars().PlanID.Store(-1)
 
 	joinGroup := make([]LogicalPlan, 0, 4)

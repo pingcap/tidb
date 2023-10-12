@@ -63,7 +63,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 	s.started = true
 	s.dstFile = f
 	s.writer = bufio.NewWriter(s.dstFile)
-	s.chk = tryNewCacheChunk(s.Children(0))
+	s.chk = exec.TryNewCacheChunk(s.Children(0))
 	s.lineBuf = make([]byte, 0, 1024)
 	s.fieldBuf = make([]byte, 0, 64)
 	s.escapeBuf = make([]byte, 0, 64)
@@ -73,7 +73,7 @@ func (s *SelectIntoExec) Open(ctx context.Context) error {
 // Next implements the Executor Next interface.
 func (s *SelectIntoExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	for {
-		if err := Next(ctx, s.Children(0), s.chk); err != nil {
+		if err := exec.Next(ctx, s.Children(0), s.chk); err != nil {
 			return err
 		}
 		if s.chk.NumRows() == 0 {

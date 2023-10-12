@@ -142,6 +142,8 @@ import (
 	fetch             "FETCH"
 	firstValue        "FIRST_VALUE"
 	floatType         "FLOAT"
+	float4Type        "FLOAT4"
+	float8Type        "FLOAT8"
 	forKwd            "FOR"
 	force             "FORCE"
 	foreign           "FOREIGN"
@@ -204,6 +206,7 @@ import (
 	mediumblobType    "MEDIUMBLOB"
 	mediumIntType     "MEDIUMINT"
 	mediumtextType    "MEDIUMTEXT"
+	middleIntType     "MIDDLEINT"
 	minuteMicrosecond "MINUTE_MICROSECOND"
 	minuteSecond      "MINUTE_SECOND"
 	mod               "MOD"
@@ -514,6 +517,7 @@ import (
 	oltpReadOnly          "OLTP_READ_ONLY"
 	oltpReadWrite         "OLTP_READ_WRITE"
 	oltpWriteOnly         "OLTP_WRITE_ONLY"
+	tpch10                "TPCH_10"
 	onDuplicate           "ON_DUPLICATE"
 	online                "ONLINE"
 	only                  "ONLY"
@@ -5175,7 +5179,7 @@ DropStatsStmt:
 	}
 |	"DROP" "STATS" TableName "PARTITION" PartitionNameList
 	{
-		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("DROP STATS ... PARTITION ..."))
+		yylex.AppendError(ErrWarnDeprecatedSyntaxNoReplacement.FastGenByArgs("'DROP STATS ... PARTITION ...'", ""))
 		parser.lastErrorAsWarn()
 		$$ = &ast.DropStatsStmt{
 			Tables:         []*ast.TableName{$3.(*ast.TableName)},
@@ -6869,6 +6873,7 @@ UnReservedKeyword:
 |	"OLTP_READ_WRITE"
 |	"OLTP_READ_ONLY"
 |	"OLTP_WRITE_ONLY"
+|	"TPCH_10"
 
 TiDBKeyword:
 	"ADMIN"
@@ -12458,10 +12463,6 @@ NumericType:
 		// TODO: check flen 0
 		tp := types.NewFieldType($1.(byte))
 		tp.SetFlen($2.(int))
-		if $2.(int) != types.UnspecifiedLength && types.TiDBStrictIntegerDisplayWidth {
-			yylex.AppendError(ErrWarnDeprecatedIntegerDisplayWidth)
-			parser.lastErrorAsWarn()
-		}
 		for _, o := range $3.([]*ast.TypeOpt) {
 			if o.IsUnsigned {
 				tp.AddFlag(mysql.UnsignedFlag)
@@ -12555,6 +12556,10 @@ IntegerType:
 	{
 		$$ = mysql.TypeInt24
 	}
+|	"MIDDLEINT"
+	{
+		$$ = mysql.TypeInt24
+	}
 |	"INT"
 	{
 		$$ = mysql.TypeLong
@@ -12635,6 +12640,14 @@ FloatingPointType:
 		$$ = mysql.TypeDouble
 	}
 |	"DOUBLE" "PRECISION"
+	{
+		$$ = mysql.TypeDouble
+	}
+|	"FLOAT4"
+	{
+		$$ = mysql.TypeFloat
+	}
+|	"FLOAT8"
 	{
 		$$ = mysql.TypeDouble
 	}
@@ -14658,12 +14671,44 @@ LockStatsStmt:
 			Tables: $3.([]*ast.TableName),
 		}
 	}
+|	"LOCK" "STATS" TableName "PARTITION" PartitionNameList
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $5.([]model.CIStr)
+		$$ = &ast.LockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
+|	"LOCK" "STATS" TableName "PARTITION" '(' PartitionNameList ')'
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $6.([]model.CIStr)
+		$$ = &ast.LockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
 
 UnlockStatsStmt:
 	"UNLOCK" "STATS" TableNameList
 	{
 		$$ = &ast.UnlockStatsStmt{
 			Tables: $3.([]*ast.TableName),
+		}
+	}
+|	"UNLOCK" "STATS" TableName "PARTITION" PartitionNameList
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $5.([]model.CIStr)
+		$$ = &ast.UnlockStatsStmt{
+			Tables: []*ast.TableName{x},
+		}
+	}
+|	"UNLOCK" "STATS" TableName "PARTITION" '(' PartitionNameList ')'
+	{
+		x := $3.(*ast.TableName)
+		x.PartitionNames = $6.([]model.CIStr)
+		$$ = &ast.UnlockStatsStmt{
+			Tables: []*ast.TableName{x},
 		}
 	}
 
@@ -15884,6 +15929,10 @@ CalibrateResourceWorkloadOption:
 	{
 		$$ = ast.OLTPWRITEONLY
 	}
+|	"WORKLOAD" "TPCH_10"
+	{
+		$$ = ast.TPCH10
+	}
 
 /********************************************************************
  *
@@ -15960,5 +16009,4 @@ DropQueryWatchStmt:
 			IntValue: $4.(int64),
 		}
 	}
-
 %%

@@ -295,37 +295,6 @@ func TestPreparedLimitOffset(t *testing.T) {
 	}
 }
 
-func TestPreparedNullParam(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	flags := []bool{false, true}
-	for _, flag := range flags {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
-
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (id int, KEY id (id))")
-		tk.MustExec("insert into t values (1), (2), (3)")
-		tk.MustExec(`prepare stmt from 'select * from t use index(id) where id = ?'`)
-
-		r := tk.MustQuery(`execute stmt using @id;`)
-		r.Check(nil)
-
-		r = tk.MustQuery(`execute stmt using @id;`)
-		r.Check(nil)
-
-		tk.MustExec(`set @id="1"`)
-		r = tk.MustQuery(`execute stmt using @id;`)
-		r.Check(testkit.Rows("1"))
-
-		r = tk.MustQuery(`execute stmt using @id2;`)
-		r.Check(nil)
-
-		r = tk.MustQuery(`execute stmt using @id;`)
-		r.Check(testkit.Rows("1"))
-	}
-}
-
 func TestPrepareWithAggregation(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	flags := []bool{false, true}
@@ -351,44 +320,6 @@ func TestPrepareWithAggregation(t *testing.T) {
 
 		r = tk.MustQuery(`execute stmt using @id;`)
 		r.Check(testkit.Rows("1"))
-	}
-}
-
-func TestPreparedIssue7579(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	flags := []bool{false, true}
-	for _, flag := range flags {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
-
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int, index a_idx(a))")
-		tk.MustExec("insert into t values (1,1), (2,2), (null,3)")
-
-		r := tk.MustQuery("select a, b from t order by b asc;")
-		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
-
-		tk.MustExec(`prepare stmt from 'select a, b from t where ? order by b asc'`)
-
-		r = tk.MustQuery(`execute stmt using @param;`)
-		r.Check(nil)
-
-		tk.MustExec(`set @param = true`)
-		r = tk.MustQuery(`execute stmt using @param;`)
-		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
-
-		tk.MustExec(`set @param = false`)
-		r = tk.MustQuery(`execute stmt using @param;`)
-		r.Check(nil)
-
-		tk.MustExec(`set @param = 1`)
-		r = tk.MustQuery(`execute stmt using @param;`)
-		r.Check(testkit.Rows("1 1", "2 2", "<nil> 3"))
-
-		tk.MustExec(`set @param = 0`)
-		r = tk.MustQuery(`execute stmt using @param;`)
-		r.Check(nil)
 	}
 }
 
@@ -686,50 +617,6 @@ func TestPreparedIssue8153(t *testing.T) {
 		tk.MustExec(`set @a=1,@b=2`)
 		_, err = tk.Exec(`execute stmt using @a,@b;`)
 		require.EqualError(t, err, "[planner:1056]Can't group on 'sum(a)'")
-	}
-}
-
-func TestPreparedIssue8644(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	flags := []bool{false, true}
-	for _, flag := range flags {
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec(fmt.Sprintf(`set @@tidb_enable_prepared_plan_cache=%v`, flag))
-
-		tk.MustExec("use test")
-
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(data mediumblob)")
-		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
-		tk.MustExec(`set @a = 'a'`)
-		tk.MustExec(`execute stmt using @a;`)
-		tk.MustExec(`set @b = 'aaaaaaaaaaaaaaaaaa'`)
-		tk.MustExec(`execute stmt using @b;`)
-
-		r := tk.MustQuery(`select * from t`)
-		r.Check(testkit.Rows("a", "aaaaaaaaaaaaaaaaaa"))
-
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(data decimal)")
-		tk.MustExec(`prepare stmt from 'insert t (data) values (?)'`)
-		tk.MustExec(`set @a = '1'`)
-		tk.MustExec(`execute stmt using @a;`)
-		tk.MustExec(`set @b = '11111.11111'`) // '.11111' will be truncated.
-		tk.MustExec(`execute stmt using @b;`)
-
-		r = tk.MustQuery(`select * from t`)
-		r.Check(testkit.Rows("1", "11111"))
-
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t(data decimal(10,3));")
-		tk.MustExec("prepare stmt from 'insert t (data) values (?)';")
-		tk.MustExec("set @a = 1.1;")
-		tk.MustExec("execute stmt using @a;")
-		tk.MustExec("set @b = 11.11;")
-		tk.MustExec("execute stmt using @b;")
-
-		r = tk.MustQuery(`select * from t`)
-		r.Check(testkit.Rows("1.100", "11.110"))
 	}
 }
 

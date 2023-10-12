@@ -44,6 +44,30 @@ func NewCache(capacity int) *InfoCache {
 	}
 }
 
+// ReSize re-size the cache.
+func (h *InfoCache) ReSize(capacity int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if cap(h.cache) == capacity {
+		return
+	}
+	oldCache := h.cache
+	h.cache = make([]schemaAndTimestamp, 0, capacity)
+	for i, v := range oldCache {
+		if i >= capacity {
+			break
+		}
+		h.cache = append(h.cache, v)
+	}
+}
+
+// Size returns the size of the cache, export for test.
+func (h *InfoCache) Size() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.cache)
+}
+
 // Reset resets the cache.
 func (h *InfoCache) Reset(capacity int) {
 	h.mu.Lock()
@@ -61,6 +85,11 @@ func (h *InfoCache) GetLatest() InfoSchema {
 		return h.cache[0].infoschema
 	}
 	return nil
+}
+
+// Len returns the size of the cache
+func (h *InfoCache) Len() int {
+	return len(h.cache)
 }
 
 func (h *InfoCache) getSchemaByTimestampNoLock(ts uint64) (InfoSchema, bool) {

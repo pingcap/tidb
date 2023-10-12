@@ -77,7 +77,6 @@ import (
 	hintSemijoin            "SEMIJOIN"
 	hintNoSemijoin          "NO_SEMIJOIN"
 	hintMaxExecutionTime    "MAX_EXECUTION_TIME"
-	hintTidbKvReadTimeout   "TIDB_KV_READ_TIMEOUT"
 	hintSetVar              "SET_VAR"
 	hintResourceGroup       "RESOURCE_GROUP"
 	hintQBName              "QB_NAME"
@@ -260,14 +259,6 @@ TableOptimizerHintOpt:
 		$$ = nil
 	}
 |	"MAX_EXECUTION_TIME" '(' QueryBlockOpt hintIntLit ')'
-	{
-		$$ = &ast.TableOptimizerHint{
-			HintName: model.NewCIStr($1),
-			QBName:   model.NewCIStr($3),
-			HintData: $4,
-		}
-	}
-|	"TIDB_KV_READ_TIMEOUT" '(' QueryBlockOpt hintIntLit ')'
 	{
 		$$ = &ast.TableOptimizerHint{
 			HintName: model.NewCIStr($1),
@@ -562,6 +553,22 @@ Value:
 	{
 		$$ = strconv.FormatUint($1, 10)
 	}
+|	'+' hintIntLit
+	{
+		$$ = strconv.FormatUint($2, 10)
+	}
+|	'-' hintIntLit
+	{
+		if $2 > 9223372036854775808 {
+			yylex.AppendError(yylex.Errorf("the Signed Value should be at the range of [-9223372036854775808, 9223372036854775807]."))
+			return 1
+		} else if $2 == 9223372036854775808 {
+			signed_one := int64(1)
+			$$ = strconv.FormatInt(signed_one<<63, 10)
+		} else {
+			$$ = strconv.FormatInt(-int64($2), 10)
+		}
+	}
 
 UnitOfBytes:
 	"MB"
@@ -747,7 +754,6 @@ Identifier:
 |	"LEADING"
 |	"SEMI_JOIN_REWRITE"
 |	"NO_DECORRELATE"
-|	"TIDB_KV_READ_TIMEOUT"
 /* other keywords */
 |	"OLAP"
 |	"OLTP"

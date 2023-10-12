@@ -24,6 +24,7 @@ go_library(
         "//kv",
         "//metrics",
         "//parser/terror",
+        "//sessionctx/variable",
         "//store/copr/metrics",
         "//store/driver/backoff",
         "//store/driver/error",

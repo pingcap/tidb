@@ -22,7 +22,7 @@ go_library(
         "//parser/mysql",
         "//planner/core",
         "//statistics",
-        "//statistics/handle",
+        "//statistics/handle/storage",
         "//types",
         "//util/mathutil",
         "//util/mock",

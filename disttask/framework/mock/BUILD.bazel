@@ -2,11 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mock",
-    srcs = ["scheduler_mock.go"],
+    srcs = [
+        "dispatcher_mock.go",
+        "plan_mock.go",
+        "scheduler_mock.go",
+    ],
     importpath = "github.com/pingcap/tidb/disttask/framework/mock",
     visibility = ["//visibility:public"],
     deps = [
+        "//disttask/framework/planner",
         "//disttask/framework/proto",
+        "//disttask/framework/scheduler/execute",
         "@org_uber_go_mock//gomock",
     ],
 )

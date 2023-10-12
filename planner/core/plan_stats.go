@@ -23,7 +23,9 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessiontxn"
 	"github.com/pingcap/tidb/statistics"
+	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
 	"go.uber.org/zap"
@@ -45,7 +47,25 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	if !histNeeded {
 		return plan, nil
 	}
-	histNeededIndices := collectSyncIndices(plan.SCtx(), histNeededColumns)
+
+	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
+	is := sessiontxn.GetTxnManager(plan.SCtx()).GetTxnInfoSchema()
+	tblID2Tbl := make(map[int64]table.Table)
+	for _, neededCol := range histNeededColumns {
+		tbl, _ := infoschema.FindTableByTblOrPartID(is, neededCol.TableID)
+		if tbl == nil {
+			continue
+		}
+		tblID2Tbl[neededCol.TableID] = tbl
+	}
+
+	// collect needed virtual columns from already needed columns
+	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on
+	// the virtual columns themselves. It's because virtual columns themselves don't have statistics, while expression
+	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
+	dependingVirtualCols := CollectDependingVirtualCols(tblID2Tbl, histNeededColumns)
+
+	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2Tbl)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	if histNeeded && len(histNeededItems) > 0 {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
@@ -124,24 +144,103 @@ func SyncWaitStatsLoad(plan LogicalPlan) error {
 	return nil
 }
 
+// CollectDependingVirtualCols collects the virtual columns that depend on the needed columns, and returns them in a new slice.
+//
+// Why do we need this?
+// It's mainly for stats sync loading.
+// Currently, virtual columns themselves don't have statistics. But expression indexes, which are indexes on virtual
+// columns, have statistics. We need to collect needed virtual columns, then needed expression index stats can be
+// collected for sync loading.
+// In normal cases, if a virtual column can be used, which means related statistics may be needed, the corresponding
+// expressions in the query must have already been replaced with the virtual column before here. So we just need to treat
+// them like normal columns in stats sync loading, which means we just extract the Column from the expressions, the
+// virtual columns we want will be there.
+// However, in some cases (the mv index case now), the expressions are not replaced with the virtual columns before here.
+// Instead, we match the expression in the query against the expression behind the virtual columns after here when
+// building the access paths. This means we are unable to known what virtual columns will be needed by just extracting
+// the Column from the expressions here. So we need to manually collect the virtual columns that may be needed.
+//
+// Note 1: As long as a virtual column depends on the needed columns, it will be collected. This could collect some virtual
+// columns that are not actually needed.
+// It's OK because that's how sync loading is expected. Sync loading only needs to ensure all actually needed stats are
+// triggered to be loaded. Other logic of sync loading also works like this.
+// If we want to collect only the virtual columns that are actually needed, we need to make the checking logic here exactly
+// the same as the logic for generating the access paths, which will make the logic here very complicated.
+//
+// Note 2: Only direct dependencies are considered here.
+// If a virtual column depends on another virtual column, and the latter depends on the needed columns, then the former
+// will not be collected.
+// For example: create table t(a int, b int, c int as (a+b), d int as (c+1)); If a is needed, then c will be collected,
+// but d will not be collected.
+// It's because currently it's impossible that statistics related to indirectly depending columns are actually needed.
+// If we need to check indirect dependency some day, we can easily extend the logic here.
+func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []model.TableItemID) []model.TableItemID {
+	generatedCols := make([]model.TableItemID, 0)
+
+	// group the neededItems by table id
+	tblID2neededColIDs := make(map[int64][]int64, len(tblID2Tbl))
+	for _, item := range neededItems {
+		if item.IsIndex {
+			continue
+		}
+		tblID2neededColIDs[item.TableID] = append(tblID2neededColIDs[item.TableID], item.ID)
+	}
+
+	// process them by table id
+	for tblID, colIDs := range tblID2neededColIDs {
+		tbl := tblID2Tbl[tblID]
+		if tbl == nil {
+			continue
+		}
+		// collect the needed columns on this table into a set for faster lookup
+		colNameSet := make(map[string]struct{}, len(colIDs))
+		for _, colID := range colIDs {
+			name := tbl.Meta().FindColumnNameByID(colID)
+			if name == "" {
+				continue
+			}
+			colNameSet[name] = struct{}{}
+		}
+		// iterate columns in this table, and collect the virtual columns that depend on the needed columns
+		for _, col := range tbl.Cols() {
+			// only handles virtual columns
+			if !col.IsVirtualGenerated() {
+				continue
+			}
+			// If this column is already needed, then skip it.
+			if _, ok := colNameSet[col.Name.L]; ok {
+				continue
+			}
+			// If there exists a needed column that is depended on by this virtual column,
+			// then we think this virtual column is needed.
+			for depCol := range col.Dependences {
+				if _, ok := colNameSet[depCol]; ok {
+					generatedCols = append(generatedCols, model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false})
+					break
+				}
+			}
+		}
+	}
+	return generatedCols
+}
+
 // collectSyncIndices will collect the indices which includes following conditions:
 // 1. the indices contained the any one of histNeededColumns, eg: histNeededColumns contained A,B columns, and idx_a is
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
-func collectSyncIndices(ctx sessionctx.Context, histNeededColumns []model.TableItemID) map[model.TableItemID]struct{} {
+func collectSyncIndices(ctx sessionctx.Context,
+	histNeededColumns []model.TableItemID,
+	tblID2Tbl map[int64]table.Table,
+) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
 	stats := domain.GetDomain(ctx).StatsHandle()
 	for _, column := range histNeededColumns {
 		if column.IsIndex {
 			continue
 		}
-		is := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-		tbl, ok := is.TableByID(column.TableID)
-		if !ok {
-			tbl, _, _ = is.FindTableByPartitionID(column.TableID)
-			if tbl == nil {
-				continue
-			}
+		tbl := tblID2Tbl[column.TableID]
+		if tbl == nil {
+			continue
 		}
 		colName := tbl.Meta().FindColumnNameByID(column.ID)
 		if colName == "" {

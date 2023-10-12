@@ -464,48 +464,48 @@
     "name": "TestTablePartition",
     "cases": [
       {
-        "SQL":   "select * from t",
+        "SQL": "select * from t",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn < 31",
+        "SQL": "select * from t where t.ptn < 31",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn < 61",
+        "SQL": "select * from t where t.ptn < 61",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 17 and t.ptn < 61",
+        "SQL": "select * from t where t.ptn > 17 and t.ptn < 61",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 17 and t.ptn < 61 union all select * from t where t.ptn > 17 and t.ptn < 61 ",
+        "SQL": "select * from t where t.ptn > 17 and t.ptn < 61 union all select * from t where t.ptn > 17 and t.ptn < 61 ",
         "IsIdx": 0
       },
       {
-        "SQL":   "select ptn from t where t.ptn > 17 and t.ptn < 61 union all select ptn from t where t.ptn > 17 and t.ptn < 61 ",
+        "SQL": "select ptn from t where t.ptn > 17 and t.ptn < 61 union all select ptn from t where t.ptn > 17 and t.ptn < 61 ",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn < 8",
+        "SQL": "select * from t where t.ptn < 8",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 128",
+        "SQL": "select * from t where t.ptn > 128",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn > 128",
+        "SQL": "select * from t where t.ptn > 128",
         "IsIdx": 1
       },
       {
         // NULL will be located in the first partition.
-        "SQL":   "select * from t where t.ptn is null",
+        "SQL": "select * from t where t.ptn is null",
         "IsIdx": 0
       },
       {
-        "SQL":   "select * from t where t.ptn is null or t.ptn > 70",
+        "SQL": "select * from t where t.ptn is null or t.ptn > 70",
         "IsIdx": 1
       }
     ]
@@ -546,6 +546,12 @@
   {
     "name": "TestOuterJoinEliminator",
     "cases": [
+      // Test no column reference from left outer join
+      "select count(*) from t t1 left outer join t t2 on t1.a = t2.a",
+      "select 1 from t t1 left outer join t t2 on t1.a = t2.a",
+      // Test no column reference from right outer join
+      "select count(*) from t t1 right outer join t t2 on t1.a = t2.a",
+      "select 2 from t t1 right outer join t t2 on t1.a = t2.a",
       // Test left outer join + distinct
       "select distinct t1.a, t1.b from t t1 left outer join t t2 on t1.b = t2.b",
       // Test right outer join + distinct

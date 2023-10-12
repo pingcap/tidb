@@ -16,17 +16,20 @@ package importinto
 
 import (
 	"context"
+	"net"
 	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/executor/importer"
 	"github.com/pingcap/tidb/kv"
@@ -41,15 +44,28 @@ import (
 // TestSyncChan is used to test.
 var TestSyncChan = make(chan struct{})
 
-// ImportMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
-type ImportMinimalTaskExecutor struct {
+// MiniTaskExecutor is the interface for a minimal task executor.
+// exported for testing.
+type MiniTaskExecutor interface {
+	Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error
+}
+
+// importMinimalTaskExecutor is a minimal task executor for IMPORT INTO.
+type importMinimalTaskExecutor struct {
 	mTtask *importStepMinimalTask
 }
 
-// Run implements the SubtaskExecutor.Run interface.
-func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
+var newImportMinimalTaskExecutor = newImportMinimalTaskExecutor0
+
+func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
+	return &importMinimalTaskExecutor{
+		mTtask: t,
+	}
+}
+
+func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
-	logger.Info("run minimal task")
+	logger.Info("execute chunk")
 	failpoint.Inject("waitBeforeSortChunk", func() {
 		time.Sleep(3 * time.Second)
 	})
@@ -62,26 +78,20 @@ func (e *ImportMinimalTaskExecutor) Run(ctx context.Context) error {
 	})
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
-	if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {
-		return err
+	if sharedVars.TableImporter.IsLocalSort() {
+		if err := importer.ProcessChunk(ctx, &chunkCheckpoint, sharedVars.TableImporter, sharedVars.DataEngine, sharedVars.IndexEngine, sharedVars.Progress, logger); err != nil {
+			return err
+		}
+	} else {
+		if err := importer.ProcessChunkWith(ctx, &chunkCheckpoint, sharedVars.TableImporter, dataWriter, indexWriter, sharedVars.Progress, logger); err != nil {
+			return err
+		}
 	}
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
 	sharedVars.Checksum.Add(&chunkCheckpoint.Checksum)
 	return nil
-}
-
-type postProcessMinimalTaskExecutor struct {
-	mTask *postProcessStepMinimalTask
-}
-
-func (e *postProcessMinimalTaskExecutor) Run(ctx context.Context) error {
-	mTask := e.mTask
-	failpoint.Inject("waitBeforePostProcess", func() {
-		time.Sleep(5 * time.Second)
-	})
-	return postProcess(ctx, mTask.taskMeta, &mTask.meta, mTask.logger)
 }
 
 // postProcess does the post-processing for the task.
@@ -91,7 +101,14 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 		<-TestSyncChan
 	})
 
-	logger.Info("post process")
+	callLog := log.BeginTask(logger, "post process")
+	defer func() {
+		callLog.End(zap.ErrorLevel, err)
+	}()
+
+	if err = rebaseAllocatorBases(ctx, taskMeta, subtaskMeta, logger); err != nil {
+		return err
+	}
 
 	// TODO: create table indexes depends on the option.
 	// create table indexes even if the post process is failed.
@@ -167,6 +184,8 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
 			}()
 
+			// TODO: add resource group name
+
 			rs, err := storage.ExecSQL(ctx, se, sql)
 			if err != nil {
 				return err
@@ -222,24 +241,34 @@ func setBackoffWeight(se sessionctx.Context, taskMeta *TaskMeta, logger *zap.Log
 	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
 
-func init() {
-	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepImport,
-		// The order of the subtask executors is the same as the order of the subtasks.
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			task, ok := minimalTask.(*importStepMinimalTask)
-			if !ok {
-				return nil, errors.Errorf("invalid task type %T", minimalTask)
-			}
-			return &ImportMinimalTaskExecutor{mTtask: task}, nil
-		},
+func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
+	callLog := log.BeginTask(logger, "rebase allocators")
+	defer func() {
+		callLog.End(zap.ErrorLevel, err)
+	}()
+
+	if !common.TableHasAutoID(taskMeta.Plan.DesiredTableInfo) {
+		return nil
+	}
+
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err2 := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
 	)
-	scheduler.RegisterSubtaskExectorConstructor(proto.ImportInto, StepPostProcess,
-		func(minimalTask proto.MinimalTask, step int64) (scheduler.SubtaskExecutor, error) {
-			mTask, ok := minimalTask.(*postProcessStepMinimalTask)
-			if !ok {
-				return nil, errors.Errorf("invalid task type %T", minimalTask)
-			}
-			return &postProcessMinimalTaskExecutor{mTask: mTask}, nil
-		},
-	)
+	if err2 != nil {
+		return err2
+	}
+
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err2 := importer.GetCachedKVStoreFrom(tidbCfg.Path, tls)
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	return errors.Trace(common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs,
+		kvStore, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo))
 }

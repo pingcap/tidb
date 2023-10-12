@@ -15,14 +15,12 @@
 package cache
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
@@ -31,33 +29,13 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/lfu"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/mapcache"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 	"go.uber.org/zap"
 )
-
-// TableStatsOption used to indicate the way to get table stats
-type TableStatsOption struct {
-	byQuery bool
-}
-
-// ByQuery indicates whether the stats is got by query
-func (t *TableStatsOption) ByQuery() bool {
-	return t.byQuery
-}
-
-// TableStatsOpt used to edit getTableStatsOption
-type TableStatsOpt func(*TableStatsOption)
-
-// WithTableStatsByQuery indicates user needed
-func WithTableStatsByQuery() TableStatsOpt {
-	return func(option *TableStatsOption) {
-		option.byQuery = true
-	}
-}
 
 // NewStatsCache creates a new StatsCacheWrapper.
 func NewStatsCache() (*StatsCache, error) {
@@ -89,16 +67,12 @@ func (sc *StatsCache) Len() int {
 	return sc.c.Len()
 }
 
-// GetFromUser returns the statistics of the specified Table ID.
+// Get returns the statistics of the specified Table ID.
 // The returned value should be read-only, if you update it, don't forget to use Put to put it back again, otherwise the memory trace can be inaccurate.
 //
 //	e.g. v := sc.Get(id); /* update the value */ v.Version = 123; sc.Put(id, v);
-func (sc *StatsCache) GetFromUser(id int64) (*statistics.Table, bool) {
-	return sc.getCache(id, true)
-}
-
-func (sc *StatsCache) getCache(id int64, moveFront bool) (*statistics.Table, bool) {
-	result, ok := sc.c.Get(id, moveFront)
+func (sc *StatsCache) Get(id int64) (*statistics.Table, bool) {
+	result, ok := sc.c.Get(id)
 	if ok {
 		metrics.HitCounter.Add(1)
 	} else {
@@ -107,17 +81,13 @@ func (sc *StatsCache) getCache(id int64, moveFront bool) (*statistics.Table, boo
 	return result, ok
 }
 
-// GetFromInternal returns the statistics of the specified Table ID.
-func (sc *StatsCache) GetFromInternal(id int64) (*statistics.Table, bool) {
-	return sc.getCache(id, false)
-}
-
 // Put puts the table statistics to the cache from query.
 func (sc *StatsCache) Put(id int64, t *statistics.Table) {
 	sc.put(id, t)
 }
 
 func (sc *StatsCache) putCache(id int64, t *statistics.Table) bool {
+	metrics.UpdateCounter.Inc()
 	ok := sc.c.Put(id, t)
 	if ok {
 		return ok
@@ -170,11 +140,7 @@ func (sc *StatsCache) Version() uint64 {
 }
 
 // CopyAndUpdate copies a new cache and updates the new statistics table cache. It is only used in the COW mode.
-func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) *StatsCache {
-	option := &TableStatsOption{}
-	for _, opt := range opts {
-		opt(option)
-	}
+func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int64) *StatsCache {
 	newCache := &StatsCache{c: sc.c.Copy()}
 	newCache.maxTblStatsVer.Store(sc.maxTblStatsVer.Load())
 	for _, tbl := range tables {
@@ -195,16 +161,14 @@ func (sc *StatsCache) CopyAndUpdate(tables []*statistics.Table, deletedIDs []int
 }
 
 // Update updates the new statistics table cache.
-func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64, opts ...TableStatsOpt) {
-	option := &TableStatsOption{}
-	for _, opt := range opts {
-		opt(option)
-	}
+func (sc *StatsCache) Update(tables []*statistics.Table, deletedIDs []int64) {
 	for _, tbl := range tables {
 		id := tbl.PhysicalID
+		metrics.UpdateCounter.Inc()
 		sc.c.Put(id, tbl)
 	}
 	for _, id := range deletedIDs {
+		metrics.DelCounter.Inc()
 		sc.c.Del(id)
 	}
 
@@ -257,20 +221,19 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 }
 
 // Update tries to update the cache.
-func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context) error {
+func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
 		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(ctx, sctx, c.dirtyIDs...)
+			tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
 			if err != nil {
 				return err
 			}
 			for id, tr := range tableRows {
 				c.tableRows[id] = tr
 			}
-			colLength, err := getColLengthTables(ctx, sctx, c.dirtyIDs...)
+			colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
 			if err != nil {
 				return err
 			}
@@ -281,11 +244,11 @@ func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context
 		}
 		return nil
 	}
-	tableRows, err := getRowCountTables(ctx, sctx)
+	tableRows, err := getRowCountTables(sctx)
 	if err != nil {
 		return err
 	}
-	colLength, err := getColLengthTables(ctx, sctx)
+	colLength, err := getColLengthTables(sctx)
 	if err != nil {
 		return err
 	}
@@ -296,16 +259,15 @@ func (c *StatsTableRowCache) Update(ctx context.Context, sctx sessionctx.Context
 	return nil
 }
 
-func getRowCountTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+func getRowCountTables(sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, "select table_id, count from mysql.stats_meta")
+		rows, _, err = util.ExecWithOpts(sctx, nil, "select table_id, count from mysql.stats_meta")
 	} else {
 		inTblIDs := buildInTableIDsString(tableIDs)
 		sql := "select table_id, count from mysql.stats_meta where " + inTblIDs
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	}
 	if err != nil {
 		return nil, err
@@ -338,17 +300,16 @@ type tableHistID struct {
 	histID  int64
 }
 
-func getColLengthTables(ctx context.Context, sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
-	exec := sctx.(sqlexec.RestrictedSQLExecutor)
+func getColLengthTables(sctx sessionctx.Context, tableIDs ...int64) (map[tableHistID]uint64, error) {
 	var rows []chunk.Row
 	var err error
 	if len(tableIDs) == 0 {
 		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0"
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	} else {
 		inTblIDs := buildInTableIDsString(tableIDs)
 		sql := "select table_id, hist_id, tot_col_size from mysql.stats_histograms where is_index = 0 and " + inTblIDs
-		rows, _, err = exec.ExecRestrictedSQL(ctx, nil, sql)
+		rows, _, err = util.ExecWithOpts(sctx, nil, sql)
 	}
 	if err != nil {
 		return nil, err

@@ -128,7 +128,7 @@ func (us *UnionScanExec) open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	us.snapshotChunkBuffer = tryNewCacheChunk(us)
+	us.snapshotChunkBuffer = exec.TryNewCacheChunk(us)
 	return nil
 }
 
@@ -141,7 +141,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	// the for-loop may exit without read one single row!
 	req.GrowAndReset(us.MaxChunkSize())
 
-	mutableRow := chunk.MutRowFromTypes(retTypes(us))
+	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(us))
 	for batchSize := req.Capacity(); req.NumRows() < batchSize; {
 		row, err := us.getOneRow(ctx)
 		if err != nil {
@@ -209,10 +209,11 @@ func (us *UnionScanExec) getOneRow(ctx context.Context) ([]types.Datum, error) {
 	} else if snapshotRow == nil {
 		row = addedRow
 	} else {
-		isSnapshotRow, err = us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
+		isSnapshotRowInt, err := us.compare(us.Ctx().GetSessionVars().StmtCtx, snapshotRow, addedRow)
 		if err != nil {
 			return nil, err
 		}
+		isSnapshotRow = isSnapshotRowInt < 0
 		if isSnapshotRow {
 			row = snapshotRow
 		} else {
@@ -243,7 +244,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
 	for len(us.snapshotRows) == 0 {
-		err = Next(ctx, us.Children(0), us.snapshotChunkBuffer)
+		err = exec.Next(ctx, us.Children(0), us.snapshotChunkBuffer)
 		if err != nil || us.snapshotChunkBuffer.NumRows() == 0 {
 			return nil, err
 		}
@@ -266,7 +267,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 				// commit, but for simplicity, we don't handle it here.
 				continue
 			}
-			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(retTypes(us.Children(0))))
+			us.snapshotRows = append(us.snapshotRows, row.GetDatumRow(exec.RetTypes(us.Children(0))))
 		}
 	}
 	return us.snapshotRows[0], nil
@@ -292,26 +293,26 @@ type compareExec struct {
 	handleCols plannercore.HandleCols
 }
 
-func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret bool, err error) {
+func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
 	var cmp int
 	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
 		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
 		if err != nil {
-			return false, err
+			return 0, err
 		}
 		if cmp == 0 {
 			continue
 		}
-		if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
-			return false, nil
+		if ce.desc {
+			return -cmp, nil
 		}
-		return true, nil
+		return cmp, nil
 	}
 	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
-	if cmp > 0 && !ce.desc || cmp < 0 && ce.desc {
-		return false, err
+	if ce.desc {
+		return -cmp, err
 	}
-	return true, err
+	return cmp, err
 }

@@ -35,7 +35,6 @@ func TestMain(m *testing.M) {
 	testDataMap.LoadTestSuiteData("testdata", "plan_suite_unexported")
 	testDataMap.LoadTestSuiteData("testdata", "index_merge_suite")
 	testDataMap.LoadTestSuiteData("testdata", "runtime_filter_generator_suite")
-	testDataMap.LoadTestSuiteData("testdata", "join_reorder_suite")
 
 	indexMergeSuiteData = testDataMap["index_merge_suite"]
 	planSuiteUnexportedData = testDataMap["plan_suite_unexported"]
@@ -62,8 +61,4 @@ func GetIndexMergeSuiteData() testdata.TestData {
 
 func GetRuntimeFilterGeneratorData() testdata.TestData {
 	return testDataMap["runtime_filter_generator_suite"]
-}
-
-func GetJoinReorderData() testdata.TestData {
-	return testDataMap["join_reorder_suite"]
 }

@@ -707,7 +707,7 @@ var MySQLErrName = map[uint16]*ErrMessage{
 	ErrSlaveCantCreateConversion:                             Message("Can't create conversion table for table '%-.192s.%-.192s'", nil),
 	ErrInsideTransactionPreventsSwitchBinlogFormat:           Message("Cannot modify @@session.binlogFormat inside a transaction", nil),
 	ErrPathLength:                                            Message("The path specified for %.64s is too long.", nil),
-	ErrWarnDeprecatedSyntaxNoReplacement:                     Message("'%s' is deprecated and will be removed in a future release.", nil),
+	ErrWarnDeprecatedSyntaxNoReplacement:                     Message("%s is deprecated and will be removed in a future release.%s", nil),
 	ErrWrongNativeTableStructure:                             Message("Native table '%-.64s'.'%-.64s' has the wrong structure", nil),
 	ErrWrongPerfSchemaUsage:                                  Message("Invalid performanceSchema usage.", nil),
 	ErrWarnISSkippedTable:                                    Message("Table '%s'.'%s' was skipped since its definition is being modified by concurrent DDL statement", nil),

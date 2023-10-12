@@ -18,9 +18,11 @@ import (
 	"context"
 	"io"
 	"math"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"unicode/utf8"
@@ -28,11 +30,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	litlog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	tidb "github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/executor/asyncloaddata"
 	"github.com/pingcap/tidb/expression"
@@ -48,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	tidbutil "github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -57,7 +62,6 @@ import (
 	"github.com/pingcap/tidb/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -92,6 +96,7 @@ const (
 	recordErrorsOption          = "record_errors"
 	detachedOption              = "detached"
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
+	cloudStorageURIOption       = "cloud_storage_uri"
 	// used for test
 	maxEngineSizeOption = "__max_engine_size"
 )
@@ -115,6 +120,7 @@ var (
 		detachedOption:              false,
 		disableTiKVImportModeOption: false,
 		maxEngineSizeOption:         true,
+		cloudStorageURIOption:       true,
 	}
 
 	csvOnlyOptions = map[string]struct{}{
@@ -151,11 +157,15 @@ type LoadDataReaderInfo struct {
 	Remote *mydump.SourceFileMeta
 }
 
-// Plan describes the plan of LOAD DATA.
+// Plan describes the plan of LOAD DATA and IMPORT INTO.
 type Plan struct {
-	DBName           string
-	DBID             int64
-	TableInfo        *model.TableInfo
+	DBName string
+	DBID   int64
+	// TableInfo is the table info we used during import, we might change it
+	// if add index by SQL is enabled(it's disabled now).
+	TableInfo *model.TableInfo
+	// DesiredTableInfo is the table info before import, and the desired table info
+	// after import.
 	DesiredTableInfo *model.TableInfo
 
 	Path   string
@@ -166,7 +176,10 @@ type Plan struct {
 	// ref https://dev.mysql.com/doc/refman/8.0/en/load-data.html#load-data-column-assignments
 	Restrictive bool
 
-	SQLMode          mysql.SQLMode
+	SQLMode mysql.SQLMode
+	// Charset is the charset of the data file when file is CSV or TSV.
+	// it might be nil when using LOAD DATA and no charset is specified.
+	// for IMPORT INTO, it is always non-nil.
 	Charset          *string
 	ImportantSysVars map[string]string
 
@@ -188,6 +201,7 @@ type Plan struct {
 	Detached              bool
 	DisableTiKVImportMode bool
 	MaxEngineSize         config.ByteSize
+	CloudStorageURI       string
 
 	// used for checksum in physical mode
 	DistSQLScanConcurrency int
@@ -201,6 +215,8 @@ type Plan struct {
 	User string `json:"-"`
 
 	IsRaftKV2 bool
+	// total data file size in bytes.
+	TotalFileSize int64
 }
 
 // ASTArgs is the arguments for ast.LoadDataStmt.
@@ -226,11 +242,11 @@ type LoadDataController struct {
 	Table table.Table
 
 	// how input field(or input column) from data file is mapped, either to a column or variable.
-	// if there's NO column list clause in load data statement, then it's table's columns
+	// if there's NO column list clause in SQL statement, then it's table's columns
 	// else it's user defined list.
 	FieldMappings []*FieldMapping
 	// see InsertValues.InsertColumns
-	// todo: our behavior is different with mysql. such as for table t(a,b)
+	// Note: our behavior is different with mysql. such as for table t(a,b)
 	// - "...(a,a) set a=100" is allowed in mysql, but not in tidb
 	// - "...(a,b) set b=100" will set b=100 in mysql, but in tidb the set is ignored.
 	// - ref columns in set clause is allowed in mysql, but not in tidb
@@ -239,8 +255,8 @@ type LoadDataController struct {
 	logger    *zap.Logger
 	dataStore storage.ExternalStorage
 	dataFiles []*mydump.SourceFileMeta
-	// total data file size in bytes, only initialized when load from remote.
-	TotalFileSize int64
+	// GlobalSortStore is used to store sorted data when using global sort.
+	GlobalSortStore storage.ExternalStorage
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -459,7 +475,6 @@ func (e *LoadDataController) checkFieldParams() error {
 		}
 		// NOTE: IMPORT INTO also don't support user set empty LinesTerminatedBy or FieldsTerminatedBy,
 		// but it's check in initOptions.
-		// TODO: support lines terminated is "".
 		if len(e.LinesTerminatedBy) == 0 {
 			return exeerrors.ErrLoadDataWrongFormatConfig.GenWithStackByArgs("LINES TERMINATED BY is empty")
 		}
@@ -491,6 +506,7 @@ func (p *Plan) initDefaultOptions() {
 	p.Detached = false
 	p.DisableTiKVImportMode = false
 	p.MaxEngineSize = config.ByteSize(defaultMaxEngineSize)
+	p.CloudStorageURI = variable.CloudStorageURI.Load()
 
 	v := "utf8mb4"
 	p.Charset = &v
@@ -648,6 +664,25 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 	if _, ok := specifiedOptions[disableTiKVImportModeOption]; ok {
 		p.DisableTiKVImportMode = true
 	}
+	if opt, ok := specifiedOptions[cloudStorageURIOption]; ok {
+		v, err := optAsString(opt)
+		if err != nil {
+			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+		}
+		// set cloud storage uri to empty string to force uses local sort when
+		// the global variable is set.
+		if v != "" {
+			b, err := storage.ParseBackend(v, nil)
+			if err != nil {
+				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			}
+			// only support s3 and gcs now.
+			if b.GetS3() == nil && b.GetGcs() == nil {
+				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
+			}
+		}
+		p.CloudStorageURI = v
+	}
 	if opt, ok := specifiedOptions[maxEngineSizeOption]; ok {
 		v, err := optAsString(opt)
 		if err != nil {
@@ -656,6 +691,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if err = p.MaxEngineSize.UnmarshalText([]byte(v)); err != nil || p.MaxEngineSize < 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
+	}
+
+	// when split-file is set, data file will be split into chunks of 256 MiB.
+	// skip_rows should be 0 or 1, we add this restriction to simplify skip_rows
+	// logic, so we only need to skip on the first chunk for each data file.
+	// CSV parser limit each row size to LargestEntryLimit(120M), the first row
+	// will NOT cross file chunk.
+	if p.SplitFile && p.IgnoreLines > 1 {
+		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
 	p.adjustOptions()
@@ -700,7 +744,11 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	optionMap := make(map[string]interface{}, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			optionMap[opt.Name] = opt.Value.String()
+			val := opt.Value.String()
+			if opt.Name == cloudStorageURIOption {
+				val = ast.RedactURL(val)
+			}
+			optionMap[opt.Name] = val
 		} else {
 			optionMap[opt.Name] = nil
 		}
@@ -848,11 +896,64 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 	return csvConfig
 }
 
-// InitDataFiles initializes the data store and load data files.
+// InitDataStore initializes the data store.
+func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+	u, err2 := storage.ParseRawURL(e.Path)
+	if err2 != nil {
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
+	}
+
+	if storage.IsLocal(u) {
+		u.Path = filepath.Dir(e.Path)
+	} else {
+		u.Path = ""
+	}
+	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	if err != nil {
+		return err
+	}
+	e.dataStore = s
+
+	if e.IsGlobalSort() {
+		target := "cloud storage"
+		cloudStorageURL, err3 := storage.ParseRawURL(e.Plan.CloudStorageURI)
+		if err3 != nil {
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
+				err3.Error())
+		}
+		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
+		if err != nil {
+			return err
+		}
+		e.GlobalSortStore = s
+	}
+	return nil
+}
+func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
+	b, err2 := storage.ParseBackendFromURL(u, nil)
+	if err2 != nil {
+		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
+	}
+
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	s, err := storage.New(ctx, b, opt)
+	if err != nil {
+		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
+	}
+	return s, nil
+}
+
+// InitDataFiles initializes the data store and files.
+// it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err2.Error())
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
 	}
 
 	var fileNameKey string
@@ -863,52 +964,46 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 
 		if !filepath.IsAbs(e.Path) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("file location should be absolute path when import from server disk")
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				"file location should be absolute path when import from server disk")
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
 		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("the file suffix is not supported when import from server disk")
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				"the file suffix is not supported when import from server disk")
 		}
 		dir := filepath.Dir(e.Path)
 		_, err := os.Stat(dir)
 		if err != nil {
 			// permission denied / file not exist error, etc.
-			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(err.Error())
+			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+				err.Error())
 		}
 
 		fileNameKey = filepath.Base(e.Path)
-		u.Path = dir
 	} else {
 		fileNameKey = strings.Trim(u.Path, "/")
-		u.Path = ""
-	}
-	b, err2 := storage.ParseBackendFromURL(u, nil)
-	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(GetMsgFromBRError(err2))
 	}
 	// try to find pattern error in advance
 	_, err2 = filepath.Match(stringutil.EscapeGlobExceptAsterisk(fileNameKey), "")
 	if err2 != nil {
-		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs("Glob pattern error: " + err2.Error())
+		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			"Glob pattern error: "+err2.Error())
 	}
 
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
-	if err != nil {
-		return exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(GetMsgFromBRError(err))
+	if err2 = e.InitDataStore(ctx); err2 != nil {
+		return err2
 	}
 
+	s := e.dataStore
 	var totalSize int64
 	dataFiles := []*mydump.SourceFileMeta{}
 	idx := strings.IndexByte(fileNameKey, '*')
 	// simple path when the path represent one file
 	sourceType := e.getSourceType()
 	if idx == -1 {
-		fileReader, err2 := s.Open(ctx, fileNameKey)
+		fileReader, err2 := s.Open(ctx, fileNameKey, nil)
 		if err2 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the file location is correct")
 		}
@@ -920,15 +1015,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "failed to read file size by seek")
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
-		dataFiles = append(dataFiles, &mydump.SourceFileMeta{
+		fileMeta := mydump.SourceFileMeta{
 			Path:        fileNameKey,
 			FileSize:    size,
 			Compression: compressTp,
 			Type:        sourceType,
-			// todo: if we support compression for physical mode, should set it to size * compressRatio to better split
-			// engines
-			RealSize: size,
-		})
+		}
+		fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
+		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
 		var commonPrefix string
@@ -941,7 +1035,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobExceptAsterisk(fileNameKey)
-		err = s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -950,13 +1044,14 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 					return nil
 				}
 				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
-				dataFiles = append(dataFiles, &mydump.SourceFileMeta{
+				fileMeta := mydump.SourceFileMeta{
 					Path:        remotePath,
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
-					RealSize:    size,
-				})
+				}
+				fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
+				dataFiles = append(dataFiles, &fileMeta)
 				totalSize += size
 				return nil
 			})
@@ -965,10 +1060,22 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 	}
 
-	e.dataStore = s
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
+}
+
+func (e *LoadDataController) getFileRealSize(ctx context.Context,
+	fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) int64 {
+	if fileMeta.Compression == mydump.CompressionNone {
+		return fileMeta.FileSize
+	}
+	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
+	if err != nil {
+		e.logger.Warn("failed to get compress ratio", zap.String("file", fileMeta.Path), zap.Error(err))
+		return fileMeta.FileSize
+	}
+	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {
@@ -990,7 +1097,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore)
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err2), "Please check the INFILE path is correct")
 				}
@@ -1059,6 +1166,11 @@ func (e *LoadDataController) GetParser(
 	}
 	parser.SetLogger(litlog.Logger{Logger: logutil.Logger(ctx)})
 
+	return parser, nil
+}
+
+// HandleSkipNRows skips the first N rows of the data file.
+func (e *LoadDataController) HandleSkipNRows(parser mydump.Parser) error {
 	// handle IGNORE N LINES
 	ignoreOneLineFn := parser.ReadRow
 	if csvParser, ok := parser.(*mydump.CSVParser); ok {
@@ -1070,17 +1182,17 @@ func (e *LoadDataController) GetParser(
 
 	ignoreLineCnt := e.IgnoreLines
 	for ignoreLineCnt > 0 {
-		err = ignoreOneLineFn()
+		err := ignoreOneLineFn()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
-				return parser, nil
+				return nil
 			}
-			return nil, err
+			return err
 		}
 
 		ignoreLineCnt--
 	}
-	return parser, nil
+	return nil
 }
 
 func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
@@ -1096,6 +1208,16 @@ func (e *LoadDataController) toMyDumpFiles() []mydump.FileInfo {
 		})
 	}
 	return res
+}
+
+// IsLocalSort returns true if we sort data on local disk.
+func (e *LoadDataController) IsLocalSort() bool {
+	return e.Plan.CloudStorageURI == ""
+}
+
+// IsGlobalSort returns true if we sort data on global storage.
+func (e *LoadDataController) IsGlobalSort() bool {
+	return !e.IsLocalSort()
 }
 
 // CreateColAssignExprs creates the column assignment expressions using session context.
@@ -1120,6 +1242,35 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	return res, allWarnings, nil
 }
 
+func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
+	backendConfig := local.BackendConfig{
+		PDAddr:                 pdAddr,
+		LocalStoreDir:          dataDir,
+		MaxConnPerStore:        config.DefaultRangeConcurrency,
+		ConnCompressType:       config.CompressionNone,
+		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		KVWriteBatchSize:       config.KVWriteBatchSize,
+		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
+		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
+		// enable after we support checkpoint
+		CheckpointEnabled:           false,
+		MemTableSize:                config.DefaultEngineMemCacheSize,
+		LocalWriterMemCacheSize:     int64(config.DefaultLocalWriterMemCacheSize),
+		ShouldCheckTiKV:             true,
+		DupeDetectEnabled:           false,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: false},
+		StoreWriteBWLimit:           int(e.MaxWriteSpeed),
+		MaxOpenFiles:                int(tidbutil.GenRLimit("table_import")),
+		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
+		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
+		DisableAutomaticCompactions: true,
+	}
+	if e.IsRaftKV2 {
+		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
+	}
+	return backendConfig
+}
+
 // JobImportParam is the param of the job import.
 type JobImportParam struct {
 	Job      *asyncloaddata.Job
@@ -1133,11 +1284,9 @@ type JobImportParam struct {
 
 // JobImportResult is the result of the job import.
 type JobImportResult struct {
-	Msg          string
-	LastInsertID uint64
-	Affected     uint64
-	Warnings     []stmtctx.SQLWarn
-	ColSizeMap   map[int64]int64
+	Affected   uint64
+	Warnings   []stmtctx.SQLWarn
+	ColSizeMap map[int64]int64
 }
 
 // JobImporter is the interface for importing a job.
@@ -1171,5 +1320,5 @@ func GetMsgFromBRError(err error) string {
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
 }
 
-// TestSyncCh is used in unit test to synchronize the execution of LOAD DATA.
+// TestSyncCh is used in unit test to synchronize the execution.
 var TestSyncCh = make(chan struct{})

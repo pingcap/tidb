@@ -89,7 +89,7 @@ func WithRecovery(exec func(), recoverFn func(r interface{})) {
 		}
 		if r != nil {
 			logutil.BgLogger().Error("panic in the recoverable goroutine",
-				zap.Reflect("r", r),
+				zap.Any("r", r),
 				zap.Stack("stack trace"))
 		}
 	}()
@@ -116,7 +116,7 @@ func Recover(metricsLabel, funcInfo string, recoverFn func(), quit bool) {
 	logutil.BgLogger().Error("panic in the recoverable goroutine",
 		zap.String("label", metricsLabel),
 		zap.String("funcInfo", funcInfo),
-		zap.Reflect("r", r),
+		zap.Any("r", r),
 		zap.Stack("stack"))
 	metrics.PanicCounter.WithLabelValues(metricsLabel).Inc()
 	if quit {
@@ -423,6 +423,12 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool) *tipb.ColumnInfo {
 	if forIndex {
 		// Use array type for read the multi-valued index.
 		pc.Tp = int32(c.FieldType.ArrayType().GetType())
+		if c.FieldType.IsArray() {
+			// Use "binary" collation for read the multi-valued index. Most of the time, the `Collation` of this hidden
+			// column should already been set to "binary". However, in old versions, the collation is set to the default
+			// value. See https://github.com/pingcap/tidb/issues/46717
+			pc.Collation = int32(mysql.CollationNames["binary"])
+		}
 	} else {
 		pc.Tp = int32(c.GetType())
 	}
@@ -606,15 +612,6 @@ func GetLocalIP() string {
 		}
 	}
 	return ""
-}
-
-// QueryStrForLog trim the query if the query length more than 4096
-func QueryStrForLog(query string) string {
-	const size = 4096
-	if len(query) > size {
-		return query[:size] + fmt.Sprintf("(len: %d)", len(query))
-	}
-	return query
 }
 
 // CreateCertificates creates and writes a cert based on the params.

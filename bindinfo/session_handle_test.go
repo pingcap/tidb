@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/bindinfo/internal"
-	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/auth"
@@ -43,14 +42,14 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 	tk.MustExec("drop table if exists t2")
 	tk.MustExec("create table t1(id int)")
 	tk.MustExec("create table t2(id int)")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
-	require.True(t, tk.HasPlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
+	tk.MustHavePlan("SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id", "MergeJoin")
 
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 
 	// Test bindingUsage, which indicates how many times the binding is used.
 	metrics.BindUsageCounter.Reset()
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
 	pb := &dto.Metric{}
 	err := metrics.BindUsageCounter.WithLabelValues(metrics.ScopeGlobal).Write(pb)
 	require.NoError(t, err)
@@ -58,30 +57,30 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 
 	// Test 'tidb_use_plan_baselines'
 	tk.MustExec("set @@tidb_use_plan_baselines = 0")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
 	tk.MustExec("set @@tidb_use_plan_baselines = 1")
 
 	// Test 'drop global binding'
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
 
 	// Test the case when global and session binding both exist
 	// PART1 : session binding should totally cover global binding
 	// use merge join as session binding here since the optimizer will choose hash join for this stmt in default
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_HJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
 	tk.MustExec("create binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
 
 	// PART2 : the dropped session binding should continue to block the effect of global binding
 	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
 	tk.MustExec("drop binding for SELECT * from t1,t2 where t1.id = t2.id")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
-	require.True(t, tk.HasPlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin"))
+	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
 }
 
 func TestSessionBinding(t *testing.T) {
@@ -387,35 +386,6 @@ func TestIssue19836(t *testing.T) {
 	tk.MustQuery("explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)).Check(explainResult)
 }
 
-func TestTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create global temporary table t(a int, b int, key(a), key(b)) on commit delete rows")
-	tk.MustExec("create table t2(a int, b int, key(a), key(b))")
-	tk.MustGetErrCode("create session binding for select * from t where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for insert into t select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for replace into t select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for update t set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for delete from t where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-}
-
-func TestLocalTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists tmp2")
-	tk.MustExec("create temporary table tmp2 (a int, b int, key(a), key(b));")
-	tk.MustGetErrCode("create session binding for select * from tmp2 where b = 123 using select * from t ignore index(b) where b = 123;", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for insert into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using insert into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for replace into tmp2 select * from t2 where t2.b = 1 and t2.c > 1 using replace into t select /*+ use_index(t2,c) */ * from t2 where t2.b = 1 and t2.c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for update tmp2 set a = 1 where b = 1 and c > 1 using update /*+ use_index(t, c) */ t set a = 1 where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-	tk.MustGetErrCode("create binding for delete from tmp2 where b = 1 and c > 1 using delete /*+ use_index(t, c) */ from t where b = 1 and c > 1", errno.ErrOptOnTemporaryTable)
-}
-
 func TestDropSingleBindings(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -521,15 +491,4 @@ func TestPreparedStmt(t *testing.T) {
 	tk.MustExec("execute stmt using @p,@p")
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 1)
 	require.Equal(t, "t:idx_c", tk.Session().GetSessionVars().StmtCtx.IndexNames[0])
-}
-
-func TestSetVarBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b varchar(20))")
-	tk.MustExec("insert into t1 values (1, '111111111111111')")
-	tk.MustExec("insert into t1 values (2, '222222222222222')")
-	tk.MustExec("create binding for select group_concat(b) from test.t1 using select /*+ SET_VAR(group_concat_max_len = 4) */ group_concat(b) from test.t1 ;")
-	tk.MustQuery("select group_concat(b) from test.t1").Check(testkit.Rows("1111"))
 }

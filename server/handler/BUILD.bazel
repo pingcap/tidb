@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/server/handler",
     visibility = ["//visibility:public"],
     deps = [
+        "//domain/infosync",
         "//infoschema",
         "//kv",
         "//parser/model",
@@ -24,6 +25,7 @@ go_library(
         "//types",
         "//util/codec",
         "//util/logutil",
+        "@com_github_gorilla_mux//:mux",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

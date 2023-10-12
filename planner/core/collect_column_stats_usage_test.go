@@ -248,6 +248,7 @@ func TestCollectPredicateColumns(t *testing.T) {
 	}
 
 	s := createPlannerSuite()
+	defer s.Close()
 	ctx := context.Background()
 	for _, tt := range tests {
 		comment := fmt.Sprintf("sql: %s", tt.sql)
@@ -325,6 +326,7 @@ func TestCollectHistNeededColumns(t *testing.T) {
 	}
 
 	s := createPlannerSuite()
+	defer s.Close()
 	ctx := context.Background()
 	for _, tt := range tests {
 		comment := fmt.Sprintf("sql: %s", tt.sql)

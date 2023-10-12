@@ -129,7 +129,13 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlDecimal:
 		tp = tipb.ExprType_MysqlDecimal
 		var err error
-		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), d.Length(), d.Frac())
+		// Use precision and fraction from MyDecimal instead of the ones in datum itself.
+		// These two set of parameters are not the same. MyDecimal is compatible with MySQL
+		// so the precision and fraction from MyDecimal are consistent with MySQL. The other
+		// ones come from the column type which belongs to the output schema. Here the datum
+		// are encoded into protobuf and will be used to do calculation so it should use the
+		// MyDecimal precision and fraction otherwise there may be a loss of accuracy.
+		val, err = codec.EncodeDecimal(nil, d.GetMysqlDecimal(), 0, 0)
 		if err != nil {
 			logutil.BgLogger().Error("encode decimal", zap.Error(err))
 			return tp, nil, false

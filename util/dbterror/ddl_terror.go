@@ -469,6 +469,21 @@ var (
 	ErrCheckConstraintUsingFKReferActionColumn = ClassDDL.NewStd(mysql.ErrCheckConstraintClauseUsingFKReferActionColumn)
 	// ErrNonBooleanExprForCheckConstraint is returned for non bool expression.
 	ErrNonBooleanExprForCheckConstraint = ClassDDL.NewStd(mysql.ErrNonBooleanExprForCheckConstraint)
+	// ErrWarnDeprecatedIntegerDisplayWidth share the same code 1681, and it will be returned when length is specified in integer.
+	ErrWarnDeprecatedIntegerDisplayWidth = ClassDDL.NewStdErr(
+		mysql.ErrWarnDeprecatedSyntaxNoReplacement,
+		parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement].Raw,
+			"Integer display width", "",
+		), nil),
+	)
+	// ErrWarnDeprecatedZerofill is for when the deprectated zerofill attribute is used
+	ErrWarnDeprecatedZerofill = ClassDDL.NewStdErr(
+		mysql.ErrWarnDeprecatedSyntaxNoReplacement,
+		parser_mysql.Message(fmt.Sprintf(mysql.MySQLErrName[mysql.ErrWarnDeprecatedSyntaxNoReplacement].Raw,
+			"The ZEROFILL attribute",
+			" Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.",
+		), nil),
+	)
 )
 
 // ReorgRetryableErrCodes is the error codes that are retryable for reorganization.

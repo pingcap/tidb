@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta/autoid"
+	"github.com/pingcap/tidb/parser/auth"
 	"github.com/pingcap/tidb/parser/charset"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -206,6 +207,8 @@ const (
 	TableResourceGroups = "RESOURCE_GROUPS"
 	// TableRunawayWatches is the query list of runaway watch.
 	TableRunawayWatches = "RUNAWAY_WATCHES"
+	// TableCheckConstraints is the list of CHECK constraints.
+	TableCheckConstraints = "CHECK_CONSTRAINTS"
 )
 
 const (
@@ -314,6 +317,7 @@ var tableIDMap = map[string]int64{
 	ClusterTableMemoryUsageOpsHistory:    autoid.InformationSchemaDBID + 87,
 	TableResourceGroups:                  autoid.InformationSchemaDBID + 88,
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
+	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -831,6 +835,7 @@ var tableProcesslistCols = []columnInfo{
 	{name: "DISK", tp: mysql.TypeLonglong, size: 21, flag: mysql.UnsignedFlag},
 	{name: "TxnStart", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 	{name: "RESOURCE_GROUP", tp: mysql.TypeVarchar, size: resourcegroup.MaxGroupNameLength, flag: mysql.NotNullFlag, deflt: ""},
+	{name: "SESSION_ALIAS", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag, deflt: ""},
 }
 
 var tableTiDBIndexesCols = []columnInfo{
@@ -1625,6 +1630,13 @@ var tableRunawayWatchListCols = []columnInfo{
 	{name: "ACTION", tp: mysql.TypeVarchar, size: 12, flag: mysql.NotNullFlag},
 }
 
+var tableCheckConstraintsCols = []columnInfo{
+	{name: "CONSTRAINT_CATALOG", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINT_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CONSTRAINT_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "CHECK_CLAUSE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2030,12 +2042,16 @@ func GetDataFromSessionVariables(ctx context.Context, sctx sessionctx.Context) (
 }
 
 // GetDataFromSessionConnectAttrs produces the rows for the session_connect_attrs table.
-func GetDataFromSessionConnectAttrs(sctx sessionctx.Context) ([][]types.Datum, error) {
+func GetDataFromSessionConnectAttrs(sctx sessionctx.Context, sameAccount bool) ([][]types.Datum, error) {
 	sm := sctx.GetSessionManager()
 	if sm == nil {
 		return nil, nil
 	}
-	allAttrs := sm.GetConAttrs()
+	var user *auth.UserIdentity
+	if sameAccount {
+		user = sctx.GetSessionVars().User
+	}
+	allAttrs := sm.GetConAttrs(user)
 	rows := make([][]types.Datum, 0, len(allAttrs)*10) // 10 Attributes per connection
 	for pid, attrs := range allAttrs {                 // Note: PID is not ordered.
 		// Sorts the attributes by key and gives ORDINAL_POSITION based on this. This is needed as we didn't store the
@@ -2138,6 +2154,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableMemoryUsageOpsHistory:              tableMemoryUsageOpsHistoryCols,
 	TableResourceGroups:                     tableResourceGroupsCols,
 	TableRunawayWatches:                     tableRunawayWatchListCols,
+	TableCheckConstraints:                   tableCheckConstraintsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {

@@ -15,21 +15,15 @@
 package statistics
 
 import (
-	"math"
 	"strconv"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util/debugtrace"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/ranger"
 	"go.uber.org/zap"
 )
 
@@ -44,11 +38,43 @@ type Column struct {
 
 	// StatsLoadedStatus indicates the status of column statistics
 	StatsLoadedStatus
+	// PhysicalID is the physical table id,
+	// or it could possibly be -1, which means "stats not available".
+	// The -1 case could happen in a pseudo stats table, and in this case, this stats should not trigger stats loading.
 	PhysicalID int64
 	Flag       int64
 	StatsVer   int64 // StatsVer is the version of the current stats, used to maintain compatibility
 
 	IsHandle bool
+}
+
+// Copy copies the column.
+func (c *Column) Copy() *Column {
+	if c == nil {
+		return nil
+	}
+	nc := &Column{
+		PhysicalID: c.PhysicalID,
+		Flag:       c.Flag,
+		StatsVer:   c.StatsVer,
+		IsHandle:   c.IsHandle,
+	}
+	c.LastAnalyzePos.Copy(&nc.LastAnalyzePos)
+	if c.CMSketch != nil {
+		nc.CMSketch = c.CMSketch.Copy()
+	}
+	if c.TopN != nil {
+		nc.TopN = c.TopN.Copy()
+	}
+	if c.FMSketch != nil {
+		nc.FMSketch = c.FMSketch.Copy()
+	}
+	if c.Info != nil {
+		nc.Info = c.Info.Clone()
+	}
+	nc.Histogram = *c.Histogram.Copy()
+	nc.StatsLoadedStatus = c.StatsLoadedStatus.Copy()
+	return nc
 }
 
 func (c *Column) String() string {
@@ -63,7 +89,8 @@ func (c *Column) TotalRowCount() float64 {
 	return c.Histogram.TotalRowCount()
 }
 
-func (c *Column) notNullCount() float64 {
+// NotNullCount returns the count of this column which is not null.
+func (c *Column) NotNullCount() float64 {
 	if c.StatsVer >= Version2 {
 		return c.Histogram.NotNullCount() + float64(c.TopN.TotalCount())
 	}
@@ -136,22 +163,24 @@ func (c *Column) IsInvalid(
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	if collPseudo {
-		inValidForCollPseudo = true
-		return true
-	}
 	if sctx != nil {
 		stmtctx := sctx.GetSessionVars().StmtCtx
-		if c.IsLoadNeeded() && stmtctx != nil {
+		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
 					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
-			if c.Info != nil {
+			// When we are using stats from PseudoTable(), the table ID will possibly be -1.
+			// In this case, we don't trigger stats loading.
+			if c.Info != nil && c.PhysicalID > 0 {
 				HistogramNeededItems.insert(model.TableItemID{TableID: c.PhysicalID, ID: c.Info.ID, IsIndex: false})
 			}
 		}
+	}
+	if collPseudo {
+		inValidForCollPseudo = true
+		return true
 	}
 	// In some cases, some statistics in column would be evicted
 	// For example: the cmsketch of the column might be evicted while the histogram and the topn are still exists
@@ -160,186 +189,6 @@ func (c *Column) IsInvalid(
 	essentialLoaded = c.IsEssentialStatsLoaded()
 	ndv = c.Histogram.NDV
 	return totalCount == 0 || (!essentialLoaded && ndv > 0)
-}
-
-func (c *Column) equalRowCount(sctx sessionctx.Context, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
-	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Error", err)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
-	if val.IsNull() {
-		return float64(c.NullCount), nil
-	}
-	if c.StatsVer < Version2 {
-		// All the values are null.
-		if c.Histogram.Bounds.NumRows() == 0 {
-			return 0.0, nil
-		}
-		if c.Histogram.NDV > 0 && c.outOfRange(val) {
-			return OutOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
-		}
-		if c.CMSketch != nil {
-			count, err := queryValue(sctx, c.CMSketch, c.TopN, val)
-			return float64(count), errors.Trace(err)
-		}
-		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
-		return histRowCount, nil
-	}
-
-	// Stats version == 2
-	// All the values are null.
-	if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 {
-		return 0, nil
-	}
-	// 1. try to find this value in TopN
-	if c.TopN != nil {
-		rowcount, ok := c.TopN.QueryTopN(sctx, encodedVal)
-		if ok {
-			return float64(rowcount), nil
-		}
-	}
-	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
-	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
-	if matched {
-		return histCnt, nil
-	}
-	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
-	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
-	if histNDV <= 0 {
-		return 0, nil
-	}
-	return c.Histogram.NotNullCount() / histNDV, nil
-}
-
-// GetColumnRowCount estimates the row count by a slice of Range.
-func (c *Column) GetColumnRowCount(sctx sessionctx.Context, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
-	sc := sctx.GetSessionVars().StmtCtx
-	debugTrace := sc.EnableOptimizerDebugTrace
-	if debugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
-	var rowCount float64
-	for _, rg := range ranges {
-		highVal := *rg.HighVal[0].Clone()
-		lowVal := *rg.LowVal[0].Clone()
-		if highVal.Kind() == types.KindString {
-			highVal.SetBytes(collate.GetCollator(highVal.Collation()).Key(highVal.GetString()))
-		}
-		if lowVal.Kind() == types.KindString {
-			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
-		}
-		cmp, err := lowVal.Compare(sc, &highVal, collate.GetBinaryCollator())
-		if err != nil {
-			return 0, errors.Trace(err)
-		}
-		lowEncoded, err := codec.EncodeKey(sc, nil, lowVal)
-		if err != nil {
-			return 0, err
-		}
-		highEncoded, err := codec.EncodeKey(sc, nil, highVal)
-		if err != nil {
-			return 0, err
-		}
-		if debugTrace {
-			debugTraceStartEstimateRange(sctx, rg, lowEncoded, highEncoded, rowCount)
-		}
-		if cmp == 0 {
-			// case 1: it's a point
-			if !rg.LowExclude && !rg.HighExclude {
-				// In this case, the row count is at most 1.
-				if pkIsHandle {
-					rowCount++
-					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
-					}
-					continue
-				}
-				var cnt float64
-				cnt, err = c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
-				if err != nil {
-					return 0, errors.Trace(err)
-				}
-				// If the current table row count has changed, we should scale the row count accordingly.
-				cnt *= c.GetIncreaseFactor(realtimeRowCount)
-				rowCount += cnt
-				if debugTrace {
-					debugTraceEndEstimateRange(sctx, cnt, debugTracePoint)
-				}
-			}
-			continue
-		}
-		// In stats ver 1, we use CM Sketch to estimate row count for point condition, which is more accurate.
-		// So for the small range, we convert it to points.
-		if c.StatsVer < 2 {
-			rangeVals := enumRangeValues(lowVal, highVal, rg.LowExclude, rg.HighExclude)
-
-			// case 2: it's a small range && using ver1 stats
-			if rangeVals != nil {
-				for _, val := range rangeVals {
-					cnt, err := c.equalRowCount(sctx, val, lowEncoded, realtimeRowCount)
-					if err != nil {
-						return 0, err
-					}
-					// If the current table row count has changed, we should scale the row count accordingly.
-					cnt *= c.GetIncreaseFactor(realtimeRowCount)
-					if debugTrace {
-						debugTraceEndEstimateRange(sctx, cnt, debugTraceVer1SmallRange)
-					}
-					rowCount += cnt
-				}
-
-				continue
-			}
-		}
-
-		// case 3: it's an interval
-		cnt := c.BetweenRowCount(sctx, lowVal, highVal, lowEncoded, highEncoded)
-		// `betweenRowCount` returns count for [l, h) range, we adjust cnt for boundaries here.
-		// Note that, `cnt` does not include null values, we need specially handle cases
-		//   where null is the lower bound.
-		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
-		//   expressions like b < 3, we need to exclude the special values.
-		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := c.equalRowCount(sctx, lowVal, lowEncoded, realtimeRowCount)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			cnt -= lowCnt
-			cnt = mathutil.Clamp(cnt, 0, c.notNullCount())
-		}
-		if !rg.LowExclude && lowVal.IsNull() {
-			cnt += float64(c.NullCount)
-		}
-		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := c.equalRowCount(sctx, highVal, highEncoded, realtimeRowCount)
-			if err != nil {
-				return 0, errors.Trace(err)
-			}
-			cnt += highCnt
-		}
-
-		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
-
-		// If the current table row count has changed, we should scale the row count accordingly.
-		cnt *= c.GetIncreaseFactor(realtimeRowCount)
-
-		// handling the out-of-range part
-		if (c.outOfRange(lowVal) && !lowVal.IsNull()) || c.outOfRange(highVal) {
-			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount)
-		}
-
-		if debugTrace {
-			debugTraceEndEstimateRange(sctx, cnt, debugTraceRange)
-		}
-		rowCount += cnt
-	}
-	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
-	return rowCount, nil
 }
 
 // ItemID implements TableCacheItem
@@ -382,89 +231,6 @@ func (c *Column) GetStatsVer() int64 {
 // IsCMSExist indicates whether CMSketch exists
 func (c *Column) IsCMSExist() bool {
 	return c.CMSketch != nil
-}
-
-// AvgColSize is the average column size of the histogram. These sizes are derived from function `encode`
-// and `Datum::ConvertTo`, so we need to update them if those 2 functions are changed.
-func (c *Column) AvgColSize(count int64, isKey bool) float64 {
-	if count == 0 {
-		return 0
-	}
-	// Note that, if the handle column is encoded as value, instead of key, i.e,
-	// when the handle column is in a unique index, the real column size may be
-	// smaller than 8 because it is encoded using `EncodeVarint`. Since we don't
-	// know the exact value size now, use 8 as approximation.
-	if c.IsHandle {
-		return 8
-	}
-	histCount := c.TotalRowCount()
-	notNullRatio := 1.0
-	if histCount > 0 {
-		notNullRatio = 1.0 - float64(c.NullCount)/histCount
-	}
-	switch c.Histogram.Tp.GetType() {
-	case mysql.TypeFloat, mysql.TypeDouble, mysql.TypeDuration, mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
-		return 8 * notNullRatio
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet:
-		if isKey {
-			return 8 * notNullRatio
-		}
-	}
-	// Keep two decimal place.
-	return math.Round(float64(c.TotColSize)/float64(count)*100) / 100
-}
-
-// AvgColSizeChunkFormat is the average column size of the histogram. These sizes are derived from function `Encode`
-// and `DecodeToChunk`, so we need to update them if those 2 functions are changed.
-func (c *Column) AvgColSizeChunkFormat(count int64) float64 {
-	if count == 0 {
-		return 0
-	}
-	fixedLen := chunk.GetFixedLen(c.Histogram.Tp)
-	if fixedLen != -1 {
-		return float64(fixedLen)
-	}
-	// Keep two decimal place.
-	// Add 8 bytes for unfixed-len type's offsets.
-	// Minus Log2(avgSize) for unfixed-len type LEN.
-	avgSize := float64(c.TotColSize) / float64(count)
-	if avgSize < 1 {
-		return math.Round(avgSize*100)/100 + 8
-	}
-	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
-}
-
-// AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
-// from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
-func (c *Column) AvgColSizeListInDisk(count int64) float64 {
-	if count == 0 {
-		return 0
-	}
-	histCount := c.TotalRowCount()
-	notNullRatio := 1.0
-	if histCount > 0 {
-		notNullRatio = 1.0 - float64(c.NullCount)/histCount
-	}
-	size := chunk.GetFixedLen(c.Histogram.Tp)
-	if size != -1 {
-		return float64(size) * notNullRatio
-	}
-	// Keep two decimal place.
-	// Minus Log2(avgSize) for unfixed-len type LEN.
-	avgSize := float64(c.TotColSize) / float64(count)
-	if avgSize < 1 {
-		return math.Round((avgSize)*100) / 100
-	}
-	return math.Round((avgSize-math.Log2(avgSize))*100) / 100
-}
-
-// BetweenRowCount estimates the row count for interval [l, r).
-func (c *Column) BetweenRowCount(sctx sessionctx.Context, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
-	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
-	if c.StatsVer <= Version1 {
-		return histBetweenCnt
-	}
-	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
 }
 
 // StatusToString gets the string info of StatsLoadedStatus

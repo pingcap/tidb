@@ -29,17 +29,18 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
 
 func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		physicalID := row.GetInt64(1)
-		table, ok := h.getTableByPhysicalID(is, physicalID)
+		// The table is read-only. Please do not modify it.
+		table, ok := h.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			continue
@@ -65,7 +66,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache *cache.Stat
 func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (*cache.StatsCache, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY version, table_id, modify_count, count from mysql.stats_meta"
-	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -92,7 +93,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (*cache.StatsCache, err
 func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID := row.GetInt64(0)
-		table, ok := cache.GetFromInternal(tblID)
+		table, ok := cache.Get(tblID)
 		if !ok {
 			continue
 		}
@@ -104,7 +105,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 		statsVer := row.GetInt64(7)
 		flag := row.GetInt64(9)
 		lastAnalyzePos := row.GetDatum(10, types.NewFieldType(mysql.TypeBlob))
-		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
+		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if isIndex > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -163,13 +164,14 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache *
 func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tblID, statsVer := row.GetInt64(0), row.GetInt64(8)
-		table, ok := cache.GetFromInternal(tblID)
+		table, ok := cache.Get(tblID)
+		table = table.Copy()
 		if !ok {
 			continue
 		}
 		id, ndv, nullCount, version, totColSize := row.GetInt64(2), row.GetInt64(3), row.GetInt64(5), row.GetUint64(4), row.GetInt64(7)
 		lastAnalyzePos := row.GetDatum(11, types.NewFieldType(mysql.TypeBlob))
-		tbl, _ := h.getTableByPhysicalID(is, table.PhysicalID)
+		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if row.GetInt64(1) > 0 {
 			var idxInfo *model.IndexInfo
 			for _, idx := range tbl.Meta().Indices {
@@ -232,7 +234,7 @@ func (h *Handle) initStatsHistograms4Chunk(is infoschema.InfoSchema, cache *cach
 func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache *cache.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -255,7 +257,7 @@ func (h *Handle) initStatsHistogramsLite(is infoschema.InfoSchema, cache *cache.
 func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *cache.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, distinct_count, version, null_count, cm_sketch, tot_col_size, stats_ver, correlation, flag, last_analyze_pos from mysql.stats_histograms"
-	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,10 +280,11 @@ func (h *Handle) initStatsHistograms(is infoschema.InfoSchema, cache *cache.Stat
 func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.GetFromInternal(row.GetInt64(0))
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
+		table = table.Copy()
 		idx, ok := table.Indices[row.GetInt64(1)]
 		if !ok || (idx.CMSketch == nil && idx.StatsVer <= statistics.Version1) {
 			continue
@@ -303,7 +306,7 @@ func (*Handle) initStatsTopN4Chunk(cache *cache.StatsCache, iter *chunk.Iterator
 func (h *Handle) initStatsTopN(cache *cache.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, hist_id, value, count from mysql.stats_top_n where is_index = 1"
-	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -325,7 +328,7 @@ func (h *Handle) initStatsTopN(cache *cache.StatsCache) error {
 
 func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
-		table, ok := cache.GetFromInternal(row.GetInt64(0))
+		table, ok := cache.Get(row.GetInt64(0))
 		if !ok {
 			continue
 		}
@@ -353,7 +356,7 @@ func (*Handle) initStatsFMSketch4Chunk(cache *cache.StatsCache, iter *chunk.Iter
 func (h *Handle) initStatsFMSketch(cache *cache.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, value from mysql.stats_fm_sketch"
-	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -376,10 +379,11 @@ func (h *Handle) initStatsFMSketch(cache *cache.StatsCache) error {
 func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Iterator4Chunk) {
 	for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 		tableID, isIndex, histID := row.GetInt64(0), row.GetInt64(1), row.GetInt64(2)
-		table, ok := cache.GetFromInternal(tableID)
+		table, ok := cache.Get(tableID)
 		if !ok {
 			continue
 		}
+		table = table.Copy()
 		var lower, upper types.Datum
 		var hist *statistics.Histogram
 		if isIndex > 0 {
@@ -425,7 +429,7 @@ func (*Handle) initStatsBuckets4Chunk(cache *cache.StatsCache, iter *chunk.Itera
 func (h *Handle) initStatsBuckets(cache *cache.StatsCache) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	sql := "select HIGH_PRIORITY table_id, is_index, hist_id, count, repeats, lower_bound, upper_bound, ndv from mysql.stats_buckets order by table_id, is_index, hist_id, bucket_id"
-	rc, err := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql)
+	rc, err := util.Exec(h.initStatsCtx, sql)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -464,14 +468,13 @@ func (h *Handle) initStatsBuckets(cache *cache.StatsCache) error {
 // InitStatsLite initiates the stats cache. The function is liter and faster than InitStats.
 // Column/index stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
 func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	defer func() {
-		_, err1 := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
+		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 	}()
-	_, err = h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	_, err = util.Exec(h.initStatsCtx, "begin")
 	if err != nil {
 		return err
 	}
@@ -492,14 +495,13 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 // Column stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	defer func() {
-		_, err1 := h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "commit")
+		_, err1 := util.Exec(h.initStatsCtx, "commit")
 		if err == nil && err1 != nil {
 			err = err1
 		}
 	}()
-	_, err = h.initStatsCtx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, "begin")
+	_, err = util.Exec(h.initStatsCtx, "begin")
 	if err != nil {
 		return err
 	}

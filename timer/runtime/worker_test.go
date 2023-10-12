@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/timer/api"
+	"github.com/pingcap/tidb/util"
 	mockutil "github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -59,13 +60,13 @@ func checkWorkerCounterValues(t *testing.T, trigger, onPreSched, onPreSchedErr, 
 }
 
 func TestWorkerStartStop(t *testing.T) {
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	hook := newMockHook()
 	hook.On("Start").Return().Once()
-	newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
+	newHookWorker(ctx, &wg, "g1", "h1", onlyOnceNewHook(hook), nil)
 	waitDone(hook.started, time.Second)
 	hook.AssertExpectations(t)
 
@@ -155,21 +156,21 @@ func sendWorkerRequestAndCheckResp(
 			require.True(t, ok)
 			fn(resp)
 		case <-timeout.C:
-			t.FailNow()
+			require.FailNow(t, "timeout")
 		}
 	default:
-		t.FailNow()
+		require.FailNow(t, "timeout")
 	}
 
 	select {
 	case <-respCh:
-		t.FailNow()
+		require.FailNow(t, "timeout")
 	default:
 	}
 }
 
 func TestWorkerProcessIdleTimerSuccess(t *testing.T) {
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -183,7 +184,7 @@ func TestWorkerProcessIdleTimerSuccess(t *testing.T) {
 	hook.On("Start").Return().Once()
 	hook.On("Stop").Return().Once()
 
-	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
+	w := newHookWorker(ctx, &wg, "g1", "h1", onlyOnceNewHook(hook), nil)
 	checkAndMockWorkerCounters(t, w)
 	eventID := uuid.NewString()
 	var eventStartRef atomic.Pointer[time.Time]
@@ -241,7 +242,7 @@ func TestWorkerProcessIdleTimerSuccess(t *testing.T) {
 }
 
 func TestWorkerProcessTriggeredTimerSuccess(t *testing.T) {
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -268,7 +269,7 @@ func TestWorkerProcessTriggeredTimerSuccess(t *testing.T) {
 	hook.On("Start").Return().Once()
 	hook.On("Stop").Return().Once()
 
-	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
+	w := newHookWorker(ctx, &wg, "g1", "h1", onlyOnceNewHook(hook), nil)
 	checkAndMockWorkerCounters(t, w)
 	hook.On("OnSchedEvent", mock.Anything, mock.Anything).
 		Return(nil).Once().
@@ -307,7 +308,7 @@ func TestWorkerProcessTriggeredTimerSuccess(t *testing.T) {
 }
 
 func TestWorkerProcessDelayOrErr(t *testing.T) {
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -321,7 +322,7 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 	hook.On("Start").Return().Once()
 	hook.On("Stop").Return().Once()
 
-	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
+	w := newHookWorker(ctx, &wg, "g1", "h1", onlyOnceNewHook(hook), nil)
 	checkAndMockWorkerCounters(t, w)
 	eventID := uuid.NewString()
 	request := &triggerEventRequest{
@@ -329,6 +330,29 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 		timer:   timer,
 		store:   store,
 		resp:    respChan,
+	}
+
+	// invalid request should be discarded
+	select {
+	case w.ch <- nil:
+	default:
+		require.FailNow(t, "")
+	}
+
+	invalidRequest1 := *request
+	invalidRequest1.timer = nil
+	select {
+	case w.ch <- &invalidRequest1:
+	default:
+		require.FailNow(t, "")
+	}
+
+	invalidRequest2 := *request
+	invalidRequest2.resp = nil
+	select {
+	case w.ch <- &invalidRequest2:
+	default:
+		require.FailNow(t, "")
 	}
 
 	// Delay 5 seconds
@@ -578,7 +602,7 @@ func TestWorkerProcessDelayOrErr(t *testing.T) {
 }
 
 func TestWorkerProcessManualRequest(t *testing.T) {
-	var wg sync.WaitGroup
+	var wg util.WaitGroupWrapper
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -599,7 +623,7 @@ func TestWorkerProcessManualRequest(t *testing.T) {
 
 	hook := newMockHook()
 	hook.On("Start").Return().Once()
-	w := newHookWorker(ctx, &wg, "g1", "h1", hook, nil)
+	w := newHookWorker(ctx, &wg, "g1", "h1", onlyOnceNewHook(hook), nil)
 
 	// manual trigger timeout and update api returns error
 	mockCore, mockStore := newMockStore()
@@ -718,5 +742,165 @@ func TestWorkerProcessManualRequest(t *testing.T) {
 	hook.On("Stop").Return().Once()
 	cancel()
 	waitDone(hook.stopped, time.Second)
+	hook.AssertExpectations(t)
+}
+
+func TestHookWorkerLoopPanicRecover(t *testing.T) {
+	var wg util.WaitGroupWrapper
+	ctx := context.WithValue(context.Background(), hookWorkerRetryLoopKey, time.Millisecond)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	hookFn := newHookFn{}
+
+	// create hook function panic
+	hookFn.OnFuncCall().Panic("hook func panic1").Once()
+	hookFn.OnFuncCall().Panic("hook func panic2").Once()
+
+	// hook start panic
+	hook1 := newMockHook()
+	hookFn.OnFuncCall().Return(hook1).Once()
+	hook1.On("Start").Panic("hook1 start panic").Once()
+	hook1.On("Stop").Once()
+
+	// create hook panic again
+	hookFn.OnFuncCall().Panic("hook func panic3").Once()
+
+	// hook start and stop panic
+	hook2 := newMockHook()
+	hookFn.OnFuncCall().Return(hook2).Once()
+	hook2.On("Start").Panic("hook2 start panic").Once()
+
+	// hook start normal and process request
+	hook3 := newMockHook()
+	hookFn.OnFuncCall().Return(hook3).Once()
+	hook3.On("Start").Return().Once()
+	hook3.On("OnPreSchedEvent", mock.Anything, mock.Anything).Return(api.PreSchedEventResult{}, nil).Once()
+	hook3.On("OnSchedEvent", mock.Anything, mock.Anything).Return(nil).Once()
+
+	w := newHookWorker(ctx, &wg, "g1", "h1", hookFn.Func, nil)
+	waitDone(hook3.started, 5*time.Second)
+
+	// check can process request normally after send request
+	timer1 := &api.TimerRecord{ID: "1", Version: 1, EventStatus: api.SchedEventIdle}
+	timer2 := &api.TimerRecord{ID: timer1.ID, Version: 2, EventID: "event1", EventStatus: api.SchedEventTrigger}
+	mockCore, mockStore := newMockStore()
+	mockCore.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).Return([]*api.TimerRecord{timer2}, nil).Once()
+	respChan := make(chan *triggerEventResponse)
+	req := &triggerEventRequest{
+		eventID: timer2.EventID,
+		timer:   timer1,
+		store:   mockStore,
+		resp:    respChan,
+	}
+	sendWorkerRequestAndCheckResp(t, w, req, respChan, func(resp *triggerEventResponse) {
+		require.True(t, resp.success)
+		require.Equal(t, timer1.ID, resp.timerID)
+		require.Equal(t, "event1", resp.eventID)
+		tm, ok := resp.newTimerRecord.Get()
+		require.True(t, ok)
+		require.Same(t, timer2, tm)
+	})
+	hookFn.AssertExpectations(t)
+	hook1.AssertExpectations(t)
+	hook2.AssertExpectations(t)
+	hook3.AssertExpectations(t)
+
+	// hook3 stop panic but worker can still stop
+	hook3.On("Stop").Panic("hook3 stop panic").Once()
+	cancel()
+	waitDone(&wg, 5*time.Second)
+	hook3.AssertExpectations(t)
+
+	// continues to panic will not affect worker stop immediately
+	ctx = context.WithValue(context.Background(), hookWorkerRetryLoopKey, time.Minute)
+	ctx, cancel = context.WithCancel(ctx)
+	defer cancel()
+	hookFn = newHookFn{}
+	started := make(chan struct{})
+	var once sync.Once
+	hookFn.OnFuncCall().Run(func(args mock.Arguments) {
+		once.Do(func() {
+			close(started)
+		})
+		panic("hook func panic")
+	})
+	newHookWorker(ctx, &wg, "g1", "h1", hookFn.Func, nil)
+	waitDone(started, 5*time.Second)
+	time.Sleep(time.Millisecond)
+	cancel()
+	waitDone(&wg, 5*time.Second)
+}
+
+func TestHookWorkerLoopHandleRequestPanicRecover(t *testing.T) {
+	var wg util.WaitGroupWrapper
+	// we set hookWorkerRetryRequestKey with a long delay to check if the fail message will be response immediately
+	// with ignoring this delay if panic happens.
+	ctx := context.WithValue(context.Background(), hookWorkerRetryRequestKey, time.Minute)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	hookFn := newHookFn{}
+	// hook1 start normally
+	hook := newMockHook()
+	hookFn.OnFuncCall().Return(hook).Once()
+	hook.On("Start").Once()
+
+	w := newHookWorker(ctx, &wg, "g1", "h1", hookFn.Func, nil)
+	waitDone(hook.started, 5*time.Second)
+	hookFn.AssertExpectations(t)
+	hook.AssertExpectations(t)
+
+	timer1 := &api.TimerRecord{ID: "1", Version: 1, EventStatus: api.SchedEventIdle}
+	timer2 := &api.TimerRecord{ID: timer1.ID, Version: 2, EventID: "event1", EventStatus: api.SchedEventTrigger}
+	mockCore, mockStore := newMockStore()
+	mockCore.On("Update", mock.Anything, mock.Anything, mock.Anything).Return(nil).Once()
+	mockCore.On("List", mock.Anything, mock.Anything).Return([]*api.TimerRecord{timer2}, nil).Once()
+	respChan := make(chan *triggerEventResponse)
+	req := &triggerEventRequest{
+		eventID: timer2.EventID,
+		timer:   timer1,
+		store:   mockStore,
+		resp:    respChan,
+	}
+
+	// OnPreSchedEvent panicked
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).Panic("OnPreSchedEvent panic").Once()
+	sendWorkerRequestAndCheckResp(t, w, req, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer1.ID, resp.timerID)
+		require.Equal(t, "event1", resp.eventID)
+		tm, ok := resp.newTimerRecord.Get()
+		require.False(t, ok)
+		require.Nil(t, tm)
+		retry, ok := resp.retryAfter.Get()
+		require.True(t, ok)
+		require.Equal(t, workerEventDefaultRetryInterval, retry)
+	})
+	hookFn.AssertExpectations(t)
+	hook.AssertExpectations(t)
+
+	// OnSchedEvent panicked
+	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).Return(api.PreSchedEventResult{}, nil).Once()
+	hook.On("OnSchedEvent", mock.Anything, mock.Anything).Panic("OnSchedEvent panic").Once()
+	sendWorkerRequestAndCheckResp(t, w, req, respChan, func(resp *triggerEventResponse) {
+		require.False(t, resp.success)
+		require.Equal(t, timer1.ID, resp.timerID)
+		require.Equal(t, "event1", resp.eventID)
+		tm, ok := resp.newTimerRecord.Get()
+		require.False(t, ok)
+		require.Nil(t, tm)
+		retry, ok := resp.retryAfter.Get()
+		require.True(t, ok)
+		require.Equal(t, workerEventDefaultRetryInterval, retry)
+	})
+	hookFn.AssertExpectations(t)
+	hook.AssertExpectations(t)
+
+	hook.On("Stop").Return().Once()
+	cancel()
+	waitDone(&wg, 5*time.Second)
+	hookFn.AssertExpectations(t)
 	hook.AssertExpectations(t)
 }

@@ -77,23 +77,23 @@ type mergeJoinTable struct {
 	memTracker *memory.Tracker
 }
 
-func (t *mergeJoinTable) init(exec *MergeJoinExec) {
-	child := exec.Children(t.childIndex)
-	t.childChunk = tryNewCacheChunk(child)
+func (t *mergeJoinTable) init(executor *MergeJoinExec) {
+	child := executor.Children(t.childIndex)
+	t.childChunk = exec.TryNewCacheChunk(child)
 	t.childChunkIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	items := make([]expression.Expression, 0, len(t.joinKeys))
 	for _, col := range t.joinKeys {
 		items = append(items, col)
 	}
-	t.groupChecker = vecgroupchecker.NewVecGroupChecker(exec.Ctx(), items)
+	t.groupChecker = vecgroupchecker.NewVecGroupChecker(executor.Ctx(), items)
 	t.groupRowsIter = chunk.NewIterator4Chunk(t.childChunk)
 
 	if t.isInner {
 		t.rowContainer = chunk.NewRowContainer(child.Base().RetFieldTypes(), t.childChunk.Capacity())
-		t.rowContainer.GetMemTracker().AttachTo(exec.memTracker)
+		t.rowContainer.GetMemTracker().AttachTo(executor.memTracker)
 		t.rowContainer.GetMemTracker().SetLabel(memory.LabelForInnerTable)
-		t.rowContainer.GetDiskTracker().AttachTo(exec.diskTracker)
+		t.rowContainer.GetDiskTracker().AttachTo(executor.diskTracker)
 		t.rowContainer.GetDiskTracker().SetLabel(memory.LabelForInnerTable)
 		if variable.EnableTmpStorageOnOOM.Load() {
 			actionSpill := t.rowContainer.ActionSpill()
@@ -102,15 +102,15 @@ func (t *mergeJoinTable) init(exec *MergeJoinExec) {
 					actionSpill = t.rowContainer.ActionSpillForTest()
 				}
 			})
-			exec.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
+			executor.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 		}
 		t.memTracker = memory.NewTracker(memory.LabelForInnerTable, -1)
 	} else {
-		t.filtersSelected = make([]bool, 0, exec.MaxChunkSize())
+		t.filtersSelected = make([]bool, 0, executor.MaxChunkSize())
 		t.memTracker = memory.NewTracker(memory.LabelForOuterTable, -1)
 	}
 
-	t.memTracker.AttachTo(exec.memTracker)
+	t.memTracker.AttachTo(executor.memTracker)
 	t.inited = true
 	t.memTracker.Consume(t.childChunk.MemoryUsage())
 }
@@ -158,9 +158,9 @@ func (t *mergeJoinTable) selectNextGroup() {
 	t.childChunk.SetSel(t.groupRowsSelected)
 }
 
-func (t *mergeJoinTable) fetchNextChunk(ctx context.Context, exec *MergeJoinExec) error {
+func (t *mergeJoinTable) fetchNextChunk(ctx context.Context, executor *MergeJoinExec) error {
 	oldMemUsage := t.childChunk.MemoryUsage()
-	err := Next(ctx, exec.Children(t.childIndex), t.childChunk)
+	err := exec.Next(ctx, executor.Children(t.childIndex), t.childChunk)
 	t.memTracker.Consume(t.childChunk.MemoryUsage() - oldMemUsage)
 	if err != nil {
 		return err

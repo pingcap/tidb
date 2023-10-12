@@ -299,3 +299,33 @@ func TestFieldTypeEqual(t *testing.T) {
 	ft1.SetFlen(23)
 	require.Equal(t, true, ft1.Equal(ft2))
 }
+
+func TestCompactStr(t *testing.T) {
+	cases := []struct {
+		t     byte   // Field Type
+		flen  int    // Field Length
+		flags uint   // Field Flags, e.g. ZEROFILL
+		e1    string // Expected string with TiDBStrictIntegerDisplayWidth disabled
+		e2    string // Expected string with TiDBStrictIntegerDisplayWidth enabled
+	}{
+		// TINYINT(1) is considered a bool by connectors, this should always display
+		// the display length.
+		{mysql.TypeTiny, 1, 0, `tinyint(1)`, `tinyint(1)`},
+		{mysql.TypeTiny, 2, 0, `tinyint(2)`, `tinyint`},
+
+		// If the ZEROFILL flag is set the display length should not be hidden.
+		{mysql.TypeLong, 10, 0, `int(10)`, `int`},
+		{mysql.TypeLong, 10, mysql.ZerofillFlag, `int(10)`, `int(10)`},
+	}
+	for _, cc := range cases {
+		ft := NewFieldType(cc.t)
+		ft.SetFlen(cc.flen)
+		ft.SetFlag(cc.flags)
+
+		TiDBStrictIntegerDisplayWidth = false
+		require.Equal(t, cc.e1, ft.CompactStr())
+
+		TiDBStrictIntegerDisplayWidth = true
+		require.Equal(t, cc.e2, ft.CompactStr())
+	}
+}

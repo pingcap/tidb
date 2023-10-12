@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
@@ -51,9 +52,9 @@ func TestDDLAfterLoad(t *testing.T) {
 	tableInfo = tbl.Meta()
 
 	sctx := mock.NewContext()
-	count := statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
+	count := cardinality.ColumnGreaterRowCount(sctx, statsTbl, types.NewDatum(recordCount+1), tableInfo.Columns[0].ID)
 	require.Equal(t, 0.0, count)
-	count = statsTbl.ColumnGreaterRowCount(sctx, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
+	count = cardinality.ColumnGreaterRowCount(sctx, statsTbl, types.NewDatum(recordCount+1), tableInfo.Columns[2].ID)
 	require.Equal(t, 333, int(count))
 }
 
@@ -133,10 +134,10 @@ func TestDDLHistogram(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.Columns[tableInfo.Columns[3].ID].IsStatsInitialized())
 	sctx := mock.NewContext()
-	count, err := statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(0), tableInfo.Columns[3].ID)
+	count, err := cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(0), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(2), count)
-	count, err = statsTbl.ColumnEqualRowCount(sctx, types.NewIntDatum(1), tableInfo.Columns[3].ID)
+	count, err = cardinality.ColumnEqualRowCount(sctx, statsTbl, types.NewIntDatum(1), tableInfo.Columns[3].ID)
 	require.NoError(t, err)
 	require.Equal(t, float64(0), count)
 
@@ -163,7 +164,7 @@ func TestDDLHistogram(t *testing.T) {
 	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
 	require.True(t, statsTbl.Columns[tableInfo.Columns[5].ID].IsStatsInitialized())
-	require.Equal(t, 3.0, statsTbl.Columns[tableInfo.Columns[5].ID].AvgColSize(statsTbl.RealtimeCount, false))
+	require.Equal(t, 3.0, cardinality.AvgColSize(statsTbl.Columns[tableInfo.Columns[5].ID], statsTbl.RealtimeCount, false))
 
 	testKit.MustExec("alter table t add column c6 varchar(15) DEFAULT '123', add column c7 varchar(15) DEFAULT '123'")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
@@ -189,11 +190,16 @@ func TestDDLHistogram(t *testing.T) {
 func TestDDLPartition(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
-	for _, pruneMode := range []string{"static", "dynamic"} {
+	for i, pruneMode := range []string{"static", "dynamic"} {
 		testKit.MustExec("set @@tidb_partition_prune_mode=`" + pruneMode + "`")
 		testKit.MustExec("set global tidb_partition_prune_mode=`" + pruneMode + "`")
 		testKit.MustExec("use test")
 		testKit.MustExec("drop table if exists t")
+		h := do.StatsHandle()
+		if i == 1 {
+			err := h.HandleDDLEvent(<-h.DDLEventCh())
+			require.NoError(t, err)
+		}
 		createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
@@ -206,14 +212,13 @@ PARTITION BY RANGE ( a ) (
 		tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo := tbl.Meta()
-		h := do.StatsHandle()
 		err = h.HandleDDLEvent(<-h.DDLEventCh())
 		require.NoError(t, err)
 		require.Nil(t, h.Update(is))
 		pi := tableInfo.GetPartitionInfo()
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			require.False(t, statsTbl.Pseudo)
+			require.False(t, statsTbl.Pseudo, "for %v", pruneMode)
 		}
 
 		testKit.MustExec("insert into t values (1,2),(6,2),(11,2),(16,2)")
@@ -230,7 +235,7 @@ PARTITION BY RANGE ( a ) (
 		for _, def := range pi.Definitions {
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.False(t, statsTbl.Pseudo)
-			require.Equal(t, 3.0, statsTbl.Columns[tableInfo.Columns[2].ID].AvgColSize(statsTbl.RealtimeCount, false))
+			require.Equal(t, 3.0, cardinality.AvgColSize(statsTbl.Columns[tableInfo.Columns[2].ID], statsTbl.RealtimeCount, false))
 		}
 
 		addPartition := "alter table t add partition (partition p4 values less than (26))"

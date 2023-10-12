@@ -76,7 +76,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/sessiontxn"
-	"github.com/pingcap/tidb/statistics/handle"
+	"github.com/pingcap/tidb/statistics/handle/usage"
 	storeerr "github.com/pingcap/tidb/store/driver/error"
 	"github.com/pingcap/tidb/store/driver/txn"
 	"github.com/pingcap/tidb/store/helper"
@@ -227,7 +227,7 @@ type session struct {
 	sessionVars    *variable.SessionVars
 	sessionManager util.SessionManager
 
-	statsCollector *handle.SessionStatsCollector
+	statsCollector *usage.SessionStatsItem
 	// ddlOwnerManager is used in `select tidb_is_ddl_owner()` statement;
 	ddlOwnerManager owner.Manager
 	// lockedTables use to record the table locks hold by the session.
@@ -239,7 +239,7 @@ type session struct {
 	mppClient kv.MPPClient
 
 	// indexUsageCollector collects index usage information.
-	idxUsageCollector *handle.SessionIndexUsageCollector
+	idxUsageCollector *usage.SessionIndexUsageCollector
 
 	functionUsageMu struct {
 		syncutil.RWMutex
@@ -465,7 +465,7 @@ func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) 
 	if s.idxUsageCollector == nil {
 		return
 	}
-	s.idxUsageCollector.Update(tblID, idxID, &handle.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
+	s.idxUsageCollector.Update(tblID, idxID, &usage.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
@@ -1559,6 +1559,7 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
+		SessionAlias:          s.sessionVars.SessionAlias,
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1678,6 +1679,7 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
+	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
 	stmts, warns, err := s.ParseSQL(ctx, sql, s.sessionVars.GetParseParams()...)
 	if err != nil {
@@ -3003,16 +3005,6 @@ func (s *session) AuthWithoutVerification(user *auth.UserIdentity) bool {
 	return false
 }
 
-// RefreshVars implements the sessionctx.Context interface.
-func (s *session) RefreshVars(_ context.Context) error {
-	pruneMode, err := s.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBPartitionPruneMode)
-	if err != nil {
-		return err
-	}
-	s.sessionVars.PartitionPruneMode.Store(pruneMode)
-	return nil
-}
-
 // SetSessionStatesHandler implements the Session.SetSessionStatesHandler interface.
 func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateType, handler sessionctx.SessionStatesHandler) {
 	s.sessionStatesHandlers[stateType] = handler
@@ -3080,9 +3072,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
-		s.statsCollector = do.StatsHandle().NewSessionStatsCollector()
+		s.statsCollector = do.StatsHandle().NewSessionStatsItem()
 		if GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
 		}
 	}
 
@@ -3443,7 +3435,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 			Handle: dom.PrivilegeHandle(),
 		}
 		privilege.BindPrivilegeManager(ses[9], pm)
-		if err := doBootstrapSQLFile(ses[9]); err != nil {
+		if err := doBootstrapSQLFile(ses[9]); err != nil && intest.InTest {
 			failToLoadOrParseSQLFile = true
 		}
 	}
@@ -3515,9 +3507,9 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.
-	if failToLoadOrParseSQLFile {
+	if intest.InTest && failToLoadOrParseSQLFile {
 		dom.Close()
-		return nil, err
+		return nil, errors.New("Fail to load or parse sql file")
 	}
 	err = dom.InitDistTaskLoop(ctx)
 	if err != nil {
@@ -3632,10 +3624,10 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
 		if s.statsCollector == nil {
-			s.statsCollector = dom.StatsHandle().NewSessionStatsCollector()
+			s.statsCollector = dom.StatsHandle().NewSessionStatsItem()
 		}
 		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
+			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
 		}
 	}
 
@@ -3710,7 +3702,8 @@ func getStoreBootstrapVersion(store kv.Storage) int64 {
 		storeBootstrapped[store.UUID()] = true
 	}
 
-	return modifyBootstrapVersionForTest(store, ver)
+	modifyBootstrapVersionForTest(ver)
+	return ver
 }
 
 func finishBootstrap(store kv.Storage) {
@@ -4280,27 +4273,48 @@ func (s *session) EncodeSessionStates(ctx context.Context,
 		return err
 	}
 
+	hasRestrictVarPriv := false
+	checker := privilege.GetPrivilegeManager(s)
+	if checker == nil || checker.RequestDynamicVerification(s.sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
+		hasRestrictVarPriv = true
+	}
 	// Encode session variables. We put it here instead of SessionVars to avoid cycle import.
 	sessionStates.SystemVars = make(map[string]string)
 	for _, sv := range variable.GetSysVars() {
 		switch {
-		case sv.HasNoneScope(), sv.HasInstanceScope(), !sv.HasSessionScope():
+		case sv.HasNoneScope(), !sv.HasSessionScope():
 			// Hidden attribute is deprecated.
 			// None-scoped variables cannot be modified.
-			// Instance-scoped variables don't need to be encoded.
 			// Noop variables should also be migrated even if they are noop.
 			continue
 		case sv.ReadOnly:
 			// Skip read-only variables here. We encode them into SessionStates manually.
 			continue
-		case sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
-			// If they are shown, there will be a security issue.
-			continue
 		}
 		// Get all session variables because the default values may change between versions.
-		if val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name); err != nil {
+		val, keep, err := s.sessionVars.GetSessionStatesSystemVar(sv.Name)
+		switch {
+		case err != nil:
 			return err
-		} else if keep {
+		case !keep:
+			continue
+		case !hasRestrictVarPriv && sem.IsEnabled() && sem.IsInvisibleSysVar(sv.Name):
+			// If the variable has a global scope, it should be the same with the global one.
+			// Otherwise, it should be the same with the default value.
+			defaultVal := sv.Value
+			if sv.HasGlobalScope() {
+				// If the session value is the same with the global one, skip it.
+				if defaultVal, err = sv.GetGlobalFromHook(ctx, s.sessionVars); err != nil {
+					return err
+				}
+			}
+			if val != defaultVal {
+				// Case 1: the RESTRICTED_VARIABLES_ADMIN is revoked after setting the session variable.
+				// Case 2: the global variable is updated after the session is created.
+				// In any case, the variable can't be set in the new session, so give up.
+				return sessionstates.ErrCannotMigrateSession.GenWithStackByArgs(fmt.Sprintf("session has set invisible variable '%s'", sv.Name))
+			}
+		default:
 			sessionStates.SystemVars[sv.Name] = val
 		}
 	}
@@ -4346,9 +4360,8 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
-		} else {
-			s.sessionVars.RequestSourceType = stmtLabel
 		}
+		s.sessionVars.RequestSourceType = stmtLabel
 		return
 	}
 	if source := ctx.Value(kv.RequestSourceKey); source != nil {

@@ -22,71 +22,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func mockSchedulerOptionFunc(op *schedulerRegisterOptions) {}
-
-func mockSchedulerConstructor(_ context.Context, _ int64, task []byte, step int64) (Scheduler, error) {
-	return nil, nil
-}
-
-func mockSubtaskExecutorConstructor(minimalTask proto.MinimalTask, step int64) (SubtaskExecutor, error) {
-	return nil, nil
-}
-
 func TestRegisterTaskType(t *testing.T) {
 	// other case might add task types, so we need to clear it first
 	ClearSchedulers()
-	RegisterTaskType("test1")
+	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) Scheduler {
+		return nil
+	}
+	RegisterTaskType("test1", factoryFn)
 	require.Len(t, taskTypes, 1)
-	require.Equal(t, int32(0), taskTypes["test1"].PoolSize)
-	RegisterTaskType("test2", WithPoolSize(10))
+	require.Len(t, taskSchedulerFactories, 1)
+	RegisterTaskType("test2", factoryFn)
 	require.Len(t, taskTypes, 2)
-	require.Equal(t, int32(10), taskTypes["test2"].PoolSize)
+	require.Len(t, taskSchedulerFactories, 2)
 	// register again
-	RegisterTaskType("test2", WithPoolSize(123))
+	RegisterTaskType("test2", factoryFn)
 	require.Len(t, taskTypes, 2)
-	require.Equal(t, int32(123), taskTypes["test2"].PoolSize)
-}
-
-func TestRegisterSchedulerConstructor(t *testing.T) {
-	RegisterSchedulerConstructor("test1", proto.StepOne, nil)
-	require.Len(t, schedulerConstructors, 1)
-	require.Len(t, schedulerOptions, 1)
-	RegisterSchedulerConstructor("test2", proto.StepOne, mockSchedulerConstructor)
-	require.Len(t, schedulerConstructors, 2)
-	require.Len(t, schedulerOptions, 2)
-
-	RegisterSchedulerConstructor("test3", proto.StepOne, mockSchedulerConstructor, mockSchedulerOptionFunc)
-	require.Len(t, schedulerConstructors, 3)
-	require.Len(t, schedulerOptions, 3)
-	RegisterSchedulerConstructor("test4", proto.StepOne, mockSchedulerConstructor, mockSchedulerOptionFunc, mockSchedulerOptionFunc, mockSchedulerOptionFunc)
-	require.Len(t, schedulerConstructors, 4)
-	require.Len(t, schedulerOptions, 4)
-	// register again
-	RegisterSchedulerConstructor("test4", proto.StepOne, mockSchedulerConstructor, mockSchedulerOptionFunc, mockSchedulerOptionFunc, mockSchedulerOptionFunc)
-	require.Len(t, schedulerConstructors, 4)
-	require.Len(t, schedulerOptions, 4)
-	// register with different step
-	RegisterSchedulerConstructor("test4", proto.StepTwo, mockSchedulerConstructor, mockSchedulerOptionFunc, mockSchedulerOptionFunc, mockSchedulerOptionFunc)
-	require.Len(t, schedulerConstructors, 5)
-	require.Len(t, schedulerOptions, 5)
-}
-
-func TestRegisterSubtaskExectorConstructor(t *testing.T) {
-	RegisterSubtaskExectorConstructor("test1", proto.StepOne, nil)
-	require.Contains(t, subtaskExecutorConstructors, getKey("test1", proto.StepOne))
-	require.Contains(t, subtaskExecutorOptions, getKey("test1", proto.StepOne))
-	RegisterSubtaskExectorConstructor("test2", proto.StepOne, mockSubtaskExecutorConstructor)
-	require.Contains(t, subtaskExecutorConstructors, getKey("test2", proto.StepOne))
-	require.Contains(t, subtaskExecutorOptions, getKey("test2", proto.StepOne))
-
-	RegisterSubtaskExectorConstructor("test3", proto.StepOne, mockSubtaskExecutorConstructor)
-	require.Contains(t, subtaskExecutorConstructors, getKey("test3", proto.StepOne))
-	require.Contains(t, subtaskExecutorOptions, getKey("test3", proto.StepOne))
-	RegisterSubtaskExectorConstructor("test4", proto.StepOne, mockSubtaskExecutorConstructor)
-	require.Contains(t, subtaskExecutorConstructors, getKey("test4", proto.StepOne))
-	require.Contains(t, subtaskExecutorOptions, getKey("test4", proto.StepOne))
-
-	RegisterSubtaskExectorConstructor("test4", proto.StepTwo, mockSubtaskExecutorConstructor)
-	require.Contains(t, subtaskExecutorConstructors, getKey("test4", proto.StepTwo))
-	require.Contains(t, subtaskExecutorOptions, getKey("test4", proto.StepTwo))
+	require.Len(t, taskSchedulerFactories, 2)
 }

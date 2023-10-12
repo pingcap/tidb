@@ -92,6 +92,7 @@ func InitMetrics() {
 	InitTelemetryMetrics()
 	InitTopSQLMetrics()
 	InitTTLMetrics()
+	InitDistTaskMetrics()
 	timermetrics.InitTimerMetrics()
 
 	PanicCounter = NewCounterVec(
@@ -149,7 +150,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(NumOfMultiQueryHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
-	prometheus.MustRegister(FastAnalyzeHistogram)
 	prometheus.MustRegister(SyncLoadCounter)
 	prometheus.MustRegister(SyncLoadTimeoutCounter)
 	prometheus.MustRegister(SyncLoadHistogram)
@@ -263,6 +263,11 @@ func RegisterMetrics() {
 	prometheus.MustRegister(HistoricalStatsCounter)
 	prometheus.MustRegister(PlanReplayerTaskCounter)
 	prometheus.MustRegister(PlanReplayerRegisterTaskGauge)
+
+	prometheus.MustRegister(DistTaskGauge)
+	prometheus.MustRegister(DistTaskStarttimeGauge)
+	prometheus.MustRegister(DistTaskSubTaskCntGauge)
+	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
 	tikvmetrics.RegisterMetrics()

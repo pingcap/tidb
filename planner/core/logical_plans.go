@@ -1698,12 +1698,12 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -1849,12 +1849,12 @@ func (ds *DataSource) deriveIndexPathStats(path *util.AccessPath, _ []expression
 		path.AccessConds = append(path.AccessConds, accesses...)
 		path.TableFilters = remained
 		if len(accesses) > 0 && ds.statisticTable.Pseudo {
-			path.CountAfterAccess = ds.statisticTable.PseudoAvgCountPerValue()
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.statisticTable)
 		} else {
 			selectivity := path.CountAfterAccess / float64(ds.statisticTable.RealtimeCount)
 			for i := range accesses {
 				col := path.IdxCols[path.EqOrInCondCount+i]
-				ndv := ds.getColumnNDV(col.ID)
+				ndv := cardinality.EstimateColumnNDV(ds.statisticTable, col.ID)
 				ndv *= selectivity
 				if ndv < 1 {
 					ndv = 1.0
@@ -2034,8 +2034,14 @@ type FrameBound struct {
 	// We will build the date_add or date_sub functions for frames like `INTERVAL '2:30' MINUTE_SECOND FOLLOWING`,
 	// and plus or minus for frames like `1 preceding`.
 	CalcFuncs []expression.Expression
+	// Sometimes we need to cast order by column to a specific type when frame type is range
+	CompareCols []expression.Expression
 	// CmpFuncs is used to decide whether one row is included in the current frame.
 	CmpFuncs []expression.CompareFunc
+	// This field is used for passing information to tiflash
+	CmpDataType tipb.RangeCmpDataType
+	// IsExplicitRange marks if this range explicitly appears in the sql
+	IsExplicitRange bool
 }
 
 // Clone copies a frame bound totally.
@@ -2050,6 +2056,55 @@ func (fb *FrameBound) Clone() *FrameBound {
 	cloned.CmpFuncs = fb.CmpFuncs
 
 	return cloned
+}
+
+func (fb *FrameBound) updateCmpFuncsAndCmpDataType(cmpDataType types.EvalType) {
+	// When cmpDataType can't match to any condition, we can ignore it.
+	//
+	// For example:
+	//   `create table test.range_test(p int not null,o text not null,v int not null);`
+	//   `select *, first_value(v) over (partition by p order by o) as a from range_test;`
+	//   The sql's frame type is range, but the cmpDataType is ETString and when the user explicitly use range frame
+	//   the sql will raise error before generating logical plan, so it's ok to ignore it.
+	switch cmpDataType {
+	case types.ETInt:
+		fb.CmpFuncs[0] = expression.CompareInt
+		fb.CmpDataType = tipb.RangeCmpDataType_Int
+	case types.ETDatetime, types.ETTimestamp:
+		fb.CmpFuncs[0] = expression.CompareTime
+		fb.CmpDataType = tipb.RangeCmpDataType_DateTime
+	case types.ETDuration:
+		fb.CmpFuncs[0] = expression.CompareDuration
+		fb.CmpDataType = tipb.RangeCmpDataType_Duration
+	case types.ETReal:
+		fb.CmpFuncs[0] = expression.CompareReal
+		fb.CmpDataType = tipb.RangeCmpDataType_Float
+	case types.ETDecimal:
+		fb.CmpFuncs[0] = expression.CompareDecimal
+		fb.CmpDataType = tipb.RangeCmpDataType_Decimal
+	}
+}
+
+// UpdateCompareCols will update CompareCols.
+func (fb *FrameBound) UpdateCompareCols(ctx sessionctx.Context, orderByCols []*expression.Column) error {
+	if len(fb.CalcFuncs) > 0 {
+		fb.CompareCols = make([]expression.Expression, len(orderByCols))
+		if fb.CalcFuncs[0].GetType().EvalType() != orderByCols[0].GetType().EvalType() {
+			var err error
+			fb.CompareCols[0], err = expression.NewFunctionBase(ctx, ast.Cast, fb.CalcFuncs[0].GetType(), orderByCols[0])
+			if err != nil {
+				return err
+			}
+		} else {
+			for i, col := range orderByCols {
+				fb.CompareCols[i] = col
+			}
+		}
+
+		cmpDataType := expression.GetAccurateCmpType(fb.CompareCols[0], fb.CalcFuncs[0])
+		fb.updateCmpFuncsAndCmpDataType(cmpDataType)
+	}
+	return nil
 }
 
 // LogicalWindow represents a logical window function plan.

@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/util/codec"
-	"golang.org/x/exp/slices"
 	"gopkg.in/yaml.v2"
 )
 
@@ -70,13 +70,20 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	followerCount := options.Followers
 	learnerCount := options.Learners
 
+	rules := []*Rule{}
 	commonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
 	if err != nil {
-		return nil, fmt.Errorf("%w: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation", err)
+		// If it's not in array format, attempt to parse it as a dictionary for more detailed definitions.
+		// The dictionary format specifies details for each replica. Constraints are used to define normal
+		// replicas that should act as voters.
+		// For example: CONSTRAINTS='{ "+region=us-east-1":2, "+region=us-east-2": 2, "+region=us-west-1": 1}'
+		normalReplicasRules, err := NewRulesWithDictConstraints(Voter, constraints)
+		if err != nil {
+			return nil, err
+		}
+		rules = append(rules, normalReplicasRules...)
 	}
-
-	rules := []*Rule{}
-
+	needCreateDefault := len(rules) == 0
 	leaderConstraints, err := NewConstraintsFromYaml([]byte(leaderConst))
 	if err != nil {
 		return nil, fmt.Errorf("%w: 'LeaderConstraints' should be [constraint1, ...] or any yaml compatible array representation", err)
@@ -86,44 +93,59 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 			return nil, fmt.Errorf("%w: LeaderConstraints conflicts with Constraints", err)
 		}
 	}
-	rules = append(rules, NewRule(Leader, 1, leaderConstraints))
-
-	followerRules, err := NewRules(Voter, followerCount, followerConstraints)
-	if err != nil {
-		return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+	leaderReplicas, followerReplicas := uint64(1), uint64(2)
+	if followerCount > 0 {
+		followerReplicas = followerCount
 	}
-	for _, rule := range followerRules {
-		// give a default of 2 followers
-		if rule.Count == 0 {
-			rule.Count = 2
+	if !needCreateDefault {
+		if len(leaderConstraints) == 0 {
+			leaderReplicas = 0
 		}
-		for _, cnst := range commonConstraints {
-			if err := rule.Constraints.Add(cnst); err != nil {
-				return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
+		if len(followerConstraints) == 0 {
+			if followerCount > 0 {
+				return nil, fmt.Errorf("%w: specify follower count without specify follower constraints when specify other constraints", ErrInvalidPlacementOptions)
+			}
+			followerReplicas = 0
+		}
+	}
+
+	// create leader rule.
+	// if no constraints, we need create default leader rule.
+	if leaderReplicas > 0 {
+		leaderRule := NewRule(Leader, leaderReplicas, leaderConstraints)
+		rules = append(rules, leaderRule)
+	}
+
+	// create follower rules.
+	// if no constraints, we need create default follower rules.
+	if followerReplicas > 0 {
+		followerRules, err := NewRules(Voter, followerReplicas, followerConstraints)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
+		}
+		for _, followerRule := range followerRules {
+			for _, cnst := range commonConstraints {
+				if err := followerRule.Constraints.Add(cnst); err != nil {
+					return nil, fmt.Errorf("%w: FollowerConstraints conflicts with Constraints", err)
+				}
 			}
 		}
+		rules = append(rules, followerRules...)
 	}
-	rules = append(rules, followerRules...)
 
+	// create learner rules.
 	learnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
 	}
 	for _, rule := range learnerRules {
-		if rule.Count == 0 {
-			if len(rule.Constraints) > 0 {
-				return nil, fmt.Errorf("%w: specify learner constraints without specify how many learners to be placed", ErrInvalidPlacementOptions)
-			}
-		}
 		for _, cnst := range commonConstraints {
 			if err := rule.Constraints.Add(cnst); err != nil {
 				return nil, fmt.Errorf("%w: LearnerConstraints conflicts with Constraints", err)
 			}
 		}
-		if rule.Count > 0 {
-			rules = append(rules, rule)
-		}
 	}
+	rules = append(rules, learnerRules...)
 	labels, err := newLocationLabelsFromSurvivalPreferences(options.SurvivalPreferences)
 	if err != nil {
 		return nil, err
@@ -288,25 +310,11 @@ func (b *Bundle) String() string {
 
 // Tidy will post optimize Rules, trying to generate rules that suits PD.
 func (b *Bundle) Tidy() error {
-	extraCnt := map[PeerRoleType]int{}
-	newRules := b.Rules[:0]
-
-	// One Bundle is from one PlacementSettings, rule share same location labels, so we can use the first rule's location labels.
-	var locationLabels []string
+	tempRules := b.Rules[:0]
+	id := 0
 	for _, rule := range b.Rules {
-		if len(rule.LocationLabels) > 0 {
-			locationLabels = rule.LocationLabels
-			break
-		}
-	}
-	for i, rule := range b.Rules {
 		// useless Rule
 		if rule.Count <= 0 {
-			continue
-		}
-		// merge all empty constraints
-		if len(rule.Constraints) == 0 {
-			extraCnt[rule.Role] += rule.Count
 			continue
 		}
 		// refer to tidb#22065.
@@ -320,34 +328,137 @@ func (b *Bundle) Tidy() error {
 		if err != nil {
 			return err
 		}
-		// Constraints.Add() will automatically avoid duplication
-		// if -engine=tiflash is added and there is only one constraint
-		// then it must be -engine=tiflash
-		// it is seen as an empty constraint, so merge it
-		if len(rule.Constraints) == 1 {
-			extraCnt[rule.Role] += rule.Count
+		rule.ID = strconv.Itoa(id)
+		tempRules = append(tempRules, rule)
+		id++
+	}
+
+	groups := make(map[string]*constraintsGroup)
+	finalRules := tempRules[:0]
+	for _, rule := range tempRules {
+		key := rule.Constraints.FingerPrint()
+		existing, ok := groups[key]
+		if !ok {
+			groups[key] = &constraintsGroup{rules: []*Rule{rule}}
 			continue
 		}
-		rule.ID = strconv.Itoa(i)
-		newRules = append(newRules, rule)
+		existing.rules = append(existing.rules, rule)
 	}
-	for role, cnt := range extraCnt {
-		// add -engine=tiflash, refer to tidb#22065.
-		newRules = append(newRules, &Rule{
-			ID:    string(role),
-			Role:  role,
-			Count: cnt,
-			Constraints: []Constraint{{
-				Op:     NotIn,
-				Key:    EngineLabelKey,
-				Values: []string{EngineLabelTiFlash},
-			}},
-			// the merged rule should have the same location labels with the original rules.
-			LocationLabels: locationLabels,
-		})
+	for _, group := range groups {
+		group.MergeRulesByRole()
 	}
-	b.Rules = newRules
+	if err := transformableLeaderConstraint(groups); err != nil {
+		return err
+	}
+	for _, group := range groups {
+		finalRules = append(finalRules, group.rules...)
+	}
+	// sort by id
+	sort.SliceStable(finalRules, func(i, j int) bool {
+		return finalRules[i].ID < finalRules[j].ID
+	})
+	b.Rules = finalRules
 	return nil
+}
+
+// constraintsGroup is a group of rules with the same constraints.
+type constraintsGroup struct {
+	rules []*Rule
+	// canBecameLeader means the group has leader/voter role,
+	// it's valid if it has leader.
+	canBecameLeader bool
+	// isLeaderGroup means it has specified leader role in this group.
+	isLeaderGroup bool
+}
+
+func transformableLeaderConstraint(groups map[string]*constraintsGroup) error {
+	var leaderGroup *constraintsGroup
+	canBecameLeaderNum := 0
+	for _, group := range groups {
+		if group.isLeaderGroup {
+			if leaderGroup != nil {
+				return ErrInvalidPlacementOptions
+			}
+			leaderGroup = group
+		}
+		if group.canBecameLeader {
+			canBecameLeaderNum++
+		}
+	}
+	// If there is a specified group should have leader, and only this group can be a leader, that means
+	// the leader's priority is certain, so we can merge the transformable rules into one.
+	// eg:
+	//  - [ group1 (L F), group2 (F) ], after merging is [group1 (2*V), group2 (F)], we still know the leader prefers group1.
+	//  - [ group1 (L F), group2 (V) ], after merging is [group1 (2*V), group2 (V)], we can't know leader priority after merge.
+	if leaderGroup != nil && canBecameLeaderNum == 1 {
+		leaderGroup.MergeTransformableRoles()
+	}
+	return nil
+}
+
+// MergeRulesByRole merges the rules with the same role.
+func (c *constraintsGroup) MergeRulesByRole() {
+	// Create a map to store rules by role
+	rulesByRole := make(map[PeerRoleType][]*Rule)
+
+	// Iterate through each rule
+	for _, rule := range c.rules {
+		// Add the rule to the map based on its role
+		rulesByRole[rule.Role] = append(rulesByRole[rule.Role], rule)
+		if rule.Role == Leader || rule.Role == Voter {
+			c.canBecameLeader = true
+		}
+		if rule.Role == Leader {
+			c.isLeaderGroup = true
+		}
+	}
+
+	// Clear existing rules
+	c.rules = nil
+
+	// Iterate through each role and merge the rules
+	for _, rules := range rulesByRole {
+		mergedRule := rules[0]
+		for i, rule := range rules {
+			if i == 0 {
+				continue
+			}
+			mergedRule.Count += rule.Count
+			if mergedRule.ID > rule.ID {
+				mergedRule.ID = rule.ID
+			}
+		}
+		c.rules = append(c.rules, mergedRule)
+	}
+}
+
+// MergeTransformableRoles merges all the rules to one that can be transformed to other roles.
+func (c *constraintsGroup) MergeTransformableRoles() {
+	if len(c.rules) == 0 || len(c.rules) == 1 {
+		return
+	}
+	var mergedRule *Rule
+	newRules := make([]*Rule, 0, len(c.rules))
+	for _, rule := range c.rules {
+		// Learner is not transformable, it should be promote by PD.
+		if rule.Role == Learner {
+			newRules = append(newRules, rule)
+			continue
+		}
+		if mergedRule == nil {
+			mergedRule = rule
+			continue
+		}
+		mergedRule.Count += rule.Count
+		if mergedRule.ID > rule.ID {
+			mergedRule.ID = rule.ID
+		}
+	}
+	if mergedRule != nil {
+		mergedRule.Role = Voter
+		newRules = append(newRules, mergedRule)
+	}
+	c.rules = newRules
 }
 
 // Reset resets the bundle ID and keyrange of all rules.

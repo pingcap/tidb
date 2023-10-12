@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/tablecodec"
 	"github.com/pingcap/tidb/types"
@@ -1268,12 +1269,12 @@ func PartitionRecordKey(pid int64, handle int64) kv.Key {
 	return tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(handle))
 }
 
-func (t *partitionedTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, pid int64) error {
+func (t *partitionedTable) CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error {
 	defID, err := t.locatePartition(ctx, r)
 	if err != nil {
 		return err
 	}
-	if defID != pid {
+	if defID != partID && defID != ntID {
 		return errors.WithStack(table.ErrRowDoesNotMatchGivenPartitionSet)
 	}
 	return nil
@@ -1551,6 +1552,39 @@ func (t *partitionTableWithGivenSets) GetPartitionByRow(ctx sessionctx.Context, 
 	return t.partitions[pid], nil
 }
 
+// checkConstraintForExchangePartition is only used for ExchangePartition by partitionTable during write only state.
+// It check if rowData inserted or updated violate checkConstraints of non-partitionTable.
+func checkConstraintForExchangePartition(sctx sessionctx.Context, row []types.Datum, partID, ntID int64) error {
+	type InfoSchema interface {
+		TableByID(id int64) (val table.Table, ok bool)
+	}
+	is, ok := sctx.GetDomainInfoSchema().(InfoSchema)
+	if !ok {
+		return errors.Errorf("exchange partition process assert inforSchema failed")
+	}
+	nt, tableFound := is.TableByID(ntID)
+	if !tableFound {
+		// Now partID is nt tableID.
+		nt, tableFound = is.TableByID(partID)
+		if !tableFound {
+			return errors.Errorf("exchange partition process table by id failed")
+		}
+	}
+	type CheckConstraintTable interface {
+		CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
+	}
+	cc, ok := nt.(CheckConstraintTable)
+	if !ok {
+		return errors.Errorf("exchange partition process assert check constraint failed")
+	}
+	err := cc.CheckRowConstraint(sctx, row)
+	if err != nil {
+		// TODO: make error include ExchangePartition info.
+		return err
+	}
+	return nil
+}
+
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (t *partitionedTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return partitionedTableAddRecord(ctx, t, r, nil, opts)
@@ -1569,6 +1603,14 @@ func partitionedTableAddRecord(ctx sessionctx.Context, t *partitionedTable, r []
 	}
 	if t.Meta().Partition.HasTruncatingPartitionID(pid) {
 		return nil, errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+	}
+	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
+	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == pid &&
+		variable.EnableCheckConstraint.Load() {
+		err = checkConstraintForExchangePartition(ctx, r, pid, exchangePartitionInfo.ExchangePartitionTableID)
+		if err != nil {
+			return nil, errors.WithStack(err)
+		}
 	}
 	tbl := t.GetPartition(pid)
 	recordID, err = tbl.AddRecord(ctx, r, opts...)
@@ -1694,6 +1736,14 @@ func partitionedTableUpdateRecord(gctx context.Context, ctx sessionctx.Context, 
 	}
 	if t.Meta().Partition.HasTruncatingPartitionID(to) {
 		return errors.WithStack(dbterror.ErrInvalidDDLState.GenWithStack("the partition is in not in public"))
+	}
+	exchangePartitionInfo := t.Meta().ExchangePartitionInfo
+	if exchangePartitionInfo != nil && exchangePartitionInfo.ExchangePartitionDefID == to &&
+		variable.EnableCheckConstraint.Load() {
+		err = checkConstraintForExchangePartition(ctx, newData, to, exchangePartitionInfo.ExchangePartitionTableID)
+		if err != nil {
+			return errors.WithStack(err)
+		}
 	}
 
 	// The old and new data locate in different partitions.

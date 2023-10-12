@@ -15,6 +15,7 @@
 package operator
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/resourcemanager/pool/workerpool"
@@ -24,6 +25,8 @@ import (
 // Operator is the basic operation unit in the task execution.
 type Operator interface {
 	Open() error
+	// Close wait task done and close the operator.
+	// TODO: the wait part should be separated from the close part.
 	Close() error
 	String() string
 }
@@ -34,25 +37,32 @@ type Operator interface {
 // use the same channel, Then op2's worker will handle
 // the result from op1.
 type AsyncOperator[T, R any] struct {
+	ctx  context.Context
 	pool *workerpool.WorkerPool[T, R]
 }
 
 // NewAsyncOperatorWithTransform create an AsyncOperator with a transform function.
-func NewAsyncOperatorWithTransform[T, R any](name string, workerNum int, transform func(T) R) *AsyncOperator[T, R] {
+func NewAsyncOperatorWithTransform[T, R any](
+	ctx context.Context,
+	name string,
+	workerNum int,
+	transform func(T) R,
+) *AsyncOperator[T, R] {
 	pool := workerpool.NewWorkerPool(name, util.DistTask, workerNum, newAsyncWorkerCtor(transform))
-	return NewAsyncOperator(pool)
+	return NewAsyncOperator(ctx, pool)
 }
 
 // NewAsyncOperator create an AsyncOperator.
-func NewAsyncOperator[T, R any](pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
+func NewAsyncOperator[T, R any](ctx context.Context, pool *workerpool.WorkerPool[T, R]) *AsyncOperator[T, R] {
 	return &AsyncOperator[T, R]{
+		ctx:  ctx,
 		pool: pool,
 	}
 }
 
 // Open implements the Operator's Open interface.
 func (c *AsyncOperator[T, R]) Open() error {
-	c.pool.Start()
+	c.pool.Start(c.ctx)
 	return nil
 }
 
@@ -60,7 +70,7 @@ func (c *AsyncOperator[T, R]) Open() error {
 func (c *AsyncOperator[T, R]) Close() error {
 	// Wait all tasks done.
 	// We don't need to close the task channel because
-	// it is closed by the workerpool.
+	// it is maintained outside this operator, see SetSource.
 	c.pool.Wait()
 	c.pool.Release()
 	return nil
@@ -95,8 +105,9 @@ func newAsyncWorkerCtor[T, R any](transform func(T) R) func() workerpool.Worker[
 	}
 }
 
-func (s *asyncWorker[T, R]) HandleTask(task T) R {
-	return s.transform(task)
+func (s *asyncWorker[T, R]) HandleTask(task T, rsFn func(R)) {
+	result := s.transform(task)
+	rsFn(result)
 }
 
 func (*asyncWorker[T, R]) Close() {}

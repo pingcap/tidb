@@ -15,18 +15,25 @@
 package importer
 
 import (
+	"context"
 	"fmt"
+	"net/url"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	plannercore "github.com/pingcap/tidb/planner/core"
+	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mock"
 	"github.com/stretchr/testify/require"
@@ -35,6 +42,10 @@ import (
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(1)"))
+	variable.CloudStorageURI.Store("s3://bucket/path")
+	t.Cleanup(func() {
+		variable.CloudStorageURI.Store("")
+	})
 	plan.initDefaultOptions()
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
@@ -46,6 +57,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, "utf8mb4", *plan.Charset)
 	require.Equal(t, false, plan.DisableTiKVImportMode)
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
+	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/importer/mockNumCpu", "return(10)"))
 	plan.initDefaultOptions()
@@ -73,14 +85,13 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 
 	sqlTemplate := "import into t from '/file.csv' with %s"
 	p := parser.New()
-	plan := &Plan{Format: DataFormatCSV}
 	sql := fmt.Sprintf(sqlTemplate, characterSetOption+"='utf8', "+
 		fieldsTerminatedByOption+"='aaa', "+
 		fieldsEnclosedByOption+"='|', "+
 		fieldsEscapedByOption+"='', "+
 		fieldsDefinedNullByOption+"='N', "+
 		linesTerminatedByOption+"='END', "+
-		skipRowsOption+"=3, "+
+		skipRowsOption+"=1, "+
 		diskQuotaOption+"='100gib', "+
 		checksumTableOption+"='optional', "+
 		threadOption+"=100000, "+
@@ -93,6 +104,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	)
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
+	plan := &Plan{Format: DataFormatCSV}
 	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, "utf8", *plan.Charset, sql)
@@ -101,7 +113,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, "", plan.FieldsEscapedBy, sql)
 	require.Equal(t, []string{"N"}, plan.FieldNullDef, sql)
 	require.Equal(t, "END", plan.LinesTerminatedBy, sql)
-	require.Equal(t, uint64(3), plan.IgnoreLines, sql)
+	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
 	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
@@ -111,6 +123,42 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.True(t, plan.Detached, sql)
 	require.True(t, plan.DisableTiKVImportMode, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.MaxEngineSize, sql)
+	require.Empty(t, plan.CloudStorageURI, sql)
+
+	// set cloud storage uri
+	variable.CloudStorageURI.Store("s3://bucket/path")
+	t.Cleanup(func() {
+		variable.CloudStorageURI.Store("")
+	})
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql)
+	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
+
+	// override cloud storage uri using option
+	sql2 := sql + ", " + cloudStorageURIOption + "='s3://bucket/path2'"
+	stmt, err = p.ParseOneStmt(sql2, "", "")
+	require.NoError(t, err, sql2)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql2)
+	require.Equal(t, "s3://bucket/path2", plan.CloudStorageURI, sql2)
+	// override with gs
+	sql3 := sql + ", " + cloudStorageURIOption + "='gs://bucket/path2'"
+	stmt, err = p.ParseOneStmt(sql3, "", "")
+	require.NoError(t, err, sql3)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql3)
+	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
+	// override with empty string, force use local sort
+	sql4 := sql + ", " + cloudStorageURIOption + "=''"
+	stmt, err = p.ParseOneStmt(sql4, "", "")
+	require.NoError(t, err, sql4)
+	plan = &Plan{Format: DataFormatCSV}
+	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	require.NoError(t, err, sql4)
+	require.Equal(t, "", plan.CloudStorageURI, sql4)
 }
 
 func TestAdjustOptions(t *testing.T) {
@@ -156,4 +204,87 @@ func TestASTArgsFromStmt(t *testing.T) {
 	importIntoStmt := stmtNode.(*ast.ImportIntoStmt)
 	require.Equal(t, astArgs.ColumnAssignments, importIntoStmt.ColumnAssignments)
 	require.Equal(t, astArgs.ColumnsAndUserVars, importIntoStmt.ColumnsAndUserVars)
+}
+
+func TestGetFileRealSize(t *testing.T) {
+	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", "return(250)")
+	require.NoError(t, err)
+	defer func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage")
+	}()
+	fileMeta := mydump.SourceFileMeta{Compression: mydump.CompressionNone, FileSize: 100}
+	c := &LoadDataController{logger: log.L()}
+	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
+	fileMeta.Compression = mydump.CompressionGZ
+	require.Equal(t, int64(250), c.getFileRealSize(context.Background(), fileMeta, nil))
+	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/mydump/SampleFileCompressPercentage", `return("test err")`)
+	require.NoError(t, err)
+	require.Equal(t, int64(100), c.getFileRealSize(context.Background(), fileMeta, nil))
+}
+
+func urlEqual(t *testing.T, expected, actual string) {
+	urlExpected, err := url.Parse(expected)
+	require.NoError(t, err)
+	urlGot, err := url.Parse(actual)
+	require.NoError(t, err)
+	// order of query parameters might change
+	require.Equal(t, urlExpected.Query(), urlGot.Query())
+	urlExpected.RawQuery, urlGot.RawQuery = "", ""
+	require.Equal(t, urlExpected.String(), urlGot.String())
+}
+
+func TestInitParameters(t *testing.T) {
+	// test redacted
+	p := &Plan{
+		Format: DataFormatCSV,
+		Path:   "s3://bucket/path?access-key=111111&secret-access-key=222222",
+	}
+	require.NoError(t, p.initParameters(&plannercore.ImportInto{
+		Options: []*plannercore.LoadDataOpt{
+			{
+				Name: cloudStorageURIOption,
+				Value: &expression.Constant{
+					Value: types.NewStringDatum("s3://this-is-for-storage/path?access-key=aaaaaa&secret-access-key=bbbbbb"),
+				},
+			},
+		},
+	}))
+	urlEqual(t, "s3://bucket/path?access-key=xxxxxx&secret-access-key=xxxxxx", p.Parameters.FileLocation)
+	require.Len(t, p.Parameters.Options, 1)
+	urlEqual(t, "s3://this-is-for-storage/path?access-key=xxxxxx&secret-access-key=xxxxxx",
+		p.Parameters.Options[cloudStorageURIOption].(string))
+
+	// test other options
+	require.NoError(t, p.initParameters(&plannercore.ImportInto{
+		Options: []*plannercore.LoadDataOpt{
+			{
+				Name: detachedOption,
+			},
+			{
+				Name: threadOption,
+				Value: &expression.Constant{
+					Value: types.NewIntDatum(3),
+				},
+			},
+		},
+	}))
+	require.Len(t, p.Parameters.Options, 2)
+	require.Contains(t, p.Parameters.Options, detachedOption)
+	require.Equal(t, "3", p.Parameters.Options[threadOption])
+}
+
+func TestGetLocalBackendCfg(t *testing.T) {
+	c := &LoadDataController{
+		Plan: &Plan{},
+	}
+	cfg := c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	require.Equal(t, "http://1.1.1.1:1234", cfg.PDAddr)
+	require.Equal(t, "/tmp", cfg.LocalStoreDir)
+	require.True(t, cfg.DisableAutomaticCompactions)
+	require.Zero(t, cfg.RaftKV2SwitchModeDuration)
+
+	c.Plan.IsRaftKV2 = true
+	cfg = c.getLocalBackendCfg("http://1.1.1.1:1234", "/tmp")
+	require.Greater(t, cfg.RaftKV2SwitchModeDuration, time.Duration(0))
+	require.Equal(t, config.DefaultSwitchTiKVModeInterval, cfg.RaftKV2SwitchModeDuration)
 }

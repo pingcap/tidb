@@ -1,0 +1,45 @@
+DROP TABLE IF EXISTS `t1`;
+create table t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijab',c3 INTEGER COMMENT '01234567890', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 VARCHAR(100), c9 CHAR(50), c10 DATETIME, c11 DATETIME, c12 DATETIME,c13 DATETIME, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2) ) COMMENT='ABCDEFGHIJabc';
+SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' and table_schema="infoschema__infoschema" ORDER BY index_comment;
+index_comment	char_length(index_comment)	COLUMN_NAME
+	0	c2
+i1 comment	10	c1
+show create table information_schema.ddl_jobs;
+Table	Create Table
+DDL_JOBS	CREATE TABLE `DDL_JOBS` (
+  `JOB_ID` bigint(21) DEFAULT NULL,
+  `DB_NAME` varchar(64) DEFAULT NULL,
+  `TABLE_NAME` varchar(64) DEFAULT NULL,
+  `JOB_TYPE` varchar(64) DEFAULT NULL,
+  `SCHEMA_STATE` varchar(64) DEFAULT NULL,
+  `SCHEMA_ID` bigint(21) DEFAULT NULL,
+  `TABLE_ID` bigint(21) DEFAULT NULL,
+  `ROW_COUNT` bigint(21) DEFAULT NULL,
+  `CREATE_TIME` datetime DEFAULT NULL,
+  `START_TIME` datetime DEFAULT NULL,
+  `END_TIME` datetime DEFAULT NULL,
+  `STATE` varchar(64) DEFAULT NULL,
+  `QUERY` text DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+select count(length(query)) from information_schema.ddl_jobs;
+count(length(query))
+x
+drop table if EXISTS t1;
+create table infoschema__infoschema.t1 (id int primary key, a text);
+insert infoschema__infoschema.t1 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
+rename table infoschema__infoschema.t1 to mysql.t1;
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't1');
+count(*)
+1
+create table infoschema__infoschema.t2 (id int primary key, a text);
+insert infoschema__infoschema.t2 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
+create table infoschema__infoschema.t3 (id int primary key, a text);
+insert infoschema__infoschema.t3 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
+rename table infoschema__infoschema.t2 to mysql.t2, infoschema__infoschema.t3 to mysql.t3;
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't2');
+count(*)
+1
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't3');
+count(*)
+1
+drop table mysql.t1, mysql.t2, mysql.t3;

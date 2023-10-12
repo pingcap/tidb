@@ -83,4 +83,20 @@ type AnalyzeResults struct {
 	BaseCount int64
 	// BaseModifyCnt is the original modify_count in mysql.stats_meta at the beginning of analyze.
 	BaseModifyCnt int64
+	// For multi-valued index analyze, there are some very different behaviors, so we add this field to indicate it.
+	//
+	// Analyze result of multi-valued index come from an independent v2 analyze index task (AnalyzeIndexExec), and it's
+	// done by a scan on the index data and building stats. According to the original design rational of v2 stats, we
+	// should use the same samples to build stats for all columns/indexes. We created an exceptional case here to avoid
+	// loading the samples of JSON columns to tidb, which may cost too much memory, and we can't handle such case very
+	// well now.
+	//
+	// As the definition of multi-valued index, the row count and NDV of this index may be higher than the table row
+	// count. So we can't use this result to update the table-level row count.
+	// The snapshot field is used by v2 analyze to check if there are concurrent analyze, so we also can't update it.
+	// The multi-valued index analyze task is always together with another normal v2 analyze table task, which will
+	// take care of those table-level fields.
+	// In conclusion, when saving the analyze result for mv index, we need to store the index stats, as for the
+	// table-level fields, we only need to update the version.
+	ForMVIndex bool
 }

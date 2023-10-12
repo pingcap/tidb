@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -163,7 +164,9 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	const expStreamCount int64 = 8
 	sctx := MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
-
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
 	start := func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
 		handleFineGrainedShuffle(nil, sctx, tableReader)
 		check(p, expStreamCount, expChildCount, curChildCount)
@@ -401,6 +404,9 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 // Test for core.prunePhysicalColumns()
 func TestPrunePhysicalColumns(t *testing.T) {
 	sctx := MockContext()
+	defer func() {
+		domain.GetDomain(sctx).StatsHandle().Close()
+	}()
 	col0 := &expression.Column{
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),

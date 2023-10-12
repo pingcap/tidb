@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/infoschema"
+	infoschema_metrics "github.com/pingcap/tidb/infoschema/metrics"
 	"github.com/pingcap/tidb/infoschema/perfschema"
 	"github.com/pingcap/tidb/keyspace"
 	"github.com/pingcap/tidb/kv"
@@ -216,6 +217,10 @@ func (do *Domain) EtcdClient() *clientv3.Client {
 // 4. the changed table IDs if it is not full load
 // 5. an error if any
 func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, int64, *transaction.RelatedSchemaChange, error) {
+	beginTime := time.Now()
+	defer func() {
+		infoschema_metrics.LoadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
+	}()
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
@@ -230,6 +235,9 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	}
 
 	if is := do.infoCache.GetByVersion(neededSchemaVersion); is != nil {
+		// try to insert here as well to correct the schemaTs if previous is wrong
+		// the insert method check if schemaTs is zero
+		do.infoCache.Insert(is, uint64(schemaTs))
 		return is, true, 0, nil, nil
 	}
 
@@ -249,6 +257,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if currentSchemaVersion != 0 && neededSchemaVersion > currentSchemaVersion && neededSchemaVersion-currentSchemaVersion < LoadSchemaDiffVersionGapThreshold {
 		is, relatedChanges, err := do.tryLoadSchemaDiffs(m, currentSchemaVersion, neededSchemaVersion)
 		if err == nil {
+			infoschema_metrics.LoadSchemaDurationLoadDiff.Observe(time.Since(startTime).Seconds())
 			do.infoCache.Insert(is, uint64(schemaTs))
 			logutil.BgLogger().Info("diff load InfoSchema success",
 				zap.Int64("currentSchemaVersion", currentSchemaVersion),
@@ -282,6 +291,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
 	}
+	infoschema_metrics.LoadSchemaDurationLoadAll.Observe(time.Since(startTime).Seconds())
 	logutil.BgLogger().Info("full load InfoSchema success",
 		zap.Int64("currentSchemaVersion", currentSchemaVersion),
 		zap.Int64("neededSchemaVersion", neededSchemaVersion),
@@ -474,6 +484,7 @@ func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchem
 		return is, nil
 	}
 	is, _, _, _, err := do.loadInfoSchema(snapshotTS)
+	infoschema_metrics.LoadSchemaCounterSnapshot.Inc()
 	return is, err
 }
 
@@ -575,7 +586,6 @@ func (do *Domain) Reload() error {
 			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
 		}
 	}
-	metrics.LoadSchemaDuration.Observe(time.Since(startTime).Seconds())
 	if err != nil {
 		metrics.LoadSchemaCounter.WithLabelValues("failed").Inc()
 		return err
@@ -985,6 +995,7 @@ func (do *Domain) Close() {
 	}
 	ttlJobManager := do.ttlJobManager.Load()
 	if ttlJobManager != nil {
+		logutil.BgLogger().Info("stopping ttlJobManager")
 		ttlJobManager.Stop()
 		err := ttlJobManager.WaitStopped(context.Background(), func() time.Duration {
 			if intest.InTest {
@@ -994,6 +1005,8 @@ func (do *Domain) Close() {
 		}())
 		if err != nil {
 			logutil.BgLogger().Warn("fail to wait until the ttl job manager stop", zap.Error(err))
+		} else {
+			logutil.BgLogger().Info("ttlJobManager exited.")
 		}
 	}
 	do.releaseServerID(context.Background())
@@ -1043,7 +1056,7 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 		exit:                make(chan struct{}),
 		sysSessionPool:      newSessionPool(capacity, factory),
 		statsLease:          statsLease,
-		infoCache:           infoschema.NewCache(16),
+		infoCache:           infoschema.NewCache(int(variable.SchemaVersionCacheLimit.Load())),
 		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
 		indexUsageSyncLease: idxUsageSyncLease,
 		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
@@ -1160,7 +1173,7 @@ func (do *Domain) Init(
 	})
 	if ddlInjector != nil {
 		checker := ddlInjector(do.ddl)
-		checker.CreateTestDB()
+		checker.CreateTestDB(nil)
 		do.ddl = checker
 	}
 
@@ -1282,7 +1295,12 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 		log.Warn("pd / etcd client not provided, won't begin Advancer.")
 		return nil
 	}
-	env, err := streamhelper.TiDBEnv(pdClient, do.etcdClient, cfg)
+	tikvStore, ok := do.Store().(tikv.Storage)
+	if !ok {
+		log.Warn("non tikv store, stop begin Advancer.")
+		return nil
+	}
+	env, err := streamhelper.TiDBEnv(tikvStore, pdClient, do.etcdClient, cfg)
 	if err != nil {
 		return err
 	}
@@ -1460,7 +1478,11 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
-	schedulerManager.Start()
+	err := schedulerManager.Start()
+	if err != nil {
+		logutil.BgLogger().Error("dist task scheduler failed", zap.Error(err))
+		return
+	}
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
 		logutil.BgLogger().Info("stopping dist task scheduler")
@@ -1476,7 +1498,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		var err error
 		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
 		if err != nil {
-			logutil.BgLogger().Error("failed to create a disttask dispatcher", zap.Error(err))
+			logutil.BgLogger().Error("failed to create a dist task dispatcher", zap.Error(err))
 			return
 		}
 		dispatcherManager.Start()
@@ -2307,10 +2329,6 @@ func (do *Domain) loadStatsWorker() {
 	for {
 		select {
 		case <-loadTicker.C:
-			err = statsHandle.RefreshVars()
-			if err != nil {
-				logutil.BgLogger().Debug("refresh variables failed", zap.Error(err))
-			}
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))
@@ -2383,7 +2401,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	lease := do.statsLease
 	deltaUpdateTicker := time.NewTicker(20 * lease)
 	gcStatsTicker := time.NewTicker(100 * lease)
-	loadLockedTablesTicker := time.NewTicker(5 * lease)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
@@ -2412,11 +2429,6 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
-			}
-		case <-loadLockedTablesTicker.C:
-			err := statsHandle.LoadLockedTables()
-			if err != nil {
-				logutil.BgLogger().Debug("load locked table failed", zap.Error(err))
 			}
 		case <-gcStatsTicker.C:
 			if !owner.IsOwner() {
@@ -2902,17 +2914,9 @@ func (do *Domain) serverIDKeeper() {
 
 // StartTTLJobManager creates and starts the ttl job manager
 func (do *Domain) StartTTLJobManager() {
-	do.wg.Run(func() {
-		defer func() {
-			logutil.BgLogger().Info("ttlJobManager exited.")
-		}()
-
-		ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
-		do.ttlJobManager.Store(ttlJobManager)
-		ttlJobManager.Start()
-
-		<-do.exit
-	}, "ttlJobManager")
+	ttlJobManager := ttlworker.NewJobManager(do.ddl.GetID(), do.sysSessionPool, do.store, do.etcdClient, do.ddl.OwnerManager().IsOwner)
+	do.ttlJobManager.Store(ttlJobManager)
+	ttlJobManager.Start()
 }
 
 // TTLJobManager returns the ttl job manager on this domain

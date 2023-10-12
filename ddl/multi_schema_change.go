@@ -16,7 +16,6 @@ package ddl
 
 import (
 	"github.com/pingcap/errors"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
@@ -34,7 +33,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+
 	job := &model.Job{
 		SchemaID:        schema.ID,
 		TableID:         t.Meta().ID,
@@ -44,17 +43,13 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		BinlogInfo:      &model.HistoryInfo{},
 		Args:            nil,
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
-		ReorgMeta: &model.DDLReorgMeta{
-			SQLMode:       ctx.GetSessionVars().SQLMode,
-			Warnings:      make(map[errors.ErrorID]*terror.Error),
-			WarningsCount: make(map[errors.ErrorID]int64),
-			Location:      &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
-		},
+		ReorgMeta:       NewDDLReorgMeta(ctx),
 	}
 	err = checkMultiSchemaInfo(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo, t)
 	if err != nil {
 		return errors.Trace(err)
 	}
+	mergeAddIndex(ctx.GetSessionVars().StmtCtx.MultiSchemaInfo)
 	ctx.GetSessionVars().StmtCtx.MultiSchemaInfo = nil
 	err = d.DoDDLJob(ctx, job)
 	return d.callHookOnChanged(job, err)
@@ -70,7 +65,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				if sub.IsFinished() {
 					continue
 				}
-				proxyJob := sub.ToProxyJob(job)
+				proxyJob := sub.ToProxyJob(job, i)
 				ver, err = w.runDDLJob(d, t, &proxyJob)
 				err = handleRollbackException(err, proxyJob.Error)
 				if err != nil {
@@ -86,14 +81,14 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 
 		// The sub-jobs are normally running.
 		// Run the first executable sub-job.
-		for _, sub := range job.MultiSchemaInfo.SubJobs {
+		for i, sub := range job.MultiSchemaInfo.SubJobs {
 			if !sub.Revertible || sub.IsFinished() {
 				// Skip the sub-jobs which related schema states
 				// are in the last revertible point.
 				// If a sub job is finished here, it should be a noop job.
 				continue
 			}
-			proxyJob := sub.ToProxyJob(job)
+			proxyJob := sub.ToProxyJob(job, i)
 			ver, err = w.runDDLJob(d, t, &proxyJob)
 			sub.FromProxyJob(&proxyJob, ver)
 			handleRevertibleException(job, sub, proxyJob.Error)
@@ -115,7 +110,7 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 				continue
 			}
 			subJobs[i] = *sub
-			proxyJob := sub.ToProxyJob(job)
+			proxyJob := sub.ToProxyJob(job, i)
 			if schemaVersionGenerated {
 				proxyJob.MultiSchemaInfo.SkipVersion = true
 			}
@@ -140,11 +135,11 @@ func onMultiSchemaChange(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job) (ve
 		return ver, err
 	}
 	// Run the rest non-revertible sub-jobs one by one.
-	for _, sub := range job.MultiSchemaInfo.SubJobs {
+	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		if sub.IsFinished() {
 			continue
 		}
-		proxyJob := sub.ToProxyJob(job)
+		proxyJob := sub.ToProxyJob(job, i)
 		ver, err = w.runDDLJob(d, t, &proxyJob)
 		sub.FromProxyJob(&proxyJob, ver)
 		return ver, err
@@ -329,6 +324,60 @@ func checkOperateSameColAndIdx(info *model.MultiSchemaInfo) error {
 		return err
 	}
 	return checkIndexes(info.AlterIndexes, true)
+}
+
+func mergeAddIndex(info *model.MultiSchemaInfo) {
+	consistentUnique := false
+	for i, subJob := range info.SubJobs {
+		if subJob.Type == model.ActionAddForeignKey {
+			// Foreign key requires the order of adding indexes is unchanged.
+			return
+		}
+		if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
+			if i == 0 {
+				consistentUnique = subJob.Args[0].(bool)
+			} else {
+				if consistentUnique != subJob.Args[0].(bool) {
+					// Some indexes are unique, others are not.
+					// There are problems with the mix usage of unique and non-unique backend,
+					// we don't merge these sub-jobs for now.
+					return
+				}
+			}
+		}
+	}
+	var newSubJob *model.SubJob
+	var unique []bool
+	var indexNames []model.CIStr
+	var indexPartSpecifications [][]*ast.IndexPartSpecification
+	var indexOption []*ast.IndexOption
+	var hiddenCols [][]*model.ColumnInfo
+	var global []bool
+
+	newSubJobs := make([]*model.SubJob, 0, len(info.SubJobs))
+	for _, subJob := range info.SubJobs {
+		if subJob.Type == model.ActionAddIndex {
+			if newSubJob == nil {
+				clonedSubJob := *subJob
+				newSubJob = &clonedSubJob
+				newSubJob.Args = nil
+				newSubJob.RawArgs = nil
+			}
+			unique = append(unique, subJob.Args[0].(bool))
+			indexNames = append(indexNames, subJob.Args[1].(model.CIStr))
+			indexPartSpecifications = append(indexPartSpecifications, subJob.Args[2].([]*ast.IndexPartSpecification))
+			indexOption = append(indexOption, subJob.Args[3].(*ast.IndexOption))
+			hiddenCols = append(hiddenCols, subJob.Args[4].([]*model.ColumnInfo))
+			global = append(global, subJob.Args[5].(bool))
+		} else {
+			newSubJobs = append(newSubJobs, subJob)
+		}
+	}
+	if newSubJob != nil {
+		newSubJob.Args = []interface{}{unique, indexNames, indexPartSpecifications, indexOption, hiddenCols, global}
+		newSubJobs = append(newSubJobs, newSubJob)
+		info.SubJobs = newSubJobs
+	}
 }
 
 func checkOperateDropIndexUseByForeignKey(info *model.MultiSchemaInfo, t table.Table) error {

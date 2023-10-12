@@ -56,28 +56,6 @@ func MockGC(tk *testkit.TestKit) (string, string, string, func()) {
 	return timeBeforeDrop, timeAfterDrop, safePointSQL, resetGC
 }
 
-func TestAlterTableAttributes(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table alter_t (c int);`)
-
-	// normal cases
-	tk.MustExec(`alter table alter_t attributes="merge_option=allow";`)
-	tk.MustExec(`alter table alter_t attributes="merge_option=allow,key=value";`)
-
-	// space cases
-	tk.MustExec(`alter table alter_t attributes=" merge_option=allow ";`)
-	tk.MustExec(`alter table alter_t attributes=" merge_option = allow , key = value ";`)
-
-	// without equal
-	tk.MustExec(`alter table alter_t attributes " merge_option=allow ";`)
-	tk.MustExec(`alter table alter_t attributes " merge_option=allow , key=value ";`)
-
-	tk.MustExec("drop table alter_t")
-}
-
 func TestAlterTablePartitionAttributes(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -504,58 +482,4 @@ PARTITION BY RANGE (c) (
 	require.Equal(t, "schema/test/part1", rows3[1][0])
 	require.Equal(t, `"key2=value2"`, rows3[1][2])
 	require.Equal(t, rows2[1][3], rows3[1][3])
-}
-
-func TestDropSchema(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), keyspace.CodecV1, true)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table drop_s1 (c int)
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6),
-	PARTITION p1 VALUES LESS THAN (11)
-);`)
-	tk.MustExec(`create table drop_s2 (c int);`)
-
-	// add attributes
-	tk.MustExec(`alter table drop_s1 attributes="key=value";`)
-	tk.MustExec(`alter table drop_s1 partition p0 attributes="key1=value1";`)
-	tk.MustExec(`alter table drop_s2 attributes="key=value";`)
-	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
-	require.Len(t, rows, 3)
-	// drop database
-	tk.MustExec(`drop database test`)
-	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
-	require.Len(t, rows, 0)
-}
-
-func TestDefaultKeyword(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), keyspace.CodecV1, true)
-	require.NoError(t, err)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table def (c int)
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (6),
-	PARTITION p1 VALUES LESS THAN (11)
-);`)
-
-	// add attributes
-	tk.MustExec(`alter table def attributes="key=value";`)
-	tk.MustExec(`alter table def partition p0 attributes="key1=value1";`)
-	rows := tk.MustQuery(`select * from information_schema.attributes;`).Rows()
-	require.Len(t, rows, 2)
-	// reset the partition p0's attribute
-	tk.MustExec(`alter table def partition p0 attributes=default;`)
-	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
-	require.Len(t, rows, 1)
-	// reset the table def's attribute
-	tk.MustExec(`alter table def attributes=default;`)
-	rows = tk.MustQuery(`select * from information_schema.attributes;`).Rows()
-	require.Len(t, rows, 0)
 }

@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
@@ -43,7 +44,7 @@ func (s *importIntoSuite) enableFailPoint(path, term string) {
 	})
 }
 
-func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
+func (s *importIntoSuite) TestDispatcherGetEligibleInstances() {
 	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
 		s.NoError(err)
@@ -60,10 +61,11 @@ func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
 	}
 	mockedAllServerInfos := makeFailpointRes(serverInfoMap)
 
-	h := flowHandle{}
+	dsp := ImportDispatcherExt{}
 	gTask := &proto.Task{Meta: []byte("{}")}
+	ctx := context.WithValue(context.Background(), "etcd", true)
 	s.enableFailPoint("github.com/pingcap/tidb/domain/infosync/mockGetAllServerInfo", mockedAllServerInfos)
-	eligibleInstances, err := h.GetEligibleInstances(context.Background(), gTask)
+	eligibleInstances, err := dsp.GetEligibleInstances(ctx, gTask)
 	s.NoError(err)
 	// order of slice is not stable, change to map
 	resultMap := map[string]*infosync.ServerInfo{}
@@ -73,7 +75,7 @@ func (s *importIntoSuite) TestFlowHandleGetEligibleInstances() {
 	s.Equal(serverInfoMap, resultMap)
 
 	gTask.Meta = []byte(`{"EligibleInstances":[{"ip": "1.1.1.1", "listening_port": 4000}]}`)
-	eligibleInstances, err = h.GetEligibleInstances(context.Background(), gTask)
+	eligibleInstances, err = dsp.GetEligibleInstances(ctx, gTask)
 	s.NoError(err)
 	s.Equal([]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}}, eligibleInstances)
 }
@@ -87,21 +89,97 @@ func (s *importIntoSuite) TestUpdateCurrentTask() {
 	bs, err := json.Marshal(taskMeta)
 	require.NoError(s.T(), err)
 
-	h := flowHandle{}
-	require.Equal(s.T(), int64(0), h.currTaskID.Load())
-	require.False(s.T(), h.disableTiKVImportMode.Load())
+	dsp := ImportDispatcherExt{}
+	require.Equal(s.T(), int64(0), dsp.currTaskID.Load())
+	require.False(s.T(), dsp.disableTiKVImportMode.Load())
 
-	h.updateCurrentTask(&proto.Task{
+	dsp.updateCurrentTask(&proto.Task{
 		ID:   1,
 		Meta: bs,
 	})
-	require.Equal(s.T(), int64(1), h.currTaskID.Load())
-	require.True(s.T(), h.disableTiKVImportMode.Load())
+	require.Equal(s.T(), int64(1), dsp.currTaskID.Load())
+	require.True(s.T(), dsp.disableTiKVImportMode.Load())
 
-	h.updateCurrentTask(&proto.Task{
+	dsp.updateCurrentTask(&proto.Task{
 		ID:   1,
 		Meta: bs,
 	})
-	require.Equal(s.T(), int64(1), h.currTaskID.Load())
-	require.True(s.T(), h.disableTiKVImportMode.Load())
+	require.Equal(s.T(), int64(1), dsp.currTaskID.Load())
+	require.True(s.T(), dsp.disableTiKVImportMode.Load())
+}
+
+func (s *importIntoSuite) TestDispatcherInit() {
+	meta := TaskMeta{
+		Plan: importer.Plan{
+			CloudStorageURI: "",
+		},
+	}
+	bytes, err := json.Marshal(meta)
+	s.NoError(err)
+	dsp := importDispatcher{
+		BaseDispatcher: &dispatcher.BaseDispatcher{
+			Task: &proto.Task{
+				Meta: bytes,
+			},
+		},
+	}
+	s.NoError(dsp.Init())
+	s.False(dsp.Extension.(*ImportDispatcherExt).GlobalSort)
+
+	meta.Plan.CloudStorageURI = "s3://test"
+	bytes, err = json.Marshal(meta)
+	s.NoError(err)
+	dsp = importDispatcher{
+		BaseDispatcher: &dispatcher.BaseDispatcher{
+			Task: &proto.Task{
+				Meta: bytes,
+			},
+		},
+	}
+	s.NoError(dsp.Init())
+	s.True(dsp.Extension.(*ImportDispatcherExt).GlobalSort)
+}
+
+func (s *importIntoSuite) TestGetNextStep() {
+	task := &proto.Task{
+		Step: proto.StepInit,
+	}
+	ext := &ImportDispatcherExt{}
+	for _, nextStep := range []int64{StepImport, StepPostProcess, proto.StepDone} {
+		s.Equal(nextStep, ext.GetNextStep(nil, task))
+		task.Step = nextStep
+	}
+
+	task.Step = proto.StepInit
+	ext = &ImportDispatcherExt{GlobalSort: true}
+	for _, nextStep := range []int64{StepEncodeAndSort, StepMergeSort,
+		StepWriteAndIngest, StepPostProcess, proto.StepDone} {
+		s.Equal(nextStep, ext.GetNextStep(nil, task))
+		task.Step = nextStep
+	}
+}
+
+func (s *importIntoSuite) TestStr() {
+	s.Equal("init", stepStr(proto.StepInit))
+	s.Equal("import", stepStr(StepImport))
+	s.Equal("post-process", stepStr(StepPostProcess))
+	s.Equal("merge-sort", stepStr(StepMergeSort))
+	s.Equal("encode&sort", stepStr(StepEncodeAndSort))
+	s.Equal("write&ingest", stepStr(StepWriteAndIngest))
+	s.Equal("done", stepStr(proto.StepDone))
+	s.Equal("unknown", stepStr(111))
+}
+
+func (s *importIntoSuite) TestGetStepOfEncode() {
+	s.Equal(StepImport, getStepOfEncode(false))
+	s.Equal(StepEncodeAndSort, getStepOfEncode(true))
+}
+
+func TestIsImporting2TiKV(t *testing.T) {
+	ext := &ImportDispatcherExt{}
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepEncodeAndSort}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepMergeSort}))
+	require.False(t, ext.isImporting2TiKV(&proto.Task{Step: StepPostProcess}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: StepImport}))
+	require.True(t, ext.isImporting2TiKV(&proto.Task{Step: StepWriteAndIngest}))
 }

@@ -171,7 +171,6 @@ go_test(
         "builtin_vectorized_test.go",
         "collation_test.go",
         "column_test.go",
-        "constant_fold_test.go",
         "constant_test.go",
         "distsql_builtin_test.go",
         "evaluator_test.go",

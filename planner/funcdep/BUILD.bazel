@@ -24,11 +24,10 @@ go_test(
         "fast_int_set_test.go",
         "fd_graph_test.go",
         "main_test.go",
-        "only_full_group_by_test.go",
     ],
     embed = [":funcdep"],
     flaky = True,
-    shard_count = 16,
+    shard_count = 15,
     deps = [
         "//domain",
         "//infoschema",

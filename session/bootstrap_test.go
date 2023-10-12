@@ -17,12 +17,11 @@ package session
 import (
 	"context"
 	"fmt"
-	"os"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/bindinfo"
-	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/auth"
@@ -146,6 +145,8 @@ func TestBootstrapWithError(t *testing.T) {
 			store:       store,
 			sessionVars: variable.NewSessionVars(nil),
 		}
+		globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
+		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
 		se.mu.values = make(map[fmt.Stringer]interface{})
@@ -943,265 +944,6 @@ func TestUpgradeToVer85(t *testing.T) {
 
 	require.NoError(t, r.Close())
 	MustExec(t, se, "delete from mysql.bind_info where default_db = 'test'")
-}
-
-func TestInitializeSQLFile(t *testing.T) {
-	testEmptyInitSQLFile(t)
-	testInitSystemVariable(t)
-	testInitUsers(t)
-	testErrorHappenWhileInit(t)
-}
-
-func testEmptyInitSQLFile(t *testing.T) {
-	// An non-existent sql file would stop the bootstrap of the tidb cluster
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
-	defer func() {
-		config.GetGlobalConfig().InitializeSQLFile = ""
-	}()
-
-	dom, err := BootstrapSession(store)
-	require.Nil(t, dom)
-	require.NoError(t, err)
-	require.NoError(t, store.Close())
-}
-
-func testInitSystemVariable(t *testing.T) {
-	// We create an initialize-sql-file and then bootstrap the server with it.
-	// The observed behavior should be that tidb_enable_noop_variables is now
-	// disabled, and the feature works as expected.
-	initializeSQLFile, err := os.CreateTemp("", "init.sql")
-	require.NoError(t, err)
-	defer func() {
-		path := initializeSQLFile.Name()
-		err = initializeSQLFile.Close()
-		require.NoError(t, err)
-		err = os.Remove(path)
-		require.NoError(t, err)
-	}()
-	// Implicitly test multi-line init files
-	_, err = initializeSQLFile.WriteString(
-		"CREATE DATABASE initsqlfiletest;\n" +
-			"SET GLOBAL tidb_enable_noop_variables = OFF;\n")
-	require.NoError(t, err)
-
-	// Create a mock store
-	// Set the config parameter for initialize sql file
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
-	defer func() {
-		require.NoError(t, store.Close())
-		config.GetGlobalConfig().InitializeSQLFile = ""
-	}()
-
-	// Bootstrap with the InitializeSQLFile config option
-	dom, err := BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
-	se := CreateSessionAndSetID(t, store)
-	ctx := context.Background()
-	r, err := exec(se, `SHOW VARIABLES LIKE 'query_cache_type'`)
-	require.NoError(t, err)
-	req := r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 0, req.NumRows()) // not shown in noopvariables mode
-	require.NoError(t, r.Close())
-
-	r, err = exec(se, `SHOW VARIABLES LIKE 'tidb_enable_noop_variables'`)
-	require.NoError(t, err)
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 1, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, []byte("OFF"), row.GetBytes(1))
-	require.NoError(t, r.Close())
-}
-
-func testInitUsers(t *testing.T) {
-	// Two sql files are set to 'initialize-sql-file' one after another,
-	// and only the first one are executed.
-	var err error
-	sqlFiles := make([]*os.File, 2)
-	for i, name := range []string{"1.sql", "2.sql"} {
-		sqlFiles[i], err = os.CreateTemp("", name)
-		require.NoError(t, err)
-	}
-	defer func() {
-		for _, sqlFile := range sqlFiles {
-			path := sqlFile.Name()
-			err = sqlFile.Close()
-			require.NoError(t, err)
-			err = os.Remove(path)
-			require.NoError(t, err)
-		}
-	}()
-	_, err = sqlFiles[0].WriteString(`
-CREATE USER cloud_admin;
-GRANT BACKUP_ADMIN, RESTORE_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT DASHBOARD_CLIENT on *.* TO 'cloud_admin'@'%';
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT CONNECTION_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT RESTRICTED_VARIABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT RESTRICTED_STATUS_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT RESTRICTED_CONNECTION_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT RESTRICTED_USER_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT RESTRICTED_TABLES_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT RESTRICTED_REPLICA_WRITER_ADMIN ON *.* TO 'cloud_admin'@'%';
-GRANT CREATE USER ON *.* TO 'cloud_admin'@'%';
-GRANT RELOAD ON *.* TO 'cloud_admin'@'%';
-GRANT PROCESS ON *.* TO 'cloud_admin'@'%';
-GRANT SELECT, INSERT, UPDATE, DELETE ON mysql.* TO 'cloud_admin'@'%';
-GRANT SELECT ON information_schema.* TO 'cloud_admin'@'%';
-GRANT SELECT ON performance_schema.* TO 'cloud_admin'@'%';
-GRANT SHOW DATABASES on *.* TO 'cloud_admin'@'%';
-GRANT REFERENCES ON *.* TO 'cloud_admin'@'%';
-GRANT SELECT ON *.* TO 'cloud_admin'@'%';
-GRANT INDEX ON *.* TO 'cloud_admin'@'%';
-GRANT INSERT ON *.* TO 'cloud_admin'@'%';
-GRANT UPDATE ON *.* TO 'cloud_admin'@'%';
-GRANT DELETE ON *.* TO 'cloud_admin'@'%';
-GRANT CREATE ON *.* TO 'cloud_admin'@'%';
-GRANT DROP ON *.* TO 'cloud_admin'@'%';
-GRANT ALTER ON *.* TO 'cloud_admin'@'%';
-GRANT CREATE VIEW ON *.* TO 'cloud_admin'@'%';
-GRANT SHUTDOWN, CONFIG ON *.* TO 'cloud_admin'@'%';
-REVOKE SHUTDOWN, CONFIG ON *.* FROM root;
-
-DROP USER root;
-`)
-	require.NoError(t, err)
-	_, err = sqlFiles[1].WriteString("drop user cloud_admin;")
-	require.NoError(t, err)
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
-	defer func() {
-		require.NoError(t, store.Close())
-		config.GetGlobalConfig().InitializeSQLFile = ""
-	}()
-
-	// Bootstrap with the first sql file
-	dom, err := BootstrapSession(store)
-	require.NoError(t, err)
-	se := CreateSessionAndSetID(t, store)
-	ctx := context.Background()
-	// 'cloud_admin' has been created successfully
-	r, err := exec(se, `select user from mysql.user where user = 'cloud_admin'`)
-	require.NoError(t, err)
-	req := r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 1, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, "cloud_admin", row.GetString(0))
-	require.NoError(t, r.Close())
-	// 'root' has been deleted successfully
-	r, err = exec(se, `select user from mysql.user where user = 'root'`)
-	require.NoError(t, err)
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 0, req.NumRows())
-	require.NoError(t, r.Close())
-	dom.Close()
-
-	runBootstrapSQLFile = false
-
-	// Bootstrap with the second sql file, which would not been executed.
-	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
-	dom, err = BootstrapSession(store)
-	require.NoError(t, err)
-	se = CreateSessionAndSetID(t, store)
-	r, err = exec(se, `select user from mysql.user where user = 'cloud_admin'`)
-	require.NoError(t, err)
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 1, req.NumRows())
-	row = req.GetRow(0)
-	require.Equal(t, "cloud_admin", row.GetString(0))
-	require.NoError(t, r.Close())
-	dom.Close()
-}
-
-func testErrorHappenWhileInit(t *testing.T) {
-	// 1. parser error in sql file (1.sql) makes the bootstrap panic
-	// 2. other errors in sql file (2.sql) will be ignored
-	var err error
-	sqlFiles := make([]*os.File, 2)
-	for i, name := range []string{"1.sql", "2.sql"} {
-		sqlFiles[i], err = os.CreateTemp("", name)
-		require.NoError(t, err)
-	}
-	defer func() {
-		for _, sqlFile := range sqlFiles {
-			path := sqlFile.Name()
-			err = sqlFile.Close()
-			require.NoError(t, err)
-			err = os.Remove(path)
-			require.NoError(t, err)
-		}
-	}()
-	_, err = sqlFiles[0].WriteString("create table test.t (c in);")
-	require.NoError(t, err)
-	_, err = sqlFiles[1].WriteString(`
-create table test.t (c int);
-insert into test.t values ("abc"); -- invalid statement
-`)
-	require.NoError(t, err)
-
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
-	defer func() {
-		config.GetGlobalConfig().InitializeSQLFile = ""
-	}()
-
-	// Bootstrap with the first sql file
-	dom, err := BootstrapSession(store)
-	require.Nil(t, dom)
-	require.NoError(t, err)
-	require.NoError(t, store.Close())
-
-	runBootstrapSQLFile = false
-
-	// Bootstrap with the second sql file, which would not been executed.
-	store, err = mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
-	dom, err = BootstrapSession(store)
-	require.NoError(t, err)
-	se := CreateSessionAndSetID(t, store)
-	ctx := context.Background()
-	_, err = exec(se, `use test;`)
-	require.NoError(t, err)
-	// Table t has been created.
-	r, err := exec(se, `show tables;`)
-	require.NoError(t, err)
-	req := r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 1, req.NumRows())
-	row := req.GetRow(0)
-	require.Equal(t, "t", row.GetString(0))
-	require.NoError(t, r.Close())
-	// But data is failed to inserted since the error
-	r, err = exec(se, `select * from test.t`)
-	require.NoError(t, err)
-	req = r.NewChunk(nil)
-	err = r.Next(ctx, req)
-	require.NoError(t, err)
-	require.Equal(t, 0, req.NumRows())
-	require.NoError(t, r.Close())
-	dom.Close()
 }
 
 func TestTiDBEnablePagingVariable(t *testing.T) {
@@ -2234,5 +1976,114 @@ func TestTiDBUpgradeToVer170(t *testing.T) {
 	ver, err = getBootstrapVersion(seV169)
 	require.NoError(t, err)
 	require.Less(t, int64(ver169), ver)
+	dom.Close()
+}
+
+func TestTiDBBindingInListToVer175(t *testing.T) {
+	ctx := context.Background()
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	// bootstrap as version174
+	ver174 := version174
+	seV174 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver174))
+	require.NoError(t, err)
+	MustExec(t, seV174, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver174))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// create some bindings at version174
+	MustExec(t, seV174, "use test")
+	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
+
+	showBindings := func(s Session) (records []string) {
+		MustExec(t, s, "admin reload bindings")
+		res := MustExecToRecodeSet(t, s, "show global bindings")
+		chk := res.NewChunk(nil)
+		for {
+			require.NoError(t, res.Next(ctx, chk))
+			if chk.NumRows() == 0 {
+				break
+			}
+			for i := 0; i < chk.NumRows(); i++ {
+				originalSQL := chk.GetRow(i).GetString(0)
+				bindSQL := chk.GetRow(i).GetString(1)
+				records = append(records, fmt.Sprintf("%s:%s", bindSQL, originalSQL))
+			}
+		}
+		require.NoError(t, res.Close())
+		sort.Strings(records)
+		return
+	}
+	bindings := showBindings(seV174)
+	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (...)`
+	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )",
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )",
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3):select * from `test` . `t` where `a` in ( ... )"}, bindings)
+
+	// upgrade to ver175
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// `in (?)` becomes to `in ( ... )`
+	bindings = showBindings(seCurVer)
+	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
+
+	planFromBinding := func(s Session, q string) {
+		MustExec(t, s, q)
+		res := MustExecToRecodeSet(t, s, "select @@last_plan_from_binding")
+		chk := res.NewChunk(nil)
+		require.NoError(t, res.Next(ctx, chk))
+		require.Equal(t, int64(1), chk.GetRow(0).GetInt64(0))
+		require.NoError(t, res.Close())
+	}
+	planFromBinding(seCurVer, "select * from test.t where a in (1)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1)")
+	planFromBinding(seCurVer, "select * from test.t where a in (1,2,3,4,5,6,7) and b in(1,2,3,4)")
+	planFromBinding(seCurVer, "select * from test.t where a in (7) and b in(1,2,3,4)")
+}
+
+func TestTiDBUpgradeToVer176(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver175 := version175
+	seV175 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver175))
+	require.NoError(t, err)
+	MustExec(t, seV175, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver175))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV175)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver175), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV175)
+	require.NoError(t, err)
+	require.Less(t, int64(ver175), ver)
 	dom.Close()
 }

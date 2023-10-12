@@ -25,6 +25,7 @@ import (
 type DispatcherManagerForTest interface {
 	GetRunningTaskCnt() int
 	DelRunningTask(globalTaskID int64)
+	DoCleanUpRoutine()
 }
 
 // GetRunningGTaskCnt implements Dispatcher.GetRunningGTaskCnt interface.
@@ -37,13 +38,18 @@ func (dm *Manager) DelRunningTask(globalTaskID int64) {
 	dm.delRunningTask(globalTaskID)
 }
 
+// DoCleanUpRoutine implements Dispatcher.DoCleanUpRoutine interface.
+func (dm *Manager) DoCleanUpRoutine() {
+	dm.doCleanUpRoutine()
+}
+
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	// Make test more fast.
 	checkTaskRunningInterval = checkTaskRunningInterval / 10
 	checkTaskFinishedInterval = checkTaskFinishedInterval / 10
-	retrySQLInterval = retrySQLInterval / 20
+	RetrySQLInterval = RetrySQLInterval / 20
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

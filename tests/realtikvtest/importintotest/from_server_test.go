@@ -52,7 +52,9 @@ func (s *mockGCSSuite) TestImportFromServer() {
 	s.tk.MustExec("create table t (a bigint, b varchar(100));")
 
 	// relative path
-	s.ErrorIs(s.tk.QueryToErr("IMPORT INTO t FROM '~/file.csv'"), exeerrors.ErrLoadDataInvalidURI)
+	err2 := s.tk.QueryToErr("IMPORT INTO t FROM '~/file.csv'")
+	s.ErrorIs(err2, exeerrors.ErrLoadDataInvalidURI)
+	s.ErrorContains(err2, "URI of data source is invalid")
 	// no suffix or wrong suffix
 	s.ErrorIs(s.tk.QueryToErr("IMPORT INTO t FROM '/file'"), exeerrors.ErrLoadDataInvalidURI)
 	s.ErrorIs(s.tk.QueryToErr("IMPORT INTO t FROM '/file.txt'"), exeerrors.ErrLoadDataInvalidURI)

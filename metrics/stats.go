@@ -24,7 +24,6 @@ var (
 	AutoAnalyzeCounter     *prometheus.CounterVec
 	StatsInaccuracyRate    prometheus.Histogram
 	PseudoEstimation       *prometheus.CounterVec
-	FastAnalyzeHistogram   *prometheus.HistogramVec
 	SyncLoadCounter        prometheus.Counter
 	SyncLoadTimeoutCounter prometheus.Counter
 	SyncLoadHistogram      prometheus.Histogram
@@ -74,15 +73,6 @@ func InitStatsMetrics() {
 			Help:      "Counter of pseudo estimation caused by outdated stats.",
 		}, []string{LblType})
 
-	FastAnalyzeHistogram = NewHistogramVec(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "fast_analyze_status",
-			Help:      "Bucketed histogram of some stats in fast analyze.",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 16),
-		}, []string{LblSQLType, LblType})
-
 	SyncLoadCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
@@ -116,21 +106,6 @@ func InitStatsMetrics() {
 			Help:      "Bucketed histogram of latency time (ms) of stats read during sync-load.",
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 22), // 1ms ~ 1h
 		})
-
-	StatsCacheCounter = NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "statistics",
-			Name:      "stats_cache_op",
-			Help:      "Counter for statsCache operation",
-		}, []string{LblType})
-
-	StatsCacheGauge = NewGaugeVec(prometheus.GaugeOpts{
-		Namespace: "tidb",
-		Subsystem: "statistics",
-		Name:      "stats_cache_val",
-		Help:      "gauge of stats cache value",
-	}, []string{LblType})
 
 	StatsHealthyGauge = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",

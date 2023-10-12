@@ -120,7 +120,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 	m := newMetrics(cfg.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
@@ -171,10 +171,29 @@ func TestWriteInsertInCsv(t *testing.T) {
 	require.Equal(t, float64(len(data)), ReadGauge(m.finishedRowsGauge))
 	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))
 
+	// test line terminator
+	bf.Reset()
+	opt.lineTerminator = []byte("\n")
+	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
+	conf = configForWriteCSV(cfg, true, opt)
+	m = newMetrics(conf.PromFactory, conf.Labels)
+	n, err = WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+	require.Equal(t, uint64(4), n)
+	require.NoError(t, err)
+
+	expected = "1;'male';'bob@mail.com';'020-1234';\\N\n" +
+		"2;'female';'sarah@mail.com';'020-1253';'healthy'\n" +
+		"3;'male';'john@mail.com';'020-1256';'healthy'\n" +
+		"4;'female';'sarah@mail.com';'020-1235';'healthy'\n"
+	require.Equal(t, expected, bf.String())
+	require.Equal(t, float64(len(data)), ReadGauge(m.finishedRowsGauge))
+	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))
+
 	// test delimiter that included in values
 	bf.Reset()
 	opt.separator = []byte("&;,?")
 	opt.delimiter = []byte("ma")
+	opt.lineTerminator = []byte("\r\n")
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.colNames = []string{"id", "gender", "email", "phone_number", "status"}
 	conf = configForWriteCSV(cfg, false, opt)
@@ -211,7 +230,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	bf := storage.NewBufferWriter()
 
 	// test nullValue
-	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
 	conf := configForWriteCSV(cfg, true, opt)
 	m := newMetrics(conf.PromFactory, conf.Labels)
 	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
@@ -294,6 +313,7 @@ func configForWriteCSV(config *Config, noHeader bool, opt *csvOption) *Config {
 	cfg.CsvNullValue = opt.nullValue
 	cfg.CsvDelimiter = string(opt.delimiter)
 	cfg.CsvSeparator = string(opt.separator)
+	cfg.CsvLineTerminator = string(opt.lineTerminator)
 	cfg.FileSize = UnspecifiedSize
 	return cfg
 }

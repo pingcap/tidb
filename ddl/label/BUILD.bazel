@@ -14,7 +14,6 @@ go_library(
         "//tablecodec",
         "//util/codec",
         "@in_gopkg_yaml_v2//:yaml_v2",
-        "@org_golang_x_exp//slices",
     ],
 )
 

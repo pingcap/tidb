@@ -11,11 +11,13 @@ go_test(
     race = "on",
     shard_count = 5,
     deps = [
+        "//sessionctx",
         "//testkit",
         "//testkit/testsetup",
         "//timer/api",
         "//timer/runtime",
         "//timer/tablestore",
+        "//util/timeutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",

@@ -16,6 +16,7 @@ package analyzetest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -39,15 +40,10 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/mockstore"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 func TestAnalyzePartition(t *testing.T) {
@@ -184,7 +180,6 @@ func TestAnalyzeParameters(t *testing.T) {
 	}
 	tk.MustExec("insert into t values (19), (19), (19)")
 
-	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
 	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("analyze table t with 30 samples")
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
@@ -252,90 +247,26 @@ func TestAnalyzeTooLongColumns(t *testing.T) {
 	require.Equal(t, int64(65559), tbl.Columns[1].TotColSize)
 }
 
-func TestIssue15993(t *testing.T) {
+func TestAnlyzeIssue(t *testing.T) {
+	// Issue15993
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
+	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT PRIMARY KEY);")
-	tk.MustExec("set @@tidb_enable_fast_analyze=1;")
-	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX PRIMARY;")
-}
-
-func TestIssue15751(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
+	// Issue15751
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT, c1 INT, PRIMARY KEY(c0, c1))")
 	tk.MustExec("INSERT INTO t0 VALUES (0, 0)")
-	tk.MustExec("set @@tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0")
-}
-
-func TestIssue15752(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
+	// Issue15752
 	tk.MustExec("drop table if exists t0")
 	tk.MustExec("CREATE TABLE t0(c0 INT)")
 	tk.MustExec("INSERT INTO t0 VALUES (0)")
 	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
-	tk.MustExec("set @@tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@tidb_analyze_version = 1")
 	tk.MustExec("ANALYZE TABLE t0 INDEX i0")
-}
-
-func TestFastAnalyzeRetryRowCount(t *testing.T) {
-	cli := &testkit.RegionProperityClient{}
-	hijackClient := func(c tikv.Client) tikv.Client {
-		cli.Client = c
-		return cli
-	}
-
-	var cls testutils.Cluster
-	store, err := mockstore.NewMockStore(
-		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithSingleStore(c)
-			cls = c
-		}),
-		mockstore.WithClientHijacker(hijackClient),
-	)
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-	dom, err := session.BootstrapSession(store)
-	require.NoError(t, err)
-	defer dom.Close()
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists retry_row_count")
-	tk.MustExec("create table retry_row_count(a int primary key)")
-	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("retry_row_count"))
-	require.NoError(t, err)
-	tid := tblInfo.Meta().ID
-	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	for i := 0; i < 30; i++ {
-		tk.MustExec(fmt.Sprintf("insert into retry_row_count values (%d)", i))
-	}
-	tableStart := tablecodec.GenTableRecordPrefix(tid)
-	cls.SplitKeys(tableStart, tableStart.PrefixNext(), 6)
-	// Flush the region cache first.
-	tk.MustQuery("select * from retry_row_count")
-	tk.MustExec("analyze table retry_row_count")
-	row := tk.MustQuery(`show stats_meta where db_name = "test" and table_name = "retry_row_count"`).Rows()[0]
-	require.Equal(t, "30", row[5])
 }
 
 func TestFailedAnalyzeRequest(t *testing.T) {
@@ -404,45 +335,6 @@ func TestExtractTopN(t *testing.T) {
 		"test_extract_topn test_extract_topn  index_b 1 8 1",
 		"test_extract_topn test_extract_topn  index_b 1 9 1",
 	))
-}
-
-func TestHashInTopN(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b float, c decimal(30, 10), d varchar(20))")
-	tk.MustExec(`insert into t values
-				(1, 1.1, 11.1, "0110"),
-				(2, 2.2, 22.2, "0110"),
-				(3, 3.3, 33.3, "0110"),
-				(4, 4.4, 44.4, "0440")`)
-	for i := 0; i < 3; i++ {
-		tk.MustExec("insert into t select * from t")
-	}
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	// get stats of normal analyze
-	tk.MustExec("analyze table t")
-	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	tblStats1 := dom.StatsHandle().GetTableStats(tblInfo).Copy()
-	// get stats of fast analyze
-	tk.MustExec("set @@tidb_enable_fast_analyze = 1")
-	tk.MustExec("analyze table t")
-	tblStats2 := dom.StatsHandle().GetTableStats(tblInfo).Copy()
-	// check the hash for topn
-	for _, col := range tblInfo.Columns {
-		topn1 := tblStats1.Columns[col.ID].TopN.TopN
-		cm2 := tblStats2.Columns[col.ID].TopN
-		for _, topnMeta := range topn1 {
-			count2, exists := cm2.QueryTopN(nil, topnMeta.Encoded)
-			require.True(t, exists)
-			require.Equal(t, topnMeta.Count, count2)
-		}
-	}
 }
 
 func TestNormalAnalyzeOnCommonHandle(t *testing.T) {
@@ -675,24 +567,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\""))
 }
 
-func TestFastAnalyze4GlobalStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`create database if not exists test_fast_gstats`)
-	tk.MustExec("use test_fast_gstats")
-	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-	tk.MustExec("set @@session.tidb_build_stats_concurrency=1")
-	// test fast analyze in dynamic mode
-	tk.MustExec("set @@session.tidb_analyze_version = 2;")
-	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic';")
-	tk.MustExec("drop table if exists test_fast_gstats;")
-	tk.MustExec("create table test_fast_gstats(a int, b int) PARTITION BY HASH(a) PARTITIONS 2;")
-	tk.MustExec("insert into test_fast_gstats values(1,1),(3,3),(4,4),(2,2),(5,5);")
-	err := tk.ExecToErr("analyze table test_fast_gstats;")
-	require.EqualError(t, err, "Fast analyze hasn't reached General Availability and only support analyze version 1 currently")
-}
-
 func TestAnalyzeIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -708,95 +582,10 @@ func TestAnalyzeIndex(t *testing.T) {
 	tk.MustExec("analyze table t1")
 	require.Greater(t, len(tk.MustQuery("show stats_topn where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 0)
 
-	func() {
-		defer tk.MustExec("set @@session.tidb_enable_fast_analyze=0")
-		tk.MustExec("drop stats t1")
-		tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
-		tk.MustExec("set @@tidb_analyze_version=1")
-		tk.MustExec("analyze table t1 index k")
-		require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 1)
-	}()
-}
-
-func TestAnalyzeIncremental(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_analyze_version = 1")
-	testAnalyzeIncremental(tk, t, dom)
-}
-
-func testAnalyzeIncremental(tk *testkit.TestKit, t *testing.T, dom *domain.Domain) {
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
-	tk.MustExec("insert into t values (1,1)")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  idx 1 0 1 1 1 1 0"))
-	tk.MustExec("insert into t values (2,2)")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
-	tk.MustExec("analyze incremental table t index")
-	// Result should not change.
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
-
-	tk.MustExec("set @@tidb_enable_paging = off")
-
-	tk.MustExec("insert into t values (3,3)")
-	is := dom.InfoSchema()
-	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo := table.Meta()
-	tk.MustQuery("select * from t use index(idx) where b = 3")
-	tk.MustQuery("select * from t where a > 1")
-	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(is))
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0"))
-	tblStats := h.GetTableStats(tblInfo)
-	val, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(3))
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
-	require.True(t, statistics.IsAnalyzed(tblStats.Indices[tblInfo.Indices[0].ID].Flag))
-	require.True(t, statistics.IsAnalyzed(tblStats.Columns[tblInfo.Columns[0].ID].Flag))
-
-	tk.MustExec("analyze incremental table t index")
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t  a 0 0 1 1 1 1 0", "test t  a 0 1 2 1 2 2 0", "test t  a 0 2 3 1 3 3 0",
-		"test t  idx 1 0 1 1 1 1 0", "test t  idx 1 1 2 1 2 2 0", "test t  idx 1 2 3 1 3 3 0"))
-	tblStats = h.GetTableStats(tblInfo)
-	require.Equal(t, uint64(1), tblStats.Indices[tblInfo.Indices[0].ID].QueryBytes(nil, val))
-
-	// test analyzeIndexIncremental for global-level stats;
-	tk.MustExec("set @@session.tidb_analyze_version = 1;")
-	tk.MustQuery("select @@tidb_analyze_version").Check(testkit.Rows("1"))
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec(`create table t (a int, b int, primary key(a), index idx(b)) partition by range (a) (
-		partition p0 values less than (10),
-		partition p1 values less than (20),
-		partition p2 values less than (30)
-	);`)
-	tk.MustExec("analyze incremental table t index")
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows())
-	tk.MustExec("insert into t values (1,1)")
-	tk.MustExec("analyze incremental table t index")
-	tk.MustQuery("show warnings").Check(testkit.Rows()) // no warning
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 idx 1 0 1 1 1 1 0"))
-	tk.MustExec("insert into t values (2,2)")
-	tk.MustExec("analyze incremental table t index")
-	require.NoError(t, h.LoadNeededHistograms())
-	tk.MustQuery("show stats_buckets").Check(testkit.Rows("test t p0 a 0 0 1 1 1 1 0", "test t p0 a 0 1 2 1 2 2 0", "test t p0 idx 1 0 1 1 1 1 0", "test t p0 idx 1 1 2 1 2 2 0"))
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
-	tk.MustExec("insert into t values (11,11)")
-	err = tk.ExecToErr("analyze incremental table t index")
-	require.Equal(t, "[stats]: global statistics for partitioned tables unavailable in ANALYZE INCREMENTAL", err.Error())
+	tk.MustExec("drop stats t1")
+	tk.MustExec("set @@tidb_analyze_version=1")
+	tk.MustExec("analyze table t1 index k")
+	require.Greater(t, len(tk.MustQuery("show stats_buckets where table_name = 't1' and column_name = 'k' and is_index = 1").Rows()), 1)
 }
 
 func TestIssue20874(t *testing.T) {
@@ -955,11 +744,11 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := handle.AutoAnalyzeMinCnt
+	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
 	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal3
+		autoanalyze.AutoAnalyzeMinCnt = originalVal3
 	}()
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
@@ -1297,11 +1086,11 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.01")
-	originalVal3 := handle.AutoAnalyzeMinCnt
+	originalVal3 := autoanalyze.AutoAnalyzeMinCnt
 	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal3
+		autoanalyze.AutoAnalyzeMinCnt = originalVal3
 	}()
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	originalVal4 := tk.MustQuery("select @@tidb_enable_column_tracking").Rows()[0][0].(string)
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set global tidb_enable_column_tracking = %v", originalVal4))
@@ -2178,9 +1967,9 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -2262,9 +2051,9 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	oriStart := tk.MustQuery("select @@tidb_auto_analyze_start_time").Rows()[0][0].(string)
 	oriEnd := tk.MustQuery("select @@tidb_auto_analyze_end_time").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		handle.AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", oriStart))
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", oriEnd))
 	}()
@@ -2737,8 +2526,6 @@ PARTITION BY RANGE ( a ) (
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Ignore columns and options when analyze partition in dynamic mode",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
 	require.NoError(t, h.LoadNeededHistograms())
@@ -2750,11 +2537,9 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p0")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/9) as the sample-rate=1\"",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
 	))
 	tbl = h.GetTableStats(tableInfo)
-	require.Equal(t, tbl.Version, lastVersion) // global stats not updated
+	require.Greater(t, tbl.Version, lastVersion) // global stats updated
 }
 
 func TestAnalyzePartitionStaticToDynamic(t *testing.T) {
@@ -2876,10 +2661,8 @@ PARTITION BY RANGE ( a ) (
 
 	// analyze partition with index and with options are allowed under dynamic V1
 	tk.MustExec("analyze table t partition p0 with 1 topn, 3 buckets")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-		"Warning 8131 Build global-level stats failed due to missing partition-level stats: table `t` partition `p1`",
-	))
+	rows := tk.MustQuery("show warnings").Rows()
+	require.Len(t, rows, 0)
 	tk.MustExec("analyze table t partition p1 with 1 topn, 3 buckets")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows())
 	tk.MustQuery("select * from t where a > 1 and b > 1 and c > 1 and d > 1")
@@ -3023,12 +2806,12 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 		"3 0",
 	))
 
-	originalVal1 := handle.AutoAnalyzeMinCnt
+	originalVal1 := autoanalyze.AutoAnalyzeMinCnt
 	originalVal2 := tk.MustQuery("select @@global.tidb_auto_analyze_ratio").Rows()[0][0].(string)
-	handle.AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	tk.MustExec("set global tidb_auto_analyze_ratio = 0.001")
 	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal1
+		autoanalyze.AutoAnalyzeMinCnt = originalVal1
 		tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_ratio = %v", originalVal2))
 	}()
 
@@ -3076,9 +2859,12 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
-		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx_c"))
-	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Check(testkit.Rows(
-		"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate"))
+	))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Sort().Check(
+		testkit.Rows(
+			"analyze index idx_c",
+			"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate",
+		))
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -3089,7 +2875,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.True(t, stats.Columns[tblInfo.Columns[1].ID].IsStatsInitialized())
 	require.False(t, stats.Columns[tblInfo.Columns[2].ID].IsStatsInitialized())
 	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
-	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
+	require.True(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
 }
 
 func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
@@ -3105,22 +2891,329 @@ func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%analyze table%'").Check(testkit.Rows("analyze table columns a, d with 256 buckets, 500 topn, 1 samplerate"))
 }
 
-func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
+// TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
+// It checks the analyze jobs, async loading and the stats content in the memory.
+func TestAnalyzeMVIndex(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/DebugAnalyzeJobOperations", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/DebugAnalyzeJobOperations", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/DebugAnalyzeJobOperations"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/statistics/handle/DebugAnalyzeJobOperations"))
+	}()
+	// 1. prepare the table and insert data
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	oriLease := h.Lease()
+	h.SetLease(1)
+	defer func() {
+		h.SetLease(oriLease)
+	}()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
-	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
-	h := dom.StatsHandle()
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, j json, index ia(a)," +
+		"index ij_signed((cast(j->'$.signed' as signed array)))," +
+		"index ij_unsigned((cast(j->'$.unsigned' as unsigned array)))," +
+		// date currently incompatible with mysql
+		//"index ij_date((cast(j->'$.dt' as date array)))," +
+		// datetime currently incompatible with mysql
+		//"index ij_datetime((cast(j->'$.dttm' as datetime(6) array)))," +
+		// time currently incompatible with mysql
+		//"index ij_time((cast(j->'$.tm' as time(6) array)))," +
+		"index ij_double((cast(j->'$.dbl' as double array)))," +
+		// decimal not supported yet
+		//"index ij_decimal((cast(j->'$.dcm' as decimal(15,5) array)))," +
+		"index ij_binary((cast(j->'$.bin' as binary(50) array)))," +
+		"index ij_char((cast(j->'$.char' as char(50) array)))" +
+		")")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	jsonData := []map[string]interface{}{
+		{
+			"signed":   []int64{1, 2, 300, 300, 0, 4, 5, -40000},
+			"unsigned": []uint64{0, 3, 4, 600, 12},
+			"dt":       []string{"2020-01-23", "2021-03-21", "2011-11-11", "2015-06-18", "1990-03-21", "2050-12-12"},
+			"dttm":     []string{"2021-01-11 12:00:00.123456", "2025-05-15 15:50:00.5", "2020-01-01 18:17:16.555", "2100-01-01 15:16:17", "1950-01-01 00:00:00.00008"},
+			"tm":       []string{"100:00:30.5", "-321:00:01.16"},
+			"dbl":      []float64{-21.5, 2.15, 10.555555, 0.000005, 0.00},
+			"dcm":      []float64{1.1, 2.2, 10.1234, -12.34, -1000.56789},
+			"bin":      []string{"aaaaaa", "bbbb", "ppp", "ccc", "asdf", "qwer", "yuiop", "1234", "5678", "0000", "zzzz"},
+			"char":     []string{"aaa", "cccccc", "eee", "asdf", "qwer", "yuiop", "!@#$"},
+		},
+		{
+			"signed":   []int64{1, 2, 300, 300, 0, 4, 5, -40000},
+			"unsigned": []uint64{0, 3, 4, 600, 12},
+			"dt":       []string{"2020-01-23", "2021-03-21", "2011-11-11", "2015-06-18", "1990-03-21", "2050-12-12"},
+			"dttm":     []string{"2021-01-11 12:00:00.123456", "2025-05-15 15:50:00.5", "2020-01-01 18:17:16.555", "2100-01-01 15:16:17", "1950-01-01 00:00:00.00008"},
+			"tm":       []string{"100:00:30.5", "-321:00:01.16", "09:11:47", "8:50.10"},
+			"dbl":      []float64{-21.5, 2.15, 10.555555, 0.000005, 0.00, 10.9876},
+			"dcm":      []float64{1.1, 2.2, 10.1234, -12.34, 987.654},
+			"bin":      []string{"aaaaaa", "bbbb", "ppp", "ccc", "asdf", "qwer", "ghjk", "0000", "zzzz"},
+			"char":     []string{"aaa", "cccccc", "eee", "asdf", "qwer", "yuiop", "!@#$"},
+		},
+		{
+			"signed":   []int64{1, 2, 300, 300, 0, 4, -5, 13245},
+			"unsigned": []uint64{0, 3, 4, 600, 3112},
+			"dt":       []string{"2020-01-23", "2021-03-21", "2011-11-11", "2015-06-18", "1990-03-21", "2050-12-12"},
+			"dttm":     []string{"2021-01-11 12:00:00.123456", "2025-05-15 15:50:00.5", "2020-01-01 18:17:16.555", "2340-01-01 15:16:17", "1950-01-01 00:00:00.00008"},
+			"tm":       []string{"100:00:30.5", "-321:00:01.16", "09:11:47", "8:50.10", "1:10:43"},
+			"dbl":      []float64{-21.5, 2.15, 10.555555, -12.000005, 0.00, 10.9876},
+			"dcm":      []float64{1.1, 2.2, 10.1234, -12.34, 987.654},
+			"bin":      []string{"aaaaaa", "bbbb", "ppp", "ccc", "asdf", "qwer", "1234", "0000", "zzzz"},
+			"char":     []string{"aaa", "cccccc", "eee", "asdf", "qwer", "yuiop", "!@#$"},
+		},
+		{
+			"signed":   []int64{1, 2, 300, 300, 0, 4, -5, 13245},
+			"unsigned": []uint64{0, 3, 4, 600, 3112},
+			"dt":       []string{"2020-01-23", "2021-03-21", "2011-11-11", "2015-06-18", "1990-03-21", "2050-12-12"},
+			"dttm":     []string{"2021-01-11 12:00:00.123456", "2025-05-15 15:50:00.5", "2110-01-01 18:17:16", "2340-01-01 15:16:17", "1950-01-01 00:00:00.00008"},
+			"tm":       []string{"100:00:30.5", "-321:00:01.16", "09:11:47", "8:50.10", "1:10:43"},
+			"dbl":      []float64{-21.5, 2.15, 10.555555, 0.000005, 0.00, 10.9876},
+			"dcm":      []float64{1.1, 2.2, 10.1234, -12.34, -123.654},
+			"bin":      []string{"aaaaaa", "bbbb", "ppp", "ccc", "egfb", "nfre", "1234", "0000", "zzzz"},
+			"char":     []string{"aaa", "cccccc", "eee", "asdf", "k!@cvd", "yuiop", "%*$%#@qwe"},
+		},
+		{
+			"signed":   []int64{1, 2, 300, -300, 0, 100, -5, 13245},
+			"unsigned": []uint64{0, 3, 4, 600, 3112},
+			"dt":       []string{"2020-01-23", "2021-03-21", "2011-11-11", "2015-06-18", "1990-03-21", "2050-12-12"},
+			"dttm":     []string{"2021-01-11 12:00:00.123456", "2025-05-15 15:50:00.5", "2110-01-01 22:17:16", "2340-01-22 15:16:17", "1950-01-01 00:12:00.00008"},
+			"tm":       []string{"100:00:30.5", "-321:00:01.16", "09:11:47", "8:5.10", "12:4:43"},
+			"dbl":      []float64{-21.5, 2.15, 10.555555, 0.000005, 0.00, 10.9876},
+			"dcm":      []float64{1.1, 2.2, 10.1234, -12.34, 987.654},
+			"bin":      []string{"aaaaaa", "bbbb", "ppp", "ccc", "egfb", "nfre", "1234", "3796", "zzzz"},
+			"char":     []string{"aaa", "cccccc", "eee", "asdf", "kicvd", "yuiop", "%*asdf@"},
+		},
+		{
+			"signed":   []int64{1, 2, 300, 300, 0, 4, -5, 13245},
+			"unsigned": []uint64{0, 3, 4, 600, 3112},
+			"dt":       []string{"2020-01-23", "2021-03-21", "2011-11-11", "2015-06-18", "1990-03-21", "2050-12-12"},
+			"dttm":     []string{"2021-01-11 12:00:00.123456", "2025-05-15 15:50:00.5", "2020-01-01 18:17:16.555", "2100-01-01 15:16:17", "1950-01-01 00:00:00.00008"},
+			"tm":       []string{"100:00:30.5", "-321:00:01.16", "09:11:47", "8:50.10", "1:10:43"},
+			"dbl":      []float64{-21.5, 2.15, 10.555555, 0.000005, 0.00, 10.9876},
+			"dcm":      []float64{1.1, 2.2, 10.1234, -12.34, 987.654},
+			"bin":      []string{"aaaaaa", "bbbb", "ppp", "ccc", "egfb", "nfre", "1234", "0000", "zzzz"},
+			"char":     []string{"aaa", "cccccc", "eee", "asdf", "k!@cvd", "yuiop", "%*$%#@qwe"},
+		},
+	}
+	for i := 0; i < 3; i++ {
+		jsonValue := jsonData[i]
+		jsonValueStr, err := json.Marshal(jsonValue)
+		require.NoError(t, err)
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%s')", 1, jsonValueStr))
+	}
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	tk.MustExec("insert into t select * from t")
+	for i := 3; i < 6; i++ {
+		jsonValue := jsonData[i]
+		jsonValueStr, err := json.Marshal(jsonValue)
+		require.NoError(t, err)
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%s')", 1, jsonValueStr))
+	}
 	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
-	require.NoError(t, h.Update(dom.InfoSchema()))
-	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
-	originalVal := handle.AutoAnalyzeMinCnt
-	handle.AutoAnalyzeMinCnt = 0
-	defer func() {
-		handle.AutoAnalyzeMinCnt = originalVal
-	}()
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
-	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
+	// 2. analyze and check analyze jobs
+	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
+	tk.MustQuery("select id, table_schema, table_name, partition_name, job_info, processed_rows, state from mysql.analyze_jobs order by id").
+		Check(testkit.Rows("1 test t  analyze table columns a with 256 buckets, 3 topn, 1 samplerate 27 finished",
+			"2 test t  analyze index ij_signed 190 finished",
+			"3 test t  analyze index ij_unsigned 135 finished",
+			"4 test t  analyze index ij_double 154 finished",
+			"5 test t  analyze index ij_binary 259 finished",
+			"6 test t  analyze index ij_char 189 finished",
+		))
+
+	// 3. test stats loading
+	// 3.1. turn off sync loading, stats on all indexes should be allEvicted, but these queries should trigger async loading
+	tk.MustExec("set session tidb_stats_load_sync_wait = 0")
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_unsigned:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_unsigned:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
+		"TableReader 21.60 root  data:Selection",
+		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
+		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
+	))
+	// 3.2. emulate the background async loading
+	require.NoError(t, h.LoadNeededHistograms())
+	// 3.3. now, stats on all indexes should be loaded
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
+		"TableReader 21.60 root  data:Selection",
+		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
+		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	))
+
+	// 3.4. clean up the stats and re-analyze the table
+	tk.MustExec("drop stats t")
+	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
+	// 3.5. turn on the sync loading, stats on mv indexes should be loaded
+	tk.MustExec("set session tidb_stats_load_sync_wait = 1000")
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
+		"IndexMerge 0.03 root  type: union",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+	))
+
+	// 4. check stats content in the memory
+	require.NoError(t, h.LoadNeededHistograms())
+	tk.MustQuery("show stats_meta").CheckAt([]int{0, 1, 4, 5}, testkit.Rows("test t 0 27"))
+	tk.MustQuery("show stats_histograms").CheckAt([]int{0, 1, 3, 4, 6, 7, 8, 9, 10}, testkit.Rows(
+		// db_name, table_name, column_name, is_index, distinct_count, null_count, avg_col_size, correlation, load_status
+		"test t a 0 1 0 1 1 allEvicted",
+		"test t ia 1 1 0 0 0 allLoaded",
+		"test t ij_signed 1 11 0 0 0 allLoaded",
+		"test t ij_unsigned 1 6 0 0 0 allLoaded",
+		"test t ij_double 1 7 0 0 0 allLoaded",
+		"test t ij_binary 1 15 0 0 0 allLoaded",
+		"test t ij_char 1 11 0 0 0 allLoaded",
+	))
+	tk.MustQuery("show stats_topn").Check(testkit.Rows(
+		// db_name, table_name, partition_name, column_name, is_index, value, count
+		"test t  ia 1 1 27",
+		"test t  ij_signed 1 -40000 16",
+		"test t  ij_signed 1 -300 1",
+		"test t  ij_signed 1 -5 11",
+		"test t  ij_unsigned 1 0 27",
+		"test t  ij_unsigned 1 3 27",
+		"test t  ij_unsigned 1 4 27",
+		"test t  ij_double 1 -21.5 27",
+		"test t  ij_double 1 -12.000005 8",
+		"test t  ij_double 1 0 27",
+		"test t  ij_binary 1 0000 26",
+		"test t  ij_binary 1 1234 19",
+		"test t  ij_binary 1 3796 1",
+		"test t  ij_char 1 !@#$ 24",
+		"test t  ij_char 1 %*$%#@qwe 2",
+		"test t  ij_char 1 %*asdf@ 1",
+	))
+	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
+		// db_name, table_name, partition_name, column_name, is_index, bucket_id, count, repeats, lower_bound, upper_bound, ndv
+		"test t  ij_signed 1 0 27 27 0 0 0",
+		"test t  ij_signed 1 1 54 27 1 1 0",
+		"test t  ij_signed 1 2 81 27 2 2 0",
+		"test t  ij_signed 1 3 107 26 4 4 0",
+		"test t  ij_signed 1 4 123 16 5 5 0",
+		"test t  ij_signed 1 5 124 1 100 100 0",
+		"test t  ij_signed 1 6 151 27 300 300 0",
+		"test t  ij_signed 1 7 162 11 13245 13245 0",
+		"test t  ij_unsigned 1 0 16 16 12 12 0",
+		"test t  ij_unsigned 1 1 43 27 600 600 0",
+		"test t  ij_unsigned 1 2 54 11 3112 3112 0",
+		"test t  ij_double 1 0 19 19 0.000005 0.000005 0",
+		"test t  ij_double 1 1 46 27 2.15 2.15 0",
+		"test t  ij_double 1 2 73 27 10.555555 10.555555 0",
+		"test t  ij_double 1 3 92 19 10.9876 10.9876 0",
+		"test t  ij_binary 1 0 8 8 5678 5678 0",
+		"test t  ij_binary 1 1 35 27 aaaaaa aaaaaa 0",
+		"test t  ij_binary 1 2 59 24 asdf asdf 0",
+		"test t  ij_binary 1 3 86 27 bbbb bbbb 0",
+		"test t  ij_binary 1 4 113 27 ccc ccc 0",
+		"test t  ij_binary 1 5 116 3 egfb egfb 0",
+		"test t  ij_binary 1 6 124 8 ghjk ghjk 0",
+		"test t  ij_binary 1 7 127 3 nfre nfre 0",
+		"test t  ij_binary 1 8 154 27 ppp ppp 0",
+		"test t  ij_binary 1 9 178 24 qwer qwer 0",
+		"test t  ij_binary 1 10 186 8 yuiop yuiop 0",
+		"test t  ij_binary 1 11 213 27 zzzz zzzz 0",
+		"test t  ij_char 1 0 27 27 aaa aaa 0",
+		"test t  ij_char 1 1 54 27 asdf asdf 0",
+		"test t  ij_char 1 2 81 27 cccccc cccccc 0",
+		"test t  ij_char 1 3 108 27 eee eee 0",
+		"test t  ij_char 1 4 110 2 k!@cvd k!@cvd 0",
+		"test t  ij_char 1 5 111 1 kicvd kicvd 0",
+		"test t  ij_char 1 6 135 24 qwer qwer 0",
+		"test t  ij_char 1 7 162 27 yuiop yuiop 0",
+	))
+}
+
+func TestAnalyzePartitionVerify(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	sql := "create table t(a int,b varchar(100),c int,INDEX idx_c(c)) PARTITION BY RANGE ( a ) ("
+	for n := 100; n < 1000; n = n + 100 {
+		sql += "PARTITION p" + fmt.Sprint(n) + " VALUES LESS THAN (" + fmt.Sprint(n) + "),"
+	}
+	sql += "PARTITION p" + fmt.Sprint(1000) + " VALUES LESS THAN MAXVALUE)"
+	tk.MustExec(sql)
+	// insert random data into table t
+	insertStr := "insert into t (a,b,c) values(0, 'abc', 0)"
+	for i := 1; i < 1000; i++ {
+		insertStr += fmt.Sprintf(" ,(%d, '%s', %d)", i, "abc", i)
+	}
+	insertStr += ";"
+	tk.MustExec(insertStr)
+	tk.MustExec("analyze table t")
+
+	result := tk.MustQuery("show stats_histograms where Db_name='test'").Sort()
+	require.NotNil(t, result)
+	require.Len(t, result.Rows(), 4+4*10) // 4 columns * 10 partiion+ 4 global columns
+	for _, row := range result.Rows() {
+		if row[2] == "global" {
+			if row[3] == "b" {
+				// global column b has 1 distinct value
+				require.Equal(t, "1", row[6])
+			} else {
+				require.Equal(t, "1000", row[6])
+			}
+		} else {
+			if row[3] == "b" {
+				require.Equal(t, "1", row[6])
+			} else {
+				require.Equal(t, "100", row[6])
+			}
+		}
+	}
 }

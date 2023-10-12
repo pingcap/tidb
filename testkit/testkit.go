@@ -32,14 +32,17 @@ import (
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testenv"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tipb/go-binlog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/atomic"
+	"google.golang.org/grpc"
 )
 
 var testKitIDGenerator atomic.Uint64
@@ -176,7 +179,7 @@ func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ..
 
 // MustIndexLookup checks whether the plan for the sql is IndexLookUp.
 func (tk *TestKit) MustIndexLookup(sql string, args ...interface{}) *Result {
-	tk.require.True(tk.HasPlan(sql, "IndexLookUp", args...))
+	tk.MustHavePlan(sql, "IndexLookUp", args...)
 	return tk.MustQuery(sql, args...)
 }
 
@@ -241,15 +244,26 @@ func (tk *TestKit) ResultSetToResultWithCtx(ctx context.Context, rs sqlexec.Reco
 	return &Result{rows: rows, comment: comment, assert: tk.assert, require: tk.require}
 }
 
-// HasPlan checks if the result execution plan contains specific plan.
-func (tk *TestKit) HasPlan(sql string, plan string, args ...interface{}) bool {
+func (tk *TestKit) hasPlan(sql string, plan string, args ...interface{}) (bool, *Result) {
 	rs := tk.MustQuery("explain "+sql, args...)
 	for i := range rs.rows {
 		if strings.Contains(rs.rows[i][0], plan) {
-			return true
+			return true, rs
 		}
 	}
-	return false
+	return false, rs
+}
+
+// MustHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustHavePlan(sql string, plan string, args ...interface{}) {
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.True(has, fmt.Sprintf("%s doesn't have plan %s, full plan %v", sql, plan, rs.Rows()))
+}
+
+// MustNotHavePlan checks if the result execution plan contains specific plan.
+func (tk *TestKit) MustNotHavePlan(sql string, plan string, args ...interface{}) {
+	has, rs := tk.hasPlan(sql, plan, args...)
+	tk.require.False(has, fmt.Sprintf("%s shouldn't have plan %s, full plan %v", sql, plan, rs.Rows()))
 }
 
 // HasTiFlashPlan checks if the result execution plan contains TiFlash plan.
@@ -341,6 +355,17 @@ func (tk *TestKit) ExecWithContext(ctx context.Context, sql string, args ...inte
 			}
 			if i == 0 {
 				rs0 = rs
+				if len(stmts) > 1 && rs != nil {
+					// The result of the first statement will be drained and closed later. To avoid leaking
+					// resource on the statement context, we'll need to store the result and close the
+					// resultSet before executing other statements.
+					rs0 = buildRowsRecordSet(ctx, rs)
+					// the `rs` can be closed safely now
+					terror.Call(rs.Close)
+				}
+			} else if rs != nil {
+				// other statements are executed, but the `ResultSet` is not returned, so close them here
+				terror.Call(rs.Close)
 			}
 			if err != nil {
 				tk.session.GetSessionVars().StmtCtx.AppendError(err)
@@ -568,4 +593,84 @@ func (c *RegionProperityClient) SendRequest(ctx context.Context, addr string, re
 		}
 	}
 	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+// MockPumpClient is a mock pump client.
+type MockPumpClient struct{}
+
+// WriteBinlog is a mock method.
+func (m MockPumpClient) WriteBinlog(ctx context.Context, in *binlog.WriteBinlogReq, opts ...grpc.CallOption) (*binlog.WriteBinlogResp, error) {
+	return &binlog.WriteBinlogResp{}, nil
+}
+
+// PullBinlogs is a mock method.
+func (m MockPumpClient) PullBinlogs(ctx context.Context, in *binlog.PullBinlogReq, opts ...grpc.CallOption) (binlog.Pump_PullBinlogsClient, error) {
+	return nil, nil
+}
+
+var _ sqlexec.RecordSet = &rowsRecordSet{}
+
+type rowsRecordSet struct {
+	fields []*ast.ResultField
+	rows   []chunk.Row
+
+	idx int
+
+	// this error is stored here to return in the future
+	err error
+}
+
+func (r *rowsRecordSet) Fields() []*ast.ResultField {
+	return r.fields
+}
+
+func (r *rowsRecordSet) Next(ctx context.Context, req *chunk.Chunk) error {
+	if r.err != nil {
+		return r.err
+	}
+
+	req.Reset()
+	for r.idx < len(r.rows) {
+		if req.IsFull() {
+			return nil
+		}
+		req.AppendRow(r.rows[r.idx])
+		r.idx++
+	}
+	return nil
+}
+
+func (r *rowsRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
+	fields := make([]*types.FieldType, 0, len(r.fields))
+	for _, field := range r.fields {
+		fields = append(fields, &field.Column.FieldType)
+	}
+	if alloc != nil {
+		return alloc.Alloc(fields, 0, 1024)
+	}
+	return chunk.New(fields, 1024, 1024)
+}
+
+func (r *rowsRecordSet) Close() error {
+	// do nothing
+	return nil
+}
+
+// buildRowsRecordSet builds a `rowsRecordSet` from any `RecordSet` by draining all rows from it.
+// It's used to store the result temporarily. After building a new RecordSet, the original rs (in the argument) can be
+// closed safely.
+func buildRowsRecordSet(ctx context.Context, rs sqlexec.RecordSet) sqlexec.RecordSet {
+	rows, err := session.GetRows4Test(ctx, nil, rs)
+	if err != nil {
+		return &rowsRecordSet{
+			fields: rs.Fields(),
+			err:    err,
+		}
+	}
+
+	return &rowsRecordSet{
+		fields: rs.Fields(),
+		rows:   rows,
+		idx:    0,
+	}
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -124,7 +125,7 @@ func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
 }
 
 // CampaignOwner implements Manager.CampaignOwner interface.
-func (m *mockManager) CampaignOwner() error {
+func (m *mockManager) CampaignOwner(_ ...int) error {
 	m.wg.Add(1)
 	go func() {
 		logutil.BgLogger().Debug("owner manager campaign owner", zap.String("category", "ddl"),
@@ -142,10 +143,12 @@ func (m *mockManager) CampaignOwner() error {
 				return
 			case <-m.resignDone:
 				m.RetireOwner()
-				time.Sleep(1 * time.Second) // Give a chance to the other owner managers to get owner.
+				//nolint: errcheck
+				timeutil.Sleep(m.ctx, 1*time.Second) // Give a chance to the other owner managers to get owner.
 			default:
 				m.toBeOwner()
-				time.Sleep(1 * time.Second)
+				//nolint: errcheck
+				timeutil.Sleep(m.ctx, 1*time.Second) // Speed up domain.Close()
 				logutil.BgLogger().Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
 					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
 			}

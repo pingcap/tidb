@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/memory"
 	"go.uber.org/zap"
+	"golang.org/x/exp/rand"
 )
 
 // LFU is a LFU based on the ristretto.Cache
@@ -34,31 +35,42 @@ type LFU struct {
 	cache        *ristretto.Cache
 	resultKeySet *keySetShard
 	cost         atomic.Int64
+	closed       atomic.Bool
 	closeOnce    sync.Once
 }
 
 var testMode = false
 
+// adjustMemCost adjusts the memory cost according to the total memory cost.
+// When the total memory cost is 0, the memory cost is set to half of the total memory.
+func adjustMemCost(totalMemCost int64) (result int64, err error) {
+	if totalMemCost == 0 {
+		memTotal, err := memory.MemTotal()
+		if err != nil {
+			return 0, err
+		}
+		return int64(memTotal / 2), nil
+	}
+	return totalMemCost, nil
+}
+
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
-	if totalMemCost == 0 {
-		if intest.InTest {
-			totalMemCost = 5000000
-		} else {
-			memTotal, err := memory.MemTotal()
-			if err != nil {
-				return nil, err
-			}
-			totalMemCost = int64(memTotal / 2)
-		}
+	cost, err := adjustMemCost(totalMemCost)
+	if err != nil {
+		return nil, err
 	}
-	metrics.CapacityGauge.Set(float64(totalMemCost))
+	if intest.InTest && totalMemCost == 0 {
+		// In test, we set the cost to 5MB to avoid using too many memory in the LFU's CM sketch.
+		cost = 5000000
+	}
+	metrics.CapacityGauge.Set(float64(cost))
 	result := &LFU{}
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters:        mathutil.Max(totalMemCost/128*2, 10), // assume the cost per table stats is 128
-		MaxCost:            totalMemCost,
+		NumCounters:        mathutil.Max(mathutil.Min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
+		MaxCost:            cost,
 		BufferItems:        bufferItems,
 		OnEvict:            result.onEvict,
 		OnExit:             result.onExit,
@@ -75,7 +87,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 }
 
 // Get implements statsCacheInner
-func (s *LFU) Get(tid int64, _ bool) (*statistics.Table, bool) {
+func (s *LFU) Get(tid int64) (*statistics.Table, bool) {
 	result, ok := s.cache.Get(tid)
 	if !ok {
 		return s.resultKeySet.Get(tid)
@@ -128,8 +140,8 @@ func (s *LFU) onReject(item *ristretto.Item) {
 			logutil.BgLogger().Warn("panic in onReject", zap.Any("error", r), zap.Stack("stack"))
 		}
 	}()
-	metrics.RejectCounter.Add(1.0)
 	s.dropMemory(item)
+	metrics.RejectCounter.Inc()
 }
 
 func (s *LFU) onEvict(item *ristretto.Item) {
@@ -149,11 +161,13 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 		// so it should not be processed.
 		return
 	}
+	if s.closed.Load() {
+		return
+	}
 	// We do not need to calculate the cost during onEvict,
 	// because the onexit function is also called when the evict event occurs.
 	// TODO(hawkingrei): not copy the useless part.
 	table := item.Value.(*statistics.Table).Copy()
-	before := table.MemoryUsage().TotalTrackingMemUsage()
 	for _, column := range table.Columns {
 		DropEvicted(column)
 	}
@@ -163,8 +177,19 @@ func (s *LFU) dropMemory(item *ristretto.Item) {
 	s.resultKeySet.AddKeyValue(int64(item.Key), table)
 	after := table.MemoryUsage().TotalTrackingMemUsage()
 	// why add before again? because the cost will be subtracted in onExit.
-	// in fact, it is  -(before - after) + after = after + after - before
-	s.addCost(2*after - before)
+	// in fact, it is after - before
+	s.addCost(after)
+	s.triggerEvict()
+}
+
+func (s *LFU) triggerEvict() {
+	// When the memory usage of the cache exceeds the maximum value, Many item need to evict. But
+	// ristretto'c cache execute the evict operation when to write the cache. for we can evict as soon as possible,
+	// we will write some fake item to the cache. fake item have a negative key, and the value is nil.
+	if s.Cost() > s.cache.MaxCost() {
+		//nolint: gosec
+		s.cache.Set(-rand.Int(), nil, 0)
+	}
 }
 
 func (s *LFU) onExit(val any) {
@@ -176,6 +201,9 @@ func (s *LFU) onExit(val any) {
 	if val == nil {
 		// Sometimes the same key may be passed to the "onEvict/onExit" function twice,
 		// and in the second invocation, the value is empty, so it should not be processed.
+		return
+	}
+	if s.closed.Load() {
 		return
 	}
 	s.addCost(
@@ -194,8 +222,15 @@ func (s *LFU) Copy() internal.StatsCacheInner {
 
 // SetCapacity implements statsCacheInner
 func (s *LFU) SetCapacity(maxCost int64) {
-	s.cache.UpdateMaxCost(maxCost)
-	metrics.CapacityGauge.Set(float64(maxCost))
+	cost, err := adjustMemCost(maxCost)
+	if err != nil {
+		logutil.BgLogger().Warn("adjustMemCost failed", zap.Error(err))
+		return
+	}
+	s.cache.UpdateMaxCost(cost)
+	s.triggerEvict()
+	metrics.CapacityGauge.Set(float64(cost))
+	metrics.CostGauge.Set(float64(s.Cost()))
 }
 
 // wait blocks until all buffered writes have been applied. This ensures a call to Set()
@@ -211,6 +246,7 @@ func (s *LFU) metrics() *ristretto.Metrics {
 // Close implements statsCacheInner
 func (s *LFU) Close() {
 	s.closeOnce.Do(func() {
+		s.closed.Store(true)
 		s.Clear()
 		s.cache.Close()
 		s.cache.Wait()

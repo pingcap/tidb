@@ -16,7 +16,7 @@ package statistics
 
 import (
 	"context"
-	"sort"
+	"slices"
 	"time"
 	"unsafe"
 
@@ -65,32 +65,16 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
 	sortedItems := make([]*SampleItem, len(items))
 	copy(sortedItems, items)
-	sorter := sampleItemSorter{items: sortedItems, sc: sc}
-	sort.Stable(&sorter)
-	return sortedItems, sorter.err
-}
-
-type sampleItemSorter struct {
-	err   error
-	sc    *stmtctx.StatementContext
-	items []*SampleItem
-}
-
-func (s *sampleItemSorter) Len() int {
-	return len(s.items)
-}
-
-func (s *sampleItemSorter) Less(i, j int) bool {
-	var cmp int
-	cmp, s.err = s.items[i].Value.Compare(s.sc, &s.items[j].Value, collate.GetBinaryCollator())
-	if s.err != nil {
-		return true
-	}
-	return cmp < 0
-}
-
-func (s *sampleItemSorter) Swap(i, j int) {
-	s.items[i], s.items[j] = s.items[j], s.items[i]
+	var err error
+	slices.SortStableFunc(sortedItems, func(i, j *SampleItem) int {
+		var cmp int
+		cmp, err = i.Value.Compare(sc, &j.Value, collate.GetBinaryCollator())
+		if err != nil {
+			return -1
+		}
+		return cmp
+	})
+	return sortedItems, err
 }
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.

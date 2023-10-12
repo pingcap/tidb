@@ -76,7 +76,6 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		key = strings.Clone(key)
 
 		if keyIsNull {
 			return 0, types.ErrJSONDocumentNULLKey
@@ -86,6 +85,7 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup
 			return 0, types.ErrInvalidJSONCharset.GenWithStackByArgs(e.args[0].GetType().GetCharset())
 		}
 
+		key = strings.Clone(key)
 		value, err := e.args[1].Eval(row)
 		if err != nil {
 			return 0, errors.Trace(err)
@@ -203,5 +203,5 @@ func (*jsonObjectAgg) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 			p2.bInMap++
 		}
 	}
-	return 0, nil
+	return memDelta, nil
 }

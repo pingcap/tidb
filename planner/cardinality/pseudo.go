@@ -36,6 +36,11 @@ const (
 // If one condition can't be calculated, we will assume that the selectivity of this condition is 0.8.
 const selectionFactor = 0.8
 
+// PseudoAvgCountPerValue gets a pseudo average count if histogram not exists.
+func PseudoAvgCountPerValue(t *statistics.Table) float64 {
+	return float64(t.RealtimeCount) / pseudoEqualRate
+}
+
 func pseudoSelectivity(coll *statistics.HistColl, exprs []expression.Expression) float64 {
 	minFactor := selectionFactor
 	colExists := make(map[string]bool)
@@ -177,7 +182,7 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 		if i >= len(indexRange.LowVal) {
 			i = len(indexRange.LowVal) - 1
 		}
-		rowCount, err := GetPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.Range{indexRange}, i)
+		rowCount, err := getPseudoRowCountByColumnRanges(sc, tableRowCount, []*ranger.Range{indexRange}, i)
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
@@ -195,8 +200,8 @@ func getPseudoRowCountByIndexRanges(sc *stmtctx.StatementContext, indexRanges []
 	return totalCount, nil
 }
 
-// GetPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
-func GetPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
+// getPseudoRowCountByColumnRanges calculate the row count by the ranges if there's no statistics information for this column.
+func getPseudoRowCountByColumnRanges(sc *stmtctx.StatementContext, tableRowCount float64, columnRanges []*ranger.Range, colIdx int) (float64, error) {
 	var rowCount float64
 	for _, ran := range columnRanges {
 		if ran.LowVal[colIdx].Kind() == types.KindNull && ran.HighVal[colIdx].Kind() == types.KindMaxValue {

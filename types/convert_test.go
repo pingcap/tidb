@@ -399,23 +399,22 @@ func TestConvertToStringWithCheck(t *testing.T) {
 	nhUTF8 := "你好"
 	nhUTF8MB4 := "你好👋"
 	nhUTF8Invalid := "你好" + string([]byte{0x81})
-	type SC = *stmtctx.StatementContext
 	tests := []struct {
-		input      string
-		outputChs  string
-		setStmtCtx func(ctx *stmtctx.StatementContext)
-		output     string
+		input     string
+		outputChs string
+		newFlags  func(flags Flags) Flags
+		output    string
 	}{
-		{nhUTF8, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, nhUTF8},
-		{nhUTF8MB4, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, nhUTF8MB4},
-		{nhUTF8, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8},
-		{nhUTF8MB4, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8MB4},
-		{nhUTF8Invalid, "utf8mb4", func(s SC) { s.SkipUTF8Check = true }, nhUTF8Invalid},
-		{nhUTF8Invalid, "utf8mb4", func(s SC) { s.SkipUTF8Check = false }, ""},
-		{nhUTF8Invalid, "ascii", func(s SC) { s.SkipASCIICheck = false }, ""},
-		{nhUTF8Invalid, "ascii", func(s SC) { s.SkipASCIICheck = true }, nhUTF8Invalid},
-		{nhUTF8MB4, "utf8", func(s SC) { s.SkipUTF8MB4Check = false }, ""},
-		{nhUTF8MB4, "utf8", func(s SC) { s.SkipUTF8MB4Check = true }, nhUTF8MB4},
+		{nhUTF8, "utf8mb4", func(f Flags) Flags { return f.WithSkipUTF8Check(false) }, nhUTF8},
+		{nhUTF8MB4, "utf8mb4", func(f Flags) Flags { return f.WithSkipUTF8Check(false) }, nhUTF8MB4},
+		{nhUTF8, "utf8mb4", func(f Flags) Flags { return f.WithSkipUTF8Check(true) }, nhUTF8},
+		{nhUTF8MB4, "utf8mb4", func(f Flags) Flags { return f.WithSkipUTF8Check(true) }, nhUTF8MB4},
+		{nhUTF8Invalid, "utf8mb4", func(f Flags) Flags { return f.WithSkipUTF8Check(true) }, nhUTF8Invalid},
+		{nhUTF8Invalid, "utf8mb4", func(f Flags) Flags { return f.WithSkipUTF8Check(false) }, ""},
+		{nhUTF8Invalid, "ascii", func(f Flags) Flags { return f.WithSkipSACIICheck(false) }, ""},
+		{nhUTF8Invalid, "ascii", func(f Flags) Flags { return f.WithSkipSACIICheck(true) }, nhUTF8Invalid},
+		{nhUTF8MB4, "utf8", func(f Flags) Flags { return f.WithSkipUTF8MB4Check(false) }, ""},
+		{nhUTF8MB4, "utf8", func(f Flags) Flags { return f.WithSkipUTF8MB4Check(true) }, nhUTF8MB4},
 	}
 	for _, tt := range tests {
 		ft := NewFieldType(mysql.TypeVarchar)
@@ -423,7 +422,8 @@ func TestConvertToStringWithCheck(t *testing.T) {
 		ft.SetCharset(tt.outputChs)
 		inputDatum := NewStringDatum(tt.input)
 		sc := new(stmtctx.StatementContext)
-		tt.setStmtCtx(sc)
+		flags := tt.newFlags(sc.TypeConvContext.Flags())
+		sc.TypeConvContext = sc.TypeConvContext.WithFlags(flags)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if len(tt.output) == 0 {
 			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
@@ -532,6 +532,9 @@ func TestStrToNum(t *testing.T) {
 	testStrToUint(t, "xx", 0, true, ErrTruncatedWrongVal)
 	testStrToUint(t, "11xx", 11, true, ErrTruncatedWrongVal)
 	testStrToUint(t, "xx11", 0, true, ErrTruncatedWrongVal)
+
+	// for issue #44359
+	testStrToUint(t, "-00", 0, true, nil)
 
 	// TODO: makes StrToFloat return truncated value instead of zero to make it pass.
 	testStrToFloat(t, "", 0, true, ErrTruncatedWrongVal)

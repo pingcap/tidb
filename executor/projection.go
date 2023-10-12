@@ -114,7 +114,7 @@ func (e *ProjectionExec) open(_ context.Context) error {
 	}
 
 	if e.isUnparallelExec() {
-		e.childResult = tryNewCacheChunk(e.Children(0))
+		e.childResult = exec.TryNewCacheChunk(e.Children(0))
 		e.memTracker.Consume(e.childResult.MemoryUsage())
 	}
 
@@ -194,7 +194,7 @@ func (e *ProjectionExec) unParallelExecute(ctx context.Context, chk *chunk.Chunk
 	// transmit the requiredRows
 	e.childResult.SetRequiredRows(chk.RequiredRows(), e.MaxChunkSize())
 	mSize := e.childResult.MemoryUsage()
-	err := Next(ctx, e.Children(0), e.childResult)
+	err := exec.Next(ctx, e.Children(0), e.childResult)
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
@@ -258,7 +258,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 			outputCh:        make(chan *projectionOutput, 1),
 		})
 
-		inputChk := newFirstChunk(e.Children(0))
+		inputChk := exec.NewFirstChunk(e.Children(0))
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(inputChk.MemoryUsage())
 		e.fetcher.inputCh <- &projectionInput{
@@ -266,7 +266,7 @@ func (e *ProjectionExec) prepare(ctx context.Context) {
 			targetWorker: e.workers[i],
 		}
 
-		outputChk := newFirstChunk(e)
+		outputChk := exec.NewFirstChunk(e)
 		e.memTracker.Consume(outputChk.MemoryUsage())
 		e.fetcher.outputCh <- &projectionOutput{
 			chk:  outputChk,
@@ -386,7 +386,7 @@ func (f *projectionInputFetcher) run(ctx context.Context) {
 		requiredRows := atomic.LoadInt64(&f.proj.parentReqRows)
 		input.chk.SetRequiredRows(int(requiredRows), f.proj.MaxChunkSize())
 		mSize := input.chk.MemoryUsage()
-		err := Next(ctx, f.child, input.chk)
+		err := exec.Next(ctx, f.child, input.chk)
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		f.proj.memTracker.Consume(input.chk.MemoryUsage() - mSize)
 		if err != nil || input.chk.NumRows() == 0 {

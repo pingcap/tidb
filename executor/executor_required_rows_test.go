@@ -99,8 +99,8 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) err
 }
 
 func (r *requiredRowsDataSource) genOneRow() chunk.Row {
-	row := chunk.MutRowFromTypes(retTypes(r))
-	for i, tp := range retTypes(r) {
+	row := chunk.MutRowFromTypes(exec.RetTypes(r))
+	for i, tp := range exec.RetTypes(r) {
 		row.SetValue(i, r.generator(tp))
 	}
 	return row.ToRow()
@@ -183,7 +183,7 @@ func TestLimitRequiredRows(t *testing.T) {
 		ds := newRequiredRowsDataSource(sctx, testCase.totalRows, testCase.expectedRowsDS)
 		exe := buildLimitExec(sctx, ds, testCase.limitOffset, testCase.limitCount)
 		require.NoError(t, exe.Open(ctx))
-		chk := newFirstChunk(exe)
+		chk := exec.NewFirstChunk(exe)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], sctx.GetSessionVars().MaxChunkSize)
 			require.NoError(t, exe.Next(ctx, chk))
@@ -265,15 +265,15 @@ func TestSortRequiredRows(t *testing.T) {
 			col := ds.Schema().Columns[groupBy]
 			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
-		exec := buildSortExec(sctx, byItems, ds)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildSortExec(sctx, byItems, ds)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
@@ -372,15 +372,15 @@ func TestTopNRequiredRows(t *testing.T) {
 			col := ds.Schema().Columns[groupBy]
 			byItems = append(byItems, &util.ByItems{Expr: col})
 		}
-		exec := buildTopNExec(sctx, testCase.topNOffset, testCase.topNCount, byItems, ds)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildTopNExec(sctx, testCase.topNOffset, testCase.topNCount, byItems, ds)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
@@ -465,15 +465,15 @@ func TestSelectionRequiredRows(t *testing.T) {
 			require.NoError(t, err)
 			filters = append(filters, f)
 		}
-		exec := buildSelectionExec(sctx, filters, ds)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildSelectionExec(sctx, filters, ds)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
@@ -523,15 +523,15 @@ func TestProjectionUnparallelRequiredRows(t *testing.T) {
 				exprs = append(exprs, col)
 			}
 		}
-		exec := buildProjectionExec(sctx, exprs, ds, 0)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildProjectionExec(sctx, exprs, ds, 0)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
@@ -579,19 +579,19 @@ func TestProjectionParallelRequiredRows(t *testing.T) {
 				exprs = append(exprs, col)
 			}
 		}
-		exec := buildProjectionExec(sctx, exprs, ds, testCase.numWorkers)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildProjectionExec(sctx, exprs, ds, testCase.numWorkers)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 
 			// wait projectionInputFetcher blocked on fetching data
 			// from child in the background.
 			time.Sleep(time.Millisecond * 25)
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
@@ -669,15 +669,15 @@ func TestStreamAggRequiredRows(t *testing.T) {
 		aggFunc, err := aggregation.NewAggFuncDesc(sctx, testCase.aggFunc, []expression.Expression{childCols[0]}, true)
 		require.NoError(t, err)
 		aggFuncs := []*aggregation.AggFuncDesc{aggFunc}
-		exec := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
-		require.NoError(t, exec.Open(ctx))
-		chk := newFirstChunk(exec)
+		executor := buildStreamAggExecutor(sctx, ds, schema, aggFuncs, groupBy, 1, true)
+		require.NoError(t, executor.Open(ctx))
+		chk := exec.NewFirstChunk(executor)
 		for i := range testCase.requiredRows {
 			chk.SetRequiredRows(testCase.requiredRows[i], maxChunkSize)
-			require.NoError(t, exec.Next(ctx, chk))
+			require.NoError(t, executor.Next(ctx, chk))
 			require.Equal(t, testCase.expectedRows[i], chk.NumRows())
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 		require.NoError(t, ds.checkNumNextCalled())
 	}
 }
@@ -703,15 +703,15 @@ func TestMergeJoinRequiredRows(t *testing.T) {
 		}
 		innerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 1, nil, justReturn1)             // just return one row: (1, 1)
 		outerSrc := newRequiredRowsDataSourceWithGenerator(ctx, 10000000, required, justReturn1) // always return (1, 1)
-		exec := buildMergeJoinExec(ctx, joinType, innerSrc, outerSrc)
-		require.NoError(t, exec.Open(context.Background()))
+		executor := buildMergeJoinExec(ctx, joinType, innerSrc, outerSrc)
+		require.NoError(t, executor.Open(context.Background()))
 
-		chk := newFirstChunk(exec)
+		chk := exec.NewFirstChunk(executor)
 		for i := range required {
 			chk.SetRequiredRows(required[i], ctx.GetSessionVars().MaxChunkSize)
-			require.NoError(t, exec.Next(context.Background(), chk))
+			require.NoError(t, executor.Next(context.Background(), chk))
 		}
-		require.NoError(t, exec.Close())
+		require.NoError(t, executor.Close())
 		require.NoError(t, outerSrc.checkNumNextCalled())
 	}
 }

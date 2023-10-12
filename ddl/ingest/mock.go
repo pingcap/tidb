@@ -19,6 +19,7 @@ import (
 	"encoding/hex"
 	"sync"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/table"
@@ -47,7 +48,7 @@ func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
 	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -121,7 +122,7 @@ func (*MockBackendCtx) FinishImport(indexID int64, _ bool, _ table.Table) error 
 }
 
 // ResetWorkers implements BackendCtx.ResetWorkers interface.
-func (*MockBackendCtx) ResetWorkers(_, _ int64) {
+func (*MockBackendCtx) ResetWorkers(_ int64) {
 }
 
 // Flush implements BackendCtx.Flush interface.
@@ -148,10 +149,28 @@ func (m *MockBackendCtx) GetCheckpointManager() *CheckpointManager {
 	return m.checkpointMgr
 }
 
+// GetLocalBackend returns the local backend.
+func (*MockBackendCtx) GetLocalBackend() *local.Backend {
+	return nil
+}
+
+// MockWriteHook the hook for write in mock engine.
+type MockWriteHook func(key, val []byte)
+
 // MockEngineInfo is a mock engine info.
 type MockEngineInfo struct {
 	sessCtx sessionctx.Context
 	mu      *sync.Mutex
+
+	onWrite MockWriteHook
+}
+
+// NewMockEngineInfo creates a new mock engine info.
+func NewMockEngineInfo(sessCtx sessionctx.Context) *MockEngineInfo {
+	return &MockEngineInfo{
+		sessCtx: sessCtx,
+		mu:      &sync.Mutex{},
+	}
 }
 
 // Flush implements Engine.Flush interface.
@@ -168,25 +187,35 @@ func (*MockEngineInfo) ImportAndClean() error {
 func (*MockEngineInfo) Clean() {
 }
 
+// SetHook set the write hook.
+func (m *MockEngineInfo) SetHook(onWrite func(key, val []byte)) {
+	m.onWrite = onWrite
+}
+
 // CreateWriter implements Engine.CreateWriter interface.
-func (m *MockEngineInfo) CreateWriter(id int, _ bool) (Writer, error) {
+func (m *MockEngineInfo) CreateWriter(id int) (Writer, error) {
 	logutil.BgLogger().Info("mock engine info create writer", zap.Int("id", id))
-	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu}, nil
+	return &MockWriter{sessCtx: m.sessCtx, mu: m.mu, onWrite: m.onWrite}, nil
 }
 
 // MockWriter is a mock writer.
 type MockWriter struct {
 	sessCtx sessionctx.Context
 	mu      *sync.Mutex
+	onWrite MockWriteHook
 }
 
 // WriteRow implements Writer.WriteRow interface.
-func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
+func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle) error {
 	logutil.BgLogger().Info("mock writer write row",
 		zap.String("key", hex.EncodeToString(key)),
 		zap.String("idxVal", hex.EncodeToString(idxVal)))
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.onWrite != nil {
+		m.onWrite(key, idxVal)
+		return nil
+	}
 	txn, err := m.sessCtx.Txn(true)
 	if err != nil {
 		return err
@@ -197,4 +226,9 @@ func (m *MockWriter) WriteRow(key, idxVal []byte, _ kv.Handle) error {
 // LockForWrite implements Writer.LockForWrite interface.
 func (*MockWriter) LockForWrite() func() {
 	return func() {}
+}
+
+// Close implements Writer.Close interface.
+func (*MockWriter) Close(_ context.Context) error {
+	return nil
 }

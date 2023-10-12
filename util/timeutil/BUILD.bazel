@@ -2,10 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "timeutil",
-    srcs = ["time.go"],
+    srcs = [
+        "errors.go",
+        "time.go",
+        "time_zone.go",
+    ],
     importpath = "github.com/pingcap/tidb/util/timeutil",
     visibility = ["//visibility:public"],
     deps = [
+        "//parser/mysql",
+        "//types",
+        "//util/dbterror",
         "//util/logutil",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
@@ -18,6 +25,7 @@ go_test(
     srcs = [
         "main_test.go",
         "time_test.go",
+        "time_zone_test.go",
     ],
     embed = [":timeutil"],
     flaky = True,

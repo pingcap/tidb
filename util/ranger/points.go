@@ -15,6 +15,7 @@
 package ranger
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"sort"
@@ -115,7 +116,7 @@ func rangePointLess(sc *stmtctx.StatementContext, a, b *point, collator collate.
 }
 
 func rangePointEnumLess(_ *stmtctx.StatementContext, a, b *point) (bool, error) {
-	cmp := types.CompareInt64(a.value.GetInt64(), b.value.GetInt64())
+	cmp := cmp.Compare(a.value.GetInt64(), b.value.GetInt64())
 	if cmp != 0 {
 		return cmp < 0, nil
 	}

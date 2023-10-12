@@ -48,7 +48,7 @@ func NewMapCache() *MapCache {
 }
 
 // Get implements StatsCacheInner
-func (m *MapCache) Get(k int64, _ bool) (*statistics.Table, bool) {
+func (m *MapCache) Get(k int64) (*statistics.Table, bool) {
 	v, ok := m.tables[k]
 	return v.value, ok
 }

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/planner/cardinality"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/collate"
@@ -159,6 +160,14 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 	do := domain.GetDomain(e.Ctx())
 	h := do.StatsHandle()
 	dbs := do.InfoSchema().AllSchemas()
+
+	type LockedTableInfo struct {
+		dbName        string
+		tblName       string
+		partitionName string
+	}
+	tableInfo := make(map[int64]*LockedTableInfo)
+
 	for _, db := range dbs {
 		for _, tbl := range db.Tables {
 			pi := tbl.GetPartitionInfo()
@@ -167,25 +176,39 @@ func (e *ShowExec) fetchShowStatsLocked() error {
 				if pi != nil {
 					partitionName = "global"
 				}
-				if h.IsTableLocked(tbl.ID) {
-					e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, partitionName)
-				}
+				tableInfo[tbl.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, partitionName}
 				if pi != nil {
 					for _, def := range pi.Definitions {
-						if h.IsTableLocked(def.ID) {
-							e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
-						}
+						tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
 					}
 				}
 			} else {
 				for _, def := range pi.Definitions {
-					if h.IsTableLocked(def.ID) {
-						e.appendTableForStatsLocked(db.Name.O, tbl.Name.O, def.Name.O)
-					}
+					tableInfo[def.ID] = &LockedTableInfo{db.Name.O, tbl.Name.O, def.Name.O}
 				}
 			}
 		}
 	}
+
+	tids := make([]int64, 0, len(tableInfo))
+	for tid := range tableInfo {
+		tids = append(tids, tid)
+	}
+
+	lockedTables, err := h.GetLockedTables(tids...)
+	if err != nil {
+		return err
+	}
+
+	// Sort the table IDs to make the output stable.
+	slices.Sort(tids)
+	for _, tid := range tids {
+		if _, ok := lockedTables[tid]; ok {
+			info := tableInfo[tid]
+			e.appendTableForStatsLocked(info.dbName, info.tblName, info.partitionName)
+		}
+	}
+
 	return nil
 }
 
@@ -225,7 +248,7 @@ func (e *ShowExec) appendTableForStatsHistograms(dbName, tblName, partitionName 
 		if !col.IsStatsInitialized() {
 			continue
 		}
-		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, col.AvgColSize(statsTbl.RealtimeCount, false),
+		e.histogramToRow(dbName, tblName, partitionName, col.Info.Name.O, 0, col.Histogram, cardinality.AvgColSize(col, statsTbl.RealtimeCount, false),
 			col.StatsLoadedStatus.StatusToString(), col.MemoryUsage())
 	}
 	for _, idx := range stableIdxsStats(statsTbl.Indices) {

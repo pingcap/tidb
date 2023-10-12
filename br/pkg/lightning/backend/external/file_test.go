@@ -36,7 +36,7 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	}
 	rc.reset()
 	initRC := *rc
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc)
 	require.NoError(t, err)
 
 	require.Equal(t, &initRC, rc)
@@ -55,10 +55,11 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 	expected := &rangeProperty{
-		key:    k1,
-		offset: 0,
-		size:   uint64(len(k1) + len(v1) + len(k2) + len(v2)),
-		keys:   2,
+		firstKey: k1,
+		lastKey:  k2,
+		offset:   0,
+		size:     uint64(len(k1) + len(v1) + len(k2) + len(v2)),
+		keys:     2,
 	}
 	require.Equal(t, expected, rc.props[0])
 	encoded = rc.encode()
@@ -74,10 +75,11 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.NoError(t, err)
 	kvStore.Close()
 	expected = &rangeProperty{
-		key:    k3,
-		offset: uint64(len(k1) + len(v1) + 16 + len(k2) + len(v2) + 16),
-		size:   uint64(len(k3) + len(v3)),
-		keys:   1,
+		firstKey: k3,
+		lastKey:  k3,
+		offset:   uint64(len(k1) + len(v1) + 16 + len(k2) + len(v2) + 16),
+		size:     uint64(len(k3) + len(v3)),
+		keys:     1,
 	}
 	require.Len(t, rc.props, 2)
 	require.Equal(t, expected, rc.props[1])
@@ -89,16 +91,17 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 		propKeysDist: 100,
 	}
 	rc.reset()
-	kvStore, err = NewKeyValueStore(ctx, writer, rc, 2, 2)
+	kvStore, err = NewKeyValueStore(ctx, writer, rc)
 	require.NoError(t, err)
 	err = kvStore.AddKeyValue(k1, v1)
 	require.NoError(t, err)
 	require.Len(t, rc.props, 1)
 	expected = &rangeProperty{
-		key:    k1,
-		offset: 0,
-		size:   uint64(len(k1) + len(v1)),
-		keys:   1,
+		firstKey: k1,
+		lastKey:  k1,
+		offset:   0,
+		size:     uint64(len(k1) + len(v1)),
+		keys:     1,
 	}
 	require.Equal(t, expected, rc.props[0])
 
@@ -106,10 +109,11 @@ func TestAddKeyValueMaintainRangeProperty(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rc.props, 2)
 	expected = &rangeProperty{
-		key:    k2,
-		offset: uint64(len(k1) + len(v1) + 16),
-		size:   uint64(len(k2) + len(v2)),
-		keys:   1,
+		firstKey: k2,
+		lastKey:  k2,
+		offset:   uint64(len(k1) + len(v1) + 16),
+		size:     uint64(len(k2) + len(v2)),
+		keys:     1,
 	}
 	require.Equal(t, expected, rc.props[1])
 	kvStore.Close()
@@ -132,7 +136,7 @@ func TestKVReadWrite(t *testing.T) {
 		propKeysDist: 2,
 	}
 	rc.reset()
-	kvStore, err := NewKeyValueStore(ctx, writer, rc, 1, 1)
+	kvStore, err := NewKeyValueStore(ctx, writer, rc)
 	require.NoError(t, err)
 
 	kvCnt := rand.Intn(10) + 10
@@ -162,4 +166,6 @@ func TestKVReadWrite(t *testing.T) {
 	}
 	_, _, err = kvReader.nextKV()
 	require.Equal(t, io.EOF, err)
+
+	require.NoError(t, kvReader.Close())
 }

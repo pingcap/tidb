@@ -25,25 +25,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestSetVariables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// test value limit of tidb_opt_tiflash_concurrency_factor
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("set @@tidb_opt_tiflash_concurrency_factor = 0")
-	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_opt_tiflash_concurrency_factor value: '0'"))
-	tk.MustQuery(`select @@tidb_opt_tiflash_concurrency_factor`).Check(testkit.Rows("1"))
-
-	// test set tidb_enforce_mpp when tidb_allow_mpp=false;
-	err := tk.ExecToErr("set @@tidb_allow_mpp = 0; set @@tidb_enforce_mpp = 1;")
-	require.EqualError(t, err, `[variable:1231]Variable 'tidb_enforce_mpp' can't be set to the value of '1' but tidb_allow_mpp is 0, please activate tidb_allow_mpp at first.'`)
-	err = tk.ExecToErr("set @@tidb_allow_mpp = 1; set @@tidb_enforce_mpp = 1;")
-	require.NoError(t, err)
-	err = tk.ExecToErr("set @@tidb_allow_mpp = 0;")
-	require.NoError(t, err)
-}
-
 func TestRowSizeInMPP(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

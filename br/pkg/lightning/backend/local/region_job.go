@@ -94,7 +94,7 @@ func (j jobStageTp) String() string {
 // to a region. The keyRange may be changed when processing because of writing
 // partial data to TiKV or region split.
 type regionJob struct {
-	keyRange Range
+	keyRange common.Range
 	// TODO: check the keyRange so that it's always included in region
 	region *split.RegionInfo
 	// stage should be updated only by convertStageTo
@@ -102,10 +102,10 @@ type regionJob struct {
 	// writeResult is available only in wrote and ingested stage
 	writeResult *tikvWriteResult
 
-	ingestData      IngestData
+	ingestData      common.IngestData
 	regionSplitSize int64
 	regionSplitKeys int64
-	metrics         *metric.Metrics
+	metrics         *metric.Common
 
 	retryCount       int
 	waitUntil        time.Time
@@ -120,39 +120,6 @@ type tikvWriteResult struct {
 	count             int64
 	totalBytes        int64
 	remainingStartKey []byte
-}
-
-// IngestData describes a common interface that is needed by TiKV write +
-// ingest RPC.
-type IngestData interface {
-	// GetFirstAndLastKey returns the first and last key of the data reader in the
-	// range [lowerBound, upperBound). Empty or nil bounds means unbounded.
-	// lowerBound must be less than upperBound.
-	// when there is no data in the range, it should return nil, nil, nil
-	GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error)
-	NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter
-	// GetTS will be used as the start/commit TS of the data.
-	GetTS() uint64
-	// Finish will be called when the data is ingested successfully.
-	Finish(totalBytes, totalCount int64)
-}
-
-// ForwardIter describes a iterator that can only move forward.
-type ForwardIter interface {
-	// First moves this iter to the first key.
-	First() bool
-	// Valid check this iter reach the end.
-	Valid() bool
-	// Next moves this iter forward.
-	Next() bool
-	// Key represents current position pair's key.
-	Key() []byte
-	// Value represents current position pair's Value.
-	Value() []byte
-	// Close close this iter.
-	Close() error
-	// Error return current error on this iter.
-	Error() error
 }
 
 type injectedBehaviour struct {
@@ -191,6 +158,27 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 	}
 }
 
+// ref means that the ingestData of job will be accessed soon.
+func (j *regionJob) ref(wg *sync.WaitGroup) {
+	if wg != nil {
+		wg.Add(1)
+	}
+	if j.ingestData != nil {
+		j.ingestData.IncRef()
+	}
+}
+
+// done promises that the ingestData of job will not be accessed. Same amount of
+// done should be called to release the ingestData.
+func (j *regionJob) done(wg *sync.WaitGroup) {
+	if j.ingestData != nil {
+		j.ingestData.DecRef()
+	}
+	if wg != nil {
+		wg.Done()
+	}
+}
+
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.
 // if any write logic has error, writeToTiKV will set job to a proper stage and return nil. TODO: <-check this
 // if any underlying logic has error, writeToTiKV will return an error.
@@ -222,16 +210,16 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	begin := time.Now()
 	region := j.region.Region
 
-	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.start, j.keyRange.end)
+	firstKey, lastKey, err := j.ingestData.GetFirstAndLastKey(j.keyRange.Start, j.keyRange.End)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if firstKey == nil {
 		j.convertStageTo(ingested)
 		log.FromContext(ctx).Debug("keys within region is empty, skip doIngest",
-			logutil.Key("start", j.keyRange.start),
+			logutil.Key("start", j.keyRange.Start),
 			logutil.Key("regionStart", region.StartKey),
-			logutil.Key("end", j.keyRange.end),
+			logutil.Key("end", j.keyRange.End),
 			logutil.Key("regionEnd", region.EndKey))
 		return nil
 	}
@@ -331,7 +319,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return nil
 	}
 
-	iter := j.ingestData.NewIter(ctx, j.keyRange.start, j.keyRange.end)
+	iter := j.ingestData.NewIter(ctx, j.keyRange.Start, j.keyRange.End)
 	//nolint: errcheck
 	defer iter.Close()
 
@@ -369,8 +357,8 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				log.FromContext(ctx).Info("write to tikv partial finish",
 					zap.Int64("count", totalCount),
 					zap.Int64("size", totalSize),
-					logutil.Key("startKey", j.keyRange.start),
-					logutil.Key("endKey", j.keyRange.end),
+					logutil.Key("startKey", j.keyRange.Start),
+					logutil.Key("endKey", j.keyRange.End),
 					logutil.Key("remainStart", remainingStartKey),
 					logutil.Region(region),
 					logutil.Leader(j.region.Leader))
@@ -497,15 +485,15 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 				zap.Stringer("job stage", j.stage),
 				logutil.ShortError(j.lastRetryableErr),
 				j.region.ToZapFields(),
-				logutil.Key("start", j.keyRange.start),
-				logutil.Key("end", j.keyRange.end))
+				logutil.Key("start", j.keyRange.Start),
+				logutil.Key("end", j.keyRange.End))
 			return nil
 		}
 		log.FromContext(ctx).Warn("meet error and will doIngest region again",
 			logutil.ShortError(j.lastRetryableErr),
 			j.region.ToZapFields(),
-			logutil.Key("start", j.keyRange.start),
-			logutil.Key("end", j.keyRange.end))
+			logutil.Key("start", j.keyRange.Start),
+			logutil.Key("end", j.keyRange.End))
 	}
 	return nil
 }
@@ -842,13 +830,11 @@ func (q *regionJobRetryer) close() {
 	defer q.protectedClosed.mu.Unlock()
 	q.protectedClosed.closed = true
 
-	count := len(q.protectedQueue.q)
 	if q.protectedToPutBack.toPutBack != nil {
-		count++
+		q.protectedToPutBack.toPutBack.done(q.jobWg)
 	}
-	for count > 0 {
-		q.jobWg.Done()
-		count--
+	for _, job := range q.protectedQueue.q {
+		job.done(q.jobWg)
 	}
 }
 

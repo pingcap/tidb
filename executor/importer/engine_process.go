@@ -47,24 +47,6 @@ func ProcessChunk(
 	dataWriterCfg := &backend.LocalWriterConfig{
 		IsKVSorted: hasAutoIncrementAutoID,
 	}
-	parser, err := tableImporter.getParser(ctx, chunk)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err2 := parser.Close(); err2 != nil {
-			logger.Warn("close parser failed", zap.Error(err2))
-		}
-	}()
-	encoder, err := tableImporter.getKVEncoder(chunk)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err2 := encoder.Close(); err2 != nil {
-			logger.Warn("close encoder failed", zap.Error(err2))
-		}
-	}()
 	dataWriter, err := dataEngine.LocalWriter(ctx, dataWriterCfg)
 	if err != nil {
 		return err
@@ -84,24 +66,47 @@ func ProcessChunk(
 		}
 	}()
 
-	cp := &chunkProcessor{
-		parser:        parser,
-		chunkInfo:     chunk,
-		logger:        logger.With(zap.String("key", chunk.GetKey())),
-		kvsCh:         make(chan []deliveredRow, maxKVQueueSize),
-		dataWriter:    dataWriter,
-		indexWriter:   indexWriter,
-		encoder:       encoder,
-		kvCodec:       tableImporter.kvStore.GetCodec(),
-		progress:      progress,
-		diskQuotaLock: tableImporter.diskQuotaLock,
+	return ProcessChunkWith(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
+}
+
+// ProcessChunkWith processes a chunk, and write kv pairs to dataWriter and indexWriter.
+func ProcessChunkWith(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	tableImporter *TableImporter,
+	dataWriter, indexWriter backend.EngineWriter,
+	progress *asyncloaddata.Progress,
+	logger *zap.Logger,
+) error {
+	parser, err := tableImporter.getParser(ctx, chunk)
+	if err != nil {
+		return err
 	}
-	// todo: process in parallel
-	err = cp.process(ctx)
+	defer func() {
+		if err2 := parser.Close(); err2 != nil {
+			logger.Warn("close parser failed", zap.Error(err2))
+		}
+	}()
+	encoder, err := tableImporter.getKVEncoder(chunk)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err2 := encoder.Close(); err2 != nil {
+			logger.Warn("close encoder failed", zap.Error(err2))
+		}
+	}()
+
+	// TODO: right now we use this chunk processor for global sort too, will
+	// impl another one for it later.
+	cp := NewLocalSortChunkProcessor(
+		parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
+		tableImporter.diskQuotaLock, dataWriter, indexWriter,
+	)
+	err = cp.Process(ctx)
 	if err != nil {
 		return err
 	}
 	progress.AddColSize(encoder.GetColumnSize())
-	tableImporter.setLastInsertID(encoder.GetLastInsertID())
 	return nil
 }

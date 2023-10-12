@@ -19,12 +19,11 @@ import (
 	"context"
 	"path"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/cockroachdb/pebble"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/util/codec"
@@ -63,12 +62,14 @@ func TestIter(t *testing.T) {
 			SetMemorySizeLimit(uint64(rand.Intn(100)+1)).
 			SetPropSizeDistance(uint64(rand.Intn(50)+1)).
 			SetPropKeysDistance(uint64(rand.Intn(10)+1)).
-			Build(store, "/subtask", i)
+			Build(store, "/subtask", strconv.Itoa(i))
 		kvStart := i * 100
 		kvEnd := (i + 1) * 100
-		err := w.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvPairs[kvStart:kvEnd]))
-		require.NoError(t, err)
-		_, err = w.Close(ctx)
+		for j := kvStart; j < kvEnd; j++ {
+			err := w.WriteRow(ctx, kvPairs[j].Key, kvPairs[j].Val, nil)
+			require.NoError(t, err)
+		}
+		err := w.Close(ctx)
 		require.NoError(t, err)
 	}
 
@@ -114,7 +115,7 @@ func TestIter(t *testing.T) {
 
 func testGetFirstAndLastKey(
 	t *testing.T,
-	data local.IngestData,
+	data common.IngestData,
 	lowerBound, upperBound []byte,
 	expectedFirstKey, expectedLastKey []byte,
 ) {
@@ -126,7 +127,7 @@ func testGetFirstAndLastKey(
 
 func testNewIter(
 	t *testing.T,
-	data local.IngestData,
+	data common.IngestData,
 	lowerBound, upperBound []byte,
 	expectedKeys, expectedValues [][]byte,
 ) {
@@ -186,7 +187,7 @@ func TestMemoryIngestData(t *testing.T) {
 		[]byte("value5"),
 	}
 	data := &MemoryIngestData{
-		keyAdapter: local.NoopKeyAdapter{},
+		keyAdapter: common.NoopKeyAdapter{},
 		keys:       keys,
 		values:     values,
 		ts:         123,
@@ -212,7 +213,7 @@ func TestMemoryIngestData(t *testing.T) {
 	dir := t.TempDir()
 	db, err := pebble.Open(path.Join(dir, "duplicate"), nil)
 	require.NoError(t, err)
-	keyAdapter := local.DupDetectKeyAdapter{}
+	keyAdapter := common.DupDetectKeyAdapter{}
 	data = &MemoryIngestData{
 		keyAdapter:         keyAdapter,
 		duplicateDetection: true,
@@ -275,4 +276,48 @@ func TestMemoryIngestData(t *testing.T) {
 	checkDupDB(t, db, nil, nil)
 	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
 	checkDupDB(t, db, nil, nil)
+}
+
+func TestSplit(t *testing.T) {
+	cases := []struct {
+		input    []int
+		conc     int
+		expected [][]int
+	}{
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     1,
+			expected: [][]int{{1, 2, 3, 4, 5}},
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     2,
+			expected: [][]int{{1, 2, 3}, {4, 5}},
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     0,
+			expected: [][]int{{1, 2, 3, 4, 5}},
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     5,
+			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
+		},
+		{
+			input:    []int{},
+			conc:     5,
+			expected: nil,
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     100,
+			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
+		},
+	}
+
+	for _, c := range cases {
+		got := split(c.input, c.conc)
+		require.Equal(t, c.expected, got)
+	}
 }

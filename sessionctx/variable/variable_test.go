@@ -61,6 +61,10 @@ func TestSysVar(t *testing.T) {
 
 	f = GetSysVar("version_compile_machine")
 	require.Equal(t, runtime.GOARCH, f.Value)
+
+	// default enable vectorized_expression
+	f = GetSysVar("tidb_enable_vectorized_expression")
+	require.Equal(t, "ON", f.Value)
 }
 
 func TestError(t *testing.T) {

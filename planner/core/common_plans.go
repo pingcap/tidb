@@ -511,7 +511,6 @@ type AnalyzeInfo struct {
 	TableName     string
 	PartitionName string
 	TableID       statistics.AnalyzeTableID
-	Incremental   bool
 	StatsVersion  int
 	V2Options     *V2AnalyzeOptions
 }
@@ -578,6 +577,7 @@ type LoadData struct {
 
 // LoadDataOpt represents load data option.
 type LoadDataOpt struct {
+	// Name is the name of the option, converted to lower case during parse.
 	Name  string
 	Value expression.Expression
 }
