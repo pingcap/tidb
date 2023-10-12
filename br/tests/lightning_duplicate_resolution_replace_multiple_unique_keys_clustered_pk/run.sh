@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -ex
+set -x
 
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
