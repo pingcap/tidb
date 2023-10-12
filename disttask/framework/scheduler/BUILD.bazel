@@ -11,7 +11,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/disttask/framework/scheduler",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/lightning/common",
         "//config",
+        "//disttask/framework/dispatcher",
+        "//disttask/framework/handle",
         "//disttask/framework/proto",
         "//disttask/framework/scheduler/execute",
         "//disttask/framework/storage",
@@ -19,6 +22,7 @@ go_library(
         "//metrics",
         "//resourcemanager/pool/spool",
         "//resourcemanager/util",
+        "//util/backoff",
         "//util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
