@@ -171,7 +171,7 @@ func testInitStatsMemTrace(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	h.Clear()
-	require.Equal(t, h.GetMemConsumed(), int64(0))
+	require.Equal(t, h.MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(is))
 
 	var memCostTot int64
@@ -182,7 +182,7 @@ func testInitStatsMemTrace(t *testing.T) {
 		memCostTot += tStats.MemoryUsage().TotalMemUsage
 	}
 
-	require.Equal(t, h.GetMemConsumed(), memCostTot)
+	require.Equal(t, h.MemConsumed(), memCostTot)
 }
 
 func TestInitStatsMemTraceWithLite(t *testing.T) {
