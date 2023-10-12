@@ -72,7 +72,7 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 		if indexInfo == nil {
 			logutil.BgLogger().Warn("index info not found", zap.String("category", "ddl-ingest"),
 				zap.Int64("table ID", tbl.Meta().ID), zap.Int64("index ID", eid))
-			return nil, errors.New("index info not found")
+			return nil, errors.Errorf("index info not found: %d", eid)
 		}
 		indexInfos = append(indexInfos, indexInfo)
 	}
@@ -140,7 +140,7 @@ func (s *backfillDistScheduler) Init(ctx context.Context) error {
 	// we use the first index uniqueness here.
 	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleIDs[0])
 	if idx == nil {
-		return errors.Trace(errors.New("index info not found"))
+		return errors.Trace(errors.Errorf("index info not found: %d", bgm.EleIDs[0]))
 	}
 	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, job.ReorgMeta.ResourceGroupName)
 	if err != nil {

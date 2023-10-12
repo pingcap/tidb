@@ -10,7 +10,6 @@ go_library(
         "//parser/model",
         "//sessionctx",
         "//statistics",
-        "//statistics/handle/cache",
         "//statistics/handle/util",
         "//util/logutil",
         "//util/mathutil",

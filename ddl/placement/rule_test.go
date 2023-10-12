@@ -70,9 +70,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name:     "zero replicas",
 		input:    "",
 		replicas: 0,
-		output: []*Rule{
-			NewRule(Voter, 0, NewConstraintsDirect()),
-		},
+		output:   nil,
 	})
 
 	tests = append(tests, TestCase{
@@ -102,10 +100,17 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal dict constraints, with count",
-		input:    "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
-		replicas: 4,
-		err:      ErrInvalidConstraintsRelicas,
+		name:  "normal dict constraints, with count",
+		input: "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+				NewConstraintDirect("zone", NotIn, "bj"),
+			)),
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+			)),
+		},
 	})
 
 	tests = append(tests, TestCase{
