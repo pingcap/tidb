@@ -11180,7 +11180,6 @@
     ]
   },
   {
-<<<<<<< HEAD
     "Name": "TestFixControl",
     "Cases": [
       {
@@ -11228,7 +11227,10 @@
         "Variable": [
           "100:'on', 100:1"
         ]
-=======
+      }
+    ]
+  },
+  {
     "Name": "TestDowncastPointGetOrRangeScan",
     "Cases": [
       {
@@ -11358,7 +11360,6 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t8 keep order:false, stats:pseudo"
         ],
         "Result": null
->>>>>>> 28a9c7f0fb7 (planner: fix cast(col) = range couldn't build range when cast function doesn't contain any precision loss in some cases (#46303))
       }
     ]
   }

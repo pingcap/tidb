@@ -1321,13 +1321,14 @@
     ]
   },
   {
-<<<<<<< HEAD
     "name": "TestFixControl",
     "cases": [
       "set @@tidb_opt_fix_control = \"1000:'on', 10000:1\"",
       "set @@tidb_opt_fix_control = \"100:'on', 100:1\"",
       "set @@tidb_opt_fix_control = \"100, 100\""
-=======
+    ]
+  },
+  {
     "name": "TestDowncastPointGetOrRangeScan",
     "cases": [
       "select * from v1 where a = 1; -- the condition should be downcast through both side and go get point",
@@ -1340,7 +1341,6 @@
       "select * from v3 where a > 'test' -- the condition shouldn't be downcast through both side and go get point too",
       "select * from v4 where a = 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range",
       "select * from v4 where a > 'test' -- diff column union may have precision loss couldn't downcast the condition to get the range"
->>>>>>> 28a9c7f0fb7 (planner: fix cast(col) = range couldn't build range when cast function doesn't contain any precision loss in some cases (#46303))
-    ]
+   ]
   }
 ]

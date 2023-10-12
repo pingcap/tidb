@@ -474,12 +474,8 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.
 	for i, expr := range ds.pushedDownConds {
-<<<<<<< HEAD
-		ds.pushedDownConds[i] = expression.PushDownNot(ds.ctx, expr)
-=======
 		ds.pushedDownConds[i] = expression.PushDownNot(ds.SCtx(), expr)
 		ds.pushedDownConds[i] = expression.EliminateNoPrecisionLossCast(ds.SCtx(), ds.pushedDownConds[i])
->>>>>>> 28a9c7f0fb7 (planner: fix cast(col) = range couldn't build range when cast function doesn't contain any precision loss in some cases (#46303))
 	}
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
