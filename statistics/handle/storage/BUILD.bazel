@@ -13,6 +13,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
+        "//infoschema",
         "//parser/ast",
         "//parser/model",
         "//parser/mysql",
@@ -29,11 +30,13 @@ go_library(
         "//util/compress",
         "//util/logutil",
         "//util/mathutil",
+        "//util/memory",
         "//util/sqlexec",
         "@com_github_klauspost_compress//gzip",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],
 )

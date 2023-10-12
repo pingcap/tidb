@@ -97,20 +97,13 @@ func ProcessChunkWith(
 		}
 	}()
 
-	cp := &chunkProcessor{
-		parser:        parser,
-		chunkInfo:     chunk,
-		logger:        logger.With(zap.String("key", chunk.GetKey())),
-		kvsCh:         make(chan []deliveredRow, maxKVQueueSize),
-		dataWriter:    dataWriter,
-		indexWriter:   indexWriter,
-		encoder:       encoder,
-		kvCodec:       tableImporter.kvStore.GetCodec(),
-		progress:      progress,
-		diskQuotaLock: tableImporter.diskQuotaLock,
-	}
-	// todo: process in parallel
-	err = cp.process(ctx)
+	// TODO: right now we use this chunk processor for global sort too, will
+	// impl another one for it later.
+	cp := NewLocalSortChunkProcessor(
+		parser, encoder, tableImporter.kvStore.GetCodec(), chunk, logger,
+		tableImporter.diskQuotaLock, dataWriter, indexWriter,
+	)
+	err = cp.Process(ctx)
 	if err != nil {
 		return err
 	}

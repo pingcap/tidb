@@ -554,6 +554,7 @@ const (
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
 	// TiDBEnableFastAnalyze indicates to use fast analyze.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBEnableFastAnalyze = "tidb_enable_fast_analyze"
 
 	// TiDBExpensiveQueryTimeThreshold indicates the time threshold of expensive query.
@@ -1347,7 +1348,7 @@ const (
 	DefTiDBRcWriteCheckTs                        = false
 	DefTiDBForeignKeyChecks                      = true
 	DefTiDBOptAdvancedJoinHint                   = true
-	DefTiDBAnalyzePartitionConcurrency           = 1
+	DefTiDBAnalyzePartitionConcurrency           = 2
 	DefTiDBOptRangeMaxSize                       = 64 * int64(size.MB) // 64 MB
 	DefTiDBCostModelVer                          = 2
 	DefTiDBServerMemoryLimitSessMinSize          = 128 << 20

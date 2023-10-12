@@ -20,31 +20,35 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
+	"github.com/pingcap/tidb/statistics/handle/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
-// StatsCachePointer is used to cache the stats of a table.
-type StatsCachePointer struct {
+// StatsCacheImpl implements util.StatsCache.
+type StatsCacheImpl struct {
 	atomic.Pointer[StatsCache]
 }
 
-// NewStatsCachePointer creates a new StatsCache.
-func NewStatsCachePointer() (*StatsCachePointer, error) {
+// NewStatsCacheImpl creates a new StatsCache.
+func NewStatsCacheImpl() (util.StatsCache, error) {
 	newCache, err := NewStatsCache()
 	if err != nil {
 		return nil, err
 	}
-	result := StatsCachePointer{}
+	result := &StatsCacheImpl{}
 	result.Store(newCache)
-	return &result, nil
+	return result, nil
 }
 
-// Load loads the cached stats from the cache.
-func (s *StatsCachePointer) Load() *StatsCache {
-	return s.Pointer.Load()
+// Replace replaces this cache.
+func (s *StatsCacheImpl) Replace(cache util.StatsCache) {
+	x := cache.(*StatsCacheImpl)
+	s.replace(x.Load())
 }
 
-// Replace replaces the cache with the new cache.
-func (s *StatsCachePointer) Replace(newCache *StatsCache) {
+// replace replaces the cache with the new cache.
+func (s *StatsCacheImpl) replace(newCache *StatsCache) {
 	old := s.Swap(newCache)
 	if old != nil {
 		old.Close()
@@ -53,10 +57,62 @@ func (s *StatsCachePointer) Replace(newCache *StatsCache) {
 }
 
 // UpdateStatsCache updates the cache with the new cache.
-func (s *StatsCachePointer) UpdateStatsCache(newCache *StatsCache, tables []*statistics.Table, deletedIDs []int64) {
+func (s *StatsCacheImpl) UpdateStatsCache(tables []*statistics.Table, deletedIDs []int64) {
 	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
 		s.Load().Update(tables, deletedIDs)
 	} else {
-		s.Replace(newCache.CopyAndUpdate(tables, deletedIDs))
+		newCache := s.Load().CopyAndUpdate(tables, deletedIDs)
+		s.replace(newCache)
 	}
+}
+
+// Close closes this cache.
+func (s *StatsCacheImpl) Close() {
+	s.Load().Close()
+}
+
+// Clear clears this cache.
+func (s *StatsCacheImpl) Clear() {
+	cache, err := NewStatsCache()
+	if err != nil {
+		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
+		return
+	}
+	s.replace(cache)
+}
+
+// MemConsumed returns its memory usage.
+func (s *StatsCacheImpl) MemConsumed() (size int64) {
+	return s.Load().Cost()
+}
+
+// Get returns the specified table's stats.
+func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
+	return s.Load().Get(tableID)
+}
+
+// Put puts this table stats into the cache.
+func (s *StatsCacheImpl) Put(id int64, t *statistics.Table) {
+	s.Load().put(id, t)
+}
+
+// MaxTableStatsVersion returns the version of the current cache, which is defined as
+// the max table stats version the cache has in its lifecycle.
+func (s *StatsCacheImpl) MaxTableStatsVersion() uint64 {
+	return s.Load().Version()
+}
+
+// Values returns all values in this cache.
+func (s *StatsCacheImpl) Values() []*statistics.Table {
+	return s.Load().Values()
+}
+
+// Len returns the length of this cache.
+func (s *StatsCacheImpl) Len() int {
+	return s.Load().Len()
+}
+
+// SetStatsCacheCapacity sets the cache's capacity.
+func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
+	s.Load().SetCapacity(c)
 }

@@ -16,9 +16,7 @@ package scheduler
 
 import (
 	"context"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/disttask/framework/mock/execute"
@@ -54,32 +52,28 @@ func TestSchedulerRun(t *testing.T) {
 
 	// 1. no scheduler constructor
 	schedulerRegisterErr := errors.Errorf("constructor of scheduler for key not found")
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, schedulerRegisterErr)
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, schedulerRegisterErr).Times(2)
 	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable)
 	scheduler.Extension = mockExtension
-	// UpdateErrorToSubtask won't return such errors, but since the error is not handled,
-	// it's saved by UpdateErrorToSubtask.
-	// here we use this to check the returned error of s.run.
-	forwardErrFn := func(_ string, _ int64, err error) error {
-		return err
-	}
-	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(forwardErrFn).AnyTimes()
-	err := scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
+	err := scheduler.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, schedulerRegisterErr.Error())
-
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
+	require.NoError(t, err)
 
 	// 2. init subtask exec env failed
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+
 	initErr := errors.New("init error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
-	err = scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
+	err = scheduler.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, initErr.Error())
 
 	var taskID int64 = 1
 	var concurrency uint64 = 10
 	task := &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}
 
-	// 5. run subtask failed
+	// 3. run subtask failed
 	runSubtaskErr := errors.New("run subtask error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
@@ -92,10 +86,11 @@ func TestSchedulerRun(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(runSubtaskErr)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+
 	err = scheduler.Run(runCtx, task)
 	require.EqualError(t, err, runSubtaskErr.Error())
 
-	// 6. run subtask success
+	// 4. run subtask success
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
@@ -114,7 +109,7 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, task)
 	require.NoError(t, err)
 
-	// 7. run subtask one by one
+	// 5. run subtask one by one
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(
@@ -182,7 +177,22 @@ func TestSchedulerRun(t *testing.T) {
 	err = scheduler.Run(runCtx, task)
 	require.NoError(t, err)
 
-	// 8. cancel
+	// 6. cancel
+	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
+		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}}, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
+	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(ErrCancelSubtask)
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateCanceled, gomock.Any()).Return(nil)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = scheduler.Run(runCtx, task)
+	require.EqualError(t, err, ErrCancelSubtask.Error())
+
+	// 7. RunSubtask return context.Canceled
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 2, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}}, nil)
@@ -192,19 +202,11 @@ func TestSchedulerRun(t *testing.T) {
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(context.Canceled)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateCanceled, gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = scheduler.Run(runCtx, task)
+	require.EqualError(t, err, context.Canceled.Error())
 
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		err = scheduler.Run(runCtx, task)
-		require.EqualError(t, err, context.Canceled.Error())
-	}()
-	time.Sleep(time.Second)
 	runCancel()
-	wg.Wait()
 }
 
 func TestSchedulerRollback(t *testing.T) {
@@ -249,17 +251,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
 
-	// 4. update subtask error
-	updateSubtaskErr := errors.New("update subtask error")
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
-		unfinishedRevertSubtaskStates...).Return(&proto.Subtask{ID: 1, State: proto.TaskStateRevertPending}, nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateReverting, nil).Return(updateSubtaskErr)
-	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
-	require.EqualError(t, err, updateSubtaskErr.Error())
-
-	// 5. rollback failed
+	// 4. rollback failed
 	rollbackErr := errors.New("rollback error")
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
@@ -271,7 +263,7 @@ func TestSchedulerRollback(t *testing.T) {
 	err = scheduler.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, rollbackErr.Error())
 
-	// 6. rollback success
+	// 5. rollback success
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{ID: 1}, nil)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(int64(1), proto.TaskStateCanceled, nil).Return(nil)
@@ -336,13 +328,14 @@ func TestScheduler(t *testing.T) {
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
 	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
+	mockSubtaskTable.EXPECT().IsSchedulerCanceled(gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 
 	scheduler := NewBaseScheduler(ctx, "id", 1, mockSubtaskTable)
 	scheduler.Extension = mockExtension
 
-	// run failed
+	// 1. run failed.
 	runSubtaskErr := errors.New("run subtask error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
@@ -355,10 +348,10 @@ func TestScheduler(t *testing.T) {
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(runSubtaskErr)
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(taskID, proto.TaskStateFailed, gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	err := scheduler.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
+	err := scheduler.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, runSubtaskErr.Error())
 
-	// rollback success
+	// 2. rollback success.
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,

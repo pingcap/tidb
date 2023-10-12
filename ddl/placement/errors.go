@@ -31,8 +31,8 @@ var (
 	ErrInvalidConstraintsFormat = errors.New("invalid label constraints format")
 	// ErrInvalidSurvivalPreferenceFormat is from rule.go.
 	ErrInvalidSurvivalPreferenceFormat = errors.New("survival preference format should be in format [xxx=yyy, ...]")
-	// ErrInvalidConstraintsRelicas is from rule.go.
-	ErrInvalidConstraintsRelicas = errors.New("label constraints with invalid REPLICAS")
+	// ErrInvalidConstraintsReplicas is from rule.go.
+	ErrInvalidConstraintsReplicas = errors.New("label constraints with invalid REPLICAS")
 	// ErrInvalidBundleID is from bundle.go.
 	ErrInvalidBundleID = errors.New("invalid bundle ID")
 	// ErrInvalidBundleIDFormat is from bundle.go.

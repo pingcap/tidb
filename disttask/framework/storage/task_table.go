@@ -931,7 +931,7 @@ func (stm *TaskManager) TransferTasks2History(tasks []*proto.Task) error {
 	}
 	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
 		insertSQL := new(strings.Builder)
-		if err := sqlexec.FormatSQL(insertSQL, "insert into mysql.tidb_global_task_history"+
+		if err := sqlexec.FormatSQL(insertSQL, "replace into mysql.tidb_global_task_history"+
 			"(id, task_key, type, dispatcher_id, state, start_time, state_update_time,"+
 			"meta, concurrency, step, error) values"); err != nil {
 			return err

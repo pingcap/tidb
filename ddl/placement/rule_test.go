@@ -70,9 +70,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name:     "zero replicas",
 		input:    "",
 		replicas: 0,
-		output: []*Rule{
-			NewRule(Voter, 0, NewConstraintsDirect()),
-		},
+		output:   nil,
 	})
 
 	tests = append(tests, TestCase{
@@ -102,10 +100,17 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	})
 
 	tests = append(tests, TestCase{
-		name:     "normal dict constraints, with count",
-		input:    "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
-		replicas: 4,
-		err:      ErrInvalidConstraintsRelicas,
+		name:  "normal dict constraints, with count",
+		input: "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+				NewConstraintDirect("zone", NotIn, "bj"),
+			)),
+			NewRule(Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+			)),
+		},
 	})
 
 	tests = append(tests, TestCase{
@@ -137,6 +142,32 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name:  "invalid dict separator",
 		input: `{+region=us-east-2:2}`,
 		err:   ErrInvalidConstraintsMappingWrongSeparator,
+	})
+
+	tests = append(tests, TestCase{
+		name:  "normal dict constraint with evict leader attribute",
+		input: `{"+zone=sh,-zone=bj":2, "+zone=sh,#evict-leader": 1}`,
+		output: []*Rule{
+			NewRule(Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+				NewConstraintDirect("zone", NotIn, "bj"),
+			)),
+			NewRule(Follower, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", In, "sh"),
+			)),
+		},
+	})
+
+	tests = append(tests, TestCase{
+		name:  "invalid constraints with invalid format",
+		input: `{"+zone=sh,-zone=bj":2, "+zone=sh,evict-leader": 1}`,
+		err:   ErrInvalidConstraintFormat,
+	})
+
+	tests = append(tests, TestCase{
+		name:  "invalid constraints with undetermined attribute",
+		input: `{"+zone=sh,-zone=bj":2, "+zone=sh,#reject-follower": 1}`,
+		err:   ErrUnsupportedConstraint,
 	})
 
 	for _, tt := range tests {
