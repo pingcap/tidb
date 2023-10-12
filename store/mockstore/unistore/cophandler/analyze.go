@@ -267,14 +267,14 @@ type analyzeColumnsExec struct {
 
 func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*analyzeColumnsExec, *statistics.SampleBuilder, int64, error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sc.SetTimeZone(time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset)))
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
 	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
 		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
 	}
-	decoder, err := newRowDecoder(evalCtx.columnInfos, evalCtx.fieldTps, evalCtx.primaryCols, evalCtx.sc.TimeZone)
+	decoder, err := newRowDecoder(evalCtx.columnInfos, evalCtx.fieldTps, evalCtx.primaryCols, evalCtx.sc.TimeZone())
 	if err != nil {
 		return nil, nil, -1, err
 	}
@@ -373,14 +373,14 @@ func handleAnalyzeFullSamplingReq(
 	startTS uint64,
 ) (*coprocessor.Response, error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.TimeZone = time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sc.SetTimeZone(time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset)))
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
 	if len(analyzeReq.ColReq.PrimaryColumnIds) > 0 {
 		evalCtx.primaryCols = analyzeReq.ColReq.PrimaryColumnIds
 	}
-	decoder, err := newRowDecoder(evalCtx.columnInfos, evalCtx.fieldTps, evalCtx.primaryCols, evalCtx.sc.TimeZone)
+	decoder, err := newRowDecoder(evalCtx.columnInfos, evalCtx.fieldTps, evalCtx.primaryCols, evalCtx.sc.TimeZone())
 	if err != nil {
 		return nil, err
 	}

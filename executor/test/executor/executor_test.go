@@ -954,7 +954,7 @@ func TestCheckIndex(t *testing.T) {
 
 	mockCtx := mock.NewContext()
 	idx := tb.Indices()[0]
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 
 	_, err = se.Execute(context.Background(), "admin check index t idx_inexistent")
 	require.Error(t, err)
@@ -1012,7 +1012,7 @@ func TestCheckIndex(t *testing.T) {
 func setColValue(t *testing.T, txn kv.Transaction, key kv.Key, v types.Datum) {
 	row := []types.Datum{v, {}}
 	colIDs := []int64{2, 3}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	rd := rowcodec.Encoder{Enable: true}
 	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)

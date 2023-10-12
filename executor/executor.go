@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	typectx "github.com/pingcap/tidb/types/context"
 	"math"
 	"runtime/pprof"
 	"slices"
@@ -1938,12 +1939,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
-		sc = &stmtctx.StatementContext{}
+		sc = stmtctx.NewStmtCtx()
 	} else {
 		sc = vars.InitStatementContext()
 	}
-	var typeConvFlags types.Flags
-	sc.TimeZone = vars.Location()
+	sc.SetTimeZone(vars.Location())
 	sc.TaskID = stmtctx.AllocateTaskID()
 	sc.CTEStorageMap = map[int]*CTEStorages{}
 	sc.IsStaleness = false
@@ -2139,10 +2139,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
 
-	typeConvFlags = typeConvFlags.
-		WithSkipUTF8Check(vars.SkipUTF8Check).
-		WithSkipSACIICheck(vars.SkipASCIICheck).
-		WithSkipUTF8MB4Check(!globalConfig.Instance.CheckMb4ValueInUTF8.Load())
+	sc.UpdateTypeFlags(func(flags typectx.Flags) typectx.Flags {
+		return flags.
+			WithSkipUTF8Check(vars.SkipUTF8Check).
+			WithSkipSACIICheck(vars.SkipASCIICheck).
+			WithSkipUTF8MB4Check(!globalConfig.Instance.CheckMb4ValueInUTF8.Load())
+	})
 
 	vars.PlanCacheParams.Reset()
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
@@ -2169,7 +2171,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
-	sc.TypeConvContext = types.NewContext(typeConvFlags, sc.TimeZone, sc.AppendWarning)
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount

@@ -113,7 +113,6 @@ type Context struct {
 
 // NewContext creates a new `Context`
 func NewContext(flags Flags, loc *time.Location, appendWarningFn func(err error)) Context {
-	intest.Assert(loc)
 	return Context{
 		flags:           flags,
 		loc:             loc,
@@ -133,6 +132,14 @@ func (c *Context) WithFlags(f Flags) Context {
 	return ctx
 }
 
+// WithLocation returns a new context with the given location
+func (c *Context) WithLocation(loc *time.Location) Context {
+	intest.Assert(loc)
+	ctx := *c
+	ctx.loc = loc
+	return ctx
+}
+
 // Location returns the location of the context
 func (c *Context) Location() *time.Location {
 	intest.Assert(c.loc)
@@ -148,4 +155,9 @@ func (c *Context) AppendWarning(err error) {
 	if fn := c.appendWarningFn; fn != nil {
 		fn(err)
 	}
+}
+
+// AppendWarningFunc returns the inner `appendWarningFn`
+func (c *Context) AppendWarningFunc() func(err error) {
+	return c.appendWarningFn
 }

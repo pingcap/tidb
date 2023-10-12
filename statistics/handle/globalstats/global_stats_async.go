@@ -296,7 +296,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	isIndex bool,
 ) error {
 	a.skipMissingPartitionStats = sctx.GetSessionVars().SkipMissingPartitionStats
-	tz := sctx.GetSessionVars().StmtCtx.TimeZone
+	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	return a.callWithSCtxFunc(

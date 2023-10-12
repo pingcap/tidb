@@ -176,6 +176,7 @@ go_library(
         "//telemetry",
         "//tidb-binlog/node",
         "//types",
+        "//types/context",
         "//types/parser_driver",
         "//util",
         "//util/admin",

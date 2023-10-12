@@ -634,7 +634,7 @@ func TestMetricTableExtractor(t *testing.T) {
 			quantiles: []float64{0},
 		},
 	}
-	se.GetSessionVars().StmtCtx.TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	for _, ca := range cases {
 		logicalMemTable := getLogicalMemTable(t, dom, se, parser, ca.sql)
 		require.NotNil(t, logicalMemTable.Extractor)
@@ -1048,7 +1048,7 @@ func TestTiDBHotRegionsHistoryTableExtractor(t *testing.T) {
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
-	se.GetSessionVars().StmtCtx.TimeZone = time.Local
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 
 	var cases = []struct {
 		sql                          string

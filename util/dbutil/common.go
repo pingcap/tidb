@@ -550,7 +550,7 @@ func AnalyzeValuesFromBuckets(valueString string, cols []*model.ColumnInfo) ([]s
 	for i, col := range cols {
 		if IsTimeTypeAndNeedDecode(col.GetType()) {
 			// check if values[i] is already a time string
-			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 			_, err := types.ParseTime(sc, values[i], col.GetType(), types.MinFsp, nil)
 			if err == nil {
 				continue

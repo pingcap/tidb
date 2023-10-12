@@ -585,6 +585,11 @@ func maxSQLLength() uint32 {
 func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 	tables := []stmtctx.TableEntry{{DB: "db1", Table: "tb1"}, {DB: "db2", Table: "tb2"}}
 	indexes := []string{"a"}
+	sc := stmtctx.NewStmtCtx()
+	sc.StmtType = "Select"
+	sc.Tables = tables
+	sc.IndexNames = indexes
+
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     "schema_name",
 		OriginalSQL:    "original_sql1",
@@ -654,11 +659,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 				CalleeAddress: "129",
 			},
 		},
-		StmtCtx: &stmtctx.StatementContext{
-			StmtType:   "Select",
-			Tables:     tables,
-			IndexNames: indexes,
-		},
+		StmtCtx:      sc,
 		MemMax:       10000,
 		DiskMax:      10000,
 		StartTime:    time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),

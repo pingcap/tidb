@@ -46,7 +46,7 @@ func (fb *fileBulder) build(tableID, indexID, num, bytes, kv int) (files []*back
 	if indexID != 0 {
 		lowVal := types.NewIntDatum(fb.startKeyOffset - 10)
 		highVal := types.NewIntDatum(fb.startKeyOffset)
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 		lowValue, err := codec.EncodeKey(sc, nil, lowVal)
 		if err != nil {
 			panic(err)

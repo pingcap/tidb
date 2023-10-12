@@ -254,7 +254,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 			}
 			for i, val := range datums {
 				if s.Collators[i] != nil && !val.IsNull() {
-					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone)
+					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone())
 					if err != nil {
 						return nil, nil, err
 					}

@@ -286,7 +286,7 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 	e.kvRanges = ranges
 	e.scanCtx.chk = chunk.NewChunkWithCapacity(e.fieldTps, 32)
 	if e.scanType == TableScan {
-		e.scanCtx.decoder, err = newRowDecoder(e.evalContext.columnInfos, e.evalContext.fieldTps, e.evalContext.primaryCols, e.evalContext.sc.TimeZone)
+		e.scanCtx.decoder, err = newRowDecoder(e.evalContext.columnInfos, e.evalContext.fieldTps, e.evalContext.primaryCols, e.evalContext.sc.TimeZone())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -925,7 +925,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 		}
 	}
 	chk := e.scanCtx.chk
-	decoder := codec.NewDecoder(chk, e.sc.TimeZone)
+	decoder := codec.NewDecoder(chk, e.sc.TimeZone())
 	for i, colVal := range values {
 		if i < len(e.fieldTps) {
 			_, err = decoder.DecodeOne(colVal, i, e.fieldTps[i])

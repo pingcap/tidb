@@ -149,9 +149,9 @@ func initSessCtx(
 	tzLocation *model.TimeZoneLocation,
 ) error {
 	// Unify the TimeZone settings in newContext.
-	if sessCtx.GetSessionVars().StmtCtx.TimeZone == nil {
+	if sessCtx.GetSessionVars().StmtCtx.TimeZone() == nil {
 		tz := *time.UTC
-		sessCtx.GetSessionVars().StmtCtx.TimeZone = &tz
+		sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
 	}
 	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 	// Set the row encode format version.

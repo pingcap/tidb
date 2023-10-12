@@ -333,7 +333,7 @@ func TestFilterOutInPlace(t *testing.T) {
 
 func TestHashGroupKey(t *testing.T) {
 	ctx := mock.NewContext()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
 	for i := 0; i < len(tNames); i++ {

@@ -3181,7 +3181,7 @@ func (w *reorgPartitionWorker) fetchRowColVals(txn kv.Transaction, taskRange reo
 
 	// taskDone means that the added handle is out of taskRange.endHandle.
 	taskDone := false
-	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone()
 
 	tmpRow := make([]types.Datum, w.maxOffset+1)
 	var lastAccessedHandle kv.Key

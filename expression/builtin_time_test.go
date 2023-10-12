@@ -1130,7 +1130,7 @@ func TestSubTimeSig(t *testing.T) {
 func TestSysDate(t *testing.T) {
 	fc := funcs[ast.Sysdate]
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx.TimeZone = timeutil.SystemLocation()
+	ctx.GetSessionVars().StmtCtx.SetTimeZone(timeutil.SystemLocation())
 	timezones := []string{"1234", "0"}
 	for _, timezone := range timezones {
 		// sysdate() result is not affected by "timestamp" session variable.
@@ -1254,10 +1254,10 @@ func TestFromUnixTime(t *testing.T) {
 		{true, 32536771199, 32536771199.99999, "", "3001-01-18 23:59:59.999990"},
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	originTZ := sc.TimeZone
-	sc.TimeZone = time.UTC
+	originTZ := sc.TimeZone()
+	sc.SetTimeZone(time.UTC)
 	defer func() {
-		sc.TimeZone = originTZ
+		sc.SetTimeZone(originTZ)
 	}()
 	fc := funcs[ast.FromUnixTime]
 	for _, c := range tbl {
