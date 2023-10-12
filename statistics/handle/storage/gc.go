@@ -383,8 +383,7 @@ func writeGCTimestampToKV(sctx sessionctx.Context, newTS uint64) error {
 
 // MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
 func MarkExtendedStatsDeleted(sctx sessionctx.Context,
-	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
-	currentCache *cache.StatsCache,
+	statsCache util.StatsCache,
 	statsName string, tableID int64, ifExists bool) (statsVer uint64, err error) {
 	rows, _, err := util.ExecRows(sctx, "SELECT name FROM mysql.stats_extended WHERE name = %? and table_id = %? and status in (%?, %?)", statsName, tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {
@@ -407,7 +406,7 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 	defer func() {
 		err1 := util.FinishTransaction(sctx, err)
 		if err == nil && err1 == nil {
-			removeExtendedStatsItem(currentCache, updateStatsCache, tableID, statsName)
+			removeExtendedStatsItem(statsCache, tableID, statsName)
 		}
 		err = err1
 	}()

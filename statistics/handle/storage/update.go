@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	statsutil "github.com/pingcap/tidb/statistics/handle/util"
-	"github.com/pingcap/tidb/util/logutil"
-	"go.uber.org/zap"
 )
 
 // UpdateStatsVersion will set statistics version to the newest TS,
@@ -104,8 +102,7 @@ func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func InsertExtendedStats(sctx sessionctx.Context,
-	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
-	currentCache *cache.StatsCache,
+	statsCache statsutil.StatsCache,
 	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
 	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
@@ -158,7 +155,7 @@ func InsertExtendedStats(sctx sessionctx.Context,
 	// is synchronized to other tidb instances, tidb-b executes `alter table add stats_extended`, which would delete
 	// the record from the table, tidb-b should delete the cached item synchronously. While for tidb-c, it has to wait for
 	// next `Update()` to remove the cached item then.
-	removeExtendedStatsItem(currentCache, updateStatsCache, tableID, statsName)
+	removeExtendedStatsItem(statsCache, tableID, statsName)
 	const sql = "INSERT INTO mysql.stats_extended(name, type, table_id, column_ids, version, status) VALUES (%?, %?, %?, %?, %?, %?)"
 	if _, err = statsutil.Exec(sctx, sql, statsName, tp, tableID, strColIDs, version, statistics.ExtendedStatsInited); err != nil {
 		return 0, err
@@ -211,26 +208,13 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	return statsVer, nil
 }
 
-const updateStatsCacheRetryCnt = 5
-
-func removeExtendedStatsItem(currentCache *cache.StatsCache,
-	updateStatsCache func(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool),
+func removeExtendedStatsItem(statsCache statsutil.StatsCache,
 	tableID int64, statsName string) {
-	for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-		oldCache := currentCache
-		tbl, ok := oldCache.Get(tableID)
-		if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
-			return
-		}
-		newTbl := tbl.Copy()
-		delete(newTbl.ExtendedStats.Stats, statsName)
-		if updateStatsCache(oldCache, []*statistics.Table{newTbl}, nil) {
-			return
-		}
-		if retry == 1 {
-			logutil.BgLogger().Info("remove extended stats cache failed", zap.String("stats_name", statsName), zap.Int64("table_id", tableID))
-		} else {
-			logutil.BgLogger().Info("remove extended stats cache failed, retrying", zap.String("stats_name", statsName), zap.Int64("table_id", tableID))
-		}
+	tbl, ok := statsCache.Get(tableID)
+	if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {
+		return
 	}
+	newTbl := tbl.Copy()
+	delete(newTbl.ExtendedStats.Stats, statsName)
+	statsCache.UpdateStatsCache([]*statistics.Table{newTbl}, nil)
 }

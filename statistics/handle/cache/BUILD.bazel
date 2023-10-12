@@ -37,6 +37,7 @@ go_test(
         "//config",
         "//statistics",
         "//statistics/handle/cache/internal/testutil",
+        "//statistics/handle/util",
         "//util/benchdaily",
     ],
 )

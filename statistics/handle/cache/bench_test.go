@@ -22,10 +22,11 @@ import (
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/testutil"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/benchdaily"
 )
 
-func benchCopyAndUpdate(b *testing.B, c *StatsCachePointer) {
+func benchCopyAndUpdate(b *testing.B, c util.StatsCache) {
 	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -34,14 +35,14 @@ func benchCopyAndUpdate(b *testing.B, c *StatsCachePointer) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache(c.Load(), []*statistics.Table{t1}, nil)
+			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
 		}()
 	}
 	wg.Wait()
 	b.StopTimer()
 }
 
-func benchPutGet(b *testing.B, c *StatsCachePointer) {
+func benchPutGet(b *testing.B, c util.StatsCache) {
 	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -50,21 +51,21 @@ func benchPutGet(b *testing.B, c *StatsCachePointer) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache(c.Load(), []*statistics.Table{t1}, nil)
+			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
 		}(i)
 	}
 	for i := 0; i < b.N; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c.Load().Get(int64(i))
+			c.Get(int64(i))
 		}(i)
 	}
 	wg.Wait()
 	b.StopTimer()
 }
 
-func benchGet(b *testing.B, c *StatsCachePointer) {
+func benchGet(b *testing.B, c util.StatsCache) {
 	var w sync.WaitGroup
 	for i := 0; i < b.N; i++ {
 		w.Add(1)
@@ -72,7 +73,7 @@ func benchGet(b *testing.B, c *StatsCachePointer) {
 			defer w.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache(c.Load(), []*statistics.Table{t1}, nil)
+			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
 		}(i)
 	}
 	w.Wait()
@@ -82,7 +83,7 @@ func benchGet(b *testing.B, c *StatsCachePointer) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			c.Load().Get(int64(i))
+			c.Get(int64(i))
 		}(i)
 	}
 	wg.Wait()
@@ -95,7 +96,7 @@ func BenchmarkStatsCacheLFUCopyAndUpdate(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	cache, err := NewStatsCachePointer()
+	cache, err := NewStatsCacheImpl()
 	if err != nil {
 		b.Fail()
 	}
@@ -108,7 +109,7 @@ func BenchmarkStatsCacheMapCacheCopyAndUpdate(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	cache, err := NewStatsCachePointer()
+	cache, err := NewStatsCacheImpl()
 	if err != nil {
 		b.Fail()
 	}
@@ -121,7 +122,7 @@ func BenchmarkLFUCachePutGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	cache, err := NewStatsCachePointer()
+	cache, err := NewStatsCacheImpl()
 	if err != nil {
 		b.Fail()
 	}
@@ -134,7 +135,7 @@ func BenchmarkMapCachePutGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	cache, err := NewStatsCachePointer()
+	cache, err := NewStatsCacheImpl()
 	if err != nil {
 		b.Fail()
 	}
@@ -147,7 +148,7 @@ func BenchmarkLFUCacheGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	cache, err := NewStatsCachePointer()
+	cache, err := NewStatsCacheImpl()
 	if err != nil {
 		b.Fail()
 	}
@@ -160,7 +161,7 @@ func BenchmarkMapCacheGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	cache, err := NewStatsCachePointer()
+	cache, err := NewStatsCacheImpl()
 	if err != nil {
 		b.Fail()
 	}

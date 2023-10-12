@@ -127,7 +127,7 @@ func TestVersion(t *testing.T) {
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", 2*unit, tableInfo1.ID)
 
 	require.NoError(t, h.Update(is))
-	require.Equal(t, 2*unit, h.LastUpdateVersion())
+	require.Equal(t, 2*unit, h.MaxTableStatsVersion())
 	statsTbl1 := h.GetTableStats(tableInfo1)
 	require.False(t, statsTbl1.Pseudo)
 
@@ -140,7 +140,7 @@ func TestVersion(t *testing.T) {
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", unit, tableInfo2.ID)
 	require.NoError(t, h.Update(is))
-	require.Equal(t, 2*unit, h.LastUpdateVersion())
+	require.Equal(t, 2*unit, h.MaxTableStatsVersion())
 	statsTbl2 := h.GetTableStats(tableInfo2)
 	require.False(t, statsTbl2.Pseudo)
 
@@ -149,7 +149,7 @@ func TestVersion(t *testing.T) {
 	offset := 3 * unit
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+4, tableInfo1.ID)
 	require.NoError(t, h.Update(is))
-	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
+	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
 	statsTbl1 = h.GetTableStats(tableInfo1)
 	require.Equal(t, int64(1), statsTbl1.RealtimeCount)
 
@@ -158,7 +158,7 @@ func TestVersion(t *testing.T) {
 	// A smaller version write, and we can still read it.
 	testKit.MustExec("update mysql.stats_meta set version = ? where table_id = ?", offset+3, tableInfo2.ID)
 	require.NoError(t, h.Update(is))
-	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
+	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 
@@ -167,7 +167,7 @@ func TestVersion(t *testing.T) {
 	// A smaller version write, and we cannot read it. Because at this time, lastThree Version is 4.
 	testKit.MustExec("update mysql.stats_meta set version = 1 where table_id = ?", tableInfo2.ID)
 	require.NoError(t, h.Update(is))
-	require.Equal(t, offset+uint64(4), h.LastUpdateVersion())
+	require.Equal(t, offset+uint64(4), h.MaxTableStatsVersion())
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.Equal(t, int64(1), statsTbl2.RealtimeCount)
 

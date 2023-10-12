@@ -43,6 +43,10 @@ func (do *Domain) initDomainSysVars() {
 
 // setStatsCacheCapacity sets statsCache cap
 func (do *Domain) setStatsCacheCapacity(c int64) {
+	statsHandle := do.StatsHandle()
+	if statsHandle == nil { // from test
+		return
+	}
 	do.StatsHandle().SetStatsCacheCapacity(c)
 }
 

@@ -85,9 +85,8 @@ type Handle struct {
 	// SessionStatsList contains all the stats collector required by session.
 	*usage.SessionStatsList
 
-	// It can be read by multiple readers at the same time without acquiring lock, but it can be
-	// written only after acquiring the lock.
-	statsCache *cache.StatsCachePointer
+	// StatsCache ...
+	util.StatsCache
 
 	// StatsLoad is used to load stats concurrently
 	StatsLoad StatsLoad
@@ -105,12 +104,7 @@ func (h *Handle) execRows(sql string, args ...interface{}) (rows []chunk.Row, fi
 
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
-	cache, err := cache.NewStatsCache()
-	if err != nil {
-		logutil.BgLogger().Warn("create stats cache failed", zap.Error(err))
-		return
-	}
-	h.statsCache.Replace(cache)
+	h.StatsCache.Clear()
 	for len(h.ddlEventCh) > 0 {
 		<-h.ddlEventCh
 	}
@@ -136,12 +130,12 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	statsCache, err := cache.NewStatsCachePointer()
+	statsCache, err := cache.NewStatsCacheImpl()
 	if err != nil {
 		return nil, err
 	}
-	handle.statsCache = statsCache
-	handle.StatsHistory = history.NewStatsHistory(pool, statsCache)
+	handle.StatsCache = statsCache
+	handle.StatsHistory = history.NewStatsHistory(pool, handle.StatsCache)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -161,13 +155,8 @@ func (h *Handle) SetLease(lease time.Duration) {
 
 // UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
 func (h *Handle) UpdateStatsHealthyMetrics() {
-	v := h.statsCache.Load()
-	if v == nil {
-		return
-	}
-
 	distribution := make([]int64, 5)
-	for _, tbl := range v.Values() {
+	for _, tbl := range h.Values() {
 		healthy, ok := tbl.GetStatsHealthy()
 		if !ok {
 			continue
@@ -190,15 +179,14 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 
 // Update reads stats meta from store and updates the stats map.
 func (h *Handle) Update(is infoschema.InfoSchema) error {
-	oldCache := h.statsCache.Load()
-	lastVersion := oldCache.Version()
+	lastVersion := h.MaxTableStatsVersion()
 	// We need this because for two tables, the smaller version may write later than the one with larger version.
 	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
 	offset := util.DurationToTS(3 * h.Lease())
-	if oldCache.Version() >= offset {
+	if h.MaxTableStatsVersion() >= offset {
 		lastVersion = lastVersion - offset
 	} else {
 		lastVersion = 0
@@ -221,7 +209,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 			continue
 		}
 		tableInfo := table.Meta()
-		if oldTbl, ok := oldCache.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+		if oldTbl, ok := h.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
 		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
@@ -241,7 +229,7 @@ func (h *Handle) Update(is infoschema.InfoSchema) error {
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
 	}
-	h.updateStatsCache(oldCache, tables, deletedTableIDs)
+	h.UpdateStatsCache(tables, deletedTableIDs)
 	return nil
 }
 
@@ -288,12 +276,6 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	return
 }
 
-// GetMemConsumed returns the mem size of statscache consumed
-func (h *Handle) GetMemConsumed() (size int64) {
-	size = h.statsCache.Load().Cost()
-	return
-}
-
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
@@ -307,48 +289,25 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 		tbl.PhysicalID = pid
 		return tbl
 	}
-	statsCache := h.statsCache.Load()
-	tbl, ok := statsCache.Get(pid)
+	tbl, ok := h.Get(pid)
 	if !ok {
 		tbl = statistics.PseudoTable(tblInfo, false)
 		tbl.PhysicalID = pid
-		if tblInfo.GetPartitionInfo() == nil || h.statsCacheLen() < 64 {
-			h.updateStatsCache(statsCache, []*statistics.Table{tbl}, nil)
+		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+			h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 		}
 		return tbl
 	}
 	return tbl
 }
 
-func (h *Handle) statsCacheLen() int {
-	return h.statsCache.Load().Len()
-}
-
-func (h *Handle) initStatsCache(newCache *cache.StatsCache) {
-	h.statsCache.Replace(newCache)
-}
-
-// updateStatsCache will update statsCache into non COW mode.
-// If it is in the COW mode. it overrides the global statsCache with a new one, it may fail
-// if the global statsCache has been modified by others already.
-// Callers should add retry loop if necessary.
-func (h *Handle) updateStatsCache(newCache *cache.StatsCache, tables []*statistics.Table, deletedIDs []int64) (updated bool) {
-	h.statsCache.UpdateStatsCache(newCache, tables, deletedIDs)
-	return true
-}
-
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (h *Handle) LoadNeededHistograms() (err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-		return storage.LoadNeededHistograms(sctx, h.statsCache, loadFMSketch)
+		return storage.LoadNeededHistograms(sctx, h.StatsCache, loadFMSketch)
 	}, util.FlagWrapTxn)
 	return err
-}
-
-// LastUpdateVersion gets the last update version.
-func (h *Handle) LastUpdateVersion() uint64 {
-	return h.statsCache.Load().Version()
 }
 
 // FlushStats flushes the cached stats update into store.
@@ -368,7 +327,7 @@ func (h *Handle) FlushStats() {
 func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		var ok bool
-		statsTbl, ok = h.statsCache.Load().Get(physicalID)
+		statsTbl, ok = h.Get(physicalID)
 		if !ok {
 			statsTbl = nil
 		}
@@ -445,7 +404,7 @@ func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source str
 func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = storage.InsertExtendedStats(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, colIDs, tp, tableID, ifNotExists)
+		statsVer, err = storage.InsertExtendedStats(sctx, h.StatsCache, statsName, colIDs, tp, tableID, ifNotExists)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -458,7 +417,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
 	var statsVer uint64
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = storage.MarkExtendedStatsDeleted(sctx, h.updateStatsCache, h.statsCache.Load(), statsName, tableID, ifExists)
+		statsVer, err = storage.MarkExtendedStatsDeleted(sctx, h.StatsCache, statsName, tableID, ifExists)
 		return err
 	})
 	if err == nil && statsVer != 0 {
@@ -473,21 +432,16 @@ const updateStatsCacheRetryCnt = 5
 // TODO: move this method to the `extstats` package.
 func (h *Handle) ReloadExtendedStatistics() error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		for retry := updateStatsCacheRetryCnt; retry > 0; retry-- {
-			oldCache := h.statsCache.Load()
-			tables := make([]*statistics.Table, 0, oldCache.Len())
-			for _, tbl := range oldCache.Values() {
-				t, err := storage.ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
-				if err != nil {
-					return err
-				}
-				tables = append(tables, t)
+		tables := make([]*statistics.Table, 0, h.Len())
+		for _, tbl := range h.Values() {
+			t, err := storage.ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
+			if err != nil {
+				return err
 			}
-			if h.updateStatsCache(oldCache, tables, nil) {
-				return nil
-			}
+			tables = append(tables, t)
 		}
-		return fmt.Errorf("update stats cache failed for %d attempts", updateStatsCacheRetryCnt)
+		h.UpdateStatsCache(tables, nil)
+		return nil
 	}, util.FlagWrapTxn)
 }
 
@@ -550,24 +504,10 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, err
 }
 
-// SetStatsCacheCapacity sets capacity
-func (h *Handle) SetStatsCacheCapacity(c int64) {
-	if h == nil {
-		return
-	}
-	v := h.statsCache.Load()
-	if v == nil {
-		return
-	}
-	sc := v
-	sc.SetCapacity(c)
-	logutil.BgLogger().Info("update stats cache capacity successfully", zap.Int64("capacity", c))
-}
-
 // Close stops the background
 func (h *Handle) Close() {
 	h.gpool.Close()
-	h.statsCache.Load().Close()
+	h.StatsCache.Close()
 }
 
 const (

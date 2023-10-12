@@ -56,6 +56,7 @@ func NewStatsCache() (*StatsCache, error) {
 }
 
 // StatsCache caches the tables in memory for Handle.
+// TODO: hide this structure or merge it into StatsCacheImpl.
 type StatsCache struct {
 	c internal.StatsCacheInner
 	// the max table stats version the cache has in its lifecycle.

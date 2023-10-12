@@ -29,11 +29,11 @@ import (
 // statsHistoryImpl implements util.StatsHistory.
 type statsHistoryImpl struct {
 	pool       util.SessionPool
-	statsCache *cache.StatsCachePointer
+	statsCache util.StatsCache
 }
 
 // NewStatsHistory creates a new StatsHistory.
-func NewStatsHistory(pool util.SessionPool, statsCache *cache.StatsCachePointer) util.StatsHistory {
+func NewStatsHistory(pool util.SessionPool, statsCache util.StatsCache) util.StatsHistory {
 	return &statsHistoryImpl{
 		pool:       pool,
 		statsCache: statsCache,
@@ -45,11 +45,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uin
 	if version == 0 {
 		return
 	}
-	sc := sh.statsCache.Load()
-	if sc == nil {
-		return
-	}
-	tbl, ok := sc.Get(tableID)
+	tbl, ok := sh.statsCache.Get(tableID)
 	if !ok {
 		return
 	}

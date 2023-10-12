@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
@@ -493,7 +492,7 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, statsCache util.StatsCache, loadFMSketch bool) (err error) {
 	items := statistics.HistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
@@ -508,9 +507,8 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache *cache.StatsCacheP
 	return nil
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, col model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := statsCache.Load()
-	tbl, ok := oldCache.Get(col.TableID)
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
+	tbl, ok := statsCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -558,21 +556,19 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache *cache.Stats
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache = statsCache.Load()
-	tbl, ok = oldCache.Get(col.TableID)
+	tbl, ok = statsCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	statsCache.UpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
 	return nil
 }
 
-func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, idx model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := statsCache.Load()
-	tbl, ok := oldCache.Get(idx.TableID)
+func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCache, idx model.TableItemID, loadFMSketch bool) (err error) {
+	tbl, ok := statsCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -610,14 +606,13 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache *cache.StatsC
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
-	oldCache = statsCache.Load()
-	tbl, ok = oldCache.Get(idx.TableID)
+	tbl, ok = statsCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	statsCache.UpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
 }
