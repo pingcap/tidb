@@ -29,7 +29,9 @@ aliases:
     - XuHuaiyu
     - zanmato1984
   sig-approvers-lightning: # approvers for lightning module
+    - Benjamin20372
     - D3Hunter
-    - lance6716
     - gmhdbjd
+    - lance6716
     - lichunzhu
+    - okJiang
