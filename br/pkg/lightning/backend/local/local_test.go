@@ -1748,6 +1748,77 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 	jobWg.Wait()
 }
 
+func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	backup := external.LargeRegionSplitDataThreshold
+	external.LargeRegionSplitDataThreshold = 1
+	t.Cleanup(func() {
+		external.LargeRegionSplitDataThreshold = backup
+	})
+
+	ctx := context.Background()
+	local := &Backend{
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},      // we have one big region
+			panicSplitRegionClient{}, // make sure no further split region
+		),
+	}
+	local.BackendConfig.WorkerConcurrency = 1
+	bigRegionRange := []common.Range{{Start: []byte{1}, End: []byte{11}}}
+
+	keys := make([][]byte, 0, 10)
+	value := make([][]byte, 0, 10)
+	for i := byte(1); i <= 10; i++ {
+		keys = append(keys, []byte{i})
+		value = append(value, []byte{i})
+	}
+	memStore := storage.NewMemStorage()
+
+	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
+	require.NoError(t, err)
+
+	extEngine := external.NewExternalEngine(
+		memStore,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{10},
+		[][]byte{{1}, {11}},
+		1<<30,
+		common.NoopKeyAdapter{},
+		false,
+		nil,
+		common.DupDetectOpt{},
+		123,
+		456,
+		789,
+	)
+
+	jobCh := make(chan *regionJob, 10)
+	jobWg := sync.WaitGroup{}
+	err = local.generateAndSendJob(
+		ctx,
+		extEngine,
+		bigRegionRange,
+		10*units.GB,
+		1<<30,
+		jobCh,
+		&jobWg,
+	)
+	require.NoError(t, err)
+	require.Len(t, jobCh, 10)
+	for i := 0; i < 10; i++ {
+		job := <-jobCh
+		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
+		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
+		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte{byte(i + 1)}, firstKey)
+		require.Equal(t, []byte{byte(i + 1)}, lastKey)
+		jobWg.Done()
+	}
+	jobWg.Wait()
+}
+
 func getSuccessInjectedBehaviour() []injectedBehaviour {
 	return []injectedBehaviour{
 		{

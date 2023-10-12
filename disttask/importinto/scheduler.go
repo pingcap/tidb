@@ -372,14 +372,15 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	localBackend := e.tableImporter.Backend()
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:    e.taskMeta.Plan.CloudStorageURI,
-			DataFiles:     sm.DataFiles,
-			StatFiles:     sm.StatFiles,
-			MinKey:        sm.MinKey,
-			MaxKey:        sm.MaxKey,
-			SplitKeys:     sm.RangeSplitKeys,
-			TotalFileSize: int64(sm.TotalKVSize),
-			TotalKVCount:  0,
+			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
+			DataFiles:       sm.DataFiles,
+			StatFiles:       sm.StatFiles,
+			MinKey:          sm.MinKey,
+			MaxKey:          sm.MaxKey,
+			SplitKeys:       sm.RangeSplitKeys,
+			RegionSplitSize: sm.RangeSplitSize,
+			TotalFileSize:   int64(sm.TotalKVSize),
+			TotalKVCount:    0,
 		},
 	}, engineUUID)
 	if err != nil {

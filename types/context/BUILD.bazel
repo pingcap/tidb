@@ -5,6 +5,7 @@ go_library(
     srcs = ["context.go"],
     importpath = "github.com/pingcap/tidb/types/context",
     visibility = ["//visibility:public"],
+    deps = ["//util/intest"],
 )
 
 go_test(
