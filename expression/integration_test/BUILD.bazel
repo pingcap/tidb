@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 50,
-=======
-    shard_count = 27,
->>>>>>> b823a1deb97 (planner: fix group_concat function couldn't resolve the index of its order-by item (#46419))
     deps = [
         "//config",
         "//domain",
