@@ -22,6 +22,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/ingest"
@@ -34,14 +35,13 @@ import (
 )
 
 type mergeSortExecutor struct {
-	jobID         int64
-	index         *model.IndexInfo
-	ptbl          table.PhysicalTable
-	bc            ingest.BackendCtx
-	cloudStoreURI string
-	dataFiles     []string
-	statFiles     []string
-	mu            sync.Mutex
+	jobID               int64
+	index               *model.IndexInfo
+	ptbl                table.PhysicalTable
+	bc                  ingest.BackendCtx
+	cloudStoreURI       string
+	mu                  sync.Mutex
+	subtaskSortedKVMeta *external.SortedKVMeta
 }
 
 func newMergeSortExecutor(
@@ -78,13 +78,9 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	m.mu.Lock()
+	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
 	onClose := func(summary *external.WriterSummary) {
-		for _, f := range summary.MultipleFilesStats {
-			for _, filename := range f.Filenames {
-				m.dataFiles = append(m.dataFiles, filename[0])
-				m.statFiles = append(m.statFiles, filename[1])
-			}
-		}
+		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
 	}
 
@@ -120,8 +116,19 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (*mergeSortExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
+func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
+	var subtaskMeta BackfillSubTaskMeta
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return errors.Trace(err)
+	}
+	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	m.subtaskSortedKVMeta = nil
+	newMeta, err := json.Marshal(subtaskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	subtask.Meta = newMeta
 	return nil
 }
 

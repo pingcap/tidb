@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -92,10 +93,20 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(h.d, tblInfo, job)
 	case proto.StepTwo:
+		gTaskMeta.UseMergeSort = true
+		logutil.BgLogger().Info("ywq test use merge sort")
+		if err := updateMeta(gTask, &gTaskMeta); err != nil {
+			return nil, err
+		}
 		return generateMergePlan(taskHandle, gTask)
 	case proto.StepThree:
 		if useExtStore {
-			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
+			prevStep := proto.StepOne
+			logutil.BgLogger().Info("ywq test use merge sort", zap.Any("use", gTaskMeta.UseMergeSort))
+			if gTaskMeta.UseMergeSort {
+				prevStep = proto.StepTwo
+			}
+			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
 		}
 		if tblInfo.Partition != nil {
 			return nil, nil
@@ -104,6 +115,15 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 	default:
 		return nil, nil
 	}
+}
+
+func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
+	bs, err := json.Marshal(taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gTask.Meta = bs
+	return nil
 }
 
 func (*backfillingDispatcherExt) GetNextStep(
@@ -134,16 +154,23 @@ func (*backfillingDispatcherExt) GetNextStep(
 			}
 			multiStats = append(multiStats, subtask.MultipleFilesStats...)
 		}
-		if external.GetMaxOverlappingTotal(multiStats) > external.MergeSortOverlapThreshold {
-			return proto.StepTwo
+		if skipMergeSort(multiStats) {
+			return proto.StepThree
 		}
-		return proto.StepThree
+		return proto.StepTwo
 	case proto.StepTwo:
 		return proto.StepThree
 	default:
 		// current step should be proto.StepThree
 		return proto.StepDone
 	}
+}
+
+func skipMergeSort(stats []external.MultipleFilesStat) bool {
+	failpoint.Inject("forceMergeSort", func() {
+		failpoint.Return(false)
+	})
+	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
 // OnErrStage generate error handling stage's plan.
@@ -318,8 +345,9 @@ func generateMergeSortPlan(
 	task *proto.Task,
 	jobID int64,
 	cloudStorageURI string,
+	step int64,
 ) ([][]byte, error) {
-	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID)
+	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +413,7 @@ func generateMergePlan(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 ) ([][]byte, error) {
-	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID)
+	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, proto.StepOne)
 	if err != nil {
 		return nil, err
 	}
@@ -411,6 +439,7 @@ func generateMergePlan(
 
 		start = end
 	}
+	logutil.BgLogger().Info("ywq test datafiles num", zap.Any("num", len(dataFiles)))
 	return metaArr, nil
 }
 
@@ -456,8 +485,9 @@ func getRangeSplitter(
 func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
+	step int64,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}

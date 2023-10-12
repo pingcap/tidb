@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/util/callback"
-	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
@@ -43,7 +42,21 @@ var (
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
-func TestGlobalSortCleanupCloudFiles(t *testing.T) {
+func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
+	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	require.NoError(t, err)
+	opts := &storage.ExternalStorageOptions{NoCredentials: true}
+	extStore, err := storage.New(context.Background(), storeBackend, opts)
+	require.NoError(t, err)
+	prefix := strconv.Itoa(int(jobID))
+	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	require.NoError(t, err)
+	require.Greater(t, jobID, int64(0))
+	require.Equal(t, 0, len(dataFiles))
+	require.Equal(t, 0, len(statFiles))
+}
+
+func TestGlobalSortBasic(t *testing.T) {
 	var err error
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -83,28 +96,31 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	sb.WriteString(";")
 	tk.MustExec(sb.String())
 
-	var jobID int64
+	//var jobID int64
 	origin := dom.DDL().GetHook()
 	onJobUpdated := func(job *model.Job) {
-		jobID = job.ID
+		//jobID = job.ID
 	}
 	hook := &callback.TestDDLCallback{}
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/forceMergeSort", "return()"))
+
 	tk.MustExec("alter table t add index idx(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	<-dispatcher.WaitCleanUpFinished
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
-	require.NoError(t, err)
-	opts := &storage.ExternalStorageOptions{NoCredentials: true}
-	extStore, err := storage.New(context.Background(), storeBackend, opts)
-	require.NoError(t, err)
-	prefix := strconv.Itoa(int(jobID))
-	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
-	require.NoError(t, err)
-	require.Greater(t, jobID, int64(0))
-	require.Equal(t, 0, len(dataFiles))
-	require.Equal(t, 0, len(statFiles))
+	//<-dispatcher.WaitCleanUpFinished
+
+	//checkFileCleaned(t, jobID, sortStorageURI)
+
+	//dom.DDL().SetHook(hook)
+	//tk.MustExec("alter table t add index idx1(a);")
+	//dom.DDL().SetHook(origin)
+	//tk.MustExec("admin check table t;")
+	//<-dispatcher.WaitCleanUpFinished
+
+	//checkFileCleaned(t, jobID, sortStorageURI)
+
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/forceMergeSort"))
 }

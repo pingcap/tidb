@@ -308,6 +308,7 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 }
 
 func (s *BaseScheduler) onSubtaskFinished(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
+	logutil.BgLogger().Info("ywq test onsubtask finished")
 	if err := s.getError(); err == nil {
 		if err = executor.OnFinished(ctx, subtask); err != nil {
 			s.onError(err)
