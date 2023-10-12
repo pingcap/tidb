@@ -1114,7 +1114,7 @@ func TestGlobalStats(t *testing.T) {
 		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
 }
 
-func testGlobalIndexStatistics(t *testing.T, analyzePartitionMergeConcurrency int) {
+func TestGlobalIndexStatistics(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
@@ -1130,7 +1130,7 @@ func testGlobalIndexStatistics(t *testing.T, analyzePartitionMergeConcurrency in
 
 	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
-		tk.MustExec(fmt.Sprintf("set @@global.tidb_merge_partition_stats_concurrency=%d", analyzePartitionMergeConcurrency))
+
 		// analyze table t
 		tk.MustExec("drop table if exists t")
 		if i != 0 {
@@ -1191,12 +1191,4 @@ func testGlobalIndexStatistics(t *testing.T, analyzePartitionMergeConcurrency in
 			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
 				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	}
-}
-
-func TestGlobalIndexStatistics(t *testing.T) {
-	testGlobalIndexStatistics(t, 1)
-}
-
-func TestGlobalIndexStatisticsWithAnalyzePartitionMergeConcurrency(t *testing.T) {
-	testGlobalIndexStatistics(t, 3)
 }
