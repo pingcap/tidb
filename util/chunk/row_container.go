@@ -492,7 +492,8 @@ type SortedRowContainer struct {
 		// rowPtrs store the chunk index and row index for each row.
 		// rowPtrs != nil indicates the pointer is initialized and sorted.
 		// It will get an ErrCannotAddBecauseSorted when trying to insert data if rowPtrs != nil.
-		rowPtrs []RowPtr
+		rowPtrs   []RowPtr
+		sortError error
 	}
 
 	ByItemsDesc []bool
@@ -502,7 +503,7 @@ type SortedRowContainer struct {
 	keyCmpFuncs []CompareFunc
 
 	actionSpill *SortAndSpillDiskAction
-	//memTracker  *memory.Tracker
+	memTracker  *memory.Tracker
 
 	// Sort is a time-consuming operation, we need to set a checkpoint to detect
 	// the outside signal periodically.
@@ -525,6 +526,7 @@ func (c *SortedRowContainer) Close() error {
 	defer c.ptrM.Unlock()
 	c.GetMemTracker().Consume(int64(-8 * c.NumRow()))
 	c.ptrM.rowPtrs = nil
+	c.ptrM.sortError = nil
 	return c.RowContainer.Close()
 }
 
@@ -574,7 +576,8 @@ func (c *SortedRowContainer) Sort() (ret error) {
 	ret = nil
 	defer func() {
 		if r := recover(); r != nil {
-			ret = fmt.Errorf("%v", r)
+			c.ptrM.sortError = fmt.Errorf("%v", r)
+			ret = c.ptrM.sortError
 		}
 	}()
 	if c.ptrM.rowPtrs != nil {
@@ -626,6 +629,9 @@ func (c *SortedRowContainer) Add(chk *Chunk) (err error) {
 func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
 	c.ptrM.RLock()
 	defer c.ptrM.RUnlock()
+	if c.ptrM.sortError != nil {
+		return Row{}, c.ptrM.sortError
+	}
 	ptr := c.ptrM.rowPtrs[idx]
 	return c.RowContainer.GetRow(ptr)
 }
@@ -634,6 +640,9 @@ func (c *SortedRowContainer) GetSortedRow(idx int) (Row, error) {
 func (c *SortedRowContainer) GetSortedRowAndAlwaysAppendToChunk(idx int, chk *Chunk) (Row, *Chunk, error) {
 	c.ptrM.RLock()
 	defer c.ptrM.RUnlock()
+	if c.ptrM.sortError != nil {
+		return Row{}, nil, c.ptrM.sortError
+	}
 	ptr := c.ptrM.rowPtrs[idx]
 	return c.RowContainer.GetRowAndAlwaysAppendToChunk(ptr, chk)
 }
