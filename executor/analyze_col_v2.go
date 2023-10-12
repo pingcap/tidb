@@ -378,16 +378,16 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
 	buildResultChan := make(chan error, totalLen)
 	buildTaskChan := make(chan *samplingBuildTask, totalLen)
-	if totalLen < statsConcurrency {
-		statsConcurrency = totalLen
+	if totalLen < SamplingStatsConcurrency {
+		SamplingStatsConcurrency = totalLen
 	}
 	e.samplingBuilderWg = newNotifyErrorWaitGroupWrapper(buildResultChan)
 	sampleCollectors := make([]*statistics.SampleCollector, len(e.colsInfo))
 	exitCh := make(chan struct{})
-	e.samplingBuilderWg.Add(statsConcurrency)
+	e.samplingBuilderWg.Add(SamplingStatsConcurrency)
 
 	// Start workers to build stats.
-	for i := 0; i < statsConcurrency; i++ {
+	for i := 0; i < SamplingStatsConcurrency; i++ {
 		e.samplingBuilderWg.Run(func() {
 			e.subBuildWorker(buildResultChan, buildTaskChan, hists, topns, sampleCollectors, exitCh)
 		})
@@ -430,7 +430,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	close(buildTaskChan)
 
 	panicCnt := 0
-	for panicCnt < statsConcurrency {
+	for panicCnt < SamplingStatsConcurrency {
 		err1, ok := <-buildResultChan
 		if !ok {
 			break
