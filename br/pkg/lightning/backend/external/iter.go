@@ -228,9 +228,9 @@ func (i *mergeIter[T, R]) next() bool {
 			for idx, cnt := range i.hotspotMap {
 				// currently only one reader will become hotspot
 				if cnt > (checkHotspotPeriod / 2) {
-					logutil.BgLogger().Info("new hotspot reader", zap.Any("idx", i.lastHotspotIdx), zap.Any("cnt", cnt))
-
 					i.lastHotspotIdx = idx
+
+					logutil.BgLogger().Info("new hotspot reader", zap.Any("idx", i.lastHotspotIdx), zap.Any("cnt", cnt))
 					break
 				}
 			}
