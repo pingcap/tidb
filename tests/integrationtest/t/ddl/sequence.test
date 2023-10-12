@@ -353,6 +353,7 @@ connect (conn1, localhost, myuser,, ddl__sequence);
 -- error 1142
 alter sequence my_seq increment = 2;
 connection default;
+disconnect conn1;
 drop sequence if exists my_seq;
 
 # TestDdl_AlterSequenceIssue31265
