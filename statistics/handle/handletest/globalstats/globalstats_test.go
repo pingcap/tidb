@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -1114,7 +1115,7 @@ func TestGlobalStats(t *testing.T) {
 		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
 }
 
-func TestGlobalIndexStatistics(t *testing.T) {
+func testGlobalIndexStatistics(t *testing.T, analyzePartitionMergeConcurrency int) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableGlobalIndex = true
@@ -1127,6 +1128,8 @@ func TestGlobalIndexStatistics(t *testing.T) {
 	h.SetLease(time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	sctx := tk.Session().(sessionctx.Context)
+	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = analyzePartitionMergeConcurrency
 
 	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
@@ -1191,4 +1194,12 @@ func TestGlobalIndexStatistics(t *testing.T) {
 			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
 				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
 	}
+}
+
+func TestGlobalIndexStatistics(t *testing.T) {
+	testGlobalIndexStatistics(t, 1)
+}
+
+func TestGlobalIndexStatisticsWithAnalyzePartitionMergeConcurrency(t *testing.T) {
+	testGlobalIndexStatistics(t, 2)
 }
