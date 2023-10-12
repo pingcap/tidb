@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"

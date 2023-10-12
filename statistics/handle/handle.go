@@ -273,6 +273,24 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 	return
 }
 
+// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+// TODO: remove GetTableStats later on.
+func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
+	return h.GetPartitionStats(tblInfo, tblInfo.ID)
+}
+
+// GetPartitionStats retrieves the partition stats from cache.
+// TODO: remove GetPartitionStats later on.
+func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	var tbl *statistics.Table
+	if h == nil {
+		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl.PhysicalID = pid
+		return tbl
+	}
+	return h.StatsCache.GetTableStats(tblInfo)
+}
+
 // LoadNeededHistograms will load histograms for those needed columns/indices.
 func (h *Handle) LoadNeededHistograms() (err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
