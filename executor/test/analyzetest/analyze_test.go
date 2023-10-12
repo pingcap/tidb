@@ -2859,12 +2859,9 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
 		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
-	))
-	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Sort().Check(
-		testkit.Rows(
-			"analyze index idx_c",
-			"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate",
-		))
+		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx_c"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Check(testkit.Rows(
+		"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate"))
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2875,7 +2872,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.True(t, stats.Columns[tblInfo.Columns[1].ID].IsStatsInitialized())
 	require.False(t, stats.Columns[tblInfo.Columns[2].ID].IsStatsInitialized())
 	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
-	require.True(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
+	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
 }
 
 func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
@@ -2894,6 +2891,7 @@ func TestManualAnalyzeSkipColumnTypes(t *testing.T) {
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
 // It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
+	t.Skip()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/DebugAnalyzeJobOperations", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/statistics/handle/DebugAnalyzeJobOperations", "return(true)"))
 	defer func() {
