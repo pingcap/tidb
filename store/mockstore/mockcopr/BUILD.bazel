@@ -49,7 +49,6 @@ go_test(
     name = "mockcopr_test",
     timeout = "short",
     srcs = [
-        "cop_handler_dag_test.go",
         "executor_test.go",
         "main_test.go",
     ],

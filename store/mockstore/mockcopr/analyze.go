@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/rowcodec"
+	"github.com/pingcap/tidb/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -128,7 +129,7 @@ type analyzeColumnsExec struct {
 
 func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
 	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.TimeZone, err = constructTimeZone("", int(analyzeReq.TimeZoneOffset))
+	sc.TimeZone, err = timeutil.ConstructTimeZone("", int(analyzeReq.TimeZoneOffset))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
