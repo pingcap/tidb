@@ -113,6 +113,7 @@ type Context struct {
 
 // NewContext creates a new `Context`
 func NewContext(flags Flags, loc *time.Location, appendWarningFn func(err error)) Context {
+	intest.Assert(loc != nil && appendWarningFn != nil)
 	return Context{
 		flags:           flags,
 		loc:             loc,
@@ -144,7 +145,7 @@ func (c *Context) WithLocation(loc *time.Location) Context {
 func (c *Context) Location() *time.Location {
 	intest.Assert(c.loc)
 	if c.loc == nil {
-		// this should never happen, just make the code safe here.
+		// c.loc should always not be nil, just make the code safe here.
 		return time.UTC
 	}
 	return c.loc
@@ -152,7 +153,9 @@ func (c *Context) Location() *time.Location {
 
 // AppendWarning appends the error to warning. If the inner `appendWarningFn` is nil, do nothing.
 func (c *Context) AppendWarning(err error) {
+	intest.Assert(c.appendWarningFn != nil)
 	if fn := c.appendWarningFn; fn != nil {
+		// appendWarningFn should always not be nil, check fn != nil here to just make code safe.
 		fn(err)
 	}
 }

@@ -150,7 +150,7 @@ func (rf *ReferenceCount) UnFreeze() {
 // It should be reset before executing a statement.
 type StatementContext struct {
 	// NoCopy indicates that this struct cannot be copied because
-	// copying this object will make the new TypeCtx referring a wrong `AppendWarnings` func.
+	// copying this object will make the copied TypeCtx field to refer a wrong `AppendWarnings` func.
 	_ nocopy.NoCopy
 
 	// TypeCtx is used to indicate how make the type conversation.
@@ -468,6 +468,7 @@ func (sc *StatementContext) SetTypeFlags(flags typectx.Flags) {
 	sc.TypeCtx = sc.TypeCtx.WithFlags(flags)
 }
 
+// UpdateTypeFlags updates the flags of the type context
 func (sc *StatementContext) UpdateTypeFlags(fn func(typectx.Flags) typectx.Flags) {
 	flags := fn(sc.TypeCtx.Flags())
 	sc.TypeCtx = sc.TypeCtx.WithFlags(flags)

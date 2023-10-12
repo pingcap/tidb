@@ -18,7 +18,6 @@ import (
 	"cmp"
 	"context"
 	"fmt"
-	typectx "github.com/pingcap/tidb/types/context"
 	"math"
 	"runtime/pprof"
 	"slices"
@@ -2139,7 +2138,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
 
-	sc.UpdateTypeFlags(func(flags typectx.Flags) typectx.Flags {
+	sc.UpdateTypeFlags(func(flags types.Flags) types.Flags {
 		return flags.
 			WithSkipUTF8Check(vars.SkipUTF8Check).
 			WithSkipSACIICheck(vars.SkipASCIICheck).

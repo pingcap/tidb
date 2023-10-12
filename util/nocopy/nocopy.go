@@ -18,7 +18,7 @@ package nocopy
 type NoCopy struct{}
 
 // Lock is an empty function to implement sync.Locker interface
-func (_ *NoCopy) Lock() {}
+func (*NoCopy) Lock() {}
 
 // Unlock is an empty function to implement sync.Locker interface
-func (_ *NoCopy) Unlock() {}
+func (*NoCopy) Unlock() {}
