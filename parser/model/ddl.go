@@ -445,7 +445,8 @@ type Job struct {
 	AdminOperator AdminCommandOperator `json:"admin_operator"`
 
 	// TraceInfo indicates the information for SQL tracing
-	TraceInfo *TraceInfo `json:"trace_info"`
+	TraceInfo  *TraceInfo `json:"trace_info"`
+	TimeDetail string     `json:"time_detail"`
 }
 
 // FinishTableJob is called when a job is finished.

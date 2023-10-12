@@ -736,6 +736,7 @@ SwitchIndexState:
 		logutil.BgLogger().Info("[ddl] finish add index job",
 			zap.String("job", job.String()),
 			zap.String("time details", details))
+		job.TimeDetail = details
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		if !job.ReorgMeta.IsDistReorg && job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge {
