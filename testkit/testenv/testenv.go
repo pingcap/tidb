@@ -20,7 +20,7 @@ import (
 	"github.com/pingcap/tidb/util/mathutil"
 )
 
-// SetGOMAXPROCSForTest sets GOMAXPROCS to 8 if it is greater than 8.
+// SetGOMAXPROCSForTest sets GOMAXPROCS to 16 if it is greater than 16.
 func SetGOMAXPROCSForTest() {
-	runtime.GOMAXPROCS(mathutil.Min(8, runtime.GOMAXPROCS(0)))
+	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
 }
