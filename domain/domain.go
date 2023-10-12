@@ -1480,14 +1480,14 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
 	err := schedulerManager.Start()
 	if err != nil {
-		logutil.BgLogger().Error("dist task scheduler failed", zap.Error(err))
+		logutil.BgLogger().Error("start dist task scheduler manager failed", zap.Error(err))
 		return
 	}
 	logutil.BgLogger().Info("dist task scheduler started")
 	defer func() {
-		logutil.BgLogger().Info("stopping dist task scheduler")
+		logutil.BgLogger().Info("stopping dist task scheduler manager")
 		schedulerManager.Stop()
-		logutil.BgLogger().Info("dist task scheduler stopped")
+		logutil.BgLogger().Info("dist task scheduler manager stopped")
 	}()
 
 	var dispatcherManager *dispatcher.Manager
@@ -1498,16 +1498,24 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		var err error
 		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
 		if err != nil {
-			logutil.BgLogger().Error("failed to create a dist task dispatcher", zap.Error(err))
+			logutil.BgLogger().Error("failed to create a dist task dispatcher manager", zap.Error(err))
 			return
 		}
 		dispatcherManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
 		if dispatcherManager != nil && dispatcherManager.Inited() {
-			logutil.BgLogger().Info("stopping dist task dispatcher because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
+			if !do.ddl.OwnerManager().IsOwner() {
+				logutil.BgLogger().Info(
+					"stopping dist task dispatcher manager because the current node is not DDL owner anymore",
+					zap.String("id", do.ddl.GetID()))
+			} else {
+				logutil.BgLogger().Info(
+					"stopping dist task dispatcher manager because tidb_enable_dist_task=0",
+					zap.String("id", do.ddl.GetID()))
+			}
 			dispatcherManager.Stop()
-			logutil.BgLogger().Info("dist task dispatcher stopped", zap.String("id", do.ddl.GetID()))
+			logutil.BgLogger().Info("dist task dispatcher manager stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
@@ -1518,6 +1526,8 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 			stopDispatchIfNeeded()
 			return
 		case <-ticker.C:
+			// Currently, only ddl owner run dispatcherManager.
+			// When EnableDistTask is set to true, we start the dispatcherManager.
 			if do.ddl.OwnerManager().IsOwner() && variable.EnableDistTask.Load() {
 				startDispatchIfNeeded()
 			} else {

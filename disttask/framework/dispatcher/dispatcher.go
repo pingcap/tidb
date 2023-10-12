@@ -703,6 +703,7 @@ func (d *BaseDispatcher) VerifyTaskStateTransform(from, to string) bool {
 	return VerifyTaskStateTransformImpl(from, to)
 }
 
+// VerifyTaskStateTransformImpl verifies whether the task state transform is valid. Exported for tests.
 func VerifyTaskStateTransformImpl(from, to string) bool {
 	rules := map[string][]string{
 		proto.TaskStatePending: {
