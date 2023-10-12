@@ -19,11 +19,11 @@ import (
 	"context"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
-	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -373,10 +372,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if len(w.writeBatch) == 0 {
 		return nil
 	}
-	if w.shareMu != nil {
-		w.shareMu.Lock()
-		defer w.shareMu.Unlock()
-	}
 
 	logger := logutil.Logger(ctx)
 	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
@@ -408,16 +403,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			zap.Uint64("bytes", savedBytes),
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
 	}()
-
-	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
-	sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
-		if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
-			if r != s {
-				w.writeBatch[r], w.writeBatch[s] = w.writeBatch[s], w.writeBatch[r]
-			}
-			return true
-		}
-		return false
+	slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
 	})
 
 	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
