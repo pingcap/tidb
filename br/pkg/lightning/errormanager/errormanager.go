@@ -583,7 +583,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 			// get the latest value of rawKey from downstream TiDB
 			latestValue, err := fnGetLatest(gCtx, rawKey)
-			if err != nil && !tikverr.IsErrNotFound(err) {
+			if tikverr.IsErrNotFound(err) || latestValue == nil {
+				continue
+			}
+			if err != nil {
 				return errors.Trace(err)
 			}
 

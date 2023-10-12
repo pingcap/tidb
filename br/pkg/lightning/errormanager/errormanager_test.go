@@ -1178,28 +1178,73 @@ func TestReplaceConflictKeysOneUniqueKeyMultipleConflicts(t *testing.T) {
 
 	data1 := []types.Datum{
 		types.NewIntDatum(1),
-		types.NewIntDatum(6),
+		types.NewIntDatum(1),
 		types.NewStringDatum("1.csv"),
 	}
 	data2 := []types.Datum{
-		types.NewIntDatum(2),
-		types.NewIntDatum(6),
+		types.NewIntDatum(1),
+		types.NewIntDatum(1),
 		types.NewStringDatum("2.csv"),
 	}
 	data3 := []types.Datum{
+		types.NewIntDatum(2),
+		types.NewIntDatum(1),
+		types.NewStringDatum("1.csv"),
+	}
+	data4 := []types.Datum{
+		types.NewIntDatum(2),
+		types.NewIntDatum(2),
+		types.NewStringDatum("2.csv"),
+	}
+	data5 := []types.Datum{
 		types.NewIntDatum(3),
 		types.NewIntDatum(3),
 		types.NewStringDatum("3.csv"),
 	}
-	data4 := []types.Datum{
+	data6 := []types.Datum{
+		types.NewIntDatum(4),
+		types.NewIntDatum(4),
+		types.NewStringDatum("4.csv"),
+	}
+	data7 := []types.Datum{
+		types.NewIntDatum(5),
+		types.NewIntDatum(5),
+		types.NewStringDatum("5.csv"),
+	}
+	data8 := []types.Datum{
+		types.NewIntDatum(5),
+		types.NewIntDatum(6),
+		types.NewStringDatum("6.csv"),
+	}
+	data9 := []types.Datum{
+		types.NewIntDatum(1),
+		types.NewIntDatum(1),
+		types.NewStringDatum("3.csv"),
+	}
+	data10 := []types.Datum{
+		types.NewIntDatum(2),
+		types.NewIntDatum(2),
+		types.NewStringDatum("1.csv"),
+	}
+	data11 := []types.Datum{
 		types.NewIntDatum(3),
 		types.NewIntDatum(4),
 		types.NewStringDatum("4.csv"),
 	}
-	data5 := []types.Datum{
-		types.NewIntDatum(5),
+	data12 := []types.Datum{
 		types.NewIntDatum(4),
-		types.NewStringDatum("5.csv"),
+		types.NewIntDatum(3),
+		types.NewStringDatum("4.csv"),
+	}
+	data13 := []types.Datum{
+		types.NewIntDatum(4),
+		types.NewIntDatum(5),
+		types.NewStringDatum("4.csv"),
+	}
+	data14 := []types.Datum{
+		types.NewIntDatum(6),
+		types.NewIntDatum(6),
+		types.NewStringDatum("6.csv"),
 	}
 	_, err = encoder.Table.AddRecord(encoder.SessionCtx, data1)
 	require.NoError(t, err)
