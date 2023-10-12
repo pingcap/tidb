@@ -12,7 +12,6 @@ go_test(
     deps = [
         "//config",
         "//parser/model",
-        "//statistics/handle",
         "//testkit",
         "//testkit/testsetup",
         "@com_github_pingcap_failpoint//:failpoint",

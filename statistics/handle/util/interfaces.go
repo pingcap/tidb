@@ -70,6 +70,21 @@ type StatsUsage interface {
 
 	// GCIndexUsage removes unnecessary index usage data.
 	GCIndexUsage() error
+
+	// Blow methods are for table delta and stats usage.
+
+	// NewSessionStatsItem allocates a stats collector for a session.
+	// TODO: use interface{} to avoid cycle import, remove this interface{}.
+	NewSessionStatsItem() interface{}
+
+	// ResetSessionStatsList resets the sessions stats list.
+	ResetSessionStatsList()
+
+	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
+	DumpStatsDeltaToKV(dumpAll bool) error
+
+	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
+	DumpColStatsUsageToKV() error
 }
 
 // StatsHistory is used to manage historical stats.
@@ -107,6 +122,12 @@ type StatsCache interface {
 
 	// Get returns the specified table's stats.
 	Get(tableID int64) (*statistics.Table, bool)
+
+	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+
+	// GetPartitionStats retrieves the partition stats from cache.
+	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
