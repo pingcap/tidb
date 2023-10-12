@@ -27,8 +27,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/ddl/util/callback"
+	"github.com/pingcap/tidb/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/pingcap/tidb/sessionctxs/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
@@ -61,8 +62,6 @@ func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
 }
 
 func TestGlobalSortBasic(t *testing.T) {
-	var err error
-
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -82,7 +81,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	variable.CloudStorageURI.Store(cloudStorageURI)
+	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
@@ -101,30 +100,29 @@ func TestGlobalSortBasic(t *testing.T) {
 	sb.WriteString(";")
 	tk.MustExec(sb.String())
 
-	//var jobID int64
+	var jobID int64
 	origin := dom.DDL().GetHook()
 	onJobUpdated := func(job *model.Job) {
-		//jobID = job.ID
+		jobID = job.ID
 	}
 	hook := &callback.TestDDLCallback{}
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/forceMergeSort", "return()"))
 
 	tk.MustExec("alter table t add index idx(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	//<-dispatcher.WaitCleanUpFinished
+	<-dispatcher.WaitCleanUpFinished
+	checkFileCleaned(t, jobID, cloudStorageURI)
 
-	//checkFileCleaned(t, jobID, sortStorageURI)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/forceMergeSort", "return()"))
+	dom.DDL().SetHook(hook)
+	tk.MustExec("alter table t add index idx1(a);")
+	dom.DDL().SetHook(origin)
+	tk.MustExec("admin check table t;")
+	<-dispatcher.WaitCleanUpFinished
 
-	//dom.DDL().SetHook(hook)
-	//tk.MustExec("alter table t add index idx1(a);")
-	//dom.DDL().SetHook(origin)
-	//tk.MustExec("admin check table t;")
-	//<-dispatcher.WaitCleanUpFinished
-
-	//checkFileCleaned(t, jobID, sortStorageURI)
+	checkFileCleaned(t, jobID, cloudStorageURI)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/forceMergeSort"))
 }

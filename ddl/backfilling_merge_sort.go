@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/proto"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
@@ -88,7 +89,11 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if err != nil {
 		return err
 	}
-	store, err := storage.New(ctx, storeBackend, nil)
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	store, err := storage.New(ctx, storeBackend, opt)
 	if err != nil {
 		return err
 	}

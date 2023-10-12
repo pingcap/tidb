@@ -94,7 +94,6 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		return generateNonPartitionPlan(h.d, tblInfo, job)
 	case proto.StepTwo:
 		gTaskMeta.UseMergeSort = true
-		logutil.BgLogger().Info("ywq test use merge sort")
 		if err := updateMeta(gTask, &gTaskMeta); err != nil {
 			return nil, err
 		}
@@ -102,7 +101,6 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 	case proto.StepThree:
 		if useExtStore {
 			prevStep := proto.StepOne
-			logutil.BgLogger().Info("ywq test use merge sort", zap.Any("use", gTaskMeta.UseMergeSort))
 			if gTaskMeta.UseMergeSort {
 				prevStep = proto.StepTwo
 			}
@@ -138,6 +136,19 @@ func (*backfillingDispatcherExt) GetNextStep(
 		if taskHandle == nil {
 			return proto.StepThree
 		}
+
+		var meta BackfillGlobalMeta
+		if err := json.Unmarshal(task.Meta, &meta); err != nil {
+			logutil.BgLogger().Info(
+				"unmarshal task meta met error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
+		}
+		// don't need merge step in local backend.
+		if len(meta.CloudStorageURI) == 0 {
+			return proto.StepTwo
+		}
+
 		// if data files overlaps too much, we need a merge step.
 		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
 		if err != nil {
@@ -439,7 +450,6 @@ func generateMergePlan(
 
 		start = end
 	}
-	logutil.BgLogger().Info("ywq test datafiles num", zap.Any("num", len(dataFiles)))
 	return metaArr, nil
 }
 
