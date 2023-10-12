@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
@@ -117,7 +116,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	insertNums := 5
 	for i := 0; i < insertNums; i++ {
 		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
-		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
+		err := h.DumpStatsDeltaToKV(false)
 		require.NoError(t, err)
 	}
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.stats_meta_history where table_id = '%d'", tableInfo.Meta().ID)).Check(testkit.Rows("0"))
@@ -128,7 +127,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 
 	for i := 0; i < insertNums; i++ {
 		tk.MustExec("insert into test.t (a,b) values (1,1), (2,2), (3,3)")
-		err := h.DumpStatsDeltaToKV(handle.DumpDelta)
+		err := h.DumpStatsDeltaToKV(false)
 		require.NoError(t, err)
 	}
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time", tableInfo.Meta().ID)).Sort().Check(
