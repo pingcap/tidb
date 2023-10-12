@@ -222,7 +222,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 	return table, nil
 }
 
-func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -295,8 +295,8 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		break
 	}
 	if idx != nil {
-		if sctx.GetSessionVars().MemTracker != nil {
-			sctx.GetSessionVars().MemTracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
+		if tracker != nil {
+			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
 		}
 		table.Indices[histID] = idx
 	} else {
@@ -305,7 +305,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	return nil
 }
 
-func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -401,8 +401,8 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		break
 	}
 	if col != nil {
-		if sctx.GetSessionVars().MemTracker != nil {
-			sctx.GetSessionVars().MemTracker.Consume(col.MemoryUsage().TotalMemoryUsage())
+		if tracker != nil {
+			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
 		}
 		table.Columns[col.ID] = col
 	} else {
@@ -454,9 +454,9 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			return nil, errors.Trace(statistics.ErrQueryInterrupted)
 		}
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
+			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		} else {
-			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
+			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		}
 		if err != nil {
 			return nil, err
