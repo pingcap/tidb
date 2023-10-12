@@ -146,7 +146,7 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 
 // ConvertIntToUint converts an int value to an uint value.
 func ConvertIntToUint(flags Flags, val int64, upperBound uint64, tp byte) (uint64, error) {
-	if flags.ClipNegativeToZero() && val < 0 {
+	if val < 0 && flags.ClipNegativeToZero() {
 		return 0, overflow(val, tp)
 	}
 

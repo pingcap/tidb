@@ -250,10 +250,6 @@ func (s *BaseScheduler) runSubtask(ctx context.Context, executor execute.Subtask
 		s.markErrorHandled()
 		return
 	}
-	if ctx.Err() != nil {
-		s.onError(ctx.Err())
-		return
-	}
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {

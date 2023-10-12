@@ -14,7 +14,11 @@
 
 package context
 
-import "time"
+import (
+	"time"
+
+	"github.com/pingcap/tidb/util/intest"
+)
 
 // StrictFlags is a flags with a fields unset and has the most strict behavior.
 const StrictFlags Flags = 0
@@ -143,7 +147,9 @@ func (c *Context) WithFlags(f Flags) Context {
 
 // Location returns the location of the context
 func (c *Context) Location() *time.Location {
+	intest.Assert(c.loc)
 	if c.loc == nil {
+		// this should never happen, just make the code safe here.
 		return time.UTC
 	}
 	return c.loc

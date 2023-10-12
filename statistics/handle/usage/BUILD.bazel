@@ -1,12 +1,11 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "usage",
     srcs = [
         "index_usage.go",
         "predicate_column.go",
-        "stats_usage.go",
-        "table_delta.go",
+        "session_stats_collect.go",
     ],
     importpath = "github.com/pingcap/tidb/statistics/handle/usage",
     visibility = ["//visibility:public"],
@@ -23,4 +22,13 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
+)
+
+go_test(
+    name = "usage_test",
+    timeout = "short",
+    srcs = ["session_stats_collect_test.go"],
+    embed = [":usage"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
 )

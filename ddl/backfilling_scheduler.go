@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/table"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/dbterror"
 	"github.com/pingcap/tidb/util/intest"
@@ -168,6 +169,10 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
+	sessCtx.GetSessionVars().StmtCtx.ResetTypeContext(types.StrictFlags.
+		WithClipNegativeToZero(true),
+	)
+
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
 	_ = sessCtx.GetDomainInfoSchema()

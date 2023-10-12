@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
 	statsutil "github.com/pingcap/tidb/statistics/handle/util"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
@@ -39,6 +40,31 @@ import (
 	"github.com/pingcap/tidb/util/timeutil"
 	"go.uber.org/zap"
 )
+
+// statsAnalyze implements util.StatsAnalyze.
+// statsAnalyze is used to handle auto-analyze and manage analyze jobs.
+type statsAnalyze struct {
+	pool statsutil.SessionPool
+}
+
+// NewStatsAnalyze creates a new StatsAnalyze.
+func NewStatsAnalyze(pool statsutil.SessionPool) statsutil.StatsAnalyze {
+	return &statsAnalyze{pool: pool}
+}
+
+func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
+	return statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
+		return insertAnalyzeJob(sctx, job, instance, procID)
+	})
+}
+
+// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
+func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
+	return statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
+		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
+		return err
+	})
+}
 
 func parseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
@@ -411,8 +437,8 @@ func execAnalyzeStmt(sctx sessionctx.Context,
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }
 
-// InsertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
-func InsertAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
+// insertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.
+func insertAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, instance string, procID uint64) (err error) {
 	jobInfo := job.JobInfo
 	const textMaxLength = 65535
 	if len(jobInfo) > textMaxLength {

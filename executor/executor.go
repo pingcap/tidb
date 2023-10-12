@@ -2173,6 +2173,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
+	sc.TypeConvContext = types.NewContext(typeFlags, sc.TimeZone, sc.AppendWarning)
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount

@@ -109,6 +109,7 @@ type WriteIngestStepMeta struct {
 	KVGroup               string `json:"kv-group"`
 	external.SortedKVMeta `json:"sorted-kv-meta"`
 	RangeSplitKeys        [][]byte `json:"range-split-keys"`
+	RangeSplitSize        int64    `json:"range-split-size"`
 
 	Result Result
 }
