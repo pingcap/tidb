@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -1128,12 +1127,10 @@ func testGlobalIndexStatistics(t *testing.T, analyzePartitionMergeConcurrency in
 	h.SetLease(time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	sctx := tk.Session().(sessionctx.Context)
-	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = analyzePartitionMergeConcurrency
 
 	for i, version := range []string{"1", "2"} {
 		tk.MustExec("set @@session.tidb_analyze_version = " + version)
-
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_merge_partition_stats_concurrency=%d", analyzePartitionMergeConcurrency))
 		// analyze table t
 		tk.MustExec("drop table if exists t")
 		if i != 0 {
@@ -1201,5 +1198,5 @@ func TestGlobalIndexStatistics(t *testing.T) {
 }
 
 func TestGlobalIndexStatisticsWithAnalyzePartitionMergeConcurrency(t *testing.T) {
-	testGlobalIndexStatistics(t, 2)
+	testGlobalIndexStatistics(t, 3)
 }
