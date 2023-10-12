@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -220,7 +222,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 	return table, nil
 }
 
-func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -293,6 +295,9 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		break
 	}
 	if idx != nil {
+		if tracker != nil {
+			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Indices[histID] = idx
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
@@ -300,7 +305,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	return nil
 }
 
-func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -396,6 +401,9 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		break
 	}
 	if col != nil {
+		if tracker != nil {
+			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Columns[col.ID] = col
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
@@ -408,6 +416,9 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 
 // TableStatsFromStorage loads table stats info from storage.
 func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
+	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
+	defer tracker.Detach()
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
@@ -439,10 +450,13 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		return nil, nil
 	}
 	for _, row := range rows {
+		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
+			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		}
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
+			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		} else {
-			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
+			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		}
 		if err != nil {
 			return nil, err
