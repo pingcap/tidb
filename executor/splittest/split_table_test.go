@@ -177,6 +177,10 @@ func TestClusterIndexSplitTableIntegration(t *testing.T) {
 	tk.MustExec("create table t (a varchar(255), b decimal, c int, primary key (a, b));")
 	errMsg = "[types:1265]Incorrect value: '' for column 'b'"
 	tk.MustGetErrMsg("split table t by ('aaa', '')", errMsg)
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);")
+	tk.MustGetErrCode("split table t index `primary` between (0) and (1000) regions 2;", errno.ErrKeyDoesNotExist)
 }
 
 func TestClusterIndexShowTableRegion(t *testing.T) {
