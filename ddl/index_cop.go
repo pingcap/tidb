@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -83,10 +84,12 @@ type copReqSenderPool struct {
 	wg      sync.WaitGroup
 	closed  bool
 
-	srcChkPool chan *chunk.Chunk
+	srcChkPool  chan *chunk.Chunk
+	workerSeqID *atomic.Int64
 }
 
 type copReqSender struct {
+	seq        int
 	senderPool *copReqSenderPool
 
 	ctx    context.Context
@@ -121,9 +124,19 @@ func (c *copReqSender) run() {
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
 		}
+		finish := func() {}
+		if c.seq == 1 {
+			finish = util2.InjectSpan(p.copCtx.GetBase().JobID, "scan-records")
+		}
 		err := scanRecords(p, task, se)
+		finish()
 		if err != nil {
+			finish = func() {}
+			if c.seq == 1 {
+				finish = util2.InjectSpan(p.copCtx.GetBase().JobID, "send-chunk")
+			}
 			p.chunkSender.AddTask(IndexRecordChunk{ID: task.id, Err: err})
+			finish()
 			return
 		}
 	}
@@ -201,6 +214,7 @@ func newCopReqSenderPool(ctx context.Context, copCtx copr.CopContext, store kv.S
 		srcChkPool:    srcChkPool,
 		sessPool:      sessPool,
 		checkpointMgr: checkpointMgr,
+		workerSeqID:   &atomic.Int64{},
 	}
 }
 
@@ -209,6 +223,7 @@ func (c *copReqSenderPool) adjustSize(n int) {
 	for i := len(c.senders); i < n; i++ {
 		ctx, cancel := context.WithCancel(c.ctx)
 		c.senders = append(c.senders, &copReqSender{
+			seq:        int(c.workerSeqID.Add(1)),
 			senderPool: c,
 			ctx:        ctx,
 			cancel:     cancel,
@@ -291,7 +306,7 @@ func fetchTableScanResult(
 	chk *chunk.Chunk,
 ) (bool, error) {
 	if seq == 1 {
-		defer util2.InjectSpan(copCtx.JobID, "read-into-chunk")()
+		defer util2.InjectSpan(copCtx.JobID, "op-read-into-chunk")()
 	}
 	err := result.Next(ctx, chk)
 	if err != nil {

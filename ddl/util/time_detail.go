@@ -22,8 +22,10 @@ type spanCtx struct {
 
 func InjectSpan(jobID int64, event string) func() {
 	if sctx, ok := timeDetails.Load(jobID); ok {
+		//logutil.BgLogger().Info("span start", zap.String("event", event))
 		hd := minitrace.StartSpan(sctx.ctx, event)
 		return func() {
+			//logutil.BgLogger().Info("span end", zap.String("event", event))
 			hd.Finish()
 		}
 	}
@@ -32,7 +34,7 @@ func InjectSpan(jobID int64, event string) func() {
 
 func InitializeTrace(jobID int64) {
 	ctx, root := minitrace.StartRootSpan(context.Background(),
-		"add-index-worker", uint64(jobID), 0, nil)
+		"add-index-job", uint64(jobID), 0, nil)
 	timeDetails.Store(jobID, &spanCtx{
 		ctx:  ctx,
 		root: root,

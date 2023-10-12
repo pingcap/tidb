@@ -64,6 +64,7 @@ func (*cloudImportExecutor) Init(ctx context.Context) error {
 
 func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
+	defer util.InjectSpan(m.jobID, "stage-cloud-import")()
 
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask.Meta, sm)
@@ -94,7 +95,6 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	defer util.InjectSpan(m.jobID, "cloud-import-exec")()
 	err = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	return err
 }

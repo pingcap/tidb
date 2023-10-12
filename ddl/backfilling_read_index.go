@@ -98,7 +98,7 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	r.subtaskSummary.Store(subtask.ID, &readIndexSummary{})
 
-	defer util.InjectSpan(r.job.ID, "read-index-exec")()
+	defer util.InjectSpan(r.job.ID, "stage-read-index")()
 	sm := &BackfillSubTaskMeta{}
 	err := json.Unmarshal(subtask.Meta, sm)
 	if err != nil {

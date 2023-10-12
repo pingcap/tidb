@@ -18,12 +18,14 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/copr"
 	"github.com/pingcap/tidb/ddl/ingest"
 	sess "github.com/pingcap/tidb/ddl/internal/session"
+	util2 "github.com/pingcap/tidb/ddl/util"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/model"
@@ -285,19 +287,21 @@ type ingestBackfillScheduler struct {
 	poolErr       chan error
 	backendCtx    ingest.BackendCtx
 	checkpointMgr *ingest.CheckpointManager
+	workerSeqID   *atomic.Int64
 }
 
 func newIngestBackfillScheduler(ctx context.Context, info *reorgInfo,
 	sessPool *sess.Pool, tbl table.PhysicalTable, distribute bool) *ingestBackfillScheduler {
 	return &ingestBackfillScheduler{
-		ctx:        ctx,
-		reorgInfo:  info,
-		sessPool:   sessPool,
-		tbl:        tbl,
-		taskCh:     make(chan *reorgBackfillTask, backfillTaskChanSize),
-		resultCh:   make(chan *backfillResult, backfillTaskChanSize),
-		poolErr:    make(chan error),
-		distribute: distribute,
+		ctx:         ctx,
+		reorgInfo:   info,
+		sessPool:    sessPool,
+		tbl:         tbl,
+		taskCh:      make(chan *reorgBackfillTask, backfillTaskChanSize),
+		resultCh:    make(chan *backfillResult, backfillTaskChanSize),
+		poolErr:     make(chan error),
+		distribute:  distribute,
+		workerSeqID: &atomic.Int64{},
 	}
 }
 
@@ -418,6 +422,7 @@ func (b *ingestBackfillScheduler) createWorker() workerpool.Worker[IndexRecordCh
 	}
 
 	worker, err := newAddIndexIngestWorker(
+		int(b.workerSeqID.Add(1)),
 		b.ctx, b.tbl, reorgInfo.d, engines, b.resultCh, job.ID,
 		reorgInfo.SchemaName, indexIDs, b.writerMaxID,
 		b.copReqSenderPool, sessCtx, b.checkpointMgr, b.distribute)
@@ -496,12 +501,18 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 			return
 		}
 	}
+	finish := func() {}
+	if w.seq == 1 {
+		finish = util2.InjectSpan(w.jobID, "write-local")
+	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
+		finish()
 		result.err = err
 		w.resultCh <- result
 		return
 	}
+	finish()
 	if count == 0 {
 		logutil.Logger(w.ctx).Info("finish a cop-request task", zap.Int("id", rs.ID))
 		return

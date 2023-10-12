@@ -1697,6 +1697,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 }
 
 type addIndexIngestWorker struct {
+	seq           int
 	ctx           context.Context
 	d             *ddlCtx
 	metricCounter prometheus.Counter
@@ -1714,6 +1715,7 @@ type addIndexIngestWorker struct {
 }
 
 func newAddIndexIngestWorker(
+	seq int,
 	ctx context.Context,
 	t table.PhysicalTable,
 	d *ddlCtx,
@@ -1742,6 +1744,7 @@ func newAddIndexIngestWorker(
 	}
 
 	return &addIndexIngestWorker{
+		seq:     seq,
 		ctx:     ctx,
 		d:       d,
 		sessCtx: sessCtx,
@@ -2046,7 +2049,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if reorgInfo.mergingTmpIdx {
 		return errors.New("do not support merge index")
 	}
-	defer ddlutil.InjectSpan(reorgInfo.ID, "exec-dist-global-task")()
+	defer ddlutil.InjectSpan(reorgInfo.ID, "task-exec-dist-global")()
 
 	taskType := BackfillTaskType
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)

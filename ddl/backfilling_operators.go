@@ -454,7 +454,12 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				return err
 			}
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
+			finish := func() {}
+			if w.seq == 1 {
+				finish = util2.InjectSpan(w.copCtx.GetBase().JobID, "op-send-chunk")
+			}
 			sender(idxResult)
+			finish()
 		}
 		return rs.Close()
 	})
@@ -465,7 +470,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
 	if w.seq == 1 {
-		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "get-chunk")()
+		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "op-get-chunk")()
 	}
 	chk := <-w.srcChkPool
 	newCap := copReadBatchSize()
@@ -629,7 +634,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 		w.se = session.NewSession(sessCtx)
 	}
 	if w.seq == 1 {
-		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "write-local")()
+		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "op-write-local")()
 	}
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
@@ -651,7 +656,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 
 func (w *indexIngestWorker) Close() {
 	if w.seq == 1 {
-		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "close-writers")()
+		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "op-close-write-flush")()
 	}
 	for _, writer := range w.writers {
 		err := writer.Close(w.ctx)
