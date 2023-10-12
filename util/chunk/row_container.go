@@ -373,9 +373,6 @@ func (c *RowContainer) ActionSpillForTest() *SpillDiskAction {
 	return c.actionSpill
 }
 
-// SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
-// the memory quota of a query is exceeded, SpillDiskAction.Action is
-// triggered.
 type baseSpillDiskAction struct {
 	memory.BaseOOMAction
 	m    sync.Mutex
@@ -388,6 +385,9 @@ type baseSpillDiskAction struct {
 	testWg             sync.WaitGroup
 }
 
+// SpillDiskAction implements memory.ActionOnExceed for chunk.List. If
+// the memory quota of a query is exceeded, SpillDiskAction.Action is
+// triggered.
 type SpillDiskAction struct {
 	c *RowContainer
 	*baseSpillDiskAction
