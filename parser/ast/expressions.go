@@ -212,13 +212,19 @@ func (n *BinaryOperationExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.L = node.(ExprNode)
+	newL := node.(ExprNode)
+	if newL != n.L {
+		n.L = newL
+	}
 
 	node, ok = n.R.Accept(v)
 	if !ok {
 		return n, false
 	}
-	n.R = node.(ExprNode)
+	newR := node.(ExprNode)
+	if newR != n.R {
+		n.R = newR
+	}
 
 	return v.Leave(n)
 }
@@ -597,7 +603,10 @@ func (n *ColumnNameExpr) Accept(v Visitor) (Node, bool) {
 	if !ok {
 		return n, false
 	}
-	n.Name = node.(*ColumnName)
+	newName := node.(*ColumnName)
+	if newName != n.Name {
+		n.Name = newName
+	}
 	return v.Leave(n)
 }
 
