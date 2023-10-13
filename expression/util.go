@@ -155,14 +155,21 @@ func ExtractColumnsFromExpressions(result []*Column, exprs []Expression, filter 
 }
 
 func extractColumns(result []*Column, expr Expression, filter func(*Column) bool) []*Column {
-	switch v := expr.(type) {
-	case *Column:
-		if filter == nil || filter(v) {
-			result = append(result, v)
-		}
-	case *ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			result = extractColumns(result, arg, filter)
+	stack := make([]Expression, 0, 5)
+	stack = append(stack, expr)
+	for len(stack) > 0 {
+		curr := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		switch v := curr.(type) {
+		case *Column:
+			if filter == nil || filter(v) {
+				result = append(result, v)
+			}
+		case *ScalarFunction:
+			args := v.GetArgs()
+			for i := len(args) - 1; i >= 0; i-- {
+				stack = append(stack, args[i])
+			}
 		}
 	}
 	return result
