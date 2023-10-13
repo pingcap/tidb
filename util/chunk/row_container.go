@@ -643,7 +643,7 @@ func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 	if c.actionSpill == nil {
 		c.actionSpill = &SortAndSpillDiskAction{
 			c:                   c,
-			baseSpillDiskAction: &baseSpillDiskAction{cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled}},
+			baseSpillDiskAction: c.RowContainer.ActionSpill().baseSpillDiskAction,
 		}
 	}
 	return c.actionSpill
@@ -652,16 +652,8 @@ func (c *SortedRowContainer) ActionSpill() *SortAndSpillDiskAction {
 // ActionSpillForTest returns a SortAndSpillDiskAction for sorting and spilling over to disk for test.
 func (c *SortedRowContainer) ActionSpillForTest() *SortAndSpillDiskAction {
 	c.actionSpill = &SortAndSpillDiskAction{
-		c: c,
-		baseSpillDiskAction: &baseSpillDiskAction{
-			testSyncInputFunc: func() {
-				c.actionSpill.testWg.Add(1)
-			},
-			testSyncOutputFunc: func() {
-				c.actionSpill.testWg.Done()
-			},
-			cond: spillStatusCond{sync.NewCond(new(sync.Mutex)), notSpilled},
-		},
+		c:                   c,
+		baseSpillDiskAction: c.RowContainer.ActionSpillForTest().baseSpillDiskAction,
 	}
 	return c.actionSpill
 }
