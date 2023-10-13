@@ -69,6 +69,7 @@ type AnalyzeResult struct {
 	IsIndex int
 }
 
+// DestroyAndPutToPool destroys the result and put it to the pool.
 func (a *AnalyzeResult) DestroyAndPutToPool() {
 	for _, f := range a.Fms {
 		f.DestroyAndPutToPool()
@@ -107,6 +108,7 @@ type AnalyzeResults struct {
 	ForMVIndex bool
 }
 
+// DestroyAndPutToPool destroys the result and put it to the pool.
 func (a *AnalyzeResults) DestroyAndPutToPool() {
 	for _, f := range a.Ars {
 		f.DestroyAndPutToPool()
