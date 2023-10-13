@@ -132,7 +132,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(pool, handle.StatsCache)
 	handle.StatsUsage = usage.NewStatsUsageImpl(pool, handle.TableInfoGetter, handle.StatsCache,
-		handle.StatsHistory, handle.GetLockedTables)
+		handle.StatsHistory, handle.GetLockedTables, handle.GetPartitionStats)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -288,7 +288,16 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 		tbl.PhysicalID = pid
 		return tbl
 	}
-	return h.StatsCache.GetTableStats(tblInfo)
+	tbl, ok := h.Get(pid)
+	if !ok {
+		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl.PhysicalID = pid
+		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+			h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+		}
+		return tbl
+	}
+	return tbl
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.

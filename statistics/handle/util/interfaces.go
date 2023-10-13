@@ -123,12 +123,6 @@ type StatsCache interface {
 	// Get returns the specified table's stats.
 	Get(tableID int64) (*statistics.Table, bool)
 
-	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
-
-	// GetPartitionStats retrieves the partition stats from cache.
-	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
-
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
 

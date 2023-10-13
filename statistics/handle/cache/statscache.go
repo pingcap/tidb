@@ -18,7 +18,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
 	"github.com/pingcap/tidb/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/statistics/handle/util"
@@ -90,31 +89,6 @@ func (s *StatsCacheImpl) MemConsumed() (size int64) {
 // Get returns the specified table's stats.
 func (s *StatsCacheImpl) Get(tableID int64) (*statistics.Table, bool) {
 	return s.Load().Get(tableID)
-}
-
-// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
-func (s *StatsCacheImpl) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
-	return s.GetPartitionStats(tblInfo, tblInfo.ID)
-}
-
-// GetPartitionStats retrieves the partition stats from cache.
-func (s *StatsCacheImpl) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	var tbl *statistics.Table
-	if s == nil {
-		tbl = statistics.PseudoTable(tblInfo, false)
-		tbl.PhysicalID = pid
-		return tbl
-	}
-	tbl, ok := s.Get(pid)
-	if !ok {
-		tbl = statistics.PseudoTable(tblInfo, false)
-		tbl.PhysicalID = pid
-		if tblInfo.GetPartitionInfo() == nil || s.Len() < 64 {
-			s.UpdateStatsCache([]*statistics.Table{tbl}, nil)
-		}
-		return tbl
-	}
-	return tbl
 }
 
 // Put puts this table stats into the cache.

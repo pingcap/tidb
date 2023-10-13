@@ -67,7 +67,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		// Dump the stats to kv at least once an hour.
 		return true
 	}
-	statsTbl := s.statsCache.GetPartitionStats(tbl.Meta(), id)
+	statsTbl := s.getPartitionStats(tbl.Meta(), id)
 	if statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
