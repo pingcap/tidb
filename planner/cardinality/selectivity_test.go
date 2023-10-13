@@ -633,7 +633,7 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 			ret[i] = types.NewIntDatum(int64(i))
 		}
 	} else {
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 		// In this way, we can guarantee the datum is in order.
 		for i := 0; i < length; i++ {
 			data := make([]types.Datum, dimension)
@@ -1006,7 +1006,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")

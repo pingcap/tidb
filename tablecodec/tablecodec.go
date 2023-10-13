@@ -377,8 +377,8 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 	case types.KindMysqlTime:
 		// for mysql datetime, timestamp and date type
 		t := data.GetMysqlTime()
-		if t.Type() == mysql.TypeTimestamp && sc.TimeZone != time.UTC {
-			err := t.ConvertTimeZone(sc.TimeZone, time.UTC)
+		if t.Type() == mysql.TypeTimestamp && sc.TimeZone() != time.UTC {
+			err := t.ConvertTimeZone(sc.TimeZone(), time.UTC)
 			if err != nil {
 				return errors.Trace(err)
 			}

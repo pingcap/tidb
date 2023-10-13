@@ -94,7 +94,7 @@ func makeATestMutaion(op kvrpcpb.Op, key []byte, value []byte) *kvrpcpb.Mutation
 }
 
 func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
-	stmtCtx := new(stmtctx.StatementContext)
+	stmtCtx := stmtctx.NewStmtCtx()
 	colIds := []int64{1, 2, 3}
 	colTypes := []*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong),

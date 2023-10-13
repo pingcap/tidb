@@ -24,13 +24,13 @@ import (
 )
 
 func TestDumpBinaryTime(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	parsedTime, err := types.ParseTimestamp(sc, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
 	d := BinaryDateTime(nil, parsedTime)
 	require.Equal(t, []byte{0}, d)
 
-	parsedTime, err = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.Local}, "1991-05-01 01:01:01.100001")
+	parsedTime, err = types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.Local), "1991-05-01 01:01:01.100001")
 	require.NoError(t, err)
 	d = BinaryDateTime(nil, parsedTime)
 	// 199 & 7 composed to uint16 1991 (litter-endian)

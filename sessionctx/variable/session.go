@@ -1677,10 +1677,10 @@ func (s *SessionVars) InitStatementContext() *stmtctx.StatementContext {
 		sc = &s.cachedStmtCtx[1]
 	}
 	if s.RefCountOfStmtCtx.TryFreeze() {
-		*sc = stmtctx.StatementContext{}
+		sc.Reset()
 		s.RefCountOfStmtCtx.UnFreeze()
 	} else {
-		sc = &stmtctx.StatementContext{}
+		sc = stmtctx.NewStmtCtx()
 	}
 	return sc
 }
@@ -1930,7 +1930,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementIncrement:        DefAutoIncrementIncrement,
 		AutoIncrementOffset:           DefAutoIncrementOffset,
 		Status:                        mysql.ServerStatusAutocommit,
-		StmtCtx:                       new(stmtctx.StatementContext),
+		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,

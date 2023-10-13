@@ -1000,7 +1000,7 @@ func encodeFromOldRow(oldRow, buf []byte) ([]byte, error) {
 		datums = append(datums, d)
 	}
 	var encoder rowcodec.Encoder
-	return encoder.Encode(&stmtctx.StatementContext{}, colIDs, datums, buf)
+	return encoder.Encode(stmtctx.NewStmtCtx(), colIDs, datums, buf)
 }
 
 func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutation, item *badger.Item,

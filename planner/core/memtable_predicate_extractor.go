@@ -711,11 +711,11 @@ func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat))
 	}
 	if len(e.NodeTypes) > 0 {
 		fmt.Fprintf(r, "node_types:[%s], ", extractStringFromStringSet(e.NodeTypes))
@@ -822,7 +822,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(
 		e.HotRegionTypes.Insert(HotRegionTypeWrite)
 	}
 
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "update_time", ctx.GetSessionVars().StmtCtx.TimeZone())
 	// The time unit for search hot regions is millisecond
 	startTime = startTime / int64(time.Millisecond)
 	endTime = endTime / int64(time.Millisecond)
@@ -846,11 +846,11 @@ func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) strin
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(time.DateTime))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(time.DateTime))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(time.DateTime))
 	}
 	if len(e.RegionIDs) > 0 {
 		fmt.Fprintf(r, "region_ids:[%s], ", extractStringFromUint64Slice(e.RegionIDs))
@@ -914,7 +914,7 @@ func (e *MetricTableExtractor) Extract(
 	}
 
 	// Extract the `time` columns
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, remained, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
 	e.StartTime, e.EndTime = e.getTimeRange(startTime, endTime)
 	e.SkipRequest = e.StartTime.After(e.EndTime)
 	if e.SkipRequest {
@@ -963,8 +963,8 @@ func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	step := time.Second * time.Duration(p.SCtx().GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
-		endTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone).Format(MetricTableTimeFormat),
+		startTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat),
+		endTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat),
 		step,
 	)
 }
@@ -1181,7 +1181,7 @@ func (e *SlowQueryExtractor) Extract(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone)
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
 	e.setTimeRange(startTime, endTime)
 	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
 	if e.SkipRequest {
@@ -1323,8 +1323,8 @@ func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if !e.Enable {
 		return fmt.Sprintf("only search in the current '%v' file", p.SCtx().GetSessionVars().SlowQueryFile)
 	}
-	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone)
-	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone)
+	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
+	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
 	return fmt.Sprintf("start_time:%v, end_time:%v",
 		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
 		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
@@ -1451,8 +1451,8 @@ func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	}
 	if e.CoarseTimeRange != nil && p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone)
-		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone)
+		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone())
+		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone())
 		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
 		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
 		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
@@ -1471,7 +1471,7 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) *TimeRange {
-	tz := sctx.GetSessionVars().StmtCtx.TimeZone
+	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
 	_, _, endTime := e.extractTimeRange(sctx, schema, names, predicates, "summary_begin_time", tz)
 	_, startTime, _ := e.extractTimeRange(sctx, schema, names, predicates, "summary_end_time", tz)
 	return e.buildTimeRange(startTime, endTime)

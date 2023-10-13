@@ -97,7 +97,7 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, er
 	if stmtCtxValid {
 		info.sc = sessVars.StmtCtx
 	} else {
-		info.sc = &stmtctx.StatementContext{}
+		info.sc = stmtctx.NewStmtCtx()
 	}
 	cc.extensions.OnStmtEvent(tp, info)
 }

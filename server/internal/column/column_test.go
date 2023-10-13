@@ -185,7 +185,7 @@ func TestDumpTextValue(t *testing.T) {
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	sc.TimeZone = losAngelesTz
+	sc.SetTimeZone(losAngelesTz)
 
 	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0, nil)
 	require.NoError(t, err)

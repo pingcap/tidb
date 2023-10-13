@@ -524,13 +524,13 @@ func (t Time) RoundFrac(sc *stmtctx.StatementContext, fsp int) (Time, error) {
 	}
 
 	var nt CoreTime
-	if t1, err := t.GoTime(sc.TimeZone); err == nil {
+	if t1, err := t.GoTime(sc.TimeZone()); err == nil {
 		t1 = roundTime(t1, fsp)
 		nt = FromGoTime(t1)
 	} else {
 		// Take the hh:mm:ss part out to avoid handle month or day = 0.
 		hour, minute, second, microsecond := t.Hour(), t.Minute(), t.Second(), t.Microsecond()
-		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, sc.TimeZone)
+		t1 := gotime.Date(1, 1, 1, hour, minute, second, microsecond*1000, sc.TimeZone())
 		t2 := roundTime(t1, fsp)
 		hour, minute, second = t2.Clock()
 		microsecond = t2.Nanosecond() / 1000
@@ -702,9 +702,9 @@ func (t *Time) Check(sc *stmtctx.StatementContext) error {
 func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 	var duration gotime.Duration
 	if t.Type() == mysql.TypeTimestamp && t1.Type() == mysql.TypeTimestamp {
-		a, err := t.GoTime(sc.TimeZone)
+		a, err := t.GoTime(sc.TimeZone())
 		terror.Log(errors.Trace(err))
-		b, err := t1.GoTime(sc.TimeZone)
+		b, err := t1.GoTime(sc.TimeZone())
 		terror.Log(errors.Trace(err))
 		duration = a.Sub(b)
 	} else {
@@ -1194,7 +1194,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		if explicitTz != nil {
 			t1, err = tmp.GoTime(explicitTz)
 		} else {
-			t1, err = tmp.GoTime(sc.TimeZone)
+			t1, err = tmp.GoTime(sc.TimeZone())
 		}
 		if err != nil {
 			return ZeroDatetime, errors.Trace(err)
@@ -1231,7 +1231,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		if explicitTz != nil {
 			t1 = t1.In(explicitTz)
 		} else {
-			t1 = t1.In(sc.TimeZone)
+			t1 = t1.In(sc.TimeZone())
 		}
 		tmp = FromGoTime(t1)
 	}
@@ -1501,7 +1501,7 @@ func (d Duration) ToNumber() *MyDecimal {
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
-	year, month, day := gotime.Now().In(sc.TimeZone).Date()
+	year, month, day := gotime.Now().In(sc.TimeZone()).Date()
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	mixDateAndDuration(&datePart, d)
 
@@ -1512,7 +1512,7 @@ func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, e
 // ConvertToTimeWithTimestamp converts duration to Time by system timestamp.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
 func (d Duration) ConvertToTimeWithTimestamp(sc *stmtctx.StatementContext, tp uint8, ts gotime.Time) (Time, error) {
-	year, month, day := ts.In(sc.TimeZone).Date()
+	year, month, day := ts.In(sc.TimeZone()).Date()
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	mixDateAndDuration(&datePart, d)
 
@@ -1833,7 +1833,7 @@ func ParseDuration(sc *stmtctx.StatementContext, str string, fsp int) (Duration,
 		return ZeroDuration, true, ErrTruncatedWrongVal.GenWithStackByArgs("time", str)
 	}
 
-	d, err = d.RoundFrac(fsp, sc.TimeZone)
+	d, err = d.RoundFrac(fsp, sc.TimeZone())
 	return d, false, err
 }
 
@@ -2168,7 +2168,7 @@ func checkTimestampType(sc *stmtctx.StatementContext, t CoreTime, explicitTz *go
 	}
 
 	var checkTime CoreTime
-	tz := sc.TimeZone
+	tz := sc.TimeZone()
 	if explicitTz != nil {
 		tz = explicitTz
 	}
@@ -3435,7 +3435,7 @@ func DateFSP(date string) (fsp int) {
 // DateTimeIsOverflow returns if this date is overflow.
 // See: https://dev.mysql.com/doc/refman/8.0/en/datetime.html
 func DateTimeIsOverflow(sc *stmtctx.StatementContext, date Time) (bool, error) {
-	tz := sc.TimeZone
+	tz := sc.TimeZone()
 	if tz == nil {
 		logutil.BgLogger().Warn("use gotime.local because sc.timezone is nil")
 		tz = gotime.Local

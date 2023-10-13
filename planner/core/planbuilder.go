@@ -5574,7 +5574,7 @@ func calcTSForPlanReplayer(sctx sessionctx.Context, tsExpr ast.ExprNode) uint64 
 	// a date/time string into a TSO.
 	// To achieve this, we need to set fields like StatementContext.IgnoreTruncate to false, and maybe it's better
 	// not to modify and reuse the original StatementContext, so we use a temporary one here.
-	tmpStmtCtx := &stmtctx.StatementContext{TimeZone: sctx.GetSessionVars().Location()}
+	tmpStmtCtx := stmtctx.NewStmtCtxWithTimeZone(sctx.GetSessionVars().Location())
 	tso, err := tsVal.ConvertTo(tmpStmtCtx, tpLonglong)
 	if err == nil {
 		return tso.GetUint64()

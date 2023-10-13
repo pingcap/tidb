@@ -29,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/types"
+	typectx "github.com/pingcap/tidb/types/context"
 	"github.com/pingcap/tidb/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -36,7 +38,7 @@ import (
 )
 
 func TestCopTasksDetails(t *testing.T) {
-	ctx := new(stmtctx.StatementContext)
+	ctx := stmtctx.NewStmtCtx()
 	backoffs := []string{"tikvRPC", "pdRPC", "regionMiss"}
 	for i := 0; i < 100; i++ {
 		d := &execdetails.ExecDetails{
@@ -79,23 +81,39 @@ func TestCopTasksDetails(t *testing.T) {
 }
 
 func TestStatementContextPushDownFLags(t *testing.T) {
+	newStmtCtx := func(fn func(*stmtctx.StatementContext)) *stmtctx.StatementContext {
+		sc := stmtctx.NewStmtCtx()
+		fn(sc)
+		return sc
+	}
+
 	testCases := []struct {
 		in  *stmtctx.StatementContext
 		out uint64
 	}{
-		{&stmtctx.StatementContext{InInsertStmt: true}, 8},
-		{&stmtctx.StatementContext{InUpdateStmt: true}, 16},
-		{&stmtctx.StatementContext{InDeleteStmt: true}, 16},
-		{&stmtctx.StatementContext{InSelectStmt: true}, 32},
-		{&stmtctx.StatementContext{IgnoreTruncate: *atomic.NewBool(true)}, 1},
-		{&stmtctx.StatementContext{TruncateAsWarning: true}, 2},
-		{&stmtctx.StatementContext{OverflowAsWarning: true}, 64},
-		{&stmtctx.StatementContext{IgnoreZeroInDate: true}, 128},
-		{&stmtctx.StatementContext{DividedByZeroAsWarning: true}, 256},
-		{&stmtctx.StatementContext{InLoadDataStmt: true}, 1024},
-		{&stmtctx.StatementContext{InSelectStmt: true, TruncateAsWarning: true}, 34},
-		{&stmtctx.StatementContext{DividedByZeroAsWarning: true, IgnoreTruncate: *atomic.NewBool(true)}, 257},
-		{&stmtctx.StatementContext{InUpdateStmt: true, IgnoreZeroInDate: true, InLoadDataStmt: true}, 1168},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InInsertStmt = true }), 8},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InUpdateStmt = true }), 16},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InDeleteStmt = true }), 16},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InSelectStmt = true }), 32},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.IgnoreTruncate = *atomic.NewBool(true) }), 1},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.TruncateAsWarning = true }), 2},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.IgnoreZeroInDate = true }), 128},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) {
+			sc.InSelectStmt = true
+			sc.TruncateAsWarning = true
+		}), 34},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) {
+			sc.DividedByZeroAsWarning = true
+			sc.IgnoreTruncate = *atomic.NewBool(true)
+		}), 257},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) {
+			sc.InUpdateStmt = true
+			sc.IgnoreZeroInDate = true
+			sc.InLoadDataStmt = true
+		}), 1168},
 	}
 	for _, tt := range testCases {
 		got := tt.in.PushDownFlags()
@@ -222,7 +240,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 		details[rand.Intn(n)].BackoffSleep[backoff] = time.Millisecond * 100 * time.Duration(valRange)
 	}
 
-	ctx := new(stmtctx.StatementContext)
+	ctx := stmtctx.NewStmtCtx()
 	for i := 0; i < n; i++ {
 		ctx.MergeExecDetails(details[i], nil)
 	}
@@ -295,4 +313,84 @@ func TestStmtHintsClone(t *testing.T) {
 		}
 	}
 	require.Equal(t, hints, *hints.Clone())
+}
+
+func TestNewStmtCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Equal(t, types.StrictFlags, sc.TypeCtx.Flags())
+	require.Same(t, time.UTC, sc.TypeCtx.Location())
+	require.Same(t, time.UTC, sc.TimeZone())
+	sc.TypeCtx.AppendWarning(errors.New("err1"))
+	warnings := sc.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, "err1", warnings[0].Err.Error())
+
+	tz := time.FixedZone("UTC+1", 2*60*60)
+	sc = stmtctx.NewStmtCtxWithTimeZone(tz)
+	require.Equal(t, types.StrictFlags, sc.TypeCtx.Flags())
+	require.Same(t, tz, sc.TypeCtx.Location())
+	require.Same(t, tz, sc.TimeZone())
+	sc.TypeCtx.AppendWarning(errors.New("err2"))
+	warnings = sc.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, "err2", warnings[0].Err.Error())
+}
+
+func TestSetStmtCtxTimeZone(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Same(t, time.UTC, sc.TypeCtx.Location())
+	tz := time.FixedZone("UTC+1", 2*60*60)
+	sc.SetTimeZone(tz)
+	require.Same(t, tz, sc.TypeCtx.Location())
+}
+
+func TestSetStmtCtxTypeFlags(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Equal(t, types.StrictFlags, sc.TypeCtx.Flags())
+
+	sc.SetTypeFlags(typectx.FlagClipNegativeToZero | typectx.FlagSkipASCIICheck)
+	require.Equal(t, typectx.FlagClipNegativeToZero|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, sc.TypeFlags(), sc.TypeCtx.Flags())
+
+	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagInvalidDateAsWarning)
+	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
+	require.Equal(t, sc.TypeFlags(), sc.TypeCtx.Flags())
+
+	sc.UpdateTypeFlags(func(flags typectx.Flags) typectx.Flags {
+		return (flags | typectx.FlagSkipUTF8Check | typectx.FlagClipNegativeToZero) &^ typectx.FlagSkipASCIICheck
+	})
+	require.Equal(t, typectx.FlagSkipUTF8Check|typectx.FlagClipNegativeToZero|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
+	require.Equal(t, sc.TypeFlags(), sc.TypeCtx.Flags())
+}
+
+func TestResetStmtCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Equal(t, types.StrictFlags, sc.TypeCtx.Flags())
+
+	tz := time.FixedZone("UTC+1", 2*60*60)
+	sc.SetTimeZone(tz)
+	sc.SetTypeFlags(typectx.FlagClipNegativeToZero | typectx.FlagSkipASCIICheck)
+	sc.AppendWarning(errors.New("err1"))
+	sc.InRestrictedSQL = true
+	sc.StmtType = "Insert"
+
+	require.Same(t, tz, sc.TimeZone())
+	require.Equal(t, typectx.FlagClipNegativeToZero|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, 1, len(sc.GetWarnings()))
+
+	sc.Reset()
+	require.Same(t, time.UTC, sc.TimeZone())
+	require.Same(t, time.UTC, sc.TypeCtx.Location())
+	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.StrictFlags, sc.TypeCtx.Flags())
+	require.False(t, sc.InRestrictedSQL)
+	require.Empty(t, sc.StmtType)
+	require.Equal(t, 0, len(sc.GetWarnings()))
+	sc.AppendWarning(errors.New("err2"))
+	warnings := sc.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, "err2", warnings[0].Err.Error())
 }

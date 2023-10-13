@@ -73,7 +73,7 @@ func convertDatumToScalar(value *types.Datum, commonPfxLen int) float64 {
 		case mysql.TypeTimestamp:
 			minTime = types.MinTimestamp
 		}
-		sc := &stmtctx.StatementContext{TimeZone: types.BoundTimezone}
+		sc := stmtctx.NewStmtCtxWithTimeZone(types.BoundTimezone)
 		return float64(valueTime.Sub(sc, &minTime).Duration)
 	case types.KindString, types.KindBytes:
 		bytes := value.GetBytes()
@@ -276,7 +276,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		}
 		fsp := mathutil.Max(lowTime.Fsp(), highTime.Fsp())
 		var stepSize int64
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 		if lowTime.Type() == mysql.TypeDate {
 			stepSize = 24 * int64(time.Hour)
 			lowTime.SetCoreTime(types.FromDate(lowTime.Year(), lowTime.Month(), lowTime.Day(), 0, 0, 0, 0))

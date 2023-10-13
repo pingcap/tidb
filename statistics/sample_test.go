@@ -272,7 +272,7 @@ func SubTestMergeSampleCollector(s *testSampleSuite) func(*testing.T) {
 			ColsFieldType:   []*types.FieldType{types.NewFieldType(mysql.TypeLonglong), types.NewFieldType(mysql.TypeLonglong)},
 		}
 		require.Nil(t, s.rs.Close())
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 		collectors, pkBuilder, err := builder.CollectColumnStats()
 		require.NoError(t, err)
 		require.Nil(t, pkBuilder)

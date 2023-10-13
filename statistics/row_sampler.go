@@ -190,7 +190,7 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 			for i, val := range datums {
 				// For string values, we use the collation key instead of the original value.
 				if s.Collators[i] != nil && !val.IsNull() {
-					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone)
+					decodedVal, err := tablecodec.DecodeColumnValue(val.GetBytes(), s.ColsFieldType[i], s.Sc.TimeZone())
 					if err != nil {
 						return nil, err
 					}

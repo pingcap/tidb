@@ -196,7 +196,7 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 	require.Equal(t, expiredTimeStamp, ts)
 
 	// set expiredTimeStamp4PC to "2023-08-02 12:15:00"
-	ts, _ = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, "2023-08-02 12:15:00")
+	ts, _ = types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.UTC), "2023-08-02 12:15:00")
 	dom.SetExpiredTimeStamp4PC(ts)
 	expiredTimeStamp = dom.ExpiredTimeStamp4PC()
 	require.Equal(t, expiredTimeStamp, ts)

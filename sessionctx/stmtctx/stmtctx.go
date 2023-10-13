@@ -38,7 +38,9 @@ import (
 	typectx "github.com/pingcap/tidb/types/context"
 	"github.com/pingcap/tidb/util/disk"
 	"github.com/pingcap/tidb/util/execdetails"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/memory"
+	"github.com/pingcap/tidb/util/nocopy"
 	"github.com/pingcap/tidb/util/resourcegrouptag"
 	"github.com/pingcap/tidb/util/topsql/stmtstats"
 	"github.com/pingcap/tidb/util/tracing"
@@ -147,11 +149,15 @@ func (rf *ReferenceCount) UnFreeze() {
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
+	// NoCopy indicates that this struct cannot be copied because
+	// copying this object will make the copied TypeCtx field to refer a wrong `AppendWarnings` func.
+	_ nocopy.NoCopy
+
+	// TypeCtx is used to indicate how make the type conversation.
+	TypeCtx typectx.Context
+
 	// Set the following variables before execution
 	StmtHints
-
-	// TypeConvContext is used to indicate how make the type conversation.
-	TypeConvContext typectx.Context
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
@@ -243,7 +249,6 @@ type StatementContext struct {
 	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
-	TimeZone         *time.Location
 	Priority         mysql.PriorityEnum
 	NotFillCache     bool
 	MemTracker       *memory.Tracker
@@ -418,6 +423,55 @@ type StatementContext struct {
 		value *uint64
 		eval  func() (uint64, error)
 	}
+}
+
+// NewStmtCtx creates a new statement context
+func NewStmtCtx() *StatementContext {
+	sc := &StatementContext{}
+	sc.TypeCtx = typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning)
+	return sc
+}
+
+// NewStmtCtxWithTimeZone creates a new StatementContext with the given timezone
+func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
+	intest.Assert(tz)
+	sc := &StatementContext{}
+	sc.TypeCtx = typectx.NewContext(typectx.StrictFlags, tz, sc.AppendWarning)
+	return sc
+}
+
+// Reset resets a statement context
+func (sc *StatementContext) Reset() {
+	*sc = StatementContext{
+		TypeCtx: typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning),
+	}
+}
+
+// TimeZone returns the timezone of the type context
+func (sc *StatementContext) TimeZone() *time.Location {
+	return sc.TypeCtx.Location()
+}
+
+// SetTimeZone sets the timezone
+func (sc *StatementContext) SetTimeZone(tz *time.Location) {
+	intest.Assert(tz)
+	sc.TypeCtx = sc.TypeCtx.WithLocation(tz)
+}
+
+// TypeFlags returns the type flags
+func (sc *StatementContext) TypeFlags() typectx.Flags {
+	return sc.TypeCtx.Flags()
+}
+
+// SetTypeFlags sets the type flags
+func (sc *StatementContext) SetTypeFlags(flags typectx.Flags) {
+	sc.TypeCtx = sc.TypeCtx.WithFlags(flags)
+}
+
+// UpdateTypeFlags updates the flags of the type context
+func (sc *StatementContext) UpdateTypeFlags(fn func(typectx.Flags) typectx.Flags) {
+	flags := fn(sc.TypeCtx.Flags())
+	sc.TypeCtx = sc.TypeCtx.WithFlags(flags)
 }
 
 // StmtHints are SessionVars related sql hints.

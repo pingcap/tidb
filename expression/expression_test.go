@@ -106,7 +106,7 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
 	require.True(t, NewZero().ConstItem(sc))
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))

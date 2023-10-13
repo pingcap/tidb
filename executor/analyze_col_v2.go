@@ -350,7 +350,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 		// If there's no virtual column or we meet error during eval virtual column, we fallback to normal decode otherwise.
 		for _, sample := range rootRowCollector.Base().Samples {
 			for i := range sample.Columns {
-				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone)
+				sample.Columns[i], err = tablecodec.DecodeColumnValue(sample.Columns[i].GetBytes(), &e.colsInfo[i].FieldType, sc.TimeZone())
 				if err != nil {
 					return 0, nil, nil, nil, nil, err
 				}

@@ -1736,7 +1736,7 @@ func evalFromUnixTime(ctx sessionctx.Context, fsp int, unixTimeStamp *types.MyDe
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone)
+	tmp := time.Unix(integralPart, fractionalPart).In(sc.TimeZone())
 	t, err := convertTimeToMysqlTime(tmp, fsp, types.ModeHalfUp)
 	if err != nil {
 		return res, true, err

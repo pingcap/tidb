@@ -108,7 +108,7 @@ func TestNextKey(t *testing.T) {
 		{types.NewStringDatum("test\255"), types.NewStringDatum("test\255\000")},
 	}
 
-	stmtCtx := new(stmtctx.StatementContext)
+	stmtCtx := stmtctx.NewStmtCtx()
 	for _, datums := range testDatums {
 		keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(123), datums[0])
 		require.NoError(t, err)

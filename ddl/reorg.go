@@ -82,7 +82,7 @@ func newContext(store kv.Storage) sessionctx.Context {
 
 	tz := *time.UTC
 	c.GetSessionVars().TimeZone = &tz
-	c.GetSessionVars().StmtCtx.TimeZone = &tz
+	c.GetSessionVars().StmtCtx.SetTimeZone(&tz)
 	return c
 }
 

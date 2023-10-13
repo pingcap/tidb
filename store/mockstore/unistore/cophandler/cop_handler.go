@@ -297,14 +297,15 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	sc := flagsToStatementContext(dagReq.Flags)
 	switch dagReq.TimeZoneName {
 	case "":
-		sc.TimeZone = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+		sc.SetTimeZone(time.FixedZone("UTC", int(dagReq.TimeZoneOffset)))
 	case "System":
-		sc.TimeZone = time.Local
+		sc.SetTimeZone(time.Local)
 	default:
-		sc.TimeZone, err = time.LoadLocation(dagReq.TimeZoneName)
+		tz, err := time.LoadLocation(dagReq.TimeZoneName)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		sc.SetTimeZone(tz)
 	}
 	ctx := &dagContext{
 		evalContext:   &evalContext{sc: sc},
@@ -422,7 +423,7 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0

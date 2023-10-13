@@ -79,7 +79,7 @@ func TestConcurrentLoadHist(t *testing.T) {
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Equal(t, 0, hg.Len()+topn.Num())
-	stmtCtx := &stmtctx.StatementContext{}
+	stmtCtx := stmtctx.NewStmtCtx()
 	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
@@ -124,7 +124,7 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
 	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Equal(t, 0, hg.Len()+topn.Num())
-	stmtCtx := &stmtctx.StatementContext{}
+	stmtCtx := stmtctx.NewStmtCtx()
 	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
 		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
@@ -195,9 +195,9 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
 		require.Equal(t, 0, hg.Len()+topn.Num())
 
-		stmtCtx1 := &stmtctx.StatementContext{}
+		stmtCtx1 := stmtctx.NewStmtCtx()
 		h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
-		stmtCtx2 := &stmtctx.StatementContext{}
+		stmtCtx2 := stmtctx.NewStmtCtx()
 		h.SendLoadRequests(stmtCtx2, neededColumns, timeout)
 
 		exitCh := make(chan struct{})

@@ -53,7 +53,7 @@ func TestRowDecoder(t *testing.T) {
 	tbl := tables.MockTableFromMeta(tblInfo)
 
 	ctx := mock.NewContext()
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	decodeColsMap := make(map[int64]decoder.Column, len(cols))
 	decodeColsMap2 := make(map[int64]decoder.Column, len(cols))
 	for _, col := range tbl.Cols() {
@@ -164,7 +164,7 @@ func TestClusterIndexRowDecoder(t *testing.T) {
 	tbl := tables.MockTableFromMeta(tblInfo)
 
 	ctx := mock.NewContext()
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	decodeColsMap := make(map[int64]decoder.Column, len(cols))
 	for _, col := range tbl.Cols() {
 		tpExpr := decoder.Column{

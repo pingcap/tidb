@@ -297,12 +297,12 @@ func TestCastFuncSig(t *testing.T) {
 
 	sc := ctx.GetSessionVars().StmtCtx
 	originIgnoreTruncate := sc.IgnoreTruncate.Load()
-	originTZ := sc.TimeZone
+	originTZ := sc.TimeZone()
 	sc.IgnoreTruncate.Store(true)
-	sc.TimeZone = time.UTC
+	sc.SetTimeZone(time.UTC)
 	defer func() {
 		sc.IgnoreTruncate.Store(originIgnoreTruncate)
-		sc.TimeZone = originTZ
+		sc.SetTimeZone(originTZ)
 	}()
 	var sig builtinFunc
 
@@ -1292,10 +1292,10 @@ func TestWrapWithCastAsTypesClasses(t *testing.T) {
 func TestWrapWithCastAsTime(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	save := sc.TimeZone
-	sc.TimeZone = time.UTC
+	save := sc.TimeZone()
+	sc.SetTimeZone(time.UTC)
 	defer func() {
-		sc.TimeZone = save
+		sc.SetTimeZone(save)
 	}()
 	cases := []struct {
 		expr Expression

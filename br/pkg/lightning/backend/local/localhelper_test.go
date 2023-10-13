@@ -783,7 +783,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 		splitRegionBaseBackOffTime = oldSplitBackoffTime
 	}()
 
-	stmtCtx := new(stmtctx.StatementContext)
+	stmtCtx := stmtctx.NewStmtCtx()
 
 	tableID := int64(1)
 	tableStartKey := tablecodec.EncodeTablePrefix(tableID)

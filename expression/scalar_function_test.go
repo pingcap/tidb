@@ -99,7 +99,7 @@ func TestScalarFunction(t *testing.T) {
 		UniqueID: 1,
 		RetType:  types.NewFieldType(mysql.TypeDouble),
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	sf := newFunction(ast.LT, a, NewOne())
 	res, err := sf.MarshalJSON()
 	require.NoError(t, err)

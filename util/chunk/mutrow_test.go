@@ -29,7 +29,7 @@ func TestMutRow(t *testing.T) {
 	allTypes := newAllTypes()
 	mutRow := MutRowFromTypes(allTypes)
 	row := mutRow.ToRow()
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	for i := 0; i < row.Len(); i++ {
 		val := zeroValForType(allTypes[i])
 		d := row.GetDatum(i, allTypes[i])

@@ -455,7 +455,7 @@ func SubTestIndexRanges() func(*testing.T) {
 }
 
 func encodeKey(key types.Datum) types.Datum {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	buf, _ := codec.EncodeKey(sc, nil, key)
 	return types.NewBytesDatum(buf)
 }

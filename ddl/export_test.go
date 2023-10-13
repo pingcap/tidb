@@ -63,6 +63,6 @@ func ConvertRowToHandleAndIndexDatum(
 	c := copCtx.GetBase()
 	idxData := extractDatumByOffsets(row, copCtx.IndexColumnOutputOffsets(idxID), c.ExprColumnInfos, nil)
 	handleData := extractDatumByOffsets(row, c.HandleOutputOffsets, c.ExprColumnInfos, nil)
-	handle, err := buildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, &stmtctx.StatementContext{TimeZone: time.Local})
+	handle, err := buildHandle(handleData, c.TableInfo, c.PrimaryKeyInfo, stmtctx.NewStmtCtxWithTimeZone(time.Local))
 	return handle, idxData, err
 }

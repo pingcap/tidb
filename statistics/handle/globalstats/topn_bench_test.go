@@ -32,7 +32,7 @@ import (
 // cmd: go test -run=^$ -bench=BenchmarkMergePartTopN2GlobalTopNWithHists -benchmem github.com/pingcap/tidb/statistics/handle/globalstats
 func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
-	sc := &stmtctx.StatementContext{TimeZone: loc}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
 	isKilled := uint32(0)
 
@@ -83,7 +83,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 // cmd: go test -run=^$ -bench=BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists -benchmem github.com/pingcap/tidb/statistics/handle/globalstats
 func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
-	sc := &stmtctx.StatementContext{TimeZone: loc}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
 	isKilled := uint32(0)
 

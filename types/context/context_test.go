@@ -23,7 +23,7 @@ import (
 )
 
 func TestWithNewFlags(t *testing.T) {
-	ctx := NewContext(FlagSkipASCIICheck, time.UTC, nil)
+	ctx := NewContext(FlagSkipASCIICheck, time.UTC, func(_ error) {})
 	ctx2 := ctx.WithFlags(FlagSkipUTF8Check)
 	require.Equal(t, FlagSkipASCIICheck, ctx.Flags())
 	require.Equal(t, FlagSkipUTF8Check, ctx2.Flags())

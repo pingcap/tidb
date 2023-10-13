@@ -72,7 +72,7 @@ func TestCodecKey(t *testing.T) {
 			types.MakeDatums(uint64(1), uint64(1)),
 		},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for i, datums := range table {
 		comment := fmt.Sprintf("%d %v", i, datums)
 		b, err := EncodeKey(sc, nil, datums.Input...)
@@ -214,7 +214,7 @@ func TestCodecKeyCompare(t *testing.T) {
 			-1,
 		},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, datums := range table {
 		b1, err := EncodeKey(sc, nil, datums.Left...)
 		require.NoError(t, err)
@@ -519,7 +519,7 @@ func TestBytes(t *testing.T) {
 }
 
 func parseTime(t *testing.T, s string) types.Time {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	m, err := types.ParseTime(sc, s, mysql.TypeDatetime, types.DefaultFsp, nil)
 	require.NoError(t, err)
 	return m
@@ -537,7 +537,7 @@ func TestTime(t *testing.T) {
 		"2011-01-01 00:00:00",
 		"0001-01-01 00:00:00",
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, timeDatum := range tbl {
 		m := types.NewDatum(parseTime(t, timeDatum))
 
@@ -584,7 +584,7 @@ func TestDuration(t *testing.T) {
 		"00:00:00",
 		"1 11:11:11",
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, duration := range tbl {
 		m := parseDuration(t, duration)
 
@@ -637,7 +637,7 @@ func TestDecimal(t *testing.T) {
 		"-12.340",
 		"-0.1234",
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for _, decimalNum := range tbl {
 		dec := new(types.MyDecimal)
 		err := dec.FromString([]byte(decimalNum))
@@ -876,7 +876,7 @@ func TestCut(t *testing.T) {
 			types.MakeDatums(types.CreateBinaryJSON(types.Opaque{TypeCode: mysql.TypeString, Buf: []byte("abc")})),
 		},
 	}
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	for i, datums := range table {
 		b, err := EncodeKey(sc, nil, datums.Input...)
 		require.NoErrorf(t, err, "%d %v", i, datums)
@@ -933,7 +933,7 @@ func TestCutOneError(t *testing.T) {
 }
 
 func TestSetRawValues(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	datums := types.MakeDatums(1, "abc", 1.1, []byte("def"))
 	rowData, err := EncodeValue(sc, nil, datums...)
 	require.NoError(t, err)
@@ -951,7 +951,7 @@ func TestSetRawValues(t *testing.T) {
 }
 
 func TestDecodeOneToChunk(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	datums, tps := datumsForTest(sc)
 	rowCount := 3
 	chk := chunkForTest(t, sc, datums, tps, rowCount)
@@ -975,7 +975,7 @@ func TestDecodeOneToChunk(t *testing.T) {
 }
 
 func TestHashGroup(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	tp := types.NewFieldType(mysql.TypeNewDecimal)
 	tps := []*types.FieldType{tp}
 	chk1 := chunk.New(tps, 3, 3)
@@ -1066,7 +1066,7 @@ func datumsForTest(_ *stmtctx.StatementContext) ([]types.Datum, []*types.FieldTy
 }
 
 func chunkForTest(t *testing.T, sc *stmtctx.StatementContext, datums []types.Datum, tps []*types.FieldType, rowCount int) *chunk.Chunk {
-	decoder := NewDecoder(chunk.New(tps, 32, 32), sc.TimeZone)
+	decoder := NewDecoder(chunk.New(tps, 32, 32), sc.TimeZone())
 	for rowIdx := 0; rowIdx < rowCount; rowIdx++ {
 		encoded, err := EncodeValue(sc, nil, datums...)
 		require.NoError(t, err)
@@ -1103,7 +1103,7 @@ func TestDecodeRange(t *testing.T) {
 }
 
 func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	buf1 := make([]byte, 1)
 	buf2 := make([]byte, 1)
 
@@ -1146,7 +1146,7 @@ func testHashChunkRowEqual(t *testing.T, a, b interface{}, equal bool) {
 }
 
 func TestHashChunkRow(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
 	chk := chunkForTest(t, sc, datums, tps, 1)
@@ -1234,7 +1234,7 @@ func TestValueSizeOfUnsignedInt(t *testing.T) {
 }
 
 func TestHashChunkColumns(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	buf := make([]byte, 1)
 	datums, tps := datumsForTest(sc)
 	chk := chunkForTest(t, sc, datums, tps, 4)

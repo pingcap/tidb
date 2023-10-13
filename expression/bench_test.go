@@ -58,7 +58,7 @@ func (h *benchHelper) init() {
 	numRows := 4 * 1024
 
 	h.ctx = mock.NewContext()
-	h.ctx.GetSessionVars().StmtCtx.TimeZone = time.Local
+	h.ctx.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	h.ctx.GetSessionVars().InitChunkSize = 32
 	h.ctx.GetSessionVars().MaxChunkSize = numRows
 

@@ -135,7 +135,7 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 		Version:      tbl.Version,
 	}
 	for _, col := range tbl.Columns {
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 		hist, err := col.ConvertTo(sc, types.NewFieldType(mysql.TypeBlob))
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -198,7 +198,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				continue
 			}
 			hist := statistics.HistogramFromProto(jsonCol.Histogram)
-			sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 			tmpFT := colInfo.FieldType
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.
