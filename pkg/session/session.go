@@ -613,7 +613,7 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.GetSessionVars().TxnCtx != nil {
 		needCheckSchema = !s.GetSessionVars().TxnCtx.EnableMDL
 	}
-	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema))
+	s.txn.SetOption(kv.SchemaChecker, domain.NewSchemaChecker(domain.GetDomain(s), s.GetInfoSchema().SchemaMetaVersion(), physicalTableIDs, needCheckSchema, s.isInternal()))
 	s.txn.SetOption(kv.InfoSchema, s.sessionVars.TxnCtx.InfoSchema)
 	s.txn.SetOption(kv.CommitHook, func(info string, _ error) { s.sessionVars.LastTxnInfo = info })
 	s.txn.SetOption(kv.EnableAsyncCommit, sessVars.EnableAsyncCommit)

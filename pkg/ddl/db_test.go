@@ -761,7 +761,7 @@ func TestSchemaValidator(t *testing.T) {
 
 	// For schema check, it tests for getting the result of "ResultUnknown".
 	is := dom.InfoSchema()
-	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil, true)
+	schemaChecker := domain.NewSchemaChecker(dom, is.SchemaMetaVersion(), nil, true, true)
 	// Make sure it will retry one time and doesn't take a long time.
 	domain.SchemaOutOfDateRetryTimes.Store(1)
 	domain.SchemaOutOfDateRetryInterval.Store(time.Millisecond * 1)

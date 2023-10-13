@@ -247,6 +247,7 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int)")
+	tk.MustExec("insert into t values (1,1), (2,2);")
 
 	rows := tk.MustQuery("select count(*) from information_schema.cluster_info where `type`='tikv';").Rows()
 	require.Len(t, rows, 1)
@@ -282,7 +283,6 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 4.*", explain)
 
 	// Test for stale read.
-	tk.MustExec("insert into t values (1,1), (2,2);")
 	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@stale_read_ts_var) where b > 1").Rows()
 	require.Len(t, rows, 3)
