@@ -273,24 +273,25 @@ func appendSkewDistinctAggRewriteTraceStep(agg *LogicalAggregation, result Logic
 	opt.appendStepToCurrent(agg.ID(), agg.TP(), reason, action)
 }
 
-func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (a *skewDistinctAggRewriter) optimize(ctx context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+	planChanged := false
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
-		newChild, err := a.optimize(ctx, child, opt)
+		newChild, planChanged, err := a.optimize(ctx, child, opt)
 		if err != nil {
-			return nil, err
+			return nil, planChanged, err
 		}
 		newChildren = append(newChildren, newChild)
 	}
 	p.SetChildren(newChildren...)
 	agg, ok := p.(*LogicalAggregation)
 	if !ok {
-		return p, nil
+		return p, planChanged, nil
 	}
 	if newAgg := a.rewriteSkewDistinctAgg(agg, opt); newAgg != nil {
-		return newAgg, nil
+		return newAgg, planChanged, nil
 	}
-	return p, nil
+	return p, planChanged, nil
 }
 
 func (*skewDistinctAggRewriter) name() string {

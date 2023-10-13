@@ -36,8 +36,9 @@ import (
 type maxMinEliminator struct {
 }
 
-func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return a.eliminateMaxMin(p, opt), nil
+func (a *maxMinEliminator) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+	planChanged := false
+	return a.eliminateMaxMin(p, opt), planChanged, nil
 }
 
 // composeAggsByInnerJoin composes the scalar aggregations by cartesianJoin.

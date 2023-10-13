@@ -116,8 +116,9 @@ func windowIsTopN(p *LogicalSelection) (bool, uint64) {
 	return false, 0
 }
 
-func (*deriveTopNFromWindow) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return p.deriveTopN(opt), nil
+func (*deriveTopNFromWindow) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+	planChanged := false
+	return p.deriveTopN(opt), planChanged, nil
 }
 
 func (s *baseLogicalPlan) deriveTopN(opt *logicalOptimizeOp) LogicalPlan {
