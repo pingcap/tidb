@@ -238,7 +238,10 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		}
 	})
 	if e.rowChunks.NumRow() > 0 {
-		e.rowChunks.Sort()
+		err := e.rowChunks.Sort()
+		if err != nil {
+			return err
+		}
 		e.partitionList = append(e.partitionList, e.rowChunks)
 	}
 	return nil
