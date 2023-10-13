@@ -22,6 +22,6 @@ import (
 
 func TestTaskStep(t *testing.T) {
 	// make sure we don't change the value of StepInit accidentally
-	require.Equal(t, int64(-1), StepInit)
-	require.Equal(t, int64(-2), StepDone)
+	require.Equal(t, int64(-1), int64(StepInit))
+	require.Equal(t, int64(-2), int64(StepDone))
 }
