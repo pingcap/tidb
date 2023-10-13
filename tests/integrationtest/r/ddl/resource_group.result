@@ -1,4 +1,5 @@
 drop table if exists t;
+drop resource group if exists rg1;
 create table t1(c1 int);
 set global tidb_enable_resource_control='on';
 create resource group rg1 ru_per_sec=1000;
@@ -25,3 +26,4 @@ show warnings;
 Level	Code	Message
 Warning	8250	Resource control feature is disabled. Run `SET GLOBAL tidb_enable_resource_control='on'` to enable the feature
 set global tidb_enable_resource_control=default;
+drop resource group rg1;
