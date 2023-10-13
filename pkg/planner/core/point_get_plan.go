@@ -1557,8 +1557,11 @@ type subQueryChecker struct {
 }
 
 func (s *subQueryChecker) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
-	switch in.(type) {
-	case *ast.SubqueryExpr:
+	if s.hasSubQuery {
+		return in, true
+	}
+
+	if _, ok := in.(*ast.SubqueryExpr); ok {
 		s.hasSubQuery = true
 		return in, true
 	}
@@ -1579,7 +1582,9 @@ func isExprHasSubQuery(expr ast.Node) bool {
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 	for _, a := range list {
-		return isExprHasSubQuery(a)
+		if isExprHasSubQuery(a) {
+			return true
+		}
 	}
 	return false
 }
