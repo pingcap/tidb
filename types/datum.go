@@ -101,6 +101,35 @@ func (d *Datum) Copy(dst *Datum) {
 	}
 }
 
+func (d *Datum) realloc(dst *Datum) {
+	dst.b = make([]byte, len(d.b))
+}
+
+// CopyTryNoAlloc deep copies a Datum into destination without allocation.
+func (d *Datum) CopyTryNoAlloc(dst *Datum) {
+	dst.k = d.k
+	dst.decimal = d.decimal
+	dst.length = d.length
+	dst.i = d.i
+	dst.collation = d.collation
+	if d.b != nil {
+		// Ensure that destination has enough capacity
+		if cap(dst.b) < len(d.b) {
+			d.realloc(dst)
+		} else {
+			dst.b = dst.b[:len(d.b)]
+		}
+		copy(dst.b, d.b)
+	}
+	switch dst.Kind() {
+	case KindMysqlDecimal:
+		d := *d.GetMysqlDecimal()
+		dst.SetMysqlDecimal(&d)
+	case KindMysqlTime:
+		dst.SetMysqlTime(d.GetMysqlTime())
+	}
+}
+
 // Kind gets the kind of the datum.
 func (d *Datum) Kind() byte {
 	return d.k
