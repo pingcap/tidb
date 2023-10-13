@@ -76,7 +76,6 @@ go_test(
         "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//statistics",
-        "//statistics/handle",
         "//testkit",
         "//testkit/testdata",
         "//testkit/testmain",

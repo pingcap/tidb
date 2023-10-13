@@ -26,7 +26,6 @@ go_test(
         "//sessionctx",
         "//sessionctx/variable",
         "//statistics",
-        "//statistics/handle",
         "//statistics/handle/autoanalyze",
         "//testkit",
         "//util/dbterror/exeerrors",

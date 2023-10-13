@@ -408,7 +408,6 @@ go_test(
         "//sessiontxn",
         "//sessiontxn/staleread",
         "//statistics",
-        "//statistics/handle",
         "//statistics/handle/globalstats",
         "//statistics/handle/storage",
         "//store/copr",

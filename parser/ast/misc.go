@@ -31,6 +31,7 @@ import (
 var (
 	_ StmtNode = &AdminStmt{}
 	_ StmtNode = &AlterUserStmt{}
+	_ StmtNode = &AlterRangeStmt{}
 	_ StmtNode = &BeginStmt{}
 	_ StmtNode = &BinlogStmt{}
 	_ StmtNode = &CommitStmt{}
@@ -1880,6 +1881,34 @@ func (n *AlterInstanceStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AlterInstanceStmt)
+	return v.Leave(n)
+}
+
+// AlterRangeStmt modifies range configuration.
+type AlterRangeStmt struct {
+	stmtNode
+	RangeName       model.CIStr
+	PlacementOption *PlacementOption
+}
+
+// Restore implements Node interface.
+func (n *AlterRangeStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER RANGE ")
+	ctx.WriteName(n.RangeName.O)
+	ctx.WritePlain(" ")
+	if err := n.PlacementOption.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore AlterRangeStmt.PlacementOption")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterRangeStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterRangeStmt)
 	return v.Leave(n)
 }
 

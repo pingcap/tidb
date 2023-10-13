@@ -87,7 +87,7 @@ require (
 	github.com/pingcap/tipb v0.0.0-20230919054518-dfd7d194838f
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.16.0
-	github.com/prometheus/client_model v0.4.0
+	github.com/prometheus/client_model v0.5.0
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/robfig/cron/v3 v3.0.1
@@ -295,7 +295,7 @@ require (
 	gonum.org/v1/gonum v0.8.2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
+	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

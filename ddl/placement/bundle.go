@@ -461,6 +461,38 @@ func (c *constraintsGroup) MergeTransformableRoles() {
 	c.rules = newRules
 }
 
+// RebuildForRange rebuilds the bundle for system range.
+func (b *Bundle) RebuildForRange(rangeName string, policyName string) *Bundle {
+	rule := b.Rules
+	startKey := ""
+	endKey := ""
+	switch rangeName {
+	case KeyRangeGlobal:
+		b.ID = TiDBBundleRangePrefixForGlobal
+		b.Index = RuleIndexKeyRangeForGlobal
+	case KeyRangeMeta:
+		// change range
+		startKey = hex.EncodeToString(metaPrefix)
+		endKey = hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(0)))
+		b.ID = TiDBBundleRangePrefixForMeta
+		b.Index = RuleIndexKeyRangeForMeta
+	}
+
+	b.Override = true
+	newRules := make([]*Rule, 0, len(rule))
+	for i, r := range b.Rules {
+		cp := r.Clone()
+		cp.ID = fmt.Sprintf("%s_rule_%d", strings.ToLower(policyName), i)
+		cp.GroupID = b.ID
+		cp.StartKeyHex = startKey
+		cp.EndKeyHex = endKey
+		cp.Index = i
+		newRules = append(newRules, cp)
+	}
+	b.Rules = newRules
+	return b
+}
+
 // Reset resets the bundle ID and keyrange of all rules.
 func (b *Bundle) Reset(ruleIndex int, newIDs []int64) *Bundle {
 	// eliminate the redundant rules.

@@ -25,7 +25,20 @@ const (
 	BundleIDPrefix = "TiDB_DDL_"
 	// PDBundleID is the bundle name of pd, the default bundle for all regions.
 	PDBundleID = "pd"
+
+	// DefaultKwd is used to reset the default rule (remove bundle).
+	DefaultKwd = "default"
+	// TiDBBundleRangePrefixForGlobal is the bundle prefix of system global range.
+	TiDBBundleRangePrefixForGlobal = "TiDB_GLOBAL"
+	// TiDBBundleRangePrefixForMeta is the bundle prefix of system meta range.
+	TiDBBundleRangePrefixForMeta = "TiDB_META"
+	// KeyRangeGlobal is the key range for system global range.
+	KeyRangeGlobal = "global"
+	// KeyRangeMeta is the key range for system meta range.
+	KeyRangeMeta = "meta"
 )
+
+var metaPrefix = []byte("m")
 
 // GroupID accepts a tableID or whatever integer, and encode the integer into a valid GroupID for PD.
 func GroupID(id int64) string {
@@ -33,6 +46,10 @@ func GroupID(id int64) string {
 }
 
 const (
+	// RuleIndexKeyRangeForGlobal is the index for a rule of whole system range.
+	RuleIndexKeyRangeForGlobal = 20
+	// RuleIndexKeyRangeForMeta is the index for a rule of system meta range.
+	RuleIndexKeyRangeForMeta = 21
 	// RuleIndexTable is the index for a rule of table.
 	RuleIndexTable = 40
 	// RuleIndexPartition is the index for a rule of partition.

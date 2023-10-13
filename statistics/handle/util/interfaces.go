@@ -70,6 +70,21 @@ type StatsUsage interface {
 
 	// GCIndexUsage removes unnecessary index usage data.
 	GCIndexUsage() error
+
+	// Blow methods are for table delta and stats usage.
+
+	// NewSessionStatsItem allocates a stats collector for a session.
+	// TODO: use interface{} to avoid cycle import, remove this interface{}.
+	NewSessionStatsItem() interface{}
+
+	// ResetSessionStatsList resets the sessions stats list.
+	ResetSessionStatsList()
+
+	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
+	DumpStatsDeltaToKV(dumpAll bool) error
+
+	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
+	DumpColStatsUsageToKV() error
 }
 
 // StatsHistory is used to manage historical stats.
@@ -92,4 +107,92 @@ type StatsAnalyze interface {
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
 	// TODO: HandleAutoAnalyze
+}
+
+// StatsCache is used to manage all table statistics in memory.
+type StatsCache interface {
+	// Close closes this cache.
+	Close()
+
+	// Clear clears this cache.
+	Clear()
+
+	// MemConsumed returns its memory usage.
+	MemConsumed() (size int64)
+
+	// Get returns the specified table's stats.
+	Get(tableID int64) (*statistics.Table, bool)
+
+	// Put puts this table stats into the cache.
+	Put(tableID int64, t *statistics.Table)
+
+	// UpdateStatsCache updates the cache.
+	UpdateStatsCache(addedTables []*statistics.Table, deletedTableIDs []int64)
+
+	// MaxTableStatsVersion returns the version of the current cache, which is defined as
+	// the max table stats version the cache has in its lifecycle.
+	MaxTableStatsVersion() uint64
+
+	// Values returns all values in this cache.
+	Values() []*statistics.Table
+
+	// Len returns the length of this cache.
+	Len() int
+
+	// SetStatsCacheCapacity sets the cache's capacity.
+	SetStatsCacheCapacity(capBytes int64)
+
+	// Replace replaces this cache.
+	Replace(cache StatsCache)
+}
+
+// StatsLockTable is the table info of which will be locked.
+type StatsLockTable struct {
+	PartitionInfo map[int64]string
+	// schema name + table name.
+	FullName string
+}
+
+// StatsLock is used to manage locked stats.
+type StatsLock interface {
+	// LockTables add locked tables id to store.
+	// - tables: tables that will be locked.
+	// Return the message of skipped tables and error.
+	LockTables(tables map[int64]*StatsLockTable) (skipped string, err error)
+
+	// LockPartitions add locked partitions id to store.
+	// If the whole table is locked, then skip all partitions of the table.
+	// - tid: table id of which will be locked.
+	// - tableName: table name of which will be locked.
+	// - pidNames: partition ids of which will be locked.
+	// Return the message of skipped tables and error.
+	// Note: If the whole table is locked, then skip all partitions of the table.
+	LockPartitions(
+		tid int64,
+		tableName string,
+		pidNames map[int64]string,
+	) (skipped string, err error)
+
+	// RemoveLockedTables remove tables from table locked records.
+	// - tables: tables of which will be unlocked.
+	// Return the message of skipped tables and error.
+	RemoveLockedTables(tables map[int64]*StatsLockTable) (skipped string, err error)
+
+	// RemoveLockedPartitions remove partitions from table locked records.
+	// - tid: table id of which will be unlocked.
+	// - tableName: table name of which will be unlocked.
+	// - pidNames: partition ids of which will be unlocked.
+	// Note: If the whole table is locked, then skip all partitions of the table.
+	RemoveLockedPartitions(
+		tid int64,
+		tableName string,
+		pidNames map[int64]string,
+	) (skipped string, err error)
+
+	// GetLockedTables returns the locked status of the given tables.
+	// Note: This function query locked tables from store, so please try to batch the query.
+	GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error)
+
+	// GetTableLockedAndClearForTest for unit test only.
+	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
 }
