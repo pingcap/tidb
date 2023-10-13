@@ -399,8 +399,10 @@ func (e *AnalyzeExec) handleResultsError(
 		}
 		if atomic.LoadUint32(&e.Ctx().GetSessionVars().Killed) == 1 {
 			finishJobWithLog(e.Ctx(), results.Job, exeerrors.ErrQueryInterrupted)
+			results.DestroyAndPutToPool()
 			return errors.Trace(exeerrors.ErrQueryInterrupted)
 		}
+		results.DestroyAndPutToPool()
 	}
 	// Dump stats to historical storage.
 	for tableID := range tableIDs {
