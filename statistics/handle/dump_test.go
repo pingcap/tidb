@@ -107,7 +107,7 @@ func TestConversion(t *testing.T) {
 	wg.Run(func() {
 		require.Nil(t, h.Update(is))
 	})
-	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0, false)
+	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
 	require.NoError(t, err)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
@@ -173,7 +173,7 @@ func TestLoadGlobalStats(t *testing.T) {
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
 	// load global-stats back
-	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0, false))
+	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), globalStats, 0))
 	loadedStats := getStatsJSON(t, dom, "test", "t")
 	require.Equal(t, 3, len(loadedStats.Partitions)) // p0, p1, global
 }
@@ -214,7 +214,7 @@ func TestLoadPartitionStats(t *testing.T) {
 	require.Equal(t, 0, len(clearedStats.Partitions))
 
 	// load stats back
-	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0, false))
+	require.Nil(t, dom.StatsHandle().LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0))
 
 	// compare
 	for i, def := range pi.Definitions {
@@ -248,12 +248,12 @@ func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	ctx := context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
 		return errors.New("ERROR")
 	})
-	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0, false)
+	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)
 	require.ErrorContains(t, err, "ERROR")
 	ctx = context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
 		panic("PANIC")
 	})
-	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0, false)
+	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)
 	require.ErrorContains(t, err, "PANIC") // recover panic as an error
 }
 
@@ -294,7 +294,7 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("delete from mysql.stats_buckets")
 	h.Clear()
 
-	err = h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0, false)
+	err = h.LoadStatsFromJSON(context.Background(), dom.InfoSchema(), jsonTbl, 0)
 	require.NoError(t, err)
 	for i, def := range pi.Definitions {
 		tt := h.GetPartitionStats(tableInfo, def.ID)
@@ -355,7 +355,7 @@ func TestDumpCMSketchWithTopN(t *testing.T) {
 
 	jsonTable, err := h.DumpStatsToJSON("test", tableInfo, nil, true)
 	require.NoError(t, err)
-	err = h.LoadStatsFromJSON(context.Background(), is, jsonTable, 0, false)
+	err = h.LoadStatsFromJSON(context.Background(), is, jsonTable, 0)
 	require.NoError(t, err)
 	stat = h.GetTableStats(tableInfo)
 	cmsFromJSON := stat.Columns[tableInfo.Columns[0].ID].CMSketch.Copy()
@@ -407,7 +407,7 @@ func TestDumpExtendedStats(t *testing.T) {
 	wg.Run(func() {
 		require.Nil(t, h.Update(is))
 	})
-	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0, false)
+	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
 	require.NoError(t, err)
 	loadTblInStorage := h.GetTableStats(tableInfo.Meta())
@@ -456,7 +456,7 @@ func TestDumpVer2Stats(t *testing.T) {
 	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTbl, statsCacheTbl)
 
-	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0, false)
+	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
@@ -508,7 +508,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	statsCacheTbl := h.GetTableStats(tableInfo.Meta())
 	requireTableEqual(t, loadTbl, statsCacheTbl)
 
-	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0, false)
+	err = h.LoadStatsFromJSON(context.Background(), is, loadJSONTable, 0)
 	require.NoError(t, err)
 	require.Nil(t, h.Update(is))
 	statsCacheTbl = h.GetTableStats(tableInfo.Meta())
@@ -606,7 +606,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
 }`
 	jsonTbl := &storage.JSONTable{}
 	require.NoError(t, json.Unmarshal([]byte(statsJSONFromOldVersion), jsonTbl))
-	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0, false))
+	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	statsTbl := h.GetTableStats(tbl.Meta())
