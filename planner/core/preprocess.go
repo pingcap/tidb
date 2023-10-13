@@ -610,6 +610,14 @@ func (p *preprocessor) Leave(in ast.Node) (out ast.Node, ok bool) {
 			break
 		}
 
+		if x.FnName.L == ast.Ifnull && len(x.Args) == 2 {
+			// If the first argument is a constant, we should rewrite it to a constant.
+			// See https://dev.mysql.com/doc/refman/8.0/en/flow-control-functions.html#function_ifnull for details.
+			if ve, isValueExpr := x.Args[0].(*driver.ValueExpr); isValueExpr && !ve.Datum.IsNull() {
+				return x.Args[0], p.err == nil
+			}
+		}
+
 		// no need sleep when retry transaction and avoid unexpect sleep caused by retry.
 		if p.flag&inTxnRetry > 0 && x.FnName.L == ast.Sleep {
 			if len(x.Args) == 1 {
