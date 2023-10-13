@@ -1119,7 +1119,12 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 		return nil, errors.New("pessimistic lock retry limit reached")
 	}
 	a.retryCount++
-	a.retryStartTime = time.Now()
+	if a.retryStartTime.IsZero() {
+		a.retryStartTime = time.Now()
+	}
+	failpoint.Inject("getPessimisticLockErrorStartRetryTime", func() {
+		sessiontxn.SetPessmisticLockErrRetryInfo(a.Ctx, a.retryStartTime, a.retryCount)
+	})
 
 	err = txnManager.OnStmtRetry(ctx)
 	if err != nil {
