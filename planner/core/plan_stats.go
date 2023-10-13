@@ -33,9 +33,10 @@ import (
 
 type collectPredicateColumnsPoint struct{}
 
-func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return plan, nil
+		return plan, planChanged, nil
 	}
 	predicateNeeded := variable.EnableColumnTracking.Load()
 	syncWait := plan.SCtx().GetSessionVars().StatsLoadSyncWait * time.Millisecond.Nanoseconds()
@@ -45,7 +46,7 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 		plan.SCtx().UpdateColStatsUsage(predicateColumns)
 	}
 	if !histNeeded {
-		return plan, nil
+		return plan, planChanged, nil
 	}
 
 	// Prepare the table metadata to avoid repeatedly fetching from the infoSchema below.
@@ -69,9 +70,9 @@ func (collectPredicateColumnsPoint) optimize(_ context.Context, plan LogicalPlan
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	if histNeeded && len(histNeededItems) > 0 {
 		err := RequestLoadStats(plan.SCtx(), histNeededItems, syncWait)
-		return plan, err
+		return plan, planChanged, err
 	}
-	return plan, nil
+	return plan, planChanged, nil
 }
 
 func (collectPredicateColumnsPoint) name() string {
@@ -80,15 +81,16 @@ func (collectPredicateColumnsPoint) name() string {
 
 type syncWaitStatsLoadPoint struct{}
 
-func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, error) {
+func (syncWaitStatsLoadPoint) optimize(_ context.Context, plan LogicalPlan, _ *logicalOptimizeOp) (LogicalPlan, bool, error) {
+	planChanged := false
 	if plan.SCtx().GetSessionVars().InRestrictedSQL {
-		return plan, nil
+		return plan, planChanged, nil
 	}
 	if plan.SCtx().GetSessionVars().StmtCtx.IsSyncStatsFailed {
-		return plan, nil
+		return plan, planChanged, nil
 	}
 	err := SyncWaitStatsLoad(plan)
-	return plan, err
+	return plan, planChanged, err
 }
 
 func (syncWaitStatsLoadPoint) name() string {

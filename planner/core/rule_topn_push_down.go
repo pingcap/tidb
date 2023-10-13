@@ -28,8 +28,9 @@ import (
 type pushDownTopNOptimizer struct {
 }
 
-func (*pushDownTopNOptimizer) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
-	return p.pushDownTopN(nil, opt), nil
+func (*pushDownTopNOptimizer) optimize(_ context.Context, p LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+	planChanged := false
+	return p.pushDownTopN(nil, opt), planChanged, nil
 }
 
 func (s *baseLogicalPlan) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan {

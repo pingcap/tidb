@@ -36,13 +36,14 @@ type ExprColumnMap map[expression.Expression]*expression.Column
 // For example: select a+1 from t order by a+1, with a virtual generate column c as (a+1) and
 // an index on c. We need to replace a+1 with c so that we can use the index on c.
 // See also https://dev.mysql.com/doc/refman/8.0/en/generated-column-index-optimizations.html
-func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, error) {
+func (gc *gcSubstituter) optimize(ctx context.Context, lp LogicalPlan, opt *logicalOptimizeOp) (LogicalPlan, bool, error) {
+	planChanged := false
 	exprToColumn := make(ExprColumnMap)
 	collectGenerateColumn(lp, exprToColumn)
 	if len(exprToColumn) == 0 {
-		return lp, nil
+		return lp, planChanged, nil
 	}
-	return gc.substitute(ctx, lp, exprToColumn, opt), nil
+	return gc.substitute(ctx, lp, exprToColumn, opt), planChanged, nil
 }
 
 // collectGenerateColumn collect the generate column and save them to a map from their expressions to themselves.
