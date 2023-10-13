@@ -311,9 +311,14 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	if handle != nil {
 		rowID = handle.Encoded()
 	}
-	buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
-	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
-	val := w.kvBuffer.AddBytes(idxVal)
+	var key, val []byte
+	if _, ok := keyAdapter.(common.NoopKeyAdapter); ok {
+		key, val = idxKey, idxVal
+	} else {
+		buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
+		key = keyAdapter.Encode(buf[:0], idxKey, rowID)
+		val = w.kvBuffer.AddBytes(idxVal)
+	}
 
 	w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
 	if w.batchSize >= w.memSizeLimit {
