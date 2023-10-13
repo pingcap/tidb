@@ -128,7 +128,7 @@ func TestCheck(t *testing.T) {
 
 func TestHandleBadNull(t *testing.T) {
 	col := newCol("a")
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	d := types.Datum{}
 	err := col.HandleBadNull(&d, sc, 0)
 	require.NoError(t, err)
@@ -256,7 +256,7 @@ func TestGetZeroValue(t *testing.T) {
 			types.NewDatum(types.CreateBinaryJSON(nil)),
 		},
 	}
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("%+v", tt.ft), func(t *testing.T) {
 			colInfo := &model.ColumnInfo{FieldType: *tt.ft}

@@ -465,7 +465,7 @@ func NewContext() *Context {
 	sctx.sessionVars = vars
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
-	vars.StmtCtx.TimeZone = time.UTC
+	vars.StmtCtx.SetTimeZone(time.UTC)
 	vars.MemTracker.SetBytesLimit(-1)
 	vars.DiskTracker.SetBytesLimit(-1)
 	vars.StmtCtx.MemTracker, vars.StmtCtx.DiskTracker = memory.NewTracker(-1, -1), disk.NewTracker(-1, -1)

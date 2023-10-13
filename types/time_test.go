@@ -192,7 +192,7 @@ func TestTimestamp(t *testing.T) {
 	}
 
 	for _, test := range table {
-		v, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test.Input)
+		v, err := types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.UTC), test.Input)
 		require.NoError(t, err)
 		require.Equal(t, test.Expect, v.String())
 	}
@@ -203,7 +203,7 @@ func TestTimestamp(t *testing.T) {
 	}
 
 	for _, test := range errTable {
-		_, err := types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, test)
+		_, err := types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.UTC), test)
 		require.Error(t, err)
 	}
 }
@@ -575,7 +575,7 @@ func TestYear(t *testing.T) {
 }
 
 func TestCodec(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 
 	// MySQL timestamp value doesn't allow month=0 or day=0.
 	_, err := types.ParseTimestamp(sc, "2016-12-00 00:00:00")
@@ -680,9 +680,7 @@ func TestParseTimeFromNum(t *testing.T) {
 		require.Equal(t, test.ExpectDateTimeValue, t1.String())
 
 		// testtypes.ParseTimestampFromNum
-		t1, err = types.ParseTimestampFromNum(&stmtctx.StatementContext{
-			TimeZone: time.UTC,
-		}, test.Input)
+		t1, err = types.ParseTimestampFromNum(stmtctx.NewStmtCtxWithTimeZone(time.UTC), test.Input)
 		if test.ExpectTimeStampError {
 			require.Error(t, err)
 		} else {
@@ -709,7 +707,7 @@ func TestToNumber(t *testing.T) {
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	sc.TimeZone = losAngelesTz
+	sc.SetTimeZone(losAngelesTz)
 	tblDateTime := []struct {
 		Input  string
 		Fsp    int
@@ -851,7 +849,7 @@ func TestParseFrac(t *testing.T) {
 func TestRoundFrac(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
-	sc.TimeZone = time.UTC
+	sc.SetTimeZone(time.UTC)
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -880,7 +878,7 @@ func TestRoundFrac(t *testing.T) {
 	// test different time zone
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	sc.TimeZone = losAngelesTz
+	sc.SetTimeZone(losAngelesTz)
 	tbl = []struct {
 		Input  string
 		Fsp    int
@@ -919,7 +917,7 @@ func TestRoundFrac(t *testing.T) {
 	for _, tt := range tbl {
 		v, _, err := types.ParseDuration(sc, tt.Input, types.MaxFsp)
 		require.NoError(t, err)
-		nv, err := v.RoundFrac(tt.Fsp, sc.TimeZone)
+		nv, err := v.RoundFrac(tt.Fsp, sc.TimeZone())
 		require.NoError(t, err)
 		require.Equal(t, tt.Except, nv.String())
 	}
@@ -944,7 +942,7 @@ func TestConvert(t *testing.T) {
 	sc := mock.NewContext().GetSessionVars().StmtCtx
 	sc.IgnoreZeroInDate = true
 	losAngelesTz, _ := time.LoadLocation("America/Los_Angeles")
-	sc.TimeZone = losAngelesTz
+	sc.SetTimeZone(losAngelesTz)
 	tbl := []struct {
 		Input  string
 		Fsp    int
@@ -977,21 +975,21 @@ func TestConvert(t *testing.T) {
 		{"1 11:30:45.999999", 0},
 	}
 	// test different time zone.
-	sc.TimeZone = time.UTC
+	sc.SetTimeZone(time.UTC)
 	for _, tt := range tblDuration {
 		v, _, err := types.ParseDuration(sc, tt.Input, tt.Fsp)
 		require.NoError(t, err)
-		year, month, day := time.Now().In(sc.TimeZone).Date()
-		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone)
+		year, month, day := time.Now().In(sc.TimeZone()).Date()
+		n := time.Date(year, month, day, 0, 0, 0, 0, sc.TimeZone())
 		t1, err := v.ConvertToTime(sc, mysql.TypeDatetime)
 		require.NoError(t, err)
-		t2, _ := t1.GoTime(sc.TimeZone)
+		t2, _ := t1.GoTime(sc.TimeZone())
 		require.Equal(t, v.Duration, t2.Sub(n))
 	}
 }
 
 func TestCompare(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	tbl := []struct {
 		Arg1 string
 		Arg2 string
@@ -1054,7 +1052,7 @@ func TestDurationClock(t *testing.T) {
 	}
 
 	for _, tt := range tbl {
-		d, _, err := types.ParseDuration(&stmtctx.StatementContext{TimeZone: time.UTC}, tt.Input, types.MaxFsp)
+		d, _, err := types.ParseDuration(stmtctx.NewStmtCtxWithTimeZone(time.UTC), tt.Input, types.MaxFsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.Hour, d.Hour())
 		require.Equal(t, tt.Minute, d.Minute())
@@ -1165,9 +1163,7 @@ func TestTimeAdd(t *testing.T) {
 		{"2017-08-21", "01:01:01.001", "2017-08-21 01:01:01.001"},
 	}
 
-	sc := &stmtctx.StatementContext{
-		TimeZone: time.UTC,
-	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	for _, tt := range tbl {
 		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
@@ -1256,7 +1252,7 @@ func TestCheckTimestamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input, nil)
+		validTimestamp := types.CheckTimestampTypeForTest(stmtctx.NewStmtCtxWithTimeZone(tt.tz), tt.input, nil)
 		if tt.expectRetError {
 			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
@@ -1313,7 +1309,7 @@ func TestCheckTimestamp(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		validTimestamp := types.CheckTimestampTypeForTest(&stmtctx.StatementContext{TimeZone: tt.tz}, tt.input, nil)
+		validTimestamp := types.CheckTimestampTypeForTest(stmtctx.NewStmtCtxWithTimeZone(tt.tz), tt.input, nil)
 		if tt.expectRetError {
 			require.Errorf(t, validTimestamp, "For %s %s", tt.input, tt.tz)
 		} else {
@@ -1987,9 +1983,7 @@ func TestTimeSub(t *testing.T) {
 		{"2019-04-12 18:20:00", "2019-04-12 14:00:00", "04:20:00"},
 	}
 
-	sc := &stmtctx.StatementContext{
-		TimeZone: time.UTC,
-	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	for _, tt := range tbl {
 		v1, err := types.ParseTime(sc, tt.Arg1, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
@@ -2022,10 +2016,8 @@ func TestCheckMonthDay(t *testing.T) {
 		{types.FromDate(3200, 2, 29, 0, 0, 0, 0), true},
 	}
 
-	sc := &stmtctx.StatementContext{
-		TimeZone:         time.UTC,
-		AllowInvalidDate: false,
-	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	sc.AllowInvalidDate = false
 
 	for _, tt := range dates {
 		v := types.NewTime(tt.date, mysql.TypeDate, types.DefaultFsp)
@@ -2190,7 +2182,7 @@ func TestParseWithTimezone(t *testing.T) {
 		},
 	}
 	for ith, ca := range cases {
-		v, err := types.ParseTime(&stmtctx.StatementContext{TimeZone: ca.sysTZ}, ca.lit, mysql.TypeTimestamp, ca.fsp, nil)
+		v, err := types.ParseTime(stmtctx.NewStmtCtxWithTimeZone(ca.sysTZ), ca.lit, mysql.TypeTimestamp, ca.fsp, nil)
 		require.NoErrorf(t, err, "tidb time parse misbehaved on %d", ith)
 		if err != nil {
 			continue
@@ -2223,9 +2215,7 @@ func BenchmarkFormat(b *testing.B) {
 }
 
 func BenchmarkTimeAdd(b *testing.B) {
-	sc := &stmtctx.StatementContext{
-		TimeZone: time.UTC,
-	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	arg1, _ := types.ParseTime(sc, "2017-01-18", mysql.TypeDatetime, types.MaxFsp, nil)
 	arg2, _, _ := types.ParseDuration(sc, "12:30:59", types.MaxFsp)
 	for i := 0; i < b.N; i++ {
@@ -2237,7 +2227,7 @@ func BenchmarkTimeAdd(b *testing.B) {
 }
 
 func BenchmarkTimeCompare(b *testing.B) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	mustParse := func(str string) types.Time {
 		t, err := types.ParseDatetime(sc, str)
 		if err != nil {
@@ -2300,7 +2290,7 @@ func benchmarkDatetimeFormat(b *testing.B, name string, sc *stmtctx.StatementCon
 }
 
 func BenchmarkParseDatetimeFormat(b *testing.B) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	benchmarkDatetimeFormat(b, "datetime without timezone", sc, "2020-10-10T10:10:10")
 	benchmarkDatetimeFormat(b, "datetime with timezone", sc, "2020-10-10T10:10:10Z+08:00")
 }
@@ -2315,7 +2305,7 @@ func benchmarkStrToDate(b *testing.B, name string, sc *stmtctx.StatementContext,
 }
 
 func BenchmarkStrToDate(b *testing.B) {
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	benchmarkStrToDate(b, "strToDate yyyyMMdd hhmmss ffff", sc, "31/05/2016 12:34:56.1234", "%d/%m/%Y %H:%i:%S.%f")
 	benchmarkStrToDate(b, "strToDate %r ddMMyyyy", sc, "04:13:56 AM 13/05/2019", "%r %d/%c/%Y")
 	benchmarkStrToDate(b, "strToDate %T ddMMyyyy", sc, " 4:13:56 13/05/2019", "%T %d/%c/%Y")

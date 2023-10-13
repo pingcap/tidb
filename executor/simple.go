@@ -2811,7 +2811,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New("The plan cache is disable. So there no need to flush the plan cache"))
 		return nil
 	}
-	now := types.NewTime(types.FromGoTime(time.Now().In(e.Ctx().GetSessionVars().StmtCtx.TimeZone)), mysql.TypeTimestamp, 3)
+	now := types.NewTime(types.FromGoTime(time.Now().In(e.Ctx().GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
 	e.Ctx().GetSessionVars().LastUpdateTime4PC = now
 	e.Ctx().GetSessionPlanCache().DeleteAll()
 	if s.StatementScope == ast.StatementScopeInstance {

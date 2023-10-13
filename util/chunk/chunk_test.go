@@ -545,7 +545,7 @@ func TestGetDecimalDatum(t *testing.T) {
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
 	decType.SetFlen(4)
 	decType.SetDecimal(2)
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	decDatum, err := datum.ConvertTo(sc, decType)
 	require.NoError(t, err)
 

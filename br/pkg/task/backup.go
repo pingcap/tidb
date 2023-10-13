@@ -767,9 +767,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	}
 
 	loc := time.Local
-	sc := &stmtctx.StatementContext{
-		TimeZone: loc,
-	}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	if tzCheck {
 		tzIdx, _, _, _, _ := types.GetTimezone(ts)
 		if tzIdx < 0 {

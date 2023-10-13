@@ -432,7 +432,7 @@ func TestClusterIndexSplitTable(t *testing.T) {
 	}(minRegionStepValue)
 	minRegionStepValue = 3
 	ctx := mock.NewContext()
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	e := &SplitTableRegionExec{
 		BaseExecutor: exec.NewBaseExecutor(ctx, nil, 0),
 		tableInfo:    tbInfo,

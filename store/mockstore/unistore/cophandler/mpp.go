@@ -91,7 +91,7 @@ func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, 
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
-	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone)
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone())
 	return ts, err
 }
 
@@ -114,7 +114,7 @@ func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan)
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
-	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone)
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone())
 	return ts, err
 }
 

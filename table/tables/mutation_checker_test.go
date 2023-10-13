@@ -72,7 +72,7 @@ func TestCompareIndexData(t *testing.T) {
 	}
 
 	for caseID, data := range testData {
-		sc := &stmtctx.StatementContext{}
+		sc := stmtctx.NewStmtCtx()
 		cols := make([]*table.Column, 0)
 		indexCols := make([]*model.IndexColumn, 0)
 		for i, ft := range data.fts {
@@ -256,7 +256,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 	for _, isCommonHandle := range []bool{true, false} {
 		for _, lc := range locations {
 			for _, columnInfos := range columnInfoSets {
-				sessVars.StmtCtx.TimeZone = lc
+				sessVars.StmtCtx.SetTimeZone(lc)
 				tableInfo := model.TableInfo{
 					ID:             1,
 					Name:           model.NewCIStr("t"),

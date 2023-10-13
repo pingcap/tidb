@@ -33,7 +33,7 @@ import (
 )
 
 func TestPartialNext(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	// keyA represents a multi column index.
 	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
 	require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestHandle(t *testing.T) {
 
 func TestPaddingHandle(t *testing.T) {
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -229,7 +229,7 @@ func TestHandleMapWithPartialHandle(t *testing.T) {
 	m.Set(ih, 3)
 
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -285,7 +285,7 @@ func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
 	m.Set(ih, 3)
 
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 

@@ -158,7 +158,7 @@ func TestMemCount(t *testing.T) {
 }
 
 func TestWriteTime(t *testing.T) {
-	tt, err := types.ParseDate(&(stmtctx.StatementContext{}), "2020-11-11")
+	tt, err := types.ParseDate(stmtctx.NewStmtCtx(), "2020-11-11")
 	require.NoError(t, err)
 
 	buf := make([]byte, 16)

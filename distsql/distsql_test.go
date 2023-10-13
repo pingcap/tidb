@@ -300,10 +300,10 @@ func (r *mockResultSubset) RespTime() time.Duration { return 0 }
 
 func newMockSessionContext() sessionctx.Context {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx = &stmtctx.StatementContext{
-		MemTracker:  memory.NewTracker(-1, -1),
-		DiskTracker: disk.NewTracker(-1, -1),
-	}
+	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(-1, -1)
+	ctx.GetSessionVars().StmtCtx.DiskTracker = disk.NewTracker(-1, -1)
+
 	ctx.Store = &mock.Store{
 		Client: &mock.Client{
 			MockResponse: &mockResponse{

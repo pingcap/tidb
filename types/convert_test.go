@@ -35,8 +35,7 @@ type invalidMockType struct {
 // Convert converts the val with type tp.
 func Convert(val interface{}, target *FieldType) (v interface{}, err error) {
 	d := NewDatum(val)
-	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = time.UTC
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	ret, err := d.ConvertTo(sc, target)
 	if err != nil {
 		return ret.GetValue(), errors.Trace(err)
@@ -149,7 +148,7 @@ func TestConvertType(t *testing.T) {
 	vv, err := Convert(v, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
 	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
 	require.NoError(t, err)
@@ -346,7 +345,7 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, Enum{Name: "a", Value: 1}, "a")
 	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(&stmtctx.StatementContext{TimeZone: time.UTC}, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
@@ -384,7 +383,7 @@ func TestConvertToString(t *testing.T) {
 		ft.SetFlen(tt.flen)
 		ft.SetCharset(tt.charset)
 		inputDatum := NewStringDatum(tt.input)
-		sc := new(stmtctx.StatementContext)
+		sc := stmtctx.NewStmtCtx()
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if tt.input != tt.output {
 			require.True(t, ErrDataTooLong.Equal(err), "flen: %d, charset: %s, input: %s, output: %s", tt.flen, tt.charset, tt.input, tt.output)
@@ -421,9 +420,9 @@ func TestConvertToStringWithCheck(t *testing.T) {
 		ft.SetFlen(255)
 		ft.SetCharset(tt.outputChs)
 		inputDatum := NewStringDatum(tt.input)
-		sc := new(stmtctx.StatementContext)
-		flags := tt.newFlags(sc.TypeConvContext.Flags())
-		sc.TypeConvContext = sc.TypeConvContext.WithFlags(flags)
+		sc := stmtctx.NewStmtCtx()
+		flags := tt.newFlags(sc.TypeCtx.Flags())
+		sc.SetTypeFlags(flags)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if len(tt.output) == 0 {
 			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
@@ -461,7 +460,7 @@ func TestConvertToBinaryString(t *testing.T) {
 		ft.SetFlen(255)
 		ft.SetCharset(tt.outputCharset)
 		inputDatum := NewCollationStringDatum(tt.input, tt.inputCollate)
-		sc := new(stmtctx.StatementContext)
+		sc := stmtctx.NewStmtCtx()
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if len(tt.output) == 0 {
 			require.True(t, charset.ErrInvalidCharacterString.Equal(err), tt)
@@ -473,7 +472,7 @@ func TestConvertToBinaryString(t *testing.T) {
 }
 
 func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.IgnoreTruncate.Store(!truncateAsErr)
 	val, err := StrToInt(sc, str, false)
 	if expectErr != nil {
@@ -485,7 +484,7 @@ func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, ex
 }
 
 func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, expectErr error) {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.IgnoreTruncate.Store(!truncateAsErr)
 	val, err := StrToUint(sc, str, false)
 	if expectErr != nil {
@@ -497,7 +496,7 @@ func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, 
 }
 
 func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool, expectErr error) {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.IgnoreTruncate.Store(!truncateAsErr)
 	val, err := StrToFloat(sc, str, false)
 	if expectErr != nil {
@@ -566,7 +565,7 @@ func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 		{true, false},
 		{false, true},
 	}
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.TruncateAsWarning = true
 	for _, tc := range testCases {
 		sc.InSelectStmt = tc.inSelect
@@ -604,8 +603,8 @@ func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected st
 		ft.AddFlag(mysql.UnsignedFlag)
 	}
 	d := NewDatum(value)
-	sc := new(stmtctx.StatementContext)
-	sc.TimeZone = time.UTC
+	sc := stmtctx.NewStmtCtx()
+	sc.SetTimeZone(time.UTC)
 	sc.IgnoreTruncate.Store(true)
 	casted, err := d.ConvertTo(sc, ft)
 	require.NoErrorf(t, err, "%v", ft)
@@ -632,7 +631,7 @@ func deny(t *testing.T, tp byte, value interface{}, unsigned bool, expected stri
 		ft.AddFlag(mysql.UnsignedFlag)
 	}
 	d := NewDatum(value)
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	casted, err := d.ConvertTo(sc, ft)
 	require.Error(t, err)
 	if casted.IsNull() {
@@ -887,7 +886,7 @@ func TestGetValidInt(t *testing.T) {
 		{"123e+", "123", true, true},
 		{"123de", "123", true, true},
 	}
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.TruncateAsWarning = true
 	sc.InSelectStmt = true
 	warningCount := 0
@@ -967,7 +966,7 @@ func TestGetValidFloat(t *testing.T) {
 		{"9-3", "9"},
 		{"1001001\\u0000\\u0000\\u0000", "1001001"},
 	}
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	for _, tt := range tests {
 		prefix, _ := getValidFloatPrefix(sc, tt.origin, false)
 		require.Equal(t, tt.valid, prefix)
@@ -1012,9 +1011,7 @@ func TestConvertTime(t *testing.T) {
 	}
 
 	for _, timezone := range timezones {
-		sc := &stmtctx.StatementContext{
-			TimeZone: timezone,
-		}
+		sc := stmtctx.NewStmtCtxWithTimeZone(timezone)
 		testConvertTimeTimeZone(t, sc)
 	}
 }
@@ -1081,7 +1078,7 @@ func TestConvertJSONToInt(t *testing.T) {
 		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
 
-		casted, err := ConvertJSONToInt64(new(stmtctx.StatementContext), j, false)
+		casted, err := ConvertJSONToInt64(stmtctx.NewStmtCtx(), j, false)
 		if tt.err {
 			require.Error(t, err, tt)
 		} else {
@@ -1114,7 +1111,7 @@ func TestConvertJSONToFloat(t *testing.T) {
 	for _, tt := range tests {
 		j := CreateBinaryJSON(tt.in)
 		require.Equal(t, tt.ty, j.TypeCode)
-		casted, err := ConvertJSONToFloat(new(stmtctx.StatementContext), j)
+		casted, err := ConvertJSONToFloat(stmtctx.NewStmtCtx(), j)
 		if tt.err {
 			require.Error(t, err, tt)
 		} else {
@@ -1142,7 +1139,7 @@ func TestConvertJSONToDecimal(t *testing.T) {
 	for _, tt := range tests {
 		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
-		casted, err := ConvertJSONToDecimal(new(stmtctx.StatementContext), j)
+		casted, err := ConvertJSONToDecimal(stmtctx.NewStmtCtx(), j)
 		errMsg := fmt.Sprintf("input: %v, casted: %v, out: %v, json: %#v", tt.in, casted, tt.out, j)
 		if tt.err {
 			require.Error(t, err, errMsg)
@@ -1205,7 +1202,7 @@ func TestNumberToDuration(t *testing.T) {
 }
 
 func TestStrToDuration(t *testing.T) {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	var tests = []struct {
 		str        string
 		fsp        int
@@ -1283,7 +1280,7 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 		{"-10000000000000000000.0", 0, false},
 	}
 	for _, ca := range cases {
-		result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, ca.input, math.MaxUint64, 0)
+		result, err := convertDecimalStrToUint(stmtctx.NewStmtCtx(), ca.input, math.MaxUint64, 0)
 		if !ca.succ {
 			require.Error(t, err)
 		} else {
@@ -1292,11 +1289,11 @@ func TestConvertDecimalStrToUint(t *testing.T) {
 		require.Equal(t, ca.result, result, "input=%v", ca.input)
 	}
 
-	result, err := convertDecimalStrToUint(&stmtctx.StatementContext{}, "-99.0", math.MaxUint8, 0)
+	result, err := convertDecimalStrToUint(stmtctx.NewStmtCtx(), "-99.0", math.MaxUint8, 0)
 	require.Error(t, err)
 	require.Equal(t, uint64(0), result)
 
-	result, err = convertDecimalStrToUint(&stmtctx.StatementContext{}, "-100.0", math.MaxUint8, 0)
+	result, err = convertDecimalStrToUint(stmtctx.NewStmtCtx(), "-100.0", math.MaxUint8, 0)
 	require.Error(t, err)
 	require.Equal(t, uint64(0), result)
 }

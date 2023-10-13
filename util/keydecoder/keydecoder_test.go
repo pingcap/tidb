@@ -116,7 +116,7 @@ func TestDecodeKey(t *testing.T) {
 	assert.Nil(t, decodedKey.IndexValues)
 
 	values := types.MakeDatums("abc", 1)
-	sc := &stmtctx.StatementContext{}
+	sc := stmtctx.NewStmtCtx()
 	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	assert.Nil(t, err)
 	key = []byte{

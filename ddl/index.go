@@ -1494,7 +1494,7 @@ func (w *baseIndexWorker) getNextKey(taskRange reorgBackfillTask, taskDone bool)
 }
 
 func (w *baseIndexWorker) updateRowDecoder(handle kv.Handle, rawRecord []byte) error {
-	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	sysZone := w.sessCtx.GetSessionVars().StmtCtx.TimeZone()
 	_, err := w.rowDecoder.DecodeAndEvalRowWithMap(w.sessCtx, handle, rawRecord, sysZone, w.rowMap)
 	return errors.Trace(err)
 }

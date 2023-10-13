@@ -1460,7 +1460,7 @@ func (e *memtableRetriever) setDataForProcessList(ctx sessionctx.Context) {
 			continue
 		}
 
-		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone)
+		rows := pi.ToRow(ctx.GetSessionVars().StmtCtx.TimeZone())
 		record := types.MakeDatums(rows...)
 		records = append(records, record)
 	}

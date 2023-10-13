@@ -1314,7 +1314,7 @@ func (w *updateColumnWorker) fetchRowColVals(txn kv.Transaction, taskRange reorg
 }
 
 func (w *updateColumnWorker) getRowRecord(handle kv.Handle, recordKey []byte, rawRow []byte) error {
-	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone
+	sysTZ := w.sessCtx.GetSessionVars().StmtCtx.TimeZone()
 	_, err := w.rowDecoder.DecodeTheExistedColumnMap(w.sessCtx, handle, rawRow, sysTZ, w.rowMap)
 	if err != nil {
 		return errors.Trace(dbterror.ErrCantDecodeRecord.GenWithStackByArgs("column", err))
