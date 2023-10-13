@@ -282,6 +282,7 @@ func TestThresholdCheckInspection(t *testing.T) {
 		"tikv_scheduler_pending_commands":     {},
 		"tikv_block_index_cache_hit":          {},
 		"tikv_block_data_cache_hit":           {},
+		"tikv_raftstore_append_log_duration":  {},
 		"tikv_block_filter_cache_hit":         {},
 		"pd_scheduler_store_status":           {},
 		"pd_region_health":                    {},
@@ -387,6 +388,9 @@ func TestThresholdCheckInspection2(t *testing.T) {
 		"tikv_block_filter_cache_hit": {
 			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", "kv", 0.93),
 		},
+		"tikv_raftstore_append_log_duration": {
+			types.MakeDatums(datetime("2020-02-14 05:20:00"), "tikv-0s", 0.99, 0.51),
+		},
 		"tikv_thread_cpu":           {},
 		"pd_scheduler_store_status": {},
 		"pd_region_health":          {},
@@ -405,6 +409,7 @@ func TestThresholdCheckInspection2(t *testing.T) {
 		"handle-snapshot-duration tikv tikv-0 tikv-0s 40.000 < 30.000 max duration of tikv-0s tikv handle-snapshot-duration is too slow",
 		"index-block-cache-hit tikv tikv-0 tikv-0s 0.940 > 0.950 min index-block-cache-hit rate of tikv-0s tikv is too low",
 		"load-schema-duration tidb tidb-0 tidb-0s 2.000 < 1.000 max duration of tidb-0s tidb load-schema-duration is too slow",
+		"raft-append-log-duration tikv tikv-0 tikv-0s 0.510 < 0.500 max duration of tikv-0s tikv raft-append-log-duration is too slow",
 		"rocksdb-get-duration tikv tikv-0 tikv-0s 0.060 < 0.050 max duration of tikv-0s tikv rocksdb-get-duration is too slow",
 		"rocksdb-seek-duration tikv tikv-0 tikv-0s 0.060 < 0.050 max duration of tikv-0s tikv rocksdb-seek-duration is too slow",
 		"rocksdb-write-duration tikv tikv-0 tikv-0s 0.200 < 0.100 max duration of tikv-0s tikv rocksdb-write-duration is too slow",

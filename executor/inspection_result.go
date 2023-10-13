@@ -976,6 +976,13 @@ func (thresholdCheckInspection) inspectThreshold2(ctx context.Context, sctx sess
 			threshold: 0.80,
 			isMin:     true,
 		},
+		{
+			tp:        "tikv",
+			item:      "raft-append-log-duration",
+			tbl:       "tikv_raftstore_append_log_duration",
+			condition: "value > 0",
+			threshold: 0.5,
+		},
 	}
 
 	condition := filter.timeRange.Condition()
