@@ -15,11 +15,11 @@
 package lockstats
 
 import (
-	"context"
 	"fmt"
 	"slices"
 	"strings"
 
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
@@ -35,6 +35,99 @@ const (
 	insertSQL = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
+// statsLockImpl implements the util.StatsLock interface.
+type statsLockImpl struct {
+	pool util.SessionPool
+}
+
+// NewStatsLock creates a new StatsLock.
+func NewStatsLock(pool util.SessionPool) util.StatsLock {
+	return &statsLockImpl{pool: pool}
+}
+
+// LockTables add locked tables id to store.
+// - tables: tables that will be locked.
+// Return the message of skipped tables and error.
+func (sl *statsLockImpl) LockTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
+	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+		skipped, err = AddLockedTables(sctx, tables)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
+// LockPartitions add locked partitions id to store.
+// If the whole table is locked, then skip all partitions of the table.
+// - tid: table id of which will be locked.
+// - tableName: table name of which will be locked.
+// - pidNames: partition ids of which will be locked.
+// Return the message of skipped tables and error.
+// Note: If the whole table is locked, then skip all partitions of the table.
+func (sl *statsLockImpl) LockPartitions(
+	tid int64,
+	tableName string,
+	pidNames map[int64]string,
+) (skipped string, err error) {
+	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+		skipped, err = AddLockedPartitions(sctx, tid, tableName, pidNames)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
+// RemoveLockedTables remove tables from table locked records.
+// - tables: tables of which will be unlocked.
+// Return the message of skipped tables and error.
+func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
+	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+		skipped, err = RemoveLockedTables(sctx, tables)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
+// RemoveLockedPartitions remove partitions from table locked records.
+// - tid: table id of which will be unlocked.
+// - tableName: table name of which will be unlocked.
+// - pidNames: partition ids of which will be unlocked.
+// Note: If the whole table is locked, then skip all partitions of the table.
+func (sl *statsLockImpl) RemoveLockedPartitions(
+	tid int64,
+	tableName string,
+	pidNames map[int64]string,
+) (skipped string, err error) {
+	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+		skipped, err = RemoveLockedPartitions(sctx, tid, tableName, pidNames)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
+// queryLockedTables query locked tables from store.
+func (sl *statsLockImpl) queryLockedTables() (tables map[int64]struct{}, err error) {
+	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
+		tables, err = QueryLockedTables(sctx)
+		return err
+	})
+	return
+}
+
+// GetLockedTables returns the locked status of the given tables.
+// Note: This function query locked tables from store, so please try to batch the query.
+func (sl *statsLockImpl) GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error) {
+	tableLocked, err := sl.queryLockedTables()
+	if err != nil {
+		return nil, err
+	}
+
+	return GetLockedTables(tableLocked, tableIDs...), nil
+}
+
+// GetTableLockedAndClearForTest for unit test only.
+func (sl *statsLockImpl) GetTableLockedAndClearForTest() (map[int64]struct{}, error) {
+	return sl.queryLockedTables()
+}
+
 var (
 	// Stats logger.
 	statsLogger = logutil.BgLogger().With(zap.String("category", "stats"))
@@ -42,33 +135,16 @@ var (
 	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
 )
 
-// TableInfo is the table info of which will be locked.
-type TableInfo struct {
-	PartitionInfo map[int64]string
-	// schema name + table name.
-	FullName string
-}
-
 // AddLockedTables add locked tables id to store.
 // - exec: sql executor.
 // - tables: tables that will be locked.
 // Return the message of skipped tables and error.
 func AddLockedTables(
-	exec sqlexec.RestrictedSQLExecutor,
-	tables map[int64]*TableInfo,
+	sctx sessionctx.Context,
+	tables map[int64]*util.StatsLockTable,
 ) (string, error) {
-	ctx := util.StatsCtx(context.Background())
-	err := startTransaction(ctx, exec)
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		// Commit transaction.
-		err = finishTransaction(ctx, exec, err)
-	}()
-
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(exec)
+	lockedTables, err := QueryLockedTables(sctx)
 	if err != nil {
 		return "", err
 	}
@@ -89,7 +165,7 @@ func AddLockedTables(
 	lockedTablesAndPartitions := GetLockedTables(lockedTables, ids...)
 	for tid, table := range tables {
 		if _, ok := lockedTablesAndPartitions[tid]; !ok {
-			if err := insertIntoStatsTableLocked(ctx, exec, tid); err != nil {
+			if err := insertIntoStatsTableLocked(sctx, tid); err != nil {
 				return "", err
 			}
 		} else {
@@ -98,7 +174,7 @@ func AddLockedTables(
 
 		for pid := range table.PartitionInfo {
 			if _, ok := lockedTablesAndPartitions[pid]; !ok {
-				if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
+				if err := insertIntoStatsTableLocked(sctx, pid); err != nil {
 					return "", err
 				}
 			}
@@ -118,23 +194,13 @@ func AddLockedTables(
 // - pidNames: partition ids of which will be locked.
 // Return the message of skipped tables and error.
 func AddLockedPartitions(
-	exec sqlexec.RestrictedSQLExecutor,
+	sctx sessionctx.Context,
 	tid int64,
 	tableName string,
 	pidNames map[int64]string,
 ) (string, error) {
-	ctx := util.StatsCtx(context.Background())
-	err := startTransaction(ctx, exec)
-	if err != nil {
-		return "", err
-	}
-	defer func() {
-		// Commit transaction.
-		err = finishTransaction(ctx, exec, err)
-	}()
-
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(exec)
+	lockedTables, err := QueryLockedTables(sctx)
 	if err != nil {
 		return "", err
 	}
@@ -165,7 +231,7 @@ func AddLockedPartitions(
 	lockedPartitions := GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
 		if _, ok := lockedPartitions[pid]; !ok {
-			if err := insertIntoStatsTableLocked(ctx, exec, pid); err != nil {
+			if err := insertIntoStatsTableLocked(sctx, pid); err != nil {
 				return "", err
 			}
 		} else {
@@ -223,12 +289,8 @@ func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skipp
 	return ""
 }
 
-func insertIntoStatsTableLocked(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, tid int64) error {
-	_, _, err := exec.ExecRestrictedSQL(
-		ctx,
-		useCurrentSession,
-		insertSQL, tid, tid,
-	)
+func insertIntoStatsTableLocked(sctx sessionctx.Context, tid int64) error {
+	_, _, err := util.ExecRows(sctx, insertSQL, tid, tid)
 	if err != nil {
 		logutil.BgLogger().Error("error occurred when insert mysql.stats_table_locked", zap.String("category", "stats"), zap.Error(err))
 		return err

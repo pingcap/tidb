@@ -27,8 +27,18 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/intest"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/sqlexec/mock"
 	"github.com/tikv/client-go/v2/oracle"
+)
+
+var (
+	// UseCurrentSessionOpt to make sure the sql is executed in current session.
+	UseCurrentSessionOpt = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+
+	// StatsCtx is used to mark the request is from stats module.
+	StatsCtx = kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 )
 
 // SessionPool is used to recycle sessionctx.
@@ -37,17 +47,12 @@ type SessionPool interface {
 	Put(pools.Resource)
 }
 
-// StatsCtx is used to mark the request is from stats module.
-func StatsCtx(ctx context.Context) context.Context {
-	return kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
-}
-
 // FinishTransaction will execute `commit` when error is nil, otherwise `rollback`.
 func FinishTransaction(sctx sessionctx.Context, err error) error {
 	if err == nil {
-		_, err = Exec(sctx, "commit")
+		_, _, err = ExecRows(sctx, "commit")
 	} else {
-		_, err1 := Exec(sctx, "rollback")
+		_, _, err1 := ExecRows(sctx, "rollback")
 		terror.Log(errors.Trace(err1))
 	}
 	return errors.Trace(err)
@@ -150,7 +155,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
 func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
 	// TODO: check whether this sctx is already in a txn
-	if _, err := Exec(sctx, "begin"); err != nil {
+	if _, _, err := ExecRows(sctx, "begin"); err != nil {
 		return err
 	}
 	defer func() {
@@ -176,16 +181,23 @@ func Exec(sctx sessionctx.Context, sql string, args ...interface{}) (sqlexec.Rec
 		return nil, errors.Errorf("invalid sql executor")
 	}
 	// TODO: use RestrictedSQLExecutor + ExecOptionUseCurSession instead of SQLExecutor
-	return sqlExec.ExecuteInternal(StatsCtx(context.Background()), sql, args...)
+	return sqlExec.ExecuteInternal(StatsCtx, sql, args...)
 }
 
 // ExecRows is a helper function to execute sql and return rows and fields.
 func ExecRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, err error) {
+	if intest.InTest {
+		if v := sctx.Value(mock.MockRestrictedSQLExecutorKey{}); v != nil {
+			return v.(*mock.MockRestrictedSQLExecutor).ExecRestrictedSQL(StatsCtx,
+				UseCurrentSessionOpt, sql, args...)
+		}
+	}
+
 	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
 	if !ok {
 		return nil, nil, errors.Errorf("invalid sql executor")
 	}
-	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
+	return sqlExec.ExecRestrictedSQL(StatsCtx, UseCurrentSessionOpt, sql, args...)
 }
 
 // ExecWithOpts is a helper function to execute sql and return rows and fields.
@@ -194,7 +206,7 @@ func ExecWithOpts(sctx sessionctx.Context, opts []sqlexec.OptionFuncAlias, sql s
 	if !ok {
 		return nil, nil, errors.Errorf("invalid sql executor")
 	}
-	return sqlExec.ExecRestrictedSQL(StatsCtx(context.Background()), opts, sql, args...)
+	return sqlExec.ExecRestrictedSQL(StatsCtx, opts, sql, args...)
 }
 
 // DurationToTS converts duration to timestamp.
