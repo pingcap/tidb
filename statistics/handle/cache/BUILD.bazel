@@ -10,6 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//config",
+        "//infoschema",
         "//parser/model",
         "//sessionctx",
         "//sessionctx/variable",
@@ -23,6 +24,7 @@ go_library(
         "//util/chunk",
         "//util/logutil",
         "//util/syncutil",
+        "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -6,11 +6,13 @@ go_library(
     importpath = "github.com/pingcap/tidb/statistics/handle/history",
     visibility = ["//visibility:public"],
     deps = [
+        "//parser/model",
         "//sessionctx",
         "//statistics/handle/cache",
         "//statistics/handle/storage",
         "//statistics/handle/util",
         "//util/logutil",
+        "//util/sqlexec",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
     ],
