@@ -90,8 +90,13 @@ const (
 
 type (
 	TaskState string
+	TaskType  string
 	Step      int64
 )
+
+func (t TaskType) String() string {
+	return string(t)
+}
 
 func (s TaskState) String() string {
 	return string(s)
@@ -115,7 +120,7 @@ const TaskIDLabelName = "task_id"
 type Task struct {
 	ID    int64
 	Key   string
-	Type  string
+	Type  TaskType
 	State TaskState
 	Step  Step
 	// DispatcherID is not used now.
@@ -137,7 +142,7 @@ func (t *Task) IsFinished() bool {
 type Subtask struct {
 	ID   int64
 	Step Step
-	Type string
+	Type TaskType
 	// taken from task_key of the subtask table
 	TaskID int64
 	State  TaskState
@@ -162,7 +167,7 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp, schedulerID string, meta []byte) *Subtask {
+func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, meta []byte) *Subtask {
 	return &Subtask{
 		Step:        step,
 		Type:        tp,
@@ -182,19 +187,19 @@ type MinimalTask interface {
 
 const (
 	// TaskTypeExample is TaskType of Example.
-	TaskTypeExample = "Example"
+	TaskTypeExample TaskType = "Example"
 	// TaskTypeExample2 is TaskType of Example.
-	TaskTypeExample2 = "Example1"
+	TaskTypeExample2 TaskType = "Example1"
 	// TaskTypeExample3 is TaskType of Example.
-	TaskTypeExample3 = "Example2"
+	TaskTypeExample3 TaskType = "Example2"
 	// ImportInto is TaskType of ImportInto.
-	ImportInto = "ImportInto"
+	ImportInto TaskType = "ImportInto"
 	// Backfill is TaskType of add index Backfilling process.
-	Backfill = "backfill"
+	Backfill TaskType = "backfill"
 )
 
 // Type2Int converts task type to int.
-func Type2Int(t string) int {
+func Type2Int(t TaskType) int {
 	switch t {
 	case TaskTypeExample:
 		return 1
@@ -210,7 +215,7 @@ func Type2Int(t string) int {
 }
 
 // Int2Type converts int to task type.
-func Int2Type(i int) string {
+func Int2Type(i int) TaskType {
 	switch i {
 	case 1:
 		return TaskTypeExample

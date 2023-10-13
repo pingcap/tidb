@@ -109,7 +109,7 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 	task := &proto.Task{
 		ID:           r.GetInt64(0),
 		Key:          r.GetString(1),
-		Type:         r.GetString(2),
+		Type:         proto.TaskType(r.GetString(2)),
 		DispatcherID: r.GetString(3),
 		State:        proto.TaskState(r.GetString(4)),
 		Meta:         r.GetBytes(7),
@@ -187,7 +187,7 @@ func (stm *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string
 }
 
 // AddNewGlobalTask adds a new task to global task table.
-func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
+func (stm *TaskManager) AddNewGlobalTask(key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
 	err = stm.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
 		taskID, err2 = stm.AddGlobalTaskWithSession(se, key, tp, concurrency, meta)
@@ -197,7 +197,7 @@ func (stm *TaskManager) AddNewGlobalTask(key, tp string, concurrency int, meta [
 }
 
 // AddGlobalTaskWithSession adds a new task to global task table with session.
-func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp string, concurrency int, meta []byte) (taskID int64, err error) {
+func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
 	_, err = ExecSQL(stm.ctx, se,
 		`insert into mysql.tidb_global_task(task_key, type, state, concurrency, step, meta, start_time, state_update_time)
 		values (%?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP())`,
@@ -352,7 +352,7 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 }
 
 // AddNewSubTask adds a new task to subtask table.
-func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step proto.Step, designatedTiDBID string, meta []byte, tp string, isRevert bool) error {
+func (stm *TaskManager) AddNewSubTask(globalTaskID int64, step proto.Step, designatedTiDBID string, meta []byte, tp proto.TaskType, isRevert bool) error {
 	st := proto.TaskStatePending
 	if isRevert {
 		st = proto.TaskStateRevertPending

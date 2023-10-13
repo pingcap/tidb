@@ -2049,7 +2049,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		return errors.New("do not support merge index")
 	}
 
-	taskType := BackfillTaskType
+	taskType := proto.Backfill
 	taskKey := fmt.Sprintf("ddl/%s/%d", taskType, reorgInfo.Job.ID)
 	g, ctx := errgroup.WithContext(context.Background())
 	done := make(chan struct{})

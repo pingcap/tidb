@@ -289,7 +289,7 @@ var testContexts sync.Map
 
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
-	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.String("type", task.Type))
+	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := getSchedulerFactory(task.Type)
 	if factory == nil {

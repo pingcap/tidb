@@ -205,7 +205,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 ) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
-		zap.String("type", gTask.Type),
+		zap.Stringer("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("curr-step", stepStr(gTask.Step)),
 		zap.String("next-step", stepStr(nextStep)),
@@ -325,7 +325,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 // OnErrStage implements dispatcher.Extension interface.
 func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
-		zap.String("type", gTask.Type),
+		zap.Stringer("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)

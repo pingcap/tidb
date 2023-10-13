@@ -105,7 +105,7 @@ var MockOwnerChange func()
 // NewBaseDispatcher creates a new BaseDispatcher.
 func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
-		zap.String("task-type", task.Type))
+		zap.Stringer("task-type", task.Type))
 	return &BaseDispatcher{
 		ctx:                   ctx,
 		taskMgr:               taskMgr,

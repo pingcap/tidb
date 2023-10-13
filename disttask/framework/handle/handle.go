@@ -32,7 +32,7 @@ var (
 )
 
 // SubmitGlobalTask submits a global task.
-func SubmitGlobalTask(taskKey, taskType string, concurrency int, taskMeta []byte) (*proto.Task, error) {
+func SubmitGlobalTask(taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -103,7 +103,7 @@ func WaitGlobalTask(ctx context.Context, globalTask *proto.Task) error {
 }
 
 // SubmitAndRunGlobalTask submits a global task and wait for it to finish.
-func SubmitAndRunGlobalTask(ctx context.Context, taskKey, taskType string, concurrency int, taskMeta []byte) error {
+func SubmitAndRunGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
 	globalTask, err := SubmitGlobalTask(taskKey, taskType, concurrency, taskMeta)
 	if err != nil {
 		return err

@@ -29,7 +29,7 @@ type PlanCtx struct {
 	SessionCtx sessionctx.Context
 	TaskID     int64
 	TaskKey    string
-	TaskType   string
+	TaskType   proto.TaskType
 	ThreadCnt  int
 
 	// PreviousSubtaskMetas is subtask metas of previous steps.

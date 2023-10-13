@@ -692,7 +692,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType(BackfillTaskType,
+	scheduler.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
 			return newBackfillDistScheduler(ctx, id, task, taskTable, d)
 		}, scheduler.WithSummary,
@@ -702,11 +702,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	if err != nil {
 		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
-		dispatcher.RegisterDispatcherFactory(BackfillTaskType,
+		dispatcher.RegisterDispatcherFactory(proto.Backfill,
 			func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
 			})
-		dispatcher.RegisterDispatcherCleanUpFactory(BackfillTaskType, newBackfillCleanUpS3)
+		dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
 	}
 
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.

@@ -128,7 +128,7 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, m *sync.Map, dispat
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType string, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension scheduler.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
 	t.Cleanup(func() {
 		dispatcher.ClearDispatcherFactory()
 		dispatcher.ClearDispatcherCleanUpFactory()

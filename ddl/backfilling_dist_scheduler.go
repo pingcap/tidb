@@ -96,9 +96,6 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	}
 }
 
-// BackfillTaskType is the type of backfill task.
-const BackfillTaskType = "backfill"
-
 type backfillDistScheduler struct {
 	*scheduler.BaseScheduler
 	d          *ddl
