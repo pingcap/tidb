@@ -508,6 +508,7 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(indexInfos []*model.In
 	totalResult := analyzeIndexNDVTotalResult{
 		results: make(map[int64]*statistics.AnalyzeResults, len(indexInfos)),
 	}
+	var err error
 	for panicCnt < statsConcurrncy {
 		results, ok := <-resultsCh
 		if !ok {
