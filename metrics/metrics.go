@@ -151,7 +151,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(NumOfMultiQueryHistogram)
 	prometheus.MustRegister(HandShakeErrorCounter)
 	prometheus.MustRegister(HandleJobHistogram)
-	prometheus.MustRegister(FastAnalyzeHistogram)
 	prometheus.MustRegister(SyncLoadCounter)
 	prometheus.MustRegister(SyncLoadTimeoutCounter)
 	prometheus.MustRegister(SyncLoadHistogram)

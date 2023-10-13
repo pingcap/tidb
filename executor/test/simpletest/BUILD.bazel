@@ -21,7 +21,6 @@ go_test(
         "//planner/core",
         "//session",
         "//sessionctx",
-        "//statistics/handle",
         "//store/mockstore",
         "//testkit",
         "//util/dbterror/exeerrors",

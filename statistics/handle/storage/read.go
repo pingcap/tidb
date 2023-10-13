@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,15 +30,29 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/util/memory"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
+func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
+	rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	if len(rows) == 0 {
+		return 0, 0, true, nil
+	}
+	count = int64(rows[0].GetUint64(0))
+	modifyCount = rows[0].GetInt64(1)
+	return count, modifyCount, false, nil
+}
 
 // HistogramFromStorage reads histogram from storage.
 func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, tp *types.FieldType, distinct int64, isIndex int, ver uint64, nullCount int64, totColSize int64, corr float64) (_ *statistics.Histogram, err error) {
@@ -104,6 +119,24 @@ func CMSketchAndTopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex, h
 	return statistics.DecodeCMSketchAndTopN(rows[0].GetBytes(0), topNRows)
 }
 
+// CMSketchFromStorage reads CMSketch from storage
+func CMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.CMSketch, err error) {
+	rows, _, err := util.ExecRows(sctx, "select cm_sketch from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeCMSketch(rows[0].GetBytes(0))
+}
+
+// TopNFromStorage reads TopN from storage
+func TopNFromStorage(sctx sessionctx.Context, tblID int64, isIndex int, histID int64) (_ *statistics.TopN, err error) {
+	rows, _, err := util.ExecRows(sctx, "select HIGH_PRIORITY value, count from mysql.stats_top_n where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
+	if err != nil || len(rows) == 0 {
+		return nil, err
+	}
+	return statistics.DecodeTopN(rows), nil
+}
+
 // FMSketchFromStorage reads FMSketch from storage
 func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID int64) (_ *statistics.FMSketch, err error) {
 	rows, _, err := util.ExecRows(sctx, "select value from mysql.stats_fm_sketch where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histID)
@@ -113,8 +146,32 @@ func FMSketchFromStorage(sctx sessionctx.Context, tblID int64, isIndex, histID i
 	return statistics.DecodeFMSketch(rows[0].GetBytes(0))
 }
 
+// CheckSkipPartition checks if we can skip loading the partition.
+func CheckSkipPartition(sctx sessionctx.Context, tblID int64, isIndex int) error {
+	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id =%? and is_index = %?", tblID, isIndex)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return types.ErrPartitionStatsMissing
+	}
+	return nil
+}
+
+// CheckSkipColumnPartiion checks if we can skip loading the partition.
+func CheckSkipColumnPartiion(sctx sessionctx.Context, tblID int64, isIndex int, histsID int64) error {
+	rows, _, err := util.ExecRows(sctx, "select distinct_count from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tblID, isIndex, histsID)
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return types.ErrPartitionColumnStatsMissing
+	}
+	return nil
+}
+
 // ExtendedStatsFromStorage reads extended stats from storage.
-func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, physicalID int64, loadAll bool) (*statistics.Table, error) {
+func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, tableID int64, loadAll bool) (*statistics.Table, error) {
 	failpoint.Inject("injectExtStatsLoadErr", func() {
 		failpoint.Return(nil, errors.New("gofail extendedStatsFromStorage error"))
 	})
@@ -125,7 +182,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 		table.ExtendedStats = statistics.NewExtendedStatsColl()
 	}
 	rows, _, err := util.ExecRows(sctx, "select name, status, type, column_ids, stats, version from mysql.stats_extended where table_id = %? and status in (%?, %?, %?) and version > %?",
-		physicalID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
+		tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsDeleted, lastVersion)
 	if err != nil || len(rows) == 0 {
 		return table, nil
 	}
@@ -164,7 +221,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 	return table, nil
 }
 
-func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -237,6 +294,9 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		break
 	}
 	if idx != nil {
+		if tracker != nil {
+			tracker.Consume(idx.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Indices[histID] = idx
 	} else {
 		logutil.BgLogger().Debug("we cannot find index id in table info. It may be deleted.", zap.Int64("indexID", histID), zap.String("table", tableInfo.Name.O))
@@ -244,7 +304,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 	return nil
 }
 
-func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration) error {
+func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statistics.Table, tableInfo *model.TableInfo, loadAll bool, lease time.Duration, tracker *memory.Tracker) error {
 	histID := row.GetInt64(2)
 	distinct := row.GetInt64(3)
 	histVer := row.GetUint64(4)
@@ -340,6 +400,9 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		break
 	}
 	if col != nil {
+		if tracker != nil {
+			tracker.Consume(col.MemoryUsage().TotalMemoryUsage())
+		}
 		table.Columns[col.ID] = col
 	} else {
 		// If we didn't find a Column or Index in tableInfo, we won't load the histogram for it.
@@ -351,12 +414,15 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, physicalID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
+	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
+	defer tracker.Detach()
 	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
 	// the average error rate of it is small.
 	if table == nil || snapshot > 0 {
 		histColl := statistics.HistColl{
-			PhysicalID:     physicalID,
+			PhysicalID:     tableID,
 			HavePhysicalID: true,
 			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
 			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
@@ -370,33 +436,63 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	}
 	table.Pseudo = false
 
-	rows, _, err := util.ExecRows(sctx, "select modify_count, count from mysql.stats_meta where table_id = %?", physicalID)
-	if err != nil || len(rows) == 0 {
+	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, tableID)
+	if err != nil || isNull {
 		return nil, err
 	}
-	table.ModifyCount = rows[0].GetInt64(0)
-	table.RealtimeCount = rows[0].GetInt64(1)
+	table.ModifyCount = modidyCount
+	table.RealtimeCount = realtimeCount
 
-	rows, _, err = util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", physicalID)
+	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", tableID)
 	// Check deleted table.
 	if err != nil || len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {
+		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
+			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		}
 		if row.GetInt64(1) > 0 {
-			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
+			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		} else {
-			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease)
+			err = columnStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)
 		}
 		if err != nil {
 			return nil, err
 		}
 	}
-	return ExtendedStatsFromStorage(sctx, table, physicalID, loadAll)
+	return ExtendedStatsFromStorage(sctx, table, tableID, loadAll)
+}
+
+// LoadHistogram will load histogram from storage.
+func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID int64, tableInfo *model.TableInfo) (*statistics.Histogram, error) {
+	row, _, err := util.ExecRows(sctx, "select distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %? and is_index = %? and hist_id = %?", tableID, isIndex, histID)
+	if err != nil || len(row) == 0 {
+		return nil, err
+	}
+	distinct := row[0].GetInt64(0)
+	histVer := row[0].GetUint64(1)
+	nullCount := row[0].GetInt64(2)
+	var totColSize int64
+	var corr float64
+	var tp types.FieldType
+	if isIndex == 0 {
+		totColSize = row[0].GetInt64(3)
+		corr = row[0].GetFloat64(6)
+		for _, colInfo := range tableInfo.Columns {
+			if histID != colInfo.ID {
+				continue
+			}
+			tp = colInfo.FieldType
+			break
+		}
+		return HistogramFromStorage(sctx, tableID, histID, &tp, distinct, isIndex, histVer, nullCount, totColSize, corr)
+	}
+	return HistogramFromStorage(sctx, tableID, histID, types.NewFieldType(mysql.TypeBlob), distinct, isIndex, histVer, nullCount, 0, 0)
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, statsCache util.StatsCache, loadFMSketch bool) (err error) {
 	items := statistics.HistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
@@ -411,9 +507,8 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache *cache.StatsCacheP
 	return nil
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, col model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := statsCache.Load()
-	tbl, ok := oldCache.Get(col.TableID)
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
+	tbl, ok := statsCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
@@ -461,21 +556,19 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache *cache.Stats
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	oldCache = statsCache.Load()
-	tbl, ok = oldCache.Get(col.TableID)
+	tbl, ok = statsCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
 	tbl = tbl.Copy()
 	tbl.Columns[c.ID] = colHist
-	statsCache.UpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
 	return nil
 }
 
-func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache *cache.StatsCachePointer, idx model.TableItemID, loadFMSketch bool) (err error) {
-	oldCache := statsCache.Load()
-	tbl, ok := oldCache.Get(idx.TableID)
+func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCache, idx model.TableItemID, loadFMSketch bool) (err error) {
+	tbl, ok := statsCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
@@ -513,14 +606,13 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache *cache.StatsC
 		StatsLoadedStatus: statistics.NewStatsFullLoadStatus()}
 	index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 
-	oldCache = statsCache.Load()
-	tbl, ok = oldCache.Get(idx.TableID)
+	tbl, ok = statsCache.Get(idx.TableID)
 	if !ok {
 		return nil
 	}
 	tbl = tbl.Copy()
 	tbl.Indices[idx.ID] = idxHist
-	statsCache.UpdateStatsCache(oldCache, []*statistics.Table{tbl}, nil)
+	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	statistics.HistogramNeededItems.Delete(idx)
 	return nil
 }

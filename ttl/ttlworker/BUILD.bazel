@@ -81,7 +81,6 @@ go_test(
         "//session",
         "//sessionctx",
         "//sessionctx/variable",
-        "//statistics/handle",
         "//statistics/handle/autoanalyze",
         "//store/mockstore",
         "//testkit",

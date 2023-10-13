@@ -17,9 +17,11 @@ package globalstats
 import (
 	"fmt"
 	"testing"
+	"time"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -54,6 +56,33 @@ func TestShowGlobalStats(t *testing.T) {
 	require.Len(t, tk.MustQuery("show stats_histograms where partition_name='global'").Rows(), 2)
 	require.Len(t, tk.MustQuery("show stats_healthy").Rows(), 3)
 	require.Len(t, tk.MustQuery("show stats_healthy where partition_name='global'").Rows(), 1)
+}
+
+func simpleTest(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 10")
+	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (8), (10), (20), (30)")
+	tk.MustExec("analyze table t with 0 topn, 1 buckets")
+}
+
+func TestGlobalStatsPanicInIOWorker(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/statistics/handle/globalstats/PanicInIOWorker"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"inject panic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsPanicInCPUWorker(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/statistics/handle/globalstats/PanicInCPUWorker"
+	require.NoError(t, failpoint.Enable(fpName, "panic(\"inject panic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
 }
 
 func TestBuildGlobalLevelStats(t *testing.T) {
@@ -151,13 +180,13 @@ partition by range (a) (
 	checkHealthy(100, 100, 100)
 
 	tk.MustExec("insert into t values (1), (2)") // update p0
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(2, 2, 2, 2, 0, 0)
 	checkHealthy(0, 0, 100)
 
 	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(6, 6, 2, 2, 4, 4)
 	checkHealthy(0, 0, 0)
@@ -167,7 +196,7 @@ partition by range (a) (
 	checkHealthy(100, 100, 100)
 
 	tk.MustExec("insert into t values (4), (5), (15), (16)") // update p0 and p1 together
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
 	checkHealthy(33, 0, 50)
@@ -190,7 +219,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t with 0 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
@@ -230,7 +259,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec("drop table if exists tint")
 	tk.MustExec("create table tint (c int, key(c)) partition by range (c) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("insert into tint values (1), (2), (3), (4), (4), (5), (5), (5), (null), (11), (12), (13), (14), (15), (16), (16), (16), (16), (17), (17)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
@@ -289,7 +318,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tdouble values ` +
 		`(1, 1), (2, 2), (3, 3), (4, 4), (4, 4), (5, 5), (5, 5), (5, 5), (null, null), ` + // values in p0
 		`(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (16, 16), (16, 16), (16, 16), (17, 17), (17, 17)`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tdouble with 2 topn, 2 buckets")
 
 	rs := tk.MustQuery("show stats_meta where table_name='tdouble'").Rows()
@@ -354,7 +383,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tdecimal values ` +
 		`(1, 1), (2, 2), (3, 3), (4, 4), (4, 4), (5, 5), (5, 5), (5, 5), (null, null), ` + // values in p0
 		`(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (16, 16), (16, 16), (16, 16), (17, 17), (17, 17)`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tdecimal with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tdecimal'").Rows()
@@ -419,7 +448,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tdatetime values ` +
 		`(1, '2000-01-01'), (2, '2000-01-02'), (3, '2000-01-03'), (4, '2000-01-04'), (4, '2000-01-04'), (5, '2000-01-05'), (5, '2000-01-05'), (5, '2000-01-05'), (null, null), ` + // values in p0
 		`(11, '2000-01-11'), (12, '2000-01-12'), (13, '2000-01-13'), (14, '2000-01-14'), (15, '2000-01-15'), (16, '2000-01-16'), (16, '2000-01-16'), (16, '2000-01-16'), (16, '2000-01-16'), (17, '2000-01-17'), (17, '2000-01-17')`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tdatetime with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tdatetime'").Rows()
@@ -484,7 +513,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tstring values ` +
 		`(1, 'a1'), (2, 'a2'), (3, 'a3'), (4, 'a4'), (4, 'a4'), (5, 'a5'), (5, 'a5'), (5, 'a5'), (null, null), ` + // values in p0
 		`(11, 'b11'), (12, 'b12'), (13, 'b13'), (14, 'b14'), (15, 'b15'), (16, 'b16'), (16, 'b16'), (16, 'b16'), (16, 'b16'), (17, 'b17'), (17, 'b17')`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tstring with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tstring'").Rows()
@@ -736,7 +765,7 @@ partition by range (a) (
 )`)
 	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
@@ -759,9 +788,9 @@ partition by range (a) (
 	// If we already have global-stats, we can get the latest global-stats by analyzing the newly added partition.
 	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
 	tk.MustExec("insert t values (13), (14), (22), (23)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	do := dom
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -783,7 +812,7 @@ partition by range (a) (
 	require.Equal(t, int64(0), globalStats.ModifyCount)
 
 	tk.MustExec("alter table t drop partition p2;")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
@@ -814,7 +843,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
 		"(12), (22), (32), (42), (52);")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -826,7 +855,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t drop partition p3, p5;")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.Update(is))
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -836,7 +865,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.Update(is))
 	// The value of global.count will not be updated automatically when we truncate the table partition.
@@ -985,4 +1014,180 @@ func TestGlobalStatsIndexNDV(t *testing.T) {
 	checkNDV("tdatetime", 6, 3, 6)
 	tk.MustExec("insert into tdatetime values (1, '2004-01-01'), (1, '2005-01-01'), (1, '2006-01-01'), (1, '2007-01-01'), (1, '2008-01-01')") // p0.b: [1, 2, 3, 4, 5, 6, 7, 8], p1.b: [1, 2, 3, 4, 5, 6]
 	checkNDV("tdatetime", 8, 8, 6)
+}
+
+func TestGlobalStats(t *testing.T) {
+	failpoint.Enable("github.com/pingcap/tidb/planner/core/forceDynamicPrune", `return(true)`)
+	defer failpoint.Disable("github.com/pingcap/tidb/planner/core/forceDynamicPrune")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("set @@session.tidb_analyze_version = 2;")
+	tk.MustExec(`create table t (a int, key(a)) partition by range (a) (
+		partition p0 values less than (10),
+		partition p1 values less than (20),
+		partition p2 values less than (30)
+	);`)
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("insert into t values (1), (5), (null), (11), (15), (21), (25);")
+	tk.MustExec("analyze table t;")
+	// On the table with global-stats, we use explain to query a multi-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"IndexReader 4.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 4.00 cop[tikv] table:t, index:a(a) range:(5,+inf], keep order:false"))
+	// On the table with global-stats, we use explain to query a single-partition query.
+	// And we should get the result that global-stats is used instead of pseudo-stats.
+	tk.MustQuery("explain format = 'brief' select * from t partition(p1) where a > 15;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:p1 index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(15,+inf], keep order:false"))
+
+	// Even if we have global-stats, we will not use it when the switch is set to `static`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 5").Check(testkit.Rows(
+		"PartitionUnion 4.00 root  ",
+		"├─IndexReader 0.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 0.00 cop[tikv] table:t, partition:p0, index:a(a) range:(5,+inf], keep order:false",
+		"├─IndexReader 2.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p1, index:a(a) range:(5,+inf], keep order:false",
+		"└─IndexReader 2.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 2.00 cop[tikv] table:t, partition:p2, index:a(a) range:(5,+inf], keep order:false"))
+
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static';")
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t(a int, b int, key(a)) PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("insert into t values(1,1),(3,3),(4,4),(2,2),(5,5);")
+	// When we set the mode to `static`, using analyze will not report an error and will not generate global-stats.
+	// In addition, when using explain to view the plan of the related query, it was found that `Union` was used.
+	tk.MustExec("analyze table t;")
+	result := tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 2)
+	require.Equal(t, "2", result.Rows()[0][5])
+	require.Equal(t, "3", result.Rows()[1][5])
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"PartitionUnion 2.00 root  ",
+		"├─IndexReader 1.00 root  index:IndexRangeScan",
+		"│ └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p0, index:a(a) range:(3,+inf], keep order:false",
+		"└─IndexReader 1.00 root  index:IndexRangeScan",
+		"  └─IndexRangeScan 1.00 cop[tikv] table:t, partition:p1, index:a(a) range:(3,+inf], keep order:false"))
+
+	// When we turned on the switch, we found that pseudo-stats will be used in the plan instead of `Union`.
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 3333.33 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 3333.33 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false, stats:pseudo"))
+
+	// Execute analyze again without error and can generate global-stats.
+	// And when executing related queries, neither Union nor pseudo-stats are used.
+	tk.MustExec("analyze table t;")
+	result = tk.MustQuery("show stats_meta where table_name = 't'").Sort()
+	require.Len(t, result.Rows(), 3)
+	require.Equal(t, "5", result.Rows()[0][5])
+	require.Equal(t, "2", result.Rows()[1][5])
+	require.Equal(t, "3", result.Rows()[2][5])
+	tk.MustQuery("explain format = 'brief' select a from t where a > 3;").Check(testkit.Rows(
+		"IndexReader 2.00 root partition:all index:IndexRangeScan",
+		"└─IndexRangeScan 2.00 cop[tikv] table:t, index:a(a) range:(3,+inf], keep order:false"))
+
+	tk.MustExec("drop table t;")
+	tk.MustExec("create table t (a int, b int, c int)  PARTITION BY HASH(a) PARTITIONS 2;")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic';")
+	tk.MustExec("create index idx_ab on t(a, b);")
+	tk.MustExec("insert into t values (1, 1, 1), (5, 5, 5), (11, 11, 11), (15, 15, 15), (21, 21, 21), (25, 25, 25);")
+	tk.MustExec("analyze table t;")
+	// test the indexScan
+	tk.MustQuery("explain format = 'brief' select b from t where a > 5 and b > 10;").Check(testkit.Rows(
+		"Projection 2.67 root  test.t.b",
+		"└─IndexReader 2.67 root partition:all index:Selection",
+		"  └─Selection 2.67 cop[tikv]  gt(test.t.b, 10)",
+		"    └─IndexRangeScan 4.00 cop[tikv] table:t, index:idx_ab(a, b) range:(5,+inf], keep order:false"))
+	// test the indexLookUp
+	tk.MustQuery("explain format = 'brief' select * from t use index(idx_ab) where a > 1;").Check(testkit.Rows(
+		"IndexLookUp 5.00 root partition:all ",
+		"├─IndexRangeScan(Build) 5.00 cop[tikv] table:t, index:idx_ab(a, b) range:(1,+inf], keep order:false",
+		"└─TableRowIDScan(Probe) 5.00 cop[tikv] table:t keep order:false"))
+	// test the tableScan
+	tk.MustQuery("explain format = 'brief' select * from t;").Check(testkit.Rows(
+		"TableReader 6.00 root partition:all data:TableFullScan",
+		"└─TableFullScan 6.00 cop[tikv] table:t keep order:false"))
+}
+
+func TestGlobalIndexStatistics(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	h := dom.StatsHandle()
+	originLease := h.Lease()
+	defer h.SetLease(originLease)
+	h.SetLease(time.Millisecond)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	for i, version := range []string{"1", "2"} {
+		tk.MustExec("set @@session.tidb_analyze_version = " + version)
+
+		// analyze table t
+		tk.MustExec("drop table if exists t")
+		if i != 0 {
+			require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		}
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, key(a) )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40))")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+		require.Nil(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("analyze table t")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+			Check(testkit.Rows("1", "2", "3", "15"))
+		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
+			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+
+		// analyze table t index idx
+		tk.MustExec("drop table if exists t")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40));")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		require.Nil(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("analyze table t index idx")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
+		require.Equal(t, "4.00", rows[0][1])
+
+		// analyze table t index
+		tk.MustExec("drop table if exists t")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("CREATE TABLE t ( a int, b int, c int default 0, primary key(b, a) clustered )" +
+			"PARTITION BY RANGE (a) (" +
+			"PARTITION p0 VALUES LESS THAN (10)," +
+			"PARTITION p1 VALUES LESS THAN (20)," +
+			"PARTITION p2 VALUES LESS THAN (30)," +
+			"PARTITION p3 VALUES LESS THAN (40));")
+		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
+		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
+		require.Nil(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("analyze table t index")
+		require.Nil(t, h.Update(dom.InfoSchema()))
+		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").
+			Check(testkit.Rows("IndexReader_12 4.00 root partition:all index:IndexRangeScan_11",
+				"└─IndexRangeScan_11 4.00 cop[tikv] table:t, index:idx(b) range:[-inf,16), keep order:true"))
+	}
 }

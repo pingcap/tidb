@@ -1780,7 +1780,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
-			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), oldTable.Stats); err != nil {
+			if err := rc.statsHandler.LoadStatsFromJSON(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); err != nil {
 				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
 			}
 			log.Info("restore stat done",

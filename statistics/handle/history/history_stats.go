@@ -22,7 +22,56 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/util"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
+
+// statsHistoryImpl implements util.StatsHistory.
+type statsHistoryImpl struct {
+	pool       util.SessionPool
+	statsCache util.StatsCache
+}
+
+// NewStatsHistory creates a new StatsHistory.
+func NewStatsHistory(pool util.SessionPool, statsCache util.StatsCache) util.StatsHistory {
+	return &statsHistoryImpl{
+		pool:       pool,
+		statsCache: statsCache,
+	}
+}
+
+// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history table.
+func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string) {
+	if version == 0 {
+		return
+	}
+	tbl, ok := sh.statsCache.Get(tableID)
+	if !ok {
+		return
+	}
+	if !tbl.IsInitialized() {
+		return
+	}
+	err := util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+		return RecordHistoricalStatsMeta(sctx, tableID, version, source)
+	})
+	if err != nil { // just log the error, hide the error from the outside caller.
+		logutil.BgLogger().Error("record historical stats meta failed",
+			zap.Int64("table-id", tableID),
+			zap.Uint64("version", version),
+			zap.String("source", source),
+			zap.Error(err))
+	}
+}
+
+// CheckHistoricalStatsEnable checks whether historical stats is enabled.
+func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error) {
+	err = util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+		enable = sctx.GetSessionVars().EnableHistoricalStats
+		return nil
+	})
+	return
+}
 
 // RecordHistoricalStatsMeta records the historical stats meta.
 func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64, source string) error {

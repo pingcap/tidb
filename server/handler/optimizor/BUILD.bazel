@@ -56,7 +56,6 @@ go_test(
         "//server/internal/testutil",
         "//server/internal/util",
         "//session",
-        "//statistics/handle",
         "//statistics/handle/globalstats",
         "//statistics/handle/storage",
         "//store/mockstore/unistore",

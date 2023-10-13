@@ -33,7 +33,8 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 )
 
-type kvEncoder interface {
+// KVEncoder encodes a row of data into a KV pair.
+type KVEncoder interface {
 	Encode(row []types.Datum, rowID int64) (*kv.Pairs, error)
 	// GetColumnSize returns the size of each column in the current encoder.
 	GetColumnSize() map[int64]int64
@@ -50,12 +51,14 @@ type tableKVEncoder struct {
 	insertColumns      []*table.Column
 }
 
-var _ kvEncoder = &tableKVEncoder{}
+var _ KVEncoder = &tableKVEncoder{}
 
-func newTableKVEncoder(
+// NewTableKVEncoder creates a new tableKVEncoder.
+// exported for test.
+func NewTableKVEncoder(
 	config *encode.EncodingConfig,
 	ti *TableImporter,
-) (*tableKVEncoder, error) {
+) (KVEncoder, error) {
 	baseKVEncoder, err := kv.NewBaseKVEncoder(config)
 	if err != nil {
 		return nil, err
@@ -76,7 +79,7 @@ func newTableKVEncoder(
 	}, nil
 }
 
-// Encode implements the kvEncoder interface.
+// Encode implements the KVEncoder interface.
 func (en *tableKVEncoder) Encode(row []types.Datum, rowID int64) (*kv.Pairs, error) {
 	// we ignore warnings when encoding rows now, but warnings uses the same memory as parser, since the input
 	// row []types.Datum share the same underlying buf, and when doing CastValue, we're using hack.String/hack.Slice.

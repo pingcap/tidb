@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/disttask/framework/storage"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
@@ -116,23 +115,11 @@ func (ti *DistImporter) Result() importer.JobImportResult {
 	var result importer.JobImportResult
 	taskMeta, err := getTaskMeta(ti.jobID)
 	if err != nil {
-		result.Msg = err.Error()
 		return result
 	}
 
-	var (
-		numWarnings uint64
-		numRecords  uint64
-		numDeletes  uint64
-		numSkipped  uint64
-	)
-	numRecords = taskMeta.Result.ReadRowCnt
-	// todo: we don't have a strict REPLACE or IGNORE mode in physical mode, so we can't get the numDeletes/numSkipped.
-	// we can have it when there's duplicate detection.
-	msg := fmt.Sprintf(mysql.MySQLErrName[mysql.ErrLoadInfo].Raw, numRecords, numDeletes, numSkipped, numWarnings)
 	return importer.JobImportResult{
-		Msg:        msg,
-		Affected:   taskMeta.Result.ReadRowCnt,
+		Affected:   taskMeta.Result.LoadedRowCnt,
 		ColSizeMap: taskMeta.Result.ColSizeMap,
 	}
 }
@@ -215,7 +202,8 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	ti.taskID = taskID
 	ti.logger = ti.logger.With(zap.Int64("task-id", globalTask.ID))
 
-	ti.logger.Info("job submitted to global task queue", zap.Int64("job-id", jobID))
+	ti.logger.Info("job submitted to global task queue",
+		zap.Int64("job-id", jobID), zap.Int64("thread-cnt", plan.ThreadCnt))
 
 	return jobID, globalTask, nil
 }

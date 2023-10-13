@@ -649,7 +649,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				return nil, nil
 			}
 
-			return nil, sr.restoreFromHistory(job)
+			return nil, sr.restoreFromHistory(job, false)
 		}
 		return nil, nil
 	}
@@ -678,23 +678,24 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	return nil, nil
 }
 
-func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
+func (sr *SchemasReplace) restoreFromHistory(job *model.Job, isSubJob bool) error {
 	if !job.IsCancelled() {
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			if job.State == model.JobStateRollbackDone {
 				return sr.deleteRange(job)
 			}
-			err := sr.ingestRecorder.AddJob(job)
+			err := sr.ingestRecorder.AddJob(job, isSubJob)
 			return errors.Trace(err)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn,
 			model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			return sr.deleteRange(job)
 		case model.ActionMultiSchemaChange:
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := sub.ToProxyJob(job)
-				if err := sr.restoreFromHistory(&proxyJob); err != nil {
+			for i, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job, i)
+				// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
+				if err := sr.restoreFromHistory(&proxyJob, true); err != nil {
 					return err
 				}
 			}

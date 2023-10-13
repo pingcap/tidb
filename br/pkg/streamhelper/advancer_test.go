@@ -361,3 +361,38 @@ func TestResolveLock(t *testing.T) {
 	require.Len(t, r.FailureSubRanges, 0)
 	require.Equal(t, r.Checkpoint, minCheckpoint, "%d %d", r.Checkpoint, minCheckpoint)
 }
+
+func TestOwnerDropped(t *testing.T) {
+	ctx := context.Background()
+	c := createFakeCluster(t, 4, false)
+	c.splitAndScatter("01", "02", "022", "023", "033", "04", "043")
+	installSubscribeSupport(c)
+	env := &testEnv{testCtx: t, fakeCluster: c}
+	fp := "github.com/pingcap/tidb/br/pkg/streamhelper/get_subscriber"
+	defer func() {
+		if t.Failed() {
+			fmt.Println(c)
+		}
+	}()
+
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.OnStart(ctx)
+	adv.SpawnSubscriptionHandler(ctx)
+	require.NoError(t, adv.OnTick(ctx))
+	failpoint.Enable(fp, "pause")
+	ch := make(chan struct{})
+	go func() {
+		defer close(ch)
+		require.NoError(t, adv.OnTick(ctx))
+	}()
+	adv.OnStop()
+	failpoint.Disable(fp)
+
+	cp := c.advanceCheckpoints()
+	c.flushAll()
+	<-ch
+	adv.WithCheckpoints(func(vsf *spans.ValueSortedFull) {
+		// Advancer will manually poll the checkpoint...
+		require.Equal(t, vsf.MinValue(), cp)
+	})
+}

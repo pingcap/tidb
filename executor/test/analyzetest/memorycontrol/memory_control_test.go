@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/executor"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util"
@@ -162,7 +161,7 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 	go dom.ServerMemoryLimitHandle().Run()
 
 	tk.MustExec("insert into t values(4),(5),(6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	err := h.Update(dom.InfoSchema())
 	require.NoError(t, err)
 

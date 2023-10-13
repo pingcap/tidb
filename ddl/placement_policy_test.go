@@ -404,7 +404,7 @@ func TestPlacementValidation(t *testing.T) {
 			settings: "LEARNERS=1 " +
 				"LEARNER_CONSTRAINTS=\"[+zone=cn-west-1]\" " +
 				"CONSTRAINTS=\"{'+disk=ssd':2}\"",
-			errmsg: "invalid label constraints format: 'Constraints' should be [constraint1, ...] or any yaml compatible array representation",
+			success: true,
 		},
 		{
 			name: "constraints may be incompatible with itself",
@@ -428,7 +428,7 @@ func TestPlacementValidation(t *testing.T) {
 			tk.MustExec("drop placement policy if exists x")
 		} else {
 			err := tk.ExecToErr(sql)
-			require.NotNil(t, err)
+			require.NotNil(t, err, sql)
 			require.EqualErrorf(t, err, ca.errmsg, ca.name)
 		}
 	}

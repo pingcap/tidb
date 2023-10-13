@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/planner/cardinality"
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/tracing"
@@ -157,7 +156,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 			tk.MustExec(sql)
 		}
 	}
-	require.Nil(t, statsHandle.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t with 1 samplerate, 20 topn")
 	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
 	// Add 100 modify count
@@ -166,7 +165,7 @@ func TestTraceDebugSelectivity(t *testing.T) {
 	sql = sql + strings.Repeat(topNValue, 100)
 	sql = sql[0 : len(sql)-1]
 	tk.MustExec(sql)
-	require.Nil(t, statsHandle.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, statsHandle.DumpStatsDeltaToKV(true))
 	require.Nil(t, statsHandle.Update(dom.InfoSchema()))
 
 	var (
