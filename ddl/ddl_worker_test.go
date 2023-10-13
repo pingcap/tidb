@@ -161,7 +161,7 @@ func TestParallelDDL(t *testing.T) {
 		/     7		/	 	2			/		3		/	drop column	 /
 		/     8		/	 	2			/		3		/	rebase autoID/
 		/     9		/	 	1			/		1		/	add index	 /
-		/     10	/	 	2			/		null   	/	drop schema  /
+		/     10	/	 	2			/		null   	/	drop table  /
 		/     11	/	 	2			/		2		/	add index	 /
 	*/
 	var wg util.WaitGroupWrapper
@@ -233,7 +233,7 @@ func TestParallelDDL(t *testing.T) {
 	time.Sleep(5 * time.Millisecond)
 	wg.Run(func() {
 		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("drop database test_parallel_ddl_2")
+		tk.MustExec("drop table test_parallel_ddl_2.t3")
 		rs := tk.MustQuery("select json_extract(@@tidb_last_ddl_info, '$.seq_num')")
 		seqIDs[9], _ = strconv.Atoi(rs.Rows()[0][0].(string))
 	})
