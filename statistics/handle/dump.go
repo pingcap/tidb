@@ -207,7 +207,17 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 }
 
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
+// In final, it will also udpate the stats cache.
 func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
+	jsonTbl *storage.JSONTable, concurrencyForPartition uint8) error {
+	if err := h.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(h.Update(is))
+}
+
+// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
+func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
 	jsonTbl *storage.JSONTable, concurrencyForPartition uint8) error {
 	nCPU := uint8(runtime.GOMAXPROCS(0))
 	if concurrencyForPartition == 0 {
@@ -282,7 +292,7 @@ func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema
 			}
 		}
 	}
-	return errors.Trace(h.Update(is))
+	return nil
 }
 
 func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
