@@ -22,9 +22,9 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/disttask/importinto"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/testkit"
 )
 
 func (s *mockGCSSuite) TestSplitFile() {

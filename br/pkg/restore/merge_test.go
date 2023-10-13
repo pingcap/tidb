@@ -15,10 +15,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
