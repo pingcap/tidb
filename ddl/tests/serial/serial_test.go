@@ -57,16 +57,6 @@ func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, end
 	return ddl.GetRangeEndKey(ddl.NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
-func TestTruncateAllPartitions(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table partition_table (v int) partition by hash (v) partitions 10")
-	tk.MustExec("insert into partition_table values (0),(1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
-	tk.MustExec("alter table partition_table truncate partition all")
-	tk.MustQuery("select count(*) from partition_table").Check(testkit.Rows("0"))
-}
-
 func TestIssue23872(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -872,17 +862,6 @@ func TestTableLocksEnable(t *testing.T) {
 	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1235 UNLOCK TABLES is not supported. To enable this experimental feature, set 'enable-table-lock' in the configuration file."))
 }
 
-func TestAutoRandomOnTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists auto_random_temporary")
-	err := tk.ExecToErr("create global temporary table auto_random_temporary (a bigint primary key auto_random(3), b varchar(255)) on commit delete rows")
-	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
-	err = tk.ExecToErr("create temporary table t(a bigint key auto_random)")
-	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
-}
-
 func TestAutoRandom(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1121,32 +1100,6 @@ func TestAutoRandom(t *testing.T) {
 	})
 }
 
-func TestAutoRandomWithRangeBits(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	// Test normal usages.
-	tk.MustExec("create table t (a bigint auto_random(5, 64) primary key, b int);")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (a bigint unsigned auto_random(5, 32) primary key, b int);")
-
-	// Test create auto_random table with invalid range bits.
-	expectErr := dbterror.ErrInvalidAutoRandom
-	tk.MustExec("drop table if exists t;")
-	err := tk.ExecToErr("create table t (a bigint auto_random(5, 31) primary key, b int);")
-	require.EqualError(t, err, expectErr.FastGenByArgs(fmt.Sprintf(autoid.AutoRandomInvalidRangeBits, 32, 64, 31)).Error())
-	err = tk.ExecToErr("create table t (a bigint auto_random(5, 65) primary key, b int);")
-	require.EqualError(t, err, expectErr.FastGenByArgs(fmt.Sprintf(autoid.AutoRandomInvalidRangeBits, 32, 64, 65)).Error())
-	err = tk.ExecToErr("create table t (a bigint auto_random(15, 32) primary key, b int);")
-	require.EqualError(t, err, expectErr.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall).Error())
-
-	// Alter table range bits is not supported.
-	tk.MustExec("create table t (a bigint auto_random(5, 64) primary key, b int);")
-	err = tk.ExecToErr("alter table t modify column a bigint auto_random(5, 32);")
-	require.EqualError(t, err, expectErr.FastGenByArgs(autoid.AutoRandomUnsupportedAlterRangeBits).Error())
-	tk.MustExec("alter table t modify column a bigint auto_random(15, 64);")
-}
-
 func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1182,40 +1135,6 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	require.Equal(t, fmt.Sprintf("t_%d_r_1073741824", tbl.Meta().ID), rows[1][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_2147483648", tbl.Meta().ID), rows[2][1])
 	require.Equal(t, fmt.Sprintf("t_%d_r_3221225472", tbl.Meta().ID), rows[3][1])
-}
-
-func TestModifyingColumn4NewCollations(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database dct")
-	tk.MustExec("use dct")
-	tk.MustExec("create table t(b varchar(10) collate utf8_bin, c varchar(10) collate utf8_general_ci) collate utf8_bin")
-	// Column collation can be changed as long as there is no index defined.
-	tk.MustExec("alter table t modify b varchar(10) collate utf8_general_ci")
-	tk.MustExec("alter table t modify c varchar(10) collate utf8_bin")
-	tk.MustExec("alter table t modify c varchar(10) collate utf8_unicode_ci")
-	tk.MustExec("alter table t charset utf8 collate utf8_general_ci")
-	tk.MustExec("alter table t convert to charset utf8 collate utf8_bin")
-	tk.MustExec("alter table t convert to charset utf8 collate utf8_unicode_ci")
-	tk.MustExec("alter table t convert to charset utf8 collate utf8_general_ci")
-	tk.MustExec("alter table t modify b varchar(10) collate utf8_unicode_ci")
-	tk.MustExec("alter table t modify b varchar(10) collate utf8_bin")
-
-	tk.MustExec("alter table t add index b_idx(b)")
-	tk.MustExec("alter table t add index c_idx(c)")
-	tk.MustGetErrMsg("alter table t modify b varchar(10) collate utf8_general_ci", "[ddl:8200]Unsupported modifying collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
-	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_bin", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_bin' when index is defined on it.")
-	tk.MustGetErrMsg("alter table t modify c varchar(10) collate utf8_unicode_ci", "[ddl:8200]Unsupported modifying collation of column 'c' from 'utf8_general_ci' to 'utf8_unicode_ci' when index is defined on it.")
-	tk.MustGetErrMsg("alter table t convert to charset utf8 collate utf8_general_ci", "[ddl:8200]Unsupported converting collation of column 'b' from 'utf8_bin' to 'utf8_general_ci' when index is defined on it.")
-	// Change to a compatible collation is allowed.
-	tk.MustExec("alter table t modify c varchar(10) collate utf8mb4_general_ci")
-	// Change the default collation of table is allowed.
-	tk.MustExec("alter table t collate utf8mb4_general_ci")
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_bin")
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_unicode_ci")
-	tk.MustExec("alter table t charset utf8mb4 collate utf8mb4_zh_pinyin_tidb_as_cs")
-	// Change the default collation of database is allowed.
-	tk.MustExec("alter database dct charset utf8mb4 collate utf8mb4_general_ci")
 }
 
 func TestForbidUnsupportedCollations(t *testing.T) {

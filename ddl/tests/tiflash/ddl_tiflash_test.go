@@ -766,16 +766,6 @@ func TestTiFlashBackoff(t *testing.T) {
 	require.True(t, tb.Meta().TiFlashReplica.Available)
 }
 
-func TestAlterDatabaseErrorGrammar(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
-	tk.MustGetErrMsg("ALTER DATABASE t SET TIFLASH REPLICA 1 LOCATION LABELS 'a','b' SET TIFLASH REPLICA 2 LOCATION LABELS 'a','b'", "[ddl:8200]Unsupported multi schema change for set tiflash replica")
-}
-
 func TestAlterDatabaseBasic(t *testing.T) {
 	s, teardown := createTiFlashContext(t)
 	defer teardown()
@@ -810,33 +800,6 @@ func TestAlterDatabaseBasic(t *testing.T) {
 
 	// There is less TiFlash store
 	tk.MustGetErrMsg("alter database tiflash_ddl set tiflash replica 3", "the tiflash replica count: 3 should be less than the total tiflash server count: 2")
-}
-
-func checkBatchPandingNum(t *testing.T, tkx *testkit.TestKit, level string, value string, ok bool) {
-	l := len(tkx.MustQuery(fmt.Sprintf("show %v variables where Variable_name='tidb_batch_pending_tiflash_count' and Value='%v'", level, value)).Rows())
-	if ok {
-		require.Equal(t, 1, l)
-	} else {
-		require.Equal(t, 0, l)
-	}
-}
-
-func TestTiFlashBatchAddVariables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set SESSION tidb_batch_pending_tiflash_count=5")
-	tk.MustExec("set GLOBAL tidb_batch_pending_tiflash_count=6")
-
-	checkBatchPandingNum(t, tk, "session", "5", true)
-	checkBatchPandingNum(t, tk, "global", "6", true)
-	checkBatchPandingNum(t, tk, "global", "1.5", false)
-
-	tk.MustGetErrMsg("set GLOBAL tidb_batch_pending_tiflash_count=1.5", "[variable:1232]Incorrect argument type to variable 'tidb_batch_pending_tiflash_count'")
-	checkBatchPandingNum(t, tk, "global", "6", true)
-
-	tk2 := testkit.NewTestKit(t, store)
-	checkBatchPandingNum(t, tk2, "session", "6", true)
 }
 
 func execWithTimeout(t *testing.T, tk *testkit.TestKit, to time.Duration, sql string) (bool, error) {
