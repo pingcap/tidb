@@ -289,6 +289,9 @@ const (
 	// those indices can be scanned concurrently, with the cost of higher system performance impact.
 	TiDBBuildStatsConcurrency = "tidb_build_stats_concurrency"
 
+	// TiDBBuildSamplingStatsConcurrency is used to control the concurrency of build sampling stats task.
+	TiDBBuildSamplingStatsConcurrency = "tidb_build_sampling_stats_concurrency"
+
 	// TiDBDistSQLScanConcurrency is used to set the concurrency of a distsql scan task.
 	// A distsql scan task can be a table scan or a index scan, which may be distributed to many TiKV nodes.
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
@@ -1128,6 +1131,7 @@ const (
 	DefIndexLookupSize                             = 20000
 	DefDistSQLScanConcurrency                      = 15
 	DefBuildStatsConcurrency                       = 4
+	DefBuildSamplingStatsConcurrency               = 2
 	DefAutoAnalyzeRatio                            = 0.5
 	DefAutoAnalyzeStartTime                        = "00:00 +0000"
 	DefAutoAnalyzeEndTime                          = "23:59 +0000"

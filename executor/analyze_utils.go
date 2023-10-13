@@ -29,14 +29,22 @@ import (
 	"go.uber.org/atomic"
 )
 
-func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
+func getIntFromSessionVars(ctx sessionctx.Context, name string) (int, error) {
 	sessionVars := ctx.GetSessionVars()
-	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), variable.TiDBBuildStatsConcurrency)
+	concurrency, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), name)
 	if err != nil {
 		return 0, err
 	}
 	c, err := strconv.ParseInt(concurrency, 10, 64)
 	return int(c), err
+}
+
+func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
+	return getIntFromSessionVars(ctx, variable.TiDBBuildStatsConcurrency)
+}
+
+func getBuildSamplingStatsConcurrency(ctx sessionctx.Context) (int, error) {
+	return getIntFromSessionVars(ctx, variable.TiDBBuildSamplingStatsConcurrency)
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
