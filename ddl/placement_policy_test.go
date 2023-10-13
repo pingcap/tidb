@@ -843,6 +843,26 @@ func TestCreateSchemaWithInfoPlacement(t *testing.T) {
 	require.Equal(t, "[schema:8239]Unknown placement policy 'p2'", err.Error())
 }
 
+func TestAlterRangePlacementPolicy(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create placement policy fiveReplicas followers=4")
+	tk.MustExec("alter range global placement policy fiveReplicas")
+	bundle, err := infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForGlobal)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundle.Rules))
+	tk.MustExec("alter range meta placement policy fiveReplicas")
+	bundle, err = infosync.GetRuleBundle(context.TODO(), placement.TiDBBundleRangePrefixForMeta)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(bundle.Rules))
+	err = tk.ExecToErr("drop placement policy fiveReplicas")
+	require.EqualError(t, err, "[ddl:8241]Placement policy 'fiveReplicas' is still in use")
+	tk.MustExec("alter range global placement policy default")
+	tk.MustExec("alter range meta placement policy default")
+	err = tk.ExecToErr("drop placement policy fiveReplicas")
+	require.NoError(t, err)
+}
+
 func TestDropPlacementPolicyInUse(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

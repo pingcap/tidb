@@ -940,6 +940,7 @@ import (
 	AlterTableStmt             "Alter table statement"
 	AlterUserStmt              "Alter user statement"
 	AlterInstanceStmt          "Alter instance statement"
+	AlterRangeStmt             "Alter data range configuration statement"
 	AlterPolicyStmt            "Alter Placement Policy statement"
 	AlterResourceGroupStmt     "Alter Resource Group statement"
 	AlterSequenceStmt          "Alter sequence statement"
@@ -11888,6 +11889,7 @@ Statement:
 |	AlterTableStmt
 |	AlterUserStmt
 |	AlterInstanceStmt
+|	AlterRangeStmt
 |	AlterSequenceStmt
 |	AlterPolicyStmt
 |	AlterResourceGroupStmt
@@ -13289,6 +13291,13 @@ AlterInstanceStmt:
 	"ALTER" "INSTANCE" InstanceOption
 	{
 		$$ = $3.(*ast.AlterInstanceStmt)
+	}
+
+AlterRangeStmt:
+	"ALTER" "RANGE" Identifier PlacementPolicyOption
+	{
+		option := $4.(*ast.PlacementOption)
+		$$ = &ast.AlterRangeStmt{RangeName: model.NewCIStr($3), PlacementOption: option}
 	}
 
 InstanceOption:
