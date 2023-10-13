@@ -1063,6 +1063,9 @@ AAAAAAAAAAAA5gm5Mg==
 
 		{"select `t`.`1a`.1 from t;", true, "SELECT `t`.`1a`.`1` FROM `t`"},
 		{"select * from 1db.1table;", true, "SELECT * FROM `1db`.`1table`"},
+		{"select * from t where t.and = 1;", true, "SELECT * FROM `t` WHERE `t`.`and`=1"},
+		{"select * from t where t. and = 1;", false, ""},
+		{"select * from t where t.status = 1;", true, "SELECT * FROM `t` WHERE `t`.`status`=1"},
 		{"select * from t where t. status = 1;", true, "SELECT * FROM `t` WHERE `t`.`status`=1"},
 
 		// for show placement
@@ -7445,6 +7448,16 @@ func TestMultiStmt(t *testing.T) {
 	require.Equal(t, "'bar'", stmt3.Fields.Fields[1].Text())
 	require.Equal(t, "'baz'", stmt3.Fields.Fields[2].Text())
 	require.Equal(t, "1", stmt4.Fields.Fields[0].Text())
+}
+
+func TestIssue46789(t *testing.T) {
+	p := parser.New()
+	// parse `1.` get a datum with type decimal,
+	// parse and restore `1.` get a datumn with type int,
+	// so add a new test case here.
+	sql := "select * from t where a between 1. and 2"
+	_, _, err := p.Parse(sql, "", "")
+	require.NoError(t, err)
 }
 
 // https://dev.mysql.com/doc/refman/8.1/en/other-vendor-data-types.html
