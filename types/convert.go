@@ -508,7 +508,7 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		// And the intCnt may contain the len of `+/-`,
 		// so I use 21 here as the early detection.
 		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
-		return validFloat[:eIdx], nil
+		return validFloat, nil
 	}
 	if intCnt <= 0 {
 		intStr = "0"
