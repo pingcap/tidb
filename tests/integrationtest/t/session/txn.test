@@ -1,0 +1,140 @@
+# TestCommitRetryCount
+connect (tk1,localhost,root,,session__txn);
+connect (tk2,localhost,root,,session__txn);
+
+connection tk1;
+set tidb_txn_mode='optimistic';
+
+create table no_retry (id int);
+insert into no_retry values (1);
+set @@tidb_retry_limit = 0;
+begin;
+update no_retry set id = 2;
+
+connection tk2;
+begin;
+update no_retry set id = 3;
+commit;
+
+connection tk1;
+--error Error 1205 (HY000): Lock wait timeout exceeded
+commit;
+disconnect tk1;
+disconnect tk2;
+connection default;
+
+
+# TestRetryForCurrentTxn
+connect (tk1,localhost,root,,session__txn);
+connect (tk2,localhost,root,,session__txn);
+
+connection tk1;
+set tidb_txn_mode='optimistic';
+create table history (a int);
+insert history values (1);
+set tidb_disable_txn_auto_retry = 0;
+begin;
+update history set a = 2;
+set tidb_disable_txn_auto_retry = 1;
+
+connection tk2;
+update history set a = 3;
+
+connection tk1;
+commit;
+select * from history;
+disconnect tk1;
+disconnect tk2;
+connection default;
+
+
+
+# TestAutocommit
+connect (tk,localhost,root,,session__txn);
+connection tk;
+create table t (id int key);
+set @@autocommit = 0;
+rollback;
+set @@autocommit = 0;
+
+connect (tk1,localhost,root,,session__txn);
+connection tk1;
+insert into t select 1;
+disconnect tk1;
+
+connection tk;
+select * from t;
+delete from t;
+
+set autocommit = 0;
+begin;
+insert into t values (1);
+set autocommit = 1;
+rollback;
+select count(*) from t where id = 1;
+select @@autocommit;
+
+set autocommit = 0;
+insert into t values (2);
+set autocommit = 1;
+rollback;
+select count(*) from t where id = 2;
+select @@autocommit;
+
+set autocommit = 0;
+begin;
+insert into t values (3);
+set autocommit = 0;
+rollback;
+select count(*) from t where id = 3;
+select @@autocommit;
+
+set autocommit = 1;
+begin;
+insert into t values (4);
+set autocommit = 1;
+rollback;
+select count(*) from t where id = 4;
+select @@autocommit;
+disconnect tk;
+connection default;
+
+
+# TestTxnLazyInitializePessimistic
+drop table if exists t;
+create table t (id int);
+set tidb_txn_mode = 'pessimistic';
+set @@autocommit = 0;
+select @@tidb_current_ts;
+select @@tidb_current_ts;
+select 1;
+select @@tidb_current_ts;
+set @@tidb_general_log = 0;
+select @@tidb_current_ts;
+explain select * from t;
+select @@tidb_current_ts;
+begin;
+rollback;
+select * from t;
+rollback;
+insert into t values (1);
+rollback;
+
+# TestTxnLazyInitializeOptimistic
+drop table if exists t;
+create table t (id int);
+set @@autocommit = 0;
+select @@tidb_current_ts;
+select @@tidb_current_ts;
+select 1;
+select @@tidb_current_ts;
+set @@tidb_general_log = 0;
+select @@tidb_current_ts;
+explain select * from t;
+select @@tidb_current_ts;
+begin;
+rollback;
+select * from t;
+rollback;
+insert into t values (1);
+rollback;

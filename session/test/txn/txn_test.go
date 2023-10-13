@@ -69,16 +69,6 @@ func TestAutocommit(t *testing.T) {
 	// When autocommit is 0, transaction start ts should be the first *valid*
 	// statement, rather than *any* statement.
 	tk.MustExec("create table t (id int key)")
-	tk.MustExec("set @@autocommit = 0")
-	tk.MustExec("rollback")
-	tk.MustExec("set @@autocommit = 0")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("insert into t select 1")
-	//nolint:all_revive,revive
-	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-	tk.MustExec("delete from t")
 
 	// When the transaction is rolled back, the global set statement would succeed.
 	tk.MustExec("set @@global.autocommit = 0")
@@ -88,96 +78,6 @@ func TestAutocommit(t *testing.T) {
 	tk.MustExec("rollback")
 	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("0"))
 	tk.MustQuery("select @@global.autocommit").Check(testkit.Rows("1"))
-
-	// When the transaction is committed because of switching mode, the session set statement shold succeed.
-	tk.MustExec("set autocommit = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1)")
-	tk.MustExec("set autocommit = 1")
-	tk.MustExec("rollback")
-	tk.MustQuery("select count(*) from t where id = 1").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
-
-	tk.MustExec("set autocommit = 0")
-	tk.MustExec("insert into t values (2)")
-	tk.MustExec("set autocommit = 1")
-	tk.MustExec("rollback")
-	tk.MustQuery("select count(*) from t where id = 2").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
-
-	// Set should not take effect if the mode is not changed.
-	tk.MustExec("set autocommit = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (3)")
-	tk.MustExec("set autocommit = 0")
-	tk.MustExec("rollback")
-	tk.MustQuery("select count(*) from t where id = 3").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@autocommit").Check(testkit.Rows("0"))
-
-	tk.MustExec("set autocommit = 1")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (4)")
-	tk.MustExec("set autocommit = 1")
-	tk.MustExec("rollback")
-	tk.MustQuery("select count(*) from t where id = 4").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@autocommit").Check(testkit.Rows("1"))
-}
-
-// TestTxnLazyInitialize tests that when autocommit = 0, not all statement starts
-// a new transaction.
-func TestTxnLazyInitialize(t *testing.T) {
-	testTxnLazyInitialize(t, false)
-	testTxnLazyInitialize(t, true)
-}
-
-func testTxnLazyInitialize(t *testing.T, isPessimistic bool) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int)")
-	if isPessimistic {
-		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
-	}
-
-	tk.MustExec("set @@autocommit = 0")
-	_, err := tk.Session().Txn(true)
-	require.True(t, kv.ErrInvalidTxn.Equal(err))
-	txn, err := tk.Session().Txn(false)
-	require.NoError(t, err)
-	require.False(t, txn.Valid())
-	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
-	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
-
-	// Those statements should not start a new transaction automatically.
-	tk.MustQuery("select 1")
-	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
-
-	tk.MustExec("set @@tidb_general_log = 0")
-	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
-
-	tk.MustQuery("explain select * from t")
-	tk.MustQuery("select @@tidb_current_ts").Check(testkit.Rows("0"))
-
-	// Begin statement should start a new transaction.
-	tk.MustExec("begin")
-	txn, err = tk.Session().Txn(false)
-	require.NoError(t, err)
-	require.True(t, txn.Valid())
-	tk.MustExec("rollback")
-
-	tk.MustExec("select * from t")
-	txn, err = tk.Session().Txn(false)
-	require.NoError(t, err)
-	require.True(t, txn.Valid())
-	tk.MustExec("rollback")
-
-	tk.MustExec("insert into t values (1)")
-	txn, err = tk.Session().Txn(false)
-	require.NoError(t, err)
-	require.True(t, txn.Valid())
-	tk.MustExec("rollback")
 }
 
 func TestDisableTxnAutoRetry(t *testing.T) {
@@ -314,32 +214,6 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	wg.Wait()
 	tk1.MustExec("SET GLOBAL tidb_restricted_read_only = 0")
 	tk1.MustExec("SET GLOBAL tidb_super_read_only = 0")
-}
-
-func TestRetryForCurrentTxn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table history (a int)")
-	tk.MustExec("insert history values (1)")
-
-	// Firstly, enable retry.
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("update history set a = 2")
-	// Disable retry now.
-	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("update history set a = 3")
-
-	tk.MustExec("commit")
-	tk.MustQuery("select * from history").Check(testkit.Rows("2"))
 }
 
 func TestBatchCommit(t *testing.T) {
@@ -593,29 +467,4 @@ func TestInTrans(t *testing.T) {
 	require.True(t, txn.Valid())
 	tk.MustExec("rollback")
 	require.False(t, txn.Valid())
-}
-
-func TestCommitRetryCount(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk1.MustExec("create table no_retry (id int)")
-	tk1.MustExec("insert into no_retry values (1)")
-	tk1.MustExec("set @@tidb_retry_limit = 0")
-
-	tk1.MustExec("begin")
-	tk1.MustExec("update no_retry set id = 2")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update no_retry set id = 3")
-	tk2.MustExec("commit")
-
-	// No auto retry because retry limit is set to 0.
-	require.Error(t, tk1.ExecToErr("commit"))
 }
