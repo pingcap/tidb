@@ -3649,7 +3649,7 @@ func (*PlanBuilder) checkOnlyFullGroupByWithGroupClause(p LogicalPlan, sel *ast.
 		if field.Auxiliary {
 			continue
 		}
-		checkExprInGroupByOrIsSingleValue(p, getInnerFromParenthesesAndUnaryPlus(field.Expr), offset, ErrExprInSelect, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
+		checkExprInGroupByOrIsSingleValue(p, getInnerExpr(field.Expr), offset, ErrExprInSelect, gbyOrSingleValueColNames, gbyExprs, notInGbyOrSingleValueColNames)
 	}
 
 	if sel.OrderBy != nil {
@@ -7498,6 +7498,18 @@ func appendVisitInfo(vi []visitInfo, priv mysql.PrivilegeType, db, tbl, col stri
 		column:    col,
 		err:       err,
 	})
+}
+
+func getInnerExpr(expr ast.ExprNode) ast.ExprNode {
+	expr = getInnerFromParenthesesAndUnaryPlus(expr)
+
+	if sqpr, ok := expr.(*ast.SubqueryExpr); ok && sqpr.Query != nil {
+		if selSt, ok := sqpr.Query.(*ast.SelectStmt); ok && selSt.From == nil &&
+			len(selSt.Fields.Fields) > 0 {
+			return getInnerExpr(selSt.Fields.Fields[0].Expr)
+		}
+	}
+	return expr
 }
 
 func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
