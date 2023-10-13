@@ -40,6 +40,7 @@ type statsLockImpl struct {
 	pool util.SessionPool
 }
 
+// NewStatsLock creates a new StatsLock.
 func NewStatsLock(pool util.SessionPool) util.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
