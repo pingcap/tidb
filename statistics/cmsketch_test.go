@@ -258,7 +258,7 @@ func TestCMSketchCodingTopN(t *testing.T) {
 
 func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	loc := time.UTC
-	sc := &stmtctx.StatementContext{TimeZone: loc}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
 	isKilled := uint32(0)
 
@@ -303,7 +303,7 @@ func TestSortTopnMeta(t *testing.T) {
 
 func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	loc := time.UTC
-	sc := &stmtctx.StatementContext{TimeZone: loc}
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
 	isKilled := uint32(0)
 

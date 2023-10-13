@@ -1272,7 +1272,7 @@ func TestCheckFailReport(t *testing.T) {
 
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		encoded, err := codec.EncodeKey(new(stmtctx.StatementContext), nil, types.NewBytesDatum([]byte{1, 0, 1, 0, 0, 1, 1}))
+		encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewBytesDatum([]byte{1, 0, 1, 0, 0, 1, 1}))
 		require.NoError(t, err)
 		hd, err := kv.NewCommonHandle(encoded)
 		require.NoError(t, err)

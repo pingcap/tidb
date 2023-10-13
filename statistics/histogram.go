@@ -1420,7 +1420,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 
 	for _, meta := range popedTopN {
 		totCount += int64(meta.Count)
-		d, err := topNMetaToDatum(meta, hists[0].Tp.GetType(), isIndex, sc.TimeZone)
+		d, err := topNMetaToDatum(meta, hists[0].Tp.GetType(), isIndex, sc.TimeZone())
 		if err != nil {
 			return nil, err
 		}

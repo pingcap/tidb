@@ -74,7 +74,9 @@ func HistogramFromStorage(sctx sessionctx.Context, tableID int64, colID int64, t
 		} else {
 			// Invalid date values may be inserted into table under some relaxed sql mode. Those values may exist in statistics.
 			// Hence, when reading statistics, we should skip invalid date check. See #39336.
-			sc := &stmtctx.StatementContext{TimeZone: time.UTC, AllowInvalidDate: true, IgnoreZeroInDate: true}
+			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+			sc.AllowInvalidDate = true
+			sc.IgnoreZeroInDate = true
 			d := rows[i].GetDatum(2, &fields[2].Column.FieldType)
 			// For new collation data, when storing the bounds of the histogram, we store the collate key instead of the
 			// original value.

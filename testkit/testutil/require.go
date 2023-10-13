@@ -29,7 +29,7 @@ import (
 
 // DatumEqual verifies that the actual value is equal to the expected value. For string datum, they are compared by the binary collation.
 func DatumEqual(t testing.TB, expected, actual types.Datum, msgAndArgs ...interface{}) {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	res, err := actual.Compare(sc, &expected, collate.GetBinaryCollator())
 	require.NoError(t, err, msgAndArgs)
 	require.Zero(t, res, msgAndArgs)

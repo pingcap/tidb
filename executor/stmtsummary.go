@@ -142,7 +142,7 @@ func (e *stmtSummaryRetriever) initEvictedRowsReader(sctx sessionctx.Context) (*
 func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*rowsReader, error) {
 	vars := sctx.GetSessionVars()
 	user := vars.User
-	tz := vars.StmtCtx.TimeZone
+	tz := vars.StmtCtx.TimeZone()
 	columns := e.columns
 	priv := hasPriv(sctx, mysql.ProcessPriv)
 	instanceAddr, err := clusterTableInstanceAddr(sctx, e.table.Name.O)
@@ -241,7 +241,7 @@ func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionctx.Context) 
 func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx sessionctx.Context) (*rowsReader, error) {
 	vars := sctx.GetSessionVars()
 	user := vars.User
-	tz := vars.StmtCtx.TimeZone
+	tz := vars.StmtCtx.TimeZone()
 	stmtSummary := r.stmtSummary
 	columns := r.columns
 	timeRanges := r.timeRanges

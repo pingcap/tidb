@@ -102,7 +102,7 @@ func TestRegionIndexRange(t *testing.T) {
 		}
 		expectIndexValues = append(expectIndexValues, str)
 	}
-	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.Local), nil, indexValues...)
 	require.NoError(t, err)
 
 	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
@@ -169,7 +169,7 @@ func TestRegionCommonHandleRange(t *testing.T) {
 		}
 		expectIndexValues = append(expectIndexValues, str)
 	}
-	encodedValue, err := codec.EncodeKey(&stmtctx.StatementContext{TimeZone: time.Local}, nil, indexValues...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.Local), nil, indexValues...)
 	require.NoError(t, err)
 
 	startKey := tablecodec.EncodeRowKey(sTableID, encodedValue)
@@ -701,7 +701,7 @@ func TestDecodeColumnValue(t *testing.T) {
 		colIDs = append(colIDs, col.id)
 	}
 	rd := rowcodec.Encoder{Enable: true}
-	sc := &stmtctx.StatementContext{TimeZone: time.UTC}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)

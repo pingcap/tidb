@@ -114,6 +114,8 @@ func TestBasicFuncSyntaxWarn(t *testing.T) {
 }
 
 func TestBasicFuncProcessInfo(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	sc.MemTracker = memory.NewTracker(-1, -1)
 	pi := ProcessInfo{
 		ID:      1,
 		User:    "test",
@@ -124,9 +126,7 @@ func TestBasicFuncProcessInfo(t *testing.T) {
 		Time:    time.Now(),
 		State:   3,
 		Info:    "test",
-		StmtCtx: &stmtctx.StatementContext{
-			MemTracker: memory.NewTracker(-1, -1),
-		},
+		StmtCtx: sc,
 	}
 	row := pi.ToRowForShow(false)
 	row2 := pi.ToRowForShow(true)

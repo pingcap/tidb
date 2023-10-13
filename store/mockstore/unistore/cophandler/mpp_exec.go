@@ -304,7 +304,7 @@ func (e *indexScanExec) Process(key, value []byte) error {
 			e.prevVals[i] = append(e.prevVals[i][:0], values[i]...)
 		}
 	}
-	decoder := codec.NewDecoder(e.chk, e.sc.TimeZone)
+	decoder := codec.NewDecoder(e.chk, e.sc.TimeZone())
 	for i, value := range values {
 		if i < len(e.fieldTypes) {
 			_, err = decoder.DecodeOne(value, i, e.fieldTypes[i])

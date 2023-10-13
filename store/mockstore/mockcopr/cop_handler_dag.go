@@ -104,10 +104,11 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 	}
 
 	sc := flagsToStatementContext(dagReq.Flags)
-	sc.TimeZone, err = timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
+	sc.SetTimeZone(tz)
 
 	ctx := &dagContext{
 		dagReq:    dagReq,
@@ -457,7 +458,7 @@ func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
 func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][]byte, row []types.Datum) error {
 	var err error
 	for _, offset := range relatedColOffsets {
-		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone)
+		row[offset], err = tablecodec.DecodeColumnValue(value[offset], e.fieldTps[offset], e.sc.TimeZone())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -467,7 +468,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 
 // flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
 	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
@@ -559,7 +560,7 @@ func (h coprHandler) fillUpData4SelectResponse(selResp *tipb.SelectResponse, dag
 		h.encodeDefault(selResp, rows, dagReq.OutputOffsets)
 	case tipb.EncodeType_TypeChunk:
 		colTypes := h.constructRespSchema(dagCtx)
-		loc := dagCtx.evalCtx.sc.TimeZone
+		loc := dagCtx.evalCtx.sc.TimeZone()
 		err := h.encodeChunk(selResp, rows, colTypes, dagReq.OutputOffsets, loc)
 		if err != nil {
 			return err

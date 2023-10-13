@@ -65,6 +65,11 @@ func TestAddStatement(t *testing.T) {
 	tables := []stmtctx.TableEntry{{DB: "db1", Table: "tb1"}, {DB: "db2", Table: "tb2"}}
 	indexes := []string{"a", "b"}
 
+	sc := stmtctx.NewStmtCtx()
+	sc.StmtType = "Select"
+	sc.Tables = tables
+	sc.IndexNames = indexes
+
 	// first statement
 	stmtExecInfo1 := generateAnyExecInfo()
 	stmtExecInfo1.ExecDetail.CommitDetail.Mu.PrewriteBackoffTypes = make([]string, 0)
@@ -220,11 +225,7 @@ func TestAddStatement(t *testing.T) {
 				}, CalleeAddress: "202",
 			},
 		},
-		StmtCtx: &stmtctx.StatementContext{
-			StmtType:   "Select",
-			Tables:     tables,
-			IndexNames: indexes,
-		},
+		StmtCtx:   sc,
 		MemMax:    20000,
 		DiskMax:   20000,
 		StartTime: time.Date(2019, 1, 1, 10, 10, 20, 10, time.UTC),
@@ -360,11 +361,7 @@ func TestAddStatement(t *testing.T) {
 				CalleeAddress: "302",
 			},
 		},
-		StmtCtx: &stmtctx.StatementContext{
-			StmtType:   "Select",
-			Tables:     tables,
-			IndexNames: indexes,
-		},
+		StmtCtx:   sc,
 		MemMax:    200,
 		DiskMax:   200,
 		StartTime: time.Date(2019, 1, 1, 10, 10, 0, 10, time.UTC),
@@ -585,6 +582,11 @@ func match(t *testing.T, row []types.Datum, expected ...interface{}) {
 func generateAnyExecInfo() *StmtExecInfo {
 	tables := []stmtctx.TableEntry{{DB: "db1", Table: "tb1"}, {DB: "db2", Table: "tb2"}}
 	indexes := []string{"a"}
+	sc := stmtctx.NewStmtCtx()
+	sc.StmtType = "Select"
+	sc.Tables = tables
+	sc.IndexNames = indexes
+
 	stmtExecInfo := &StmtExecInfo{
 		SchemaName:     "schema_name",
 		OriginalSQL:    "original_sql1",
@@ -654,11 +656,7 @@ func generateAnyExecInfo() *StmtExecInfo {
 				CalleeAddress: "129",
 			},
 		},
-		StmtCtx: &stmtctx.StatementContext{
-			StmtType:   "Select",
-			Tables:     tables,
-			IndexNames: indexes,
-		},
+		StmtCtx:   sc,
 		MemMax:    10000,
 		DiskMax:   10000,
 		StartTime: time.Date(2019, 1, 1, 10, 10, 10, 10, time.UTC),

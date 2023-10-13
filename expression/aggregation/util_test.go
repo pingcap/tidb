@@ -24,7 +24,7 @@ import (
 )
 
 func TestDistinct(t *testing.T) {
-	sc := &stmtctx.StatementContext{TimeZone: time.Local}
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	dc := createDistinctChecker(sc)
 	testCases := []struct {
 		vals   []interface{}

@@ -29,7 +29,7 @@ import (
 
 func TestUpdateCopRuntimeStats(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().StmtCtx = new(stmtctx.StatementContext)
+	ctx.GetSessionVars().StmtCtx = stmtctx.NewStmtCtx()
 	sr := selectResult{ctx: ctx, storeType: kv.TiKV}
 	require.Nil(t, ctx.GetSessionVars().StmtCtx.RuntimeStatsColl)
 

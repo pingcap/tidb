@@ -1153,7 +1153,7 @@ func PBToExpr(expr *tipb.Expr, tps []*types.FieldType, sc *stmtctx.StatementCont
 	case tipb.ExprType_MysqlDuration:
 		return convertDuration(expr.Val)
 	case tipb.ExprType_MysqlTime:
-		return convertTime(expr.Val, expr.FieldType, sc.TimeZone)
+		return convertTime(expr.Val, expr.FieldType, sc.TimeZone())
 	case tipb.ExprType_MysqlJson:
 		return convertJSON(expr.Val)
 	case tipb.ExprType_MysqlEnum:

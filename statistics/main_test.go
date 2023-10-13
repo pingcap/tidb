@@ -103,7 +103,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	for i := start; i < len(samples); i += 5 {
 		samples[i].Value.SetInt64(samples[i].Value.GetInt64() + 2)
 	}
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 
 	var err error
 	s.samples, err = SortSampleItems(sc, samples)

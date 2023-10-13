@@ -43,7 +43,7 @@ func TestLogFormat(t *testing.T) {
 		StatsInfo: func(interface{}) map[string]uint64 {
 			return nil
 		},
-		StmtCtx:           &stmtctx.StatementContext{},
+		StmtCtx:           stmtctx.NewStmtCtx(),
 		RefCountOfStmtCtx: &refCount,
 		MemTracker:        mem,
 		RedactSQL:         false,

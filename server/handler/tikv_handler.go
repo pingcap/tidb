@@ -90,8 +90,8 @@ func (t *TikvHandlerTool) GetHandle(tb table.PhysicalTable, params map[string]st
 		for _, idxCol := range pkIdx.Columns {
 			pkCols = append(pkCols, cols[idxCol.Offset])
 		}
-		sc := new(stmtctx.StatementContext)
-		sc.TimeZone = time.UTC
+		sc := stmtctx.NewStmtCtx()
+		sc.SetTimeZone(time.UTC)
 		pkDts, err := t.formValue2DatumRow(sc, values, pkCols)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -112,10 +112,9 @@ func (t *TikvHandlerTool) GetHandle(tb table.PhysicalTable, params map[string]st
 
 // GetMvccByIdxValue gets the mvcc by the index value.
 func (t *TikvHandlerTool) GetMvccByIdxValue(idx table.Index, values url.Values, idxCols []*model.ColumnInfo, handle kv.Handle) ([]*helper.MvccKV, error) {
-	sc := new(stmtctx.StatementContext)
 	// HTTP request is not a database session, set timezone to UTC directly here.
 	// See https://github.com/pingcap/tidb/blob/master/docs/tidb_http_api.md for more details.
-	sc.TimeZone = time.UTC
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	idxRow, err := t.formValue2DatumRow(sc, values, idxCols)
 	if err != nil {
 		return nil, errors.Trace(err)

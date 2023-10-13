@@ -48,7 +48,7 @@ func buildFMSketch(sc *stmtctx.StatementContext, values []types.Datum, maxSize i
 func SubTestSketch() func(*testing.T) {
 	return func(t *testing.T) {
 		s := createTestStatisticsSamples(t)
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 		maxSize := 1000
 		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
 		require.NoError(t, err)
@@ -79,7 +79,7 @@ func SubTestSketch() func(*testing.T) {
 func SubTestSketchProtoConversion() func(*testing.T) {
 	return func(t *testing.T) {
 		s := createTestStatisticsSamples(t)
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 		maxSize := 1000
 		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
 		require.NoError(t, err)
@@ -98,7 +98,7 @@ func SubTestSketchProtoConversion() func(*testing.T) {
 func SubTestFMSketchCoding() func(*testing.T) {
 	return func(t *testing.T) {
 		s := createTestStatisticsSamples(t)
-		sc := &stmtctx.StatementContext{TimeZone: time.Local}
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 		maxSize := 1000
 		sampleSketch, ndv, err := buildFMSketch(sc, extractSampleItemsDatums(s.samples), maxSize)
 		require.NoError(t, err)
