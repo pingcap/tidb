@@ -1552,70 +1552,35 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 	return -1
 }
 
-func checkIfCaseExprHasSubQuery(expr ast.ExprNode) bool {
-	if c, ok := expr.(*ast.CaseExpr); ok {
-		for _, clause := range c.WhenClauses {
-			if b, ok := clause.Expr.(*ast.BinaryOperationExpr); ok {
-				if _, ok := b.L.(*ast.SubqueryExpr); ok {
-					return true
-				}
-				if _, ok := b.R.(*ast.SubqueryExpr); ok {
-					return true
-				}
-			}
-		}
-	}
-
-	return false
+type subQueryChecker struct {
+	hasSubQuery bool
 }
 
-func checkIfParenthesesCaseExprHasSubQuery(expr ast.ExprNode) bool {
-	if pe, ok := expr.(*ast.ParenthesesExpr); ok {
-		return checkIfCaseExprHasSubQuery(pe.Expr)
+func (s *subQueryChecker) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+	switch in.(type) {
+	case *ast.SubqueryExpr:
+		s.hasSubQuery = true
+		return in, true
 	}
-	return false
+
+	return in, false
 }
 
-func checkIfExprHasSubQuery(expr ast.ExprNode) bool {
-	if _, ok := expr.(*ast.SubqueryExpr); ok {
-		return true
-	}
-
-	return false
+func (s *subQueryChecker) Leave(in ast.Node) (ast.Node, bool) {
+	// Before we enter the sub-query, we should keep visiting its children.
+	return in, !s.hasSubQuery
 }
 
-func checkIfParenthesesExprHasSubQuery(expr ast.ExprNode) bool {
-	if pe, ok := expr.(*ast.ParenthesesExpr); ok {
-		return checkIfExprHasSubQuery(pe.Expr)
-	}
-	return false
+func isExprHasSubQuery(expr ast.Node) bool {
+	checker := &subQueryChecker{}
+	expr.Accept(checker)
+	return checker.hasSubQuery
 }
 
 func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 	for _, a := range list {
-		// For example: update t a set foo = (select bar from t1 b where b.id = a.id) where id = 1;
-		if checkIfParenthesesExprHasSubQuery(a.Expr) {
-			return true
-		}
-		// TODO: do we really check this case? Shouldn't this case be handled by the check above?
-		if checkIfExprHasSubQuery(a.Expr) {
-			return true
-		}
-
-		// For example: update t a set foo =
-		// (case when (select bar from t1 b where b.id = a.id) > (select bar from t2 c where c.id = a.id) then 1 else 0 end)
-		// where id = 1;
-		if checkIfParenthesesCaseExprHasSubQuery(a.Expr) {
-			return true
-		}
-		// For example: update t a set foo =
-		// case when (select bar from t1 b where b.id = a.id) > (select bar from t2 c where c.id = a.id) then 1 else 0 end
-		// where id = 1;
-		if checkIfCaseExprHasSubQuery(a.Expr) {
-			return true
-		}
+		return isExprHasSubQuery(a)
 	}
-
 	return false
 }
 
