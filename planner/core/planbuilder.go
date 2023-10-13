@@ -3978,15 +3978,54 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	mockTablePlan.SetSchema(insertPlan.tableSchema)
 	mockTablePlan.names = insertPlan.tableColNames
 
-	checkRefColumn := func(n ast.Node) ast.Node {
+	checkTblName := func(n ast.Node) error {
+		source := n.(*ast.TableSource).Source
+		if src, ok := source.(*ast.TableName); ok {
+			subTblname := src.Name
+			srcTblname := tn.Name
+			subAsName := n.(*ast.TableSource).AsName
+
+			if srcTblname == subTblname && subAsName.O == "" {
+				err := ErrUpdateTableUsed.GenWithStackByArgs(srcTblname.O)
+				return err
+			}
+		}
+		return nil
+	}
+
+	checkRefColumn := func(n ast.Node) (ast.Node, error) {
 		if insertPlan.NeedFillDefaultValue {
-			return n
+			return n, nil
 		}
 		switch n.(type) {
 		case *ast.ColumnName, *ast.ColumnNameExpr:
 			insertPlan.NeedFillDefaultValue = true
+		case *ast.SubqueryExpr:
+			sel := n.(*ast.SubqueryExpr).Query
+			switch sel.(type) {
+			case *ast.SelectStmt:
+				if sel.(*ast.SelectStmt).From != nil {
+					left := sel.(*ast.SelectStmt).From.TableRefs.Left
+					switch lnode := left.(type) {
+					case *ast.Join:
+						err := checkTblName(lnode.Left)
+						if err != nil {
+							return n, err
+						}
+						err = checkTblName(lnode.Right)
+						if err != nil {
+							return n, err
+						}
+					case *ast.TableSource:
+						err = checkTblName(lnode)
+						if err != nil {
+							return n, err
+						}
+					}
+				}
+			}
 		}
-		return n
+		return n, nil
 	}
 
 	if len(insert.Lists) > 0 {
@@ -4109,7 +4148,7 @@ func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert
 	return affectedValuesCols, nil
 }
 
-func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) ast.Node) (outExpr expression.Expression, err error) {
+func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, mockTablePlan *LogicalTableDual, col *table.Column, expr ast.ExprNode, checkRefColumn func(n ast.Node) (ast.Node, error)) (outExpr expression.Expression, err error) {
 	if col.Hidden {
 		return nil, ErrUnknownColumn.GenWithStackByArgs(col.Name, clauseMsg[fieldList])
 	}
@@ -4171,7 +4210,7 @@ func (b PlanBuilder) getInsertColExpr(ctx context.Context, insertPlan *Insert, m
 	return outExpr, nil
 }
 
-func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) ast.Node) error {
+func (b *PlanBuilder) buildValuesListOfInsert(ctx context.Context, insert *ast.InsertStmt, insertPlan *Insert, mockTablePlan *LogicalTableDual, checkRefColumn func(n ast.Node) (ast.Node, error)) error {
 	affectedValuesCols, err := b.getAffectCols(insert, insertPlan)
 	if err != nil {
 		return err
