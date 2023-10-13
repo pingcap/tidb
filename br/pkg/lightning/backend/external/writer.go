@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/size"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -296,6 +297,9 @@ type Writer struct {
 	totalSize uint64
 	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
 	shareMu *sync.Mutex
+
+	statEG  *errgroup.Group
+	statCtx context.Context
 }
 
 // WriteRow implements ingest.Writer.
@@ -337,6 +341,12 @@ func (w *Writer) Close(ctx context.Context) error {
 	err := w.flushKVs(ctx, true)
 	if err != nil {
 		return err
+	}
+	if w.statEG != nil {
+		err2 := w.statEG.Wait()
+		if err2 != nil {
+			return err2
+		}
 	}
 	// remove the trailing empty MultipleFilesStat
 	w.multiFileStats = w.multiFileStats[:len(w.multiFileStats)-1]
@@ -387,9 +397,17 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		writeStartTime              time.Time
 	)
 
+	getSpeed := func(bytes uint64, dur float64) string {
+		if dur == 0 {
+			return "-"
+		}
+		return units.BytesSize(float64(bytes) / dur)
+	}
+
+	kvCnt := len(w.writeBatch)
 	defer func() {
 		w.currentSeq++
-		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
+		err1 := dataWriter.Close(ctx)
 		if err != nil {
 			return
 		}
@@ -398,21 +416,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			err = err1
 			return
 		}
-		if err2 != nil {
-			logger.Error("close stat writer failed", zap.Error(err2))
-			err = err2
-			return
-		}
 
-		getSpeed := func(bytes uint64, dur float64) string {
-			if dur == 0 {
-				return "-"
-			}
-			return units.BytesSize(float64(bytes) / dur)
-		}
 		writeDuration = time.Since(writeStartTime)
 		logger.Info("flush kv",
 			zap.Uint64("bytes", savedBytes),
+			zap.Int("kv-cnt", kvCnt),
 			zap.Int("stat-size", statSize),
 			zap.Duration("sort-time", sortDuration),
 			zap.Duration("write-time", writeDuration),
@@ -444,10 +452,34 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.kvStore.Close()
 	encodedStat := w.rc.encode()
 	statSize = len(encodedStat)
-	_, err = statWriter.Write(ctx, encodedStat)
-	if err != nil {
-		return err
+	if w.statEG == nil {
+		w.statEG, w.statCtx = errgroup.WithContext(ctx)
 	}
+	w.statEG.Go(func() (resErr error) {
+		statWriteStart := time.Now()
+		defer func() {
+			err2 := statWriter.Close(ctx)
+			if resErr != nil {
+				return
+			}
+			if err2 != nil {
+				logger.Error("close stat writer failed", zap.Error(err2))
+				err = err2
+				return
+			}
+			statWriteDuration := time.Since(statWriteStart)
+			logger.Info("async flush stat",
+				zap.Int("size", statSize),
+				zap.Duration("write-time", statWriteDuration),
+				zap.String("write-speed(/s)", getSpeed(uint64(statSize), statWriteDuration.Seconds())),
+			)
+		}()
+		_, resErr = statWriter.Write(ctx, encodedStat)
+		if resErr != nil {
+			return resErr
+		}
+		return nil
+	})
 
 	w.recordMinMax(w.writeBatch[0].Key, w.writeBatch[len(w.writeBatch)-1].Key, kvSize)
 
