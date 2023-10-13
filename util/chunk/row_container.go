@@ -130,7 +130,6 @@ func (c *RowContainer) SpillToDisk() {
 }
 
 func (*RowContainer) hasEnoughDataToSpill(_ *memory.Tracker) bool {
-	// should check the memory consumed as SortAndSpillDiskAction?
 	return true
 }
 
@@ -600,6 +599,7 @@ func (c *SortedRowContainer) Sort() (ret error) {
 	return
 }
 
+// SpillToDisk spills data to disk. This function may be called in parallel.
 func (c *SortedRowContainer) SpillToDisk() {
 	err := c.Sort()
 	c.RowContainer.spillToDisk(err)
