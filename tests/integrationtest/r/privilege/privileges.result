@@ -29,6 +29,7 @@ DELETE FROM privilege__privileges.t1;
 Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
 DELETE FROM dbnotexists.t1;
 Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
+drop table t1;
 CREATE USER u1;
 CREATE TABLE routine_table (a int);
 GRANT CREATE ROUTINE on privilege__privileges.* to u1;
@@ -52,6 +53,7 @@ create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
 drop placement policy if exists x;
 create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
 drop placement policy if exists x;
+drop user placement_user;
 CREATE USER resource_group_user;
 set @@global.tidb_enable_resource_control = 1;
 CREATE RESOURCE GROUP test RU_PER_SEC = 666;
@@ -252,6 +254,7 @@ SELECT User_attributes FROM mysql.user WHERE User = "usr1";
 User_attributes
 {"resource_group": "rg1"}
 DROP USER usr1;
+drop resource group rg1;
 create database privilege__privileges_db1;
 create database privilege__privileges_db2;
 create table a(id int);
@@ -312,3 +315,271 @@ GRANT TRIGGER ON privilege__privileges.trigger_table TO ucorrect2;
 DROP TABLE privilege__privileges.trigger_table;
 GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO uincorrect;
 Error 1410 (42000): You are not allowed to create a user with GRANT
+CREATE USER 'column'@'%';
+CREATE TABLE column_table (a int, b int, c int);
+GRANT Select(a),Update(a,b),Insert(c) ON privilege__privileges.column_table TO  'column'@'%';
+SHOW GRANTS;
+Grants for User
+GRANT USAGE ON *.* TO 'column'@'%'
+GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `privilege__privileges`.`column_table` TO 'column'@'%'
+CREATE USER 'tableaccess'@'localhost';
+CREATE TABLE fieldlistt1 (a int);
+desc fieldlistt1;
+Error 1046 (3D000): No database selected
+CREATE USER tr_insert;
+CREATE USER tr_update;
+CREATE USER tr_delete;
+CREATE TABLE t1 (a int primary key, b int);
+GRANT INSERT ON t1 TO tr_insert;
+GRANT UPDATE ON t1 TO tr_update;
+GRANT DELETE ON t1 TO tr_delete;
+REPLACE INTO t1 VALUES (1, 2);
+Error 1142 (42000): DELETE command denied to user 'tr_insert'@'%' for table 't1'
+INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5;
+Error 1142 (42000): UPDATE command denied to user 'tr_insert'@'%' for table 't1'
+INSERT INTO t1 VALUES (6, 7);
+REPLACE INTO t1 VALUES (8, 9);
+Error 1142 (42000): INSERT command denied to user 'tr_delete'@'%' for table 't1'
+INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12;
+Error 1142 (42000): INSERT command denied to user 'tr_update'@'%' for table 't1'
+CREATE DATABASE placement_db;
+USE placement_db;
+CREATE TABLE placement_table (a int);
+CREATE USER placement_user;
+GRANT PLACEMENT_ADMIN ON *.* TO placement_user;
+SHOW GRANTS FOR placement_user;
+Grants for placement_user@%
+GRANT USAGE ON *.* TO 'placement_user'@'%'
+GRANT PLACEMENT_ADMIN ON *.* TO 'placement_user'@'%'
+DROP USER placement_user;
+DROP DATABASE placement_db;
+CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4;
+GRANT ALL ON *.* TO superuser2;
+GRANT CREATE USER ON *.* TO nobodyuser2;
+GRANT SYSTEM_USER ON *.* TO nobodyuser4;
+GRANT UPDATE ON mysql.user TO nobodyuser5, semuser1;
+GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1;
+GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3;
+GRANT SYSTEM_USER ON *.* to semuser3;
+CREATE RESOURCE GROUP rg1 ru_per_sec=1000;
+ALTER USER 'semuser1' RESOURCE GROUP rg1;
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+User_attributes
+{"resource_group": "rg1"}
+ALTER USER 'semuser1' COMMENT 'comment1';
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+User_attributes
+{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+Error 1227 (42000): Access denied; you need (at least one of) the SYSTEM_USER or SUPER privilege(s) for this operation
+ALTER USER 'semuser1' IDENTIFIED BY '';
+ALTER USER 'semuser2' IDENTIFIED BY '';
+ALTER USER 'semuser3' IDENTIFIED BY '';
+DROP USER IF EXISTS 'ru1'@'localhost';
+DROP USER IF EXISTS ru3;
+DROP USER IF EXISTS ru6@localhost;
+CREATE USER 'ru1'@'localhost';
+CREATE USER ru3;
+CREATE USER ru6@localhost;
+RENAME USER ru3 TO ru4;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+GRANT UPDATE ON mysql.user TO 'ru1'@'localhost';
+RENAME USER ru3 TO ru4;
+Error 1227 (42000): Access denied; you need (at least one of) the CREATE USER privilege(s) for this operation
+GRANT CREATE USER ON *.* TO 'ru1'@'localhost';
+RENAME USER ru3 TO ru4;
+RENAME USER 'ru4'@'%' TO 'ru3'@'localhost';
+RENAME USER 'ru3'@'localhost' TO 'ru3'@'%';
+RENAME USER ru3 TO ru1@localhost;
+Error 1396 (HY000): Operation RENAME USER failed for ru3@% TO ru1@localhost new did exist
+RENAME USER ru4 TO ru5@localhost;
+Error 1396 (HY000): Operation RENAME USER failed for ru4@% TO ru5@localhost old did not exist
+RENAME USER ru3 TO ru3;
+Error 1396 (HY000): Operation RENAME USER failed for ru3@% TO ru3@% new did exist
+RENAME USER ru3 TO ru5@localhost, ru4 TO ru7;
+Error 1396 (HY000): Operation RENAME USER failed for ru4@% TO ru7@% old did not exist
+RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost;
+Error 1396 (HY000): Operation RENAME USER failed for ru6@localhost TO ru1@localhost new did exist
+RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost;
+RENAME USER 'ru6@localhost' TO '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost';
+Error 1470 (HY000): String '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost' is too long for user name (should be no longer than 32)
+RENAME USER 'ru6@localhost' TO 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X';
+Error 1470 (HY000): String 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890' is too long for user name (should be no longer than 32)
+DROP USER ru6@localhost;
+DROP USER ru3;
+DROP USER 'ru1'@'localhost';
+CREATE USER ccnobody, ccconfig, ccprocess;
+GRANT CONFIG ON *.* TO ccconfig;
+GRANT Process ON *.* TO ccprocess;
+SHOW GRANTS;
+Grants for User
+GRANT USAGE ON *.* TO 'ccnobody'@'%'
+SELECT * FROM information_schema.cluster_config;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+SELECT * FROM information_schema.cluster_hardware;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+SELECT * FROM information_schema.cluster_info;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_load;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_systeminfo;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SHOW GRANTS;
+Grants for User
+GRANT CONFIG ON *.* TO 'ccconfig'@'%'
+SELECT * FROM information_schema.cluster_config limit 0;
+TYPE	INSTANCE	KEY	VALUE
+SELECT * FROM information_schema.cluster_HARDWARE limit 0;
+TYPE	INSTANCE	DEVICE_TYPE	DEVICE_NAME	NAME	VALUE
+SELECT * FROM information_schema.cluster_INFO;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_LOAD;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_SYSTEMINFO;
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
+SHOW GRANTS;
+Grants for User
+GRANT PROCESS ON *.* TO 'ccprocess'@'%'
+SELECT * FROM information_schema.CLUSTER_info limit 0;
+TYPE	INSTANCE	STATUS_ADDRESS	VERSION	GIT_HASH	START_TIME	UPTIME	SERVER_ID
+SELECT * FROM information_schema.CLUSTER_load limit 0;
+TYPE	INSTANCE	DEVICE_TYPE	DEVICE_NAME	NAME	VALUE
+SELECT * FROM information_schema.CLUSTER_systeminfo limit 0;
+TYPE	INSTANCE	SYSTEM_TYPE	SYSTEM_NAME	NAME	VALUE
+SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%';
+TIME	TYPE	INSTANCE	LEVEL	MESSAGE
+SELECT * FROM information_schema.CLUSTER_config;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+SELECT * FROM information_schema.CLUSTER_hardware;
+Error 1227 (42000): Access denied; you need (at least one of) the CONFIG privilege(s) for this operation
+CREATE USER 'superuser';
+CREATE USER 'nobodyuser';
+GRANT ALL ON *.* TO 'superuser';
+SET PASSWORD for 'nobodyuser' = 'newpassword';
+SET PASSWORD for 'nobodyuser' = '';
+SET PASSWORD for 'superuser' = 'newpassword';
+Error 1044 (42000): Access denied for user ''@'' to database 'mysql'
+CREATE ROLE tsg_r1;
+CREATE USER tsg_u1, tsg_u2;
+GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u1 WITH GRANT OPTION;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u2 WITH GRANT OPTION;
+GRANT ROLE_ADMIN ON *.* TO tsg_u1;
+GRANT ROLE_ADMIN ON *.* TO tsg_u2;
+GRANT ROLE_ADMIN ON *.* TO tsg_r1 WITH GRANT OPTION;
+GRANT CONFIG ON *.* TO tsg_r1;
+GRANT tsg_r1 TO tsg_u1, tsg_u2;
+SET DEFAULT ROLE tsg_r1 TO tsg_u1;
+SHOW GRANTS;
+Grants for User
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR CURRENT_USER();
+Grants for tsg_u1@%
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u1'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u1'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR 'tsg_u1';
+Grants for tsg_u1@%
+GRANT USAGE ON *.* TO 'tsg_u1'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u1'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u1'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u1'@'%' WITH GRANT OPTION
+SHOW GRANTS;
+Grants for User
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR CURRENT_USER();
+Grants for tsg_u2@%
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR 'tsg_u2';
+Grants for tsg_u2@%
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SET ROLE tsg_r1;
+SHOW GRANTS;
+Grants for User
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR CURRENT_USER();
+Grants for tsg_u2@%
+GRANT PROCESS,CONFIG ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN,ROLE_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+SHOW GRANTS FOR 'tsg_u2';
+Grants for tsg_u2@%
+GRANT USAGE ON *.* TO 'tsg_u2'@'%'
+GRANT 'tsg_r1'@'%' TO 'tsg_u2'@'%'
+GRANT ROLE_ADMIN ON *.* TO 'tsg_u2'@'%'
+GRANT CONNECTION_ADMIN ON *.* TO 'tsg_u2'@'%' WITH GRANT OPTION
+CREATE USER 'test_encode_u'@'localhost' identified by 'root';
+select authentication_string from mysql.user where user='test_encode_u';
+authentication_string
+*81F5E21E35407D884A6CD4A731AEBFB6AF209E1B
+DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege;
+CREATE USER joe;
+CREATE ROLE engineering;
+CREATE ROLE admins;
+CREATE ROLE notgranted;
+CREATE ROLE otherrole;
+GRANT INSERT ON test.* TO engineering;
+GRANT DELETE ON test.* TO admins;
+GRANT SELECT on test.* to joe;
+GRANT engineering TO joe;
+GRANT admins TO joe;
+SET DEFAULT ROLE admins TO joe;
+GRANT otherrole TO joe;
+GRANT UPDATE ON role.* TO otherrole;
+GRANT SELECT ON mysql.user TO otherrole;
+CREATE ROLE delete_stuff_privilege;
+GRANT DELETE ON mysql.user TO delete_stuff_privilege;
+GRANT delete_stuff_privilege TO otherrole;
+SHOW GRANTS FOR CURRENT_USER() USING notgranted;
+Error 3530 (HY000): `notgranted`@`%` is not granted to joe@%
+SHOW GRANTS FOR current_user() USING otherrole;
+Grants for joe@%
+GRANT USAGE ON *.* TO 'joe'@'%'
+GRANT SELECT ON `test`.* TO 'joe'@'%'
+GRANT UPDATE ON `role`.* TO 'joe'@'%'
+GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
+GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
+SHOW GRANTS FOR joe USING otherrole;
+Grants for joe@%
+GRANT USAGE ON *.* TO 'joe'@'%'
+GRANT SELECT ON `test`.* TO 'joe'@'%'
+GRANT UPDATE ON `role`.* TO 'joe'@'%'
+GRANT SELECT,DELETE ON `mysql`.`user` TO 'joe'@'%'
+GRANT 'admins'@'%', 'engineering'@'%', 'otherrole'@'%' TO 'joe'@'%'
