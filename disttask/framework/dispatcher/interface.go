@@ -39,7 +39,7 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step int64) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
@@ -56,7 +56,7 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then dispatcher will mark it as finished.
-	GetNextStep(h TaskHandle, task *proto.Task) int64
+	GetNextStep(h TaskHandle, task *proto.Task) proto.Step
 }
 
 // dispatcherFactoryFn is used to create a dispatcher.

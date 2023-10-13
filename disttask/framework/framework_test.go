@@ -44,7 +44,7 @@ var _ dispatcher.Extension = (*testDispatcherExt)(nil)
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
+func (dsp *testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ proto.Step) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		dsp.cnt = 3
 		return [][]byte{
@@ -66,7 +66,7 @@ func (*testDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle,
 	return nil, nil
 }
 
-func (dsp *testDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+func (dsp *testDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
@@ -251,7 +251,7 @@ func DispatchAndCancelTask(taskKey string, t *testing.T, m *sync.Map) {
 	})
 }
 
-func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state string) {
+func DispatchTaskAndCheckState(taskKey string, t *testing.T, m *sync.Map, state proto.TaskState) {
 	task := DispatchTask(taskKey, t)
 	require.Equal(t, state, task.State)
 	m.Range(func(key, value interface{}) bool {

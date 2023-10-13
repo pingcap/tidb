@@ -28,7 +28,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func CheckSubtasksState(t *testing.T, taskID int64, state string, expectedCnt int64) {
+func CheckSubtasksState(t *testing.T, taskID int64, state proto.TaskState, expectedCnt int64) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	mgr.PrintSubtaskInfo(taskID)

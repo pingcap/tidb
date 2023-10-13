@@ -54,7 +54,7 @@ type BackfillSubTaskMeta struct {
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
 func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
-	bc ingest.BackendCtx, stage int64, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.SubtaskExecutor, error) {
 	bgm := &BackfillGlobalMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {

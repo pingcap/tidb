@@ -89,7 +89,7 @@ func IncDistTaskSubTaskCnt(subtask *proto.Subtask) {
 	DistTaskSubTaskCntGauge.WithLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 	).Inc()
 }
 
@@ -98,7 +98,7 @@ func DecDistTaskSubTaskCnt(subtask *proto.Subtask) {
 	DistTaskSubTaskCntGauge.WithLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 	).Dec()
 }
 
@@ -107,7 +107,7 @@ func StartDistTaskSubTask(subtask *proto.Subtask) {
 	DistTaskSubTaskStartTimeGauge.WithLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 		strconv.Itoa(int(subtask.ID)),
 	).SetToCurrentTime()
 }
@@ -117,7 +117,7 @@ func EndDistTaskSubTask(subtask *proto.Subtask) {
 	DistTaskSubTaskStartTimeGauge.DeleteLabelValues(
 		subtask.Type,
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 		strconv.Itoa(int(subtask.ID)),
 	)
 }
