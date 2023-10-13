@@ -19,6 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -1552,6 +1553,9 @@ func findInPairs(colName string, pairs []nameValuePair) int {
 	return -1
 }
 
+// Use cache to avoid allocating memory every time.
+var subQueryCheckerPool = &sync.Pool{New: func() any { return &subQueryChecker{} }}
+
 type subQueryChecker struct {
 	hasSubQuery bool
 }
@@ -1575,7 +1579,8 @@ func (s *subQueryChecker) Leave(in ast.Node) (ast.Node, bool) {
 }
 
 func isExprHasSubQuery(expr ast.Node) bool {
-	checker := &subQueryChecker{}
+	checker := subQueryCheckerPool.Get().(*subQueryChecker)
+	defer subQueryCheckerPool.Put(checker)
 	expr.Accept(checker)
 	return checker.hasSubQuery
 }
