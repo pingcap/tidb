@@ -106,7 +106,7 @@ require (
 	go.etcd.io/etcd/tests/v3 v3.5.2
 	go.opencensus.io v0.24.0
 	go.uber.org/atomic v1.10.0
-	go.uber.org/automaxprocs v1.4.0
+	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/goleak v1.2.0
 	go.uber.org/multierr v1.8.0
 	go.uber.org/zap v1.23.0
