@@ -382,6 +382,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	var (
 		savedBytes                  uint64
+		statSize                    int
 		sortDuration, writeDuration time.Duration
 		writeStartTime              time.Time
 	)
@@ -412,6 +413,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		writeDuration = time.Since(writeStartTime)
 		logger.Info("flush kv",
 			zap.Uint64("bytes", savedBytes),
+			zap.Int("stat-size", statSize),
 			zap.Duration("sort-time", sortDuration),
 			zap.Duration("write-time", writeDuration),
 			zap.String("sort-speed(/s)", getSpeed(savedBytes, sortDuration.Seconds())),
@@ -440,7 +442,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	w.kvStore.Close()
-	_, err = statWriter.Write(ctx, w.rc.encode())
+	encodedStat := w.rc.encode()
+	statSize = len(encodedStat)
+	_, err = statWriter.Write(ctx, encodedStat)
 	if err != nil {
 		return err
 	}
