@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/extstats"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/history"
+	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/usage"
@@ -69,6 +70,9 @@ type Handle struct {
 
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	util.StatsAnalyze
+
+	// StatsLock is used to manage locked stats.
+	util.StatsLock
 
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
@@ -120,6 +124,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		InitStatsDone:           make(chan struct{}),
 		TableInfoGetter:         util.NewTableInfoGetter(),
 		StatsAnalyze:            autoanalyze.NewStatsAnalyze(pool),
+		StatsLock:               lockstats.NewStatsLock(pool),
 	}
 	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
 

@@ -8,7 +8,6 @@ go_library(
         "dump.go",
         "handle.go",
         "handle_hist.go",
-        "lock_stats_handler.go",
         "update.go",
     ],
     importpath = "github.com/pingcap/tidb/statistics/handle",

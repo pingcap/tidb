@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/chunk"
 )
@@ -135,11 +135,11 @@ func populatePartitionIDAndNames(
 func populateTableAndPartitionIDs(
 	tables []*ast.TableName,
 	is infoschema.InfoSchema,
-) (map[int64]*lockstats.TableInfo, error) {
+) (map[int64]*util.StatsLockTable, error) {
 	if len(tables) == 0 {
 		return nil, errors.New("table list should not be empty")
 	}
-	tableWithPartitions := make(map[int64]*lockstats.TableInfo, len(tables))
+	tableWithPartitions := make(map[int64]*util.StatsLockTable, len(tables))
 
 	for _, table := range tables {
 		tbl, err := is.TableByName(table.Schema, table.Name)
@@ -147,7 +147,7 @@ func populateTableAndPartitionIDs(
 			return nil, err
 		}
 		tid := tbl.Meta().ID
-		tableWithPartitions[tid] = &lockstats.TableInfo{
+		tableWithPartitions[tid] = &util.StatsLockTable{
 			FullName: fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L),
 		}
 

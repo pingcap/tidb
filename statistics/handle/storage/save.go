@@ -15,7 +15,6 @@
 package storage
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -125,7 +124,7 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	results *statistics.AnalyzeResults, analyzeSnapshot bool) (statsVer uint64, err error) {
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
-	ctx := util.StatsCtx(context.Background())
+	ctx := util.StatsCtx
 	_, err = util.Exec(sctx, "begin pessimistic")
 	if err != nil {
 		return 0, err

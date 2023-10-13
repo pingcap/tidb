@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/mysql"
+	statsutil "github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec/mock"
@@ -128,10 +129,10 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 	if wantErr {
 		exec.EXPECT().ExecRestrictedSQL(
 			gomock.All(&ctxMatcher{}),
-			useCurrentSession,
+			statsutil.UseCurrentSessionOpt,
 			selectSQL,
 		).Return(nil, nil, errors.New("error"))
-		return QueryLockedTables(exec)
+		return QueryLockedTables(wrapAsSCtx(exec))
 	}
 
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, numRows)
@@ -144,9 +145,9 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 	}
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		statsutil.UseCurrentSessionOpt,
 		selectSQL,
 	).Return(rows, nil, nil)
 
-	return QueryLockedTables(exec)
+	return QueryLockedTables(wrapAsSCtx(exec))
 }

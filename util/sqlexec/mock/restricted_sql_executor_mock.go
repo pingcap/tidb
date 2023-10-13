@@ -14,6 +14,14 @@ import (
 	gomock "go.uber.org/mock/gomock"
 )
 
+// MockRestrictedSQLExecutorKey is the key to represent MockRestrictedSQLExecutorMockRecorder in ctx.
+type MockRestrictedSQLExecutorKey struct{}
+
+// String implements the string.Stringer interface.
+func (k MockRestrictedSQLExecutorKey) String() string {
+	return "__MockRestrictedSQLExecutor"
+}
+
 // MockRestrictedSQLExecutor is a mock of RestrictedSQLExecutor interface.
 type MockRestrictedSQLExecutor struct {
 	ctrl     *gomock.Controller
