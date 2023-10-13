@@ -18,13 +18,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util/callback"
-	"github.com/pingcap/tidb/disttask/framework/dispatcher"
-	"github.com/pingcap/tidb/disttask/framework/proto"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -165,10 +165,10 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("alter table t1 add index idx(a);")
 	tk.MustExec("admin check index t1 idx;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskContextCanceled", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockRunSubtaskContextCanceled", "1*return(true)"))
 	tk.MustExec("alter table t1 add index idx1(a);")
 	tk.MustExec("admin check index t1 idx1;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/scheduler/MockRunSubtaskContextCanceled"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/MockRunSubtaskContextCanceled"))
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 
@@ -199,9 +199,9 @@ func TestAddIndexDistCancel(t *testing.T) {
 		tk1.MustExec("admin cancel ddl jobs " + jobID)
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
 	}()
 
 	require.Error(t, tk.ExecToErr("alter table t add index idx(a);"))
@@ -252,15 +252,15 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 		tk1.MustExec("admin pause ddl jobs " + jobID)
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish", "3*return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDMLExecutionOnPausedState", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "3*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState", "return(true)"))
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
 	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustExec("admin check table t;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/mockDMLExecutionOnPausedState"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState"))
 
 	// dist task succeed, job paused and resumed.
 	var hook = &callback.TestDDLCallback{Do: dom}
@@ -274,9 +274,9 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	}
 	hook.OnJobUpdatedExported.Store(&resumeFunc)
 	dom.DDL().SetHook(hook.Clone())
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/pauseAfterDistTaskSuccess", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskSuccess", "1*return(true)"))
 	tk.MustExec("alter table t add index idx3(a);")
 	tk.MustExec("admin check table t;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/pauseAfterDistTaskSuccess"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskSuccess"))
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }

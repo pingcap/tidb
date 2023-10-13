@@ -19,8 +19,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // IngestIndexInfo records the information used to generate index drop/re-add SQL.

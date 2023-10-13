@@ -22,19 +22,19 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/copr"
-	"github.com/pingcap/tidb/ddl/ingest"
-	"github.com/pingcap/tidb/disttask/operator"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/ddl/copr"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/tests/realtikvtest"
-	"github.com/pingcap/tidb/util/chunk"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
 )
@@ -214,27 +214,27 @@ func TestBackfillOperatorPipelineException(t *testing.T) {
 		operatorErrMsg string
 	}{
 		{
-			failPointPath:  "github.com/pingcap/tidb/ddl/mockScanRecordError",
+			failPointPath:  "github.com/pingcap/tidb/pkg/ddl/mockScanRecordError",
 			closeErrMsg:    "context canceled",
 			operatorErrMsg: "mock scan record error",
 		},
 		{
-			failPointPath:  "github.com/pingcap/tidb/ddl/scanRecordExec",
+			failPointPath:  "github.com/pingcap/tidb/pkg/ddl/scanRecordExec",
 			closeErrMsg:    "context canceled",
 			operatorErrMsg: "",
 		},
 		{
-			failPointPath:  "github.com/pingcap/tidb/ddl/mockWriteLocalError",
+			failPointPath:  "github.com/pingcap/tidb/pkg/ddl/mockWriteLocalError",
 			closeErrMsg:    "context canceled",
 			operatorErrMsg: "mock write local error",
 		},
 		{
-			failPointPath:  "github.com/pingcap/tidb/ddl/writeLocalExec",
+			failPointPath:  "github.com/pingcap/tidb/pkg/ddl/writeLocalExec",
 			closeErrMsg:    "context canceled",
 			operatorErrMsg: "",
 		},
 		{
-			failPointPath:  "github.com/pingcap/tidb/ddl/mockFlushError",
+			failPointPath:  "github.com/pingcap/tidb/pkg/ddl/mockFlushError",
 			closeErrMsg:    "mock flush error",
 			operatorErrMsg: "mock flush error",
 		},

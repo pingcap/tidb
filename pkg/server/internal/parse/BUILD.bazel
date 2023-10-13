@@ -1,0 +1,45 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "parse",
+    srcs = ["parse.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/internal/parse",
+    visibility = ["//pkg/server:__subpackages__"],
+    deps = [
+        "//pkg/errno",
+        "//pkg/expression",
+        "//pkg/parser/charset",
+        "//pkg/parser/mysql",
+        "//pkg/server/internal/handshake",
+        "//pkg/server/internal/util",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/types",
+        "//pkg/util/dbterror",
+        "//pkg/util/hack",
+        "//pkg/util/logutil",
+        "@com_github_klauspost_compress//zstd",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "parse_test",
+    timeout = "short",
+    srcs = [
+        "handshake_test.go",
+        "parse_test.go",
+    ],
+    embed = [":parse"],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        "//pkg/expression",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/server/internal/handshake",
+        "//pkg/server/internal/util",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)

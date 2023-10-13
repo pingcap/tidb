@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )

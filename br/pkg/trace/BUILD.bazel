@@ -25,7 +25,7 @@ go_test(
     embed = [":trace"],
     flaky = True,
     deps = [
-        "//testkit/testsetup",
+        "//pkg/testkit/testsetup",
         "@com_github_opentracing_opentracing_go//:opentracing-go",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

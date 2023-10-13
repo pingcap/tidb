@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/session/txninfo"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/session/txninfo"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -160,7 +160,7 @@ func TestRunning(t *testing.T) {
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t(a) values (1);")
 	tk.MustExec("begin pessimistic;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockStmtSlow", "return(200)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockStmtSlow", "return(200)"))
 	ch := make(chan struct{})
 	go func() {
 		tk.MustExec("select * from t for update /* sleep */;")
@@ -170,7 +170,7 @@ func TestRunning(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	info := tk.Session().TxnInfo()
 	require.Equal(t, txninfo.TxnRunning, info.State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockStmtSlow"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockStmtSlow"))
 	<-ch
 }
 
@@ -217,13 +217,13 @@ func TestCommitting(t *testing.T) {
 		tk2.MustExec("begin pessimistic")
 		require.NotNil(t, tk2.Session().TxnInfo())
 		tk2.MustExec("select * from t where a = 2 for update;")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockSlowCommit", "pause"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockSlowCommit", "pause"))
 		tk2.MustExec("commit;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
 	require.Equal(t, txninfo.TxnCommitting, tk2.Session().TxnInfo().State)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockSlowCommit"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockSlowCommit"))
 	tk1.MustExec("commit;")
 	<-ch
 }
@@ -239,12 +239,12 @@ func TestRollbackTxnState(t *testing.T) {
 	go func() {
 		tk.MustExec("begin pessimistic")
 		tk.MustExec("insert into t(a) values (3);")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/session/mockSlowRollback", "pause"))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockSlowRollback", "pause"))
 		tk.MustExec("rollback;")
 		ch <- struct{}{}
 	}()
 	time.Sleep(100 * time.Millisecond)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/session/mockSlowRollback"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockSlowRollback"))
 	require.Equal(t, txninfo.TxnRollingBack, tk.Session().TxnInfo().State)
 	<-ch
 }
