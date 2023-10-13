@@ -1264,10 +1264,8 @@ func TestAggPushDownUnionAndMPP(t *testing.T) {
 	tk.MustExec("alter table c set tiflash replica 1")
 	tk.MustExec("alter table o set tiflash replica 1")
 
-	tk.MustQuery("select a, count(*) from (select a, b from t " +
-		"union all " +
-		"select a, b from t" +
-		") t group by a order by a limit 10;").Check(testkit.Rows("1 10"))
+	tk.MustQuery("select a, count(1) from (select a, b from t union all select a, " +
+		"b from t) s group by a order by a").Check(testkit.Rows("1 10"))
 
 	tk.MustQuery("select o.o_id, count(*) from c, o where c.c_id=o.o_id group by o.o_id").Check(testkit.Rows("1 12"))
 }
