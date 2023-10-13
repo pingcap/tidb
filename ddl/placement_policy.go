@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -320,10 +321,14 @@ func checkPlacementPolicyNotInUse(d *ddlCtx, t *meta.Meta, policy *model.PolicyI
 	}
 	is := d.infoCache.GetLatest()
 	if is.SchemaMetaVersion() == currVer {
-		return CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
+		err = CheckPlacementPolicyNotInUseFromInfoSchema(is, policy)
+	} else {
+		err = CheckPlacementPolicyNotInUseFromMeta(t, policy)
 	}
-
-	return CheckPlacementPolicyNotInUseFromMeta(t, policy)
+	if err != nil {
+		return err
+	}
+	return checkPlacementPolicyNotInUseFromRange(policy)
 }
 
 // CheckPlacementPolicyNotInUseFromInfoSchema export for test.
@@ -341,6 +346,31 @@ func CheckPlacementPolicyNotInUseFromInfoSchema(is infoschema.InfoSchema, policy
 		}
 	}
 	return nil
+}
+
+// checkPlacementPolicyNotInUseFromRange checks whether the placement policy is used by the special range.
+func checkPlacementPolicyNotInUseFromRange(policy *model.PolicyInfo) error {
+	checkFn := func(rangeName string) error {
+		bundle, err := infosync.GetRuleBundle(context.TODO(), rangeName)
+		if err != nil {
+			return err
+		}
+		if bundle == nil {
+			return nil
+		}
+		for _, rule := range bundle.Rules {
+			if strings.Contains(rule.ID, policy.Name.L) {
+				return dbterror.ErrPlacementPolicyInUse.GenWithStackByArgs(policy.Name)
+			}
+		}
+		return nil
+	}
+
+	err := checkFn(placement.TiDBBundleRangePrefixForGlobal)
+	if err != nil {
+		return err
+	}
+	return checkFn(placement.TiDBBundleRangePrefixForMeta)
 }
 
 func getPlacementPolicyDependedObjectsIDs(t *meta.Meta, policy *model.PolicyInfo) (dbIDs, partIDs []int64, tblInfos []*model.TableInfo, err error) {

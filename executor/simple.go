@@ -29,8 +29,10 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/distsql"
 	"github.com/pingcap/tidb/domain"
+	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/domain/resourcegroup"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/executor/internal/exec"
@@ -191,6 +193,8 @@ func (e *SimpleExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeAdmin(x)
 	case *ast.SetResourceGroupStmt:
 		err = e.executeSetResourceGroupName(x)
+	case *ast.AlterRangeStmt:
+		err = e.executeAlterRange(x)
 	case *ast.DropQueryWatchStmt:
 		err = e.executeDropQueryWatch(x)
 	}
@@ -2828,4 +2832,34 @@ func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) er
 		e.Ctx().GetSessionVars().ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	}
 	return nil
+}
+
+// executeAlterRange is used to alter range configuration. currently, only config placement policy.
+func (e *SimpleExec) executeAlterRange(s *ast.AlterRangeStmt) error {
+	if s.RangeName.L != placement.KeyRangeGlobal && s.RangeName.L != placement.KeyRangeMeta {
+		return errors.New("range name is not supported")
+	}
+	if s.PlacementOption.Tp != ast.PlacementOptionPolicy {
+		return errors.New("only support alter range policy")
+	}
+	bundle := &placement.Bundle{}
+	policyName := model.NewCIStr(s.PlacementOption.StrValue)
+	if policyName.L != placement.DefaultKwd {
+		policy, ok := e.is.PolicyByName(policyName)
+		if !ok {
+			return infoschema.ErrPlacementPolicyNotExists.GenWithStackByArgs(policyName.O)
+		}
+		tmpBundle, err := placement.NewBundleFromOptions(policy.PlacementSettings)
+		if err != nil {
+			return err
+		}
+		// reset according range
+		bundle = tmpBundle.RebuildForRange(s.RangeName.L, policyName.L)
+	} else {
+		// delete all rules
+		bundle = bundle.RebuildForRange(s.RangeName.L, policyName.L)
+		bundle = &placement.Bundle{ID: bundle.ID}
+	}
+
+	return infosync.PutRuleBundlesWithDefaultRetry(context.Background(), []*placement.Bundle{bundle})
 }

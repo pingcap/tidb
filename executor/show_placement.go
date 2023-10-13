@@ -17,11 +17,14 @@ package executor
 import (
 	"cmp"
 	"context"
+	"encoding/hex"
 	gjson "encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/ddl/placement"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
@@ -247,7 +250,10 @@ func (e *ShowExec) fetchShowPlacement(ctx context.Context) error {
 		return err
 	}
 
-	return e.fetchAllTablePlacements(ctx, scheduled)
+	if err := e.fetchAllTablePlacements(ctx, scheduled); err != nil {
+		return err
+	}
+	return e.fetchRangesPlacementPlocy(ctx)
 }
 
 func (e *ShowExec) fetchAllPlacementPolicies() error {
@@ -260,6 +266,49 @@ func (e *ShowExec) fetchAllPlacementPolicies() error {
 	}
 
 	return nil
+}
+
+func (e *ShowExec) fetchRangesPlacementPlocy(ctx context.Context) error {
+	fetchFn := func(ctx context.Context, rangeName string) error {
+		bundle, err := infosync.GetRuleBundle(ctx, rangeName)
+		if err != nil {
+			return err
+		}
+		if bundle == nil || len(bundle.Rules) == 0 {
+			return nil
+		}
+		policyName := ""
+		startKey := []byte("")
+		endKey := []byte("")
+		rule := bundle.Rules[0]
+		pos := strings.Index(rule.ID, "_rule")
+		if pos > 0 {
+			policyName = rule.ID[:pos]
+		}
+		startKey, err = hex.DecodeString(rule.StartKeyHex)
+		if err != nil {
+			return err
+		}
+		endKey, err = hex.DecodeString(rule.EndKeyHex)
+		if err != nil {
+			return err
+		}
+		state, err := infosync.GetReplicationState(ctx, startKey, endKey)
+		if err != nil {
+			return err
+		}
+		policy, ok := e.is.PolicyByName(model.NewCIStr(policyName))
+		if !ok {
+			return errors.Errorf("Policy with name '%s' not found", policyName)
+		}
+		e.appendRow([]interface{}{"RANGE " + rangeName, policy.PlacementSettings.String(), state.String()})
+		return nil
+	}
+	// try fetch ranges placement policy
+	if err := fetchFn(ctx, placement.TiDBBundleRangePrefixForGlobal); err != nil {
+		return err
+	}
+	return fetchFn(ctx, placement.TiDBBundleRangePrefixForMeta)
 }
 
 func (e *ShowExec) fetchAllDBPlacements(ctx context.Context, scheduleState map[int64]infosync.PlacementScheduleState) error {

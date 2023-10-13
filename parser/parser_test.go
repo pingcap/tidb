@@ -1049,6 +1049,11 @@ AAAAAAAAAAAA5gm5Mg==
 		{"ALTER INSTANCE RELOAD TLS", true, "ALTER INSTANCE RELOAD TLS"},
 		{"ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR", true, "ALTER INSTANCE RELOAD TLS NO ROLLBACK ON ERROR"},
 
+		// for alter range
+		{"ALTER RANGE global PLACEMENT POLICY mypolicy", true, "ALTER RANGE `global` PLACEMENT POLICY = `mypolicy`"},
+		{"ALTER RANGE global PLACEMENT POLICY default", true, "ALTER RANGE `global` PLACEMENT POLICY = `default`"},
+		{"ALTER RANGE meta PLACEMENT POLICY mypolicy", true, "ALTER RANGE `meta` PLACEMENT POLICY = `mypolicy`"},
+
 		// for create sequence with signed value especially with Two's Complement Min.
 		// for issue #17948
 		{"CREATE SEQUENCE seq INCREMENT - 9223372036854775807", true, "CREATE SEQUENCE `seq` INCREMENT BY -9223372036854775807"},
