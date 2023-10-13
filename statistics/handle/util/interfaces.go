@@ -109,7 +109,7 @@ type StatsAnalyze interface {
 	// TODO: HandleAutoAnalyze
 }
 
-// StatsCache is used to manage all table statistics in memory
+// StatsCache is used to manage all table statistics in memory.
 type StatsCache interface {
 	// Close closes this cache.
 	Close()
@@ -144,4 +144,55 @@ type StatsCache interface {
 
 	// Replace replaces this cache.
 	Replace(cache StatsCache)
+}
+
+// StatsLockTable is the table info of which will be locked.
+type StatsLockTable struct {
+	PartitionInfo map[int64]string
+	// schema name + table name.
+	FullName string
+}
+
+// StatsLock is used to manage locked stats.
+type StatsLock interface {
+	// LockTables add locked tables id to store.
+	// - tables: tables that will be locked.
+	// Return the message of skipped tables and error.
+	LockTables(tables map[int64]*StatsLockTable) (skipped string, err error)
+
+	// LockPartitions add locked partitions id to store.
+	// If the whole table is locked, then skip all partitions of the table.
+	// - tid: table id of which will be locked.
+	// - tableName: table name of which will be locked.
+	// - pidNames: partition ids of which will be locked.
+	// Return the message of skipped tables and error.
+	// Note: If the whole table is locked, then skip all partitions of the table.
+	LockPartitions(
+		tid int64,
+		tableName string,
+		pidNames map[int64]string,
+	) (skipped string, err error)
+
+	// RemoveLockedTables remove tables from table locked records.
+	// - tables: tables of which will be unlocked.
+	// Return the message of skipped tables and error.
+	RemoveLockedTables(tables map[int64]*StatsLockTable) (skipped string, err error)
+
+	// RemoveLockedPartitions remove partitions from table locked records.
+	// - tid: table id of which will be unlocked.
+	// - tableName: table name of which will be unlocked.
+	// - pidNames: partition ids of which will be unlocked.
+	// Note: If the whole table is locked, then skip all partitions of the table.
+	RemoveLockedPartitions(
+		tid int64,
+		tableName string,
+		pidNames map[int64]string,
+	) (skipped string, err error)
+
+	// GetLockedTables returns the locked status of the given tables.
+	// Note: This function query locked tables from store, so please try to batch the query.
+	GetLockedTables(tableIDs ...int64) (map[int64]struct{}, error)
+
+	// GetTableLockedAndClearForTest for unit test only.
+	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
 }

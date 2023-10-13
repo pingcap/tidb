@@ -16,6 +16,7 @@ package lockstats
 
 import (
 	"context"
+	"github.com/pingcap/tidb/sessionctx"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/terror"
@@ -27,9 +28,8 @@ const selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
 
 // QueryLockedTables loads locked tables from mysql.stats_table_locked.
 // Return it as a map for fast query.
-func QueryLockedTables(exec sqlexec.RestrictedSQLExecutor) (map[int64]struct{}, error) {
-	ctx := util.StatsCtx(context.Background())
-	rows, _, err := exec.ExecRestrictedSQL(ctx, useCurrentSession, selectSQL)
+func QueryLockedTables(sctx sessionctx.Context) (map[int64]struct{}, error) {
+	rows, _, err := util.ExecRows(sctx, selectSQL)
 	if err != nil {
 		return nil, err
 	}

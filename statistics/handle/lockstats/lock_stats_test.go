@@ -15,11 +15,11 @@
 package lockstats
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/sqlexec/mock"
@@ -150,19 +150,18 @@ func TestGenerateSkippedPartitionsMessage(t *testing.T) {
 }
 
 func TestInsertIntoStatsTableLocked(t *testing.T) {
-	ctx := context.Background()
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
 
 	// Executed SQL should be:
 	exec.EXPECT().ExecRestrictedSQL(
-		gomock.Eq(ctx),
-		useCurrentSession,
+		util.StatsCtx,
+		util.UseCurrentSessionOpt,
 		gomock.Eq(insertSQL),
 		gomock.Eq([]interface{}{int64(1), int64(1)}),
 	)
-	err := insertIntoStatsTableLocked(ctx, exec, 1)
+	err := insertIntoStatsTableLocked(wrapAsSCtx(exec), 1)
 	require.NoError(t, err)
 
 	// Error should be returned when ExecRestrictedSQL returns error.
@@ -173,7 +172,7 @@ func TestInsertIntoStatsTableLocked(t *testing.T) {
 		gomock.Any(),
 	).Return(nil, nil, errors.New("test error"))
 
-	err = insertIntoStatsTableLocked(ctx, exec, 1)
+	err = insertIntoStatsTableLocked(wrapAsSCtx(exec), 1)
 	require.Equal(t, "test error", err.Error())
 }
 
@@ -182,49 +181,37 @@ func TestAddLockedTables(t *testing.T) {
 	defer ctrl.Finish()
 	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
 
-	// Executed SQL should be:
-	exec.EXPECT().ExecRestrictedSQL(
-		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
-		gomock.Eq("BEGIN PESSIMISTIC"),
-	)
 	// Return table 1 is locked.
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
 	c.AppendInt64(0, int64(1))
 	rows := []chunk.Row{c.GetRow(0)}
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		selectSQL,
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(2), int64(2)}),
 	)
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(3), int64(3)}),
 	)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(4), int64(4)}),
 	)
 
-	exec.EXPECT().ExecRestrictedSQL(
-		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
-		"COMMIT",
-	)
-
-	tables := map[int64]*TableInfo{
+	tables := map[int64]*util.StatsLockTable{
 		1: {
 			FullName: "test.t1",
 			PartitionInfo: map[int64]string{
@@ -240,7 +227,7 @@ func TestAddLockedTables(t *testing.T) {
 	}
 
 	msg, err := AddLockedTables(
-		exec,
+		wrapAsSCtx(exec),
 		tables,
 	)
 	require.NoError(t, err)
@@ -252,41 +239,28 @@ func TestAddLockedPartitions(t *testing.T) {
 	defer ctrl.Finish()
 	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
 
-	// Executed SQL should be:
-	exec.EXPECT().ExecRestrictedSQL(
-		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
-		gomock.Eq("BEGIN PESSIMISTIC"),
-	)
-
 	// No table is locked.
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		selectSQL,
 	).Return(nil, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(2), int64(2)}),
 	)
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		insertSQL,
 		gomock.Eq([]interface{}{int64(3), int64(3)}),
 	)
 
-	exec.EXPECT().ExecRestrictedSQL(
-		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
-		"COMMIT",
-	)
-
 	msg, err := AddLockedPartitions(
-		exec,
+		wrapAsSCtx(exec),
 		1,
 		"test.t1",
 		map[int64]string{
@@ -303,31 +277,18 @@ func TestAddLockedPartitionsFailed(t *testing.T) {
 	defer ctrl.Finish()
 	exec := mock.NewMockRestrictedSQLExecutor(ctrl)
 
-	// Executed SQL should be:
-	exec.EXPECT().ExecRestrictedSQL(
-		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
-		gomock.Eq("BEGIN PESSIMISTIC"),
-	)
-
 	// Return table 1 is locked.
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1)
 	c.AppendInt64(0, int64(1))
 	rows := []chunk.Row{c.GetRow(0)}
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
+		util.UseCurrentSessionOpt,
 		selectSQL,
 	).Return(rows, nil, nil)
 
-	exec.EXPECT().ExecRestrictedSQL(
-		gomock.All(&ctxMatcher{}),
-		useCurrentSession,
-		"COMMIT",
-	)
-
 	msg, err := AddLockedPartitions(
-		exec,
+		wrapAsSCtx(exec),
 		1,
 		"test.t1",
 		map[int64]string{

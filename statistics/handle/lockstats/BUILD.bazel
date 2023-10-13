@@ -11,6 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//parser/terror",
+        "//sessionctx",
         "//statistics/handle/cache",
         "//statistics/handle/util",
         "//util/logutil",
@@ -34,8 +35,11 @@ go_test(
     deps = [
         "//kv",
         "//parser/mysql",
+        "//sessionctx",
+        "//statistics/handle/util",
         "//types",
         "//util/chunk",
+        "//util/mock",
         "//util/sqlexec/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
