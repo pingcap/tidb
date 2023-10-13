@@ -1374,6 +1374,7 @@ func (cc *clientConn) flush(ctx context.Context) error {
 	var (
 		stmtDetail *execdetails.StmtExecDetails
 		startTime  time.Time
+		region     = trace.StartRegion(ctx, "FlushClientConn")
 	)
 	if stmtDetailRaw := ctx.Value(execdetails.StmtExecDetailKey); stmtDetailRaw != nil {
 		//nolint:forcetypeassert
@@ -1384,7 +1385,6 @@ func (cc *clientConn) flush(ctx context.Context) error {
 		if stmtDetail != nil {
 			stmtDetail.WriteSQLRespDuration += time.Since(startTime)
 		}
-		trace.StartRegion(ctx, "FlushClientConn").End()
 		if ctx := cc.getCtx(); ctx != nil && ctx.WarningCount() > 0 {
 			for _, err := range ctx.GetWarnings() {
 				var warn *errors.Error
@@ -1394,6 +1394,7 @@ func (cc *clientConn) flush(ctx context.Context) error {
 				}
 			}
 		}
+		region.End()
 	}()
 	failpoint.Inject("FakeClientConn", func() {
 		if cc.pkt == nil {
@@ -2231,6 +2232,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			return firstNext, err
 		}
 		if !gotColumnInfo {
+			reg := trace.StartRegion(ctx, "WriteColumnInfo")
 			// We need to call Next before we get columns.
 			// Otherwise, we will get incorrect columns info.
 			columns := rs.Columns()
@@ -2238,11 +2240,13 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 				start = time.Now()
 			}
 			if err = cc.writeColumnInfo(columns); err != nil {
+				reg.End()
 				return false, err
 			}
 			if cc.capability&mysql.ClientDeprecateEOF == 0 {
 				// metadata only needs EOF marker for old clients without ClientDeprecateEOF
 				if err = cc.writeEOF(ctx, serverStatus); err != nil {
+					reg.End()
 					return false, err
 				}
 			}
@@ -2250,6 +2254,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 				stmtDetail.WriteSQLRespDuration += time.Since(start)
 			}
 			gotColumnInfo = true
+			reg.End()
 		}
 		rowCount := req.NumRows()
 		if rowCount == 0 {
