@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
+// Sizer is the interface for table that implements the Get/Set size operation.
 type Sizer interface {
 	GetSize() int64
 	SetSize(int64)
