@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
+	"github.com/pingcap/tidb/util/tableutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -240,8 +241,24 @@ func (c *cachedTable) updateLockForRead(ctx context.Context, handle StateRemote,
 
 const cachedTableSizeLimit = 64 * (1 << 20)
 
+// cachedTable implements tableutil.Sizer interface.
+var _ tableutil.Sizer = &cachedTable{}
+
+func (c *cachedTable) GetSize() int64 {
+	return c.totalSize
+}
+func (c *cachedTable) SetSize(val int64) {
+	c.totalSize = val
+}
+
 // AddRecord implements the AddRecord method for the table.Table interface.
 func (c *cachedTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return nil, err
+	}
+	defer handleTableSizeDelta(c, txn.Size(), txn)
+
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return nil, table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")
 	}
@@ -261,6 +278,12 @@ func txnCtxAddCachedTable(sctx sessionctx.Context, tid int64, handle *cachedTabl
 
 // UpdateRecord implements table.Table
 func (c *cachedTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return err
+	}
+	defer handleTableSizeDelta(c, txn.Size(), txn)
+
 	// Prevent furthur writing when the table is already too large.
 	if atomic.LoadInt64(&c.totalSize) > cachedTableSizeLimit {
 		return table.ErrOptOnCacheTable.GenWithStackByArgs("table too large")

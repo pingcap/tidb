@@ -118,3 +118,34 @@ select * from cache_add_column use index(k) where f1 = 1;
 alter table cache_add_column nocache;
 drop table cache_add_column;
 
+# TestInsertTableTooLargeErr
+drop table if exists t,t2;
+# -- create a table first to provide the data
+create table t (pad varchar(200));
+insert into t values (repeat('x', 200));
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+# -- create a cached table
+create table t2 like t;
+alter table t2 cache;
+# -- fill data and check the error
+insert into t2 select * from t;
+insert into t2 select * from t;
+insert into t2 select * from t;
+insert into t2 select * from t;
+--error table too large
+insert into t2 select * from t;

@@ -437,7 +437,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
 				return err
 			}
-			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+			defer handleTableSizeDelta(tmpTable, txn.Size(), txn)
 		}
 	}
 
@@ -779,8 +779,8 @@ func addTemporaryTable(sctx sessionctx.Context, tblInfo *model.TableInfo) tableu
 	return tempTable
 }
 
-// The size of a temporary table is calculated by accumulating the transaction size delta.
-func handleTempTableSize(t tableutil.TempTable, txnSizeBefore int, txn kv.Transaction) {
+// The size of a table is calculated by accumulating the transaction size delta.
+func handleTableSizeDelta(t tableutil.Sizer, txnSizeBefore int, txn kv.Transaction) {
 	txnSizeNow := txn.Size()
 	delta := txnSizeNow - txnSizeBefore
 
@@ -819,7 +819,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			if err := checkTempTableSize(sctx, tmpTable, m); err != nil {
 				return nil, err
 			}
-			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+			defer handleTableSizeDelta(tmpTable, txn.Size(), txn)
 		}
 	}
 
@@ -1313,7 +1313,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 			if err := checkTempTableSize(ctx, tmpTable, m); err != nil {
 				return err
 			}
-			defer handleTempTableSize(tmpTable, txn.Size(), txn)
+			defer handleTableSizeDelta(tmpTable, txn.Size(), txn)
 		}
 	}
 

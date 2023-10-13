@@ -19,6 +19,11 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 )
 
+type Sizer interface {
+	GetSize() int64
+	SetSize(int64)
+}
+
 // TempTable is used to store transaction-specific or session-specific information for global / local temporary tables.
 // For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
 type TempTable interface {
@@ -35,8 +40,7 @@ type TempTable interface {
 	// Define the return type as interface{} here to avoid cycle imports.
 	GetStats() interface{}
 
-	GetSize() int64
-	SetSize(int64)
+	Sizer
 
 	GetMeta() *model.TableInfo
 }
