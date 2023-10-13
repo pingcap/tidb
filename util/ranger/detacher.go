@@ -747,10 +747,18 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 			newAccessItems = append(newAccessItems, expression.ComposeCNFCondition(d.sctx, accesses...))
 			if res.ColumnValues != nil {
 				if i == 0 {
-					columnValues = res.ColumnValues
+					for j := range columnValues {
+						if j >= len(res.ColumnValues) {
+							break
+						}
+						columnValues[j] = res.ColumnValues[j]
+					}
 				} else {
 					// take the intersection of the two columnValues
 					for j, valInfo := range columnValues {
+						if j >= len(res.ColumnValues) {
+							break
+						}
 						if valInfo == nil {
 							continue
 						}
