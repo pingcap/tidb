@@ -36,6 +36,7 @@ go_library(
         "//parser/terror",
         "//planner/core",
         "//sessionctx",
+        "//sessionctx/stmtctx",
         "//sessionctx/variable",
         "//table",
         "//table/tables",

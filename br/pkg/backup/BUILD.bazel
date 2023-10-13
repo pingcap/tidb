@@ -25,6 +25,7 @@ go_library(
         "//br/pkg/storage",
         "//br/pkg/summary",
         "//br/pkg/utils",
+        "//br/pkg/version",
         "//ddl",
         "//distsql",
         "//kv",

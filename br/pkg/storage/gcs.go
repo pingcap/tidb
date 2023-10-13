@@ -296,6 +296,9 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	if gcs.Endpoint != "" {
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
+	// the HTTPClient should has credential, currently the HTTPClient only has the http.Transport.
+	// So we remove the HTTPClient in the storage.New().
+	// Issue: https: //github.com/pingcap/tidb/issues/47022
 	if opts.HTTPClient != nil {
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
