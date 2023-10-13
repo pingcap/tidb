@@ -133,7 +133,7 @@ func globalVarsCount() int64 {
 // We should make sure that the following session could finish the bootstrap process.
 func TestBootstrapWithError(t *testing.T) {
 	ctx := context.Background()
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
@@ -777,7 +777,7 @@ func TestAnalyzeVersionUpgradeFrom300To500(t *testing.T) {
 }
 
 func TestIndexMergeInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
@@ -1091,7 +1091,7 @@ func TestTiDBOptAdvancedJoinHintWhenUpgrading(t *testing.T) {
 }
 
 func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
@@ -1117,7 +1117,7 @@ func TestTiDBOptAdvancedJoinHintInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelInNewCluster(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	// Indicates we are in a new cluster.
 	require.Equal(t, int64(notBootstrapped), getStoreBootstrapVersion(store))
