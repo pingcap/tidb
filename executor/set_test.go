@@ -297,10 +297,15 @@ func TestSetVar(t *testing.T) {
 
 	tk.MustExec("set tidb_build_stats_concurrency = 42")
 	tk.MustQuery(`select @@tidb_build_stats_concurrency;`).Check(testkit.Rows("42"))
+	tk.MustExec("set tidb_build_sampling_stats_concurrency = 42")
+	tk.MustQuery(`select @@tidb_build_sampling_stats_concurrency;`).Check(testkit.Rows("42"))
+	require.Error(t, tk.ExecToErr("set tidb_build_sampling_stats_concurrency = 'abc'"))
 	require.Error(t, tk.ExecToErr("set tidb_build_stats_concurrency = 'abc'"))
 	tk.MustQuery(`select @@tidb_build_stats_concurrency;`).Check(testkit.Rows("42"))
 	tk.MustExec("set tidb_build_stats_concurrency = 257")
 	tk.MustQuery(`select @@tidb_build_stats_concurrency;`).Check(testkit.Rows(strconv.Itoa(variable.MaxConfigurableConcurrency)))
+	tk.MustExec("set tidb_build_sampling_stats_concurrency = 257")
+	tk.MustQuery(`select @@tidb_build_sampling_stats_concurrency;`).Check(testkit.Rows(strconv.Itoa(variable.MaxConfigurableConcurrency)))
 
 	tk.MustExec(`set tidb_partition_prune_mode = "static"`)
 	tk.MustQuery(`select @@tidb_partition_prune_mode;`).Check(testkit.Rows("static"))
