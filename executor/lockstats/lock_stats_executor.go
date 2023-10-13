@@ -17,7 +17,6 @@ package lockstats
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/statistics/handle/util"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/domain"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/statistics/handle/util"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util/chunk"
 )

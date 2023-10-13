@@ -16,7 +16,6 @@ package handle
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	"math"
 	"time"
 
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/statistics/handle/extstats"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/history"
+	"github.com/pingcap/tidb/statistics/handle/lockstats"
 	handle_metrics "github.com/pingcap/tidb/statistics/handle/metrics"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/statistics/handle/usage"

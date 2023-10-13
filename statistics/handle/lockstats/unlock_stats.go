@@ -15,9 +15,8 @@
 package lockstats
 
 import (
-	"github.com/pingcap/tidb/sessionctx"
-
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/statistics/handle/cache"
 	"github.com/pingcap/tidb/statistics/handle/util"
 	"go.uber.org/zap"
