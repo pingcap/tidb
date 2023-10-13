@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -280,7 +279,7 @@ func TestUnlockPartitionedTableWouldUpdateGlobalCountCorrectly(t *testing.T) {
 	require.Equal(t, int64(0), tblStats.RealtimeCount)
 
 	// Dump stats delta to KV.
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	// Check the mysql.stats_table_locked is updated correctly.
 	rows := tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
 	require.Len(t, rows, 3)
@@ -312,7 +311,7 @@ func TestDeltaInLockInfoCanBeNegative(t *testing.T) {
 	tk.MustExec("insert into t(a, b) values(1,'a')")
 	tk.MustExec("insert into t(a, b) values(2,'b')")
 	// Dump stats delta to KV.
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	rows := tk.MustQuery(fmt.Sprint("select count, modify_count from mysql.stats_meta where table_id = ", tbl.ID)).Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "2", rows[0][0])
@@ -324,7 +323,7 @@ func TestDeltaInLockInfoCanBeNegative(t *testing.T) {
 	tk.MustExec("delete from t where a = 2")
 
 	// Dump stats delta to KV.
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	// Check the mysql.stats_table_locked is updated correctly.
 	rows = tk.MustQuery("select count, modify_count, table_id from mysql.stats_table_locked order by table_id").Rows()
 	require.Len(t, rows, 3)

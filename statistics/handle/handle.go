@@ -82,9 +82,6 @@ type Handle struct {
 	// It is sent only by owner or the drop stats executor, and read by stats handle.
 	ddlEventCh chan *ddlUtil.Event
 
-	// SessionStatsList contains all the stats collector required by session.
-	*usage.SessionStatsList
-
 	// StatsCache ...
 	util.StatsCache
 
@@ -117,13 +114,11 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 	handle := &Handle{
 		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
-		SessionStatsList:        usage.NewSessionStatsList(),
 		pool:                    pool,
 		sysProcTracker:          tracker,
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
 		InitStatsDone:           make(chan struct{}),
 		TableInfoGetter:         util.NewTableInfoGetter(),
-		StatsUsage:              usage.NewStatsUsageImpl(pool),
 		StatsAnalyze:            autoanalyze.NewStatsAnalyze(pool),
 	}
 	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
@@ -136,6 +131,8 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 	}
 	handle.StatsCache = statsCache
 	handle.StatsHistory = history.NewStatsHistory(pool, handle.StatsCache)
+	handle.StatsUsage = usage.NewStatsUsageImpl(pool, handle.TableInfoGetter, handle.StatsCache,
+		handle.StatsHistory, handle.GetLockedTables, handle.GetPartitionStats)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -277,11 +274,13 @@ func (h *Handle) mergePartitionStats2GlobalStats(
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+// TODO: remove GetTableStats later on.
 func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
 // GetPartitionStats retrieves the partition stats from cache.
+// TODO: remove GetPartitionStats later on.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
@@ -318,7 +317,7 @@ func (h *Handle) FlushStats() {
 			logutil.BgLogger().Error("handle ddl event fail", zap.String("category", "stats"), zap.Error(err))
 		}
 	}
-	if err := h.DumpStatsDeltaToKV(DumpAll); err != nil {
+	if err := h.DumpStatsDeltaToKV(true); err != nil {
 		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
 	}
 }

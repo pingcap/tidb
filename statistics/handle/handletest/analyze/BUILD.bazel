@@ -14,7 +14,6 @@ go_test(
         "//domain",
         "//parser/model",
         "//sessionctx/variable",
-        "//statistics/handle",
         "//testkit",
         "//testkit/testsetup",
         "@com_github_stretchr_testify//require",

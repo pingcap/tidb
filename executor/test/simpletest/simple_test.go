@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
@@ -987,7 +986,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into test_drop_gstats values (1), (5), (11), (15), (21), (25)")
-	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
 	checkPartitionStats := func(names ...string) {
 		rs := tk.MustQuery("show stats_meta").Rows()
