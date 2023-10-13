@@ -71,6 +71,7 @@ go_library(
     deps = [
         "//config",
         "//errno",
+        "//expression/internal",
         "//extension",
         "//kv",
         "//parser",

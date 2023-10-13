@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "internal",
+    srcs = ["base.go"],
+    importpath = "github.com/pingcap/tidb/expression/internal",
+    visibility = ["//expression:__subpackages__"],
+    deps = [
+        "//sessionctx",
+        "//util/chunk",
+    ],
+)
