@@ -490,7 +490,10 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 		req.AppendNull(10)
 	}
 	req.AppendString(11, job.State.String())
-	req.AppendString(12, job.TimeDetail)
+	if checker == nil {
+		// nil checker means this function is called by `admin show ddl jobs`.
+		req.AppendString(12, job.TimeDetail)
+	}
 	if job.Type == model.ActionMultiSchemaChange {
 		for _, subJob := range job.MultiSchemaInfo.SubJobs {
 			req.AppendInt64(0, job.ID)
