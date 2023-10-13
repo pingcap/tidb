@@ -89,9 +89,12 @@ const (
 )
 
 type (
+	// TaskState is the state of task.
 	TaskState string
-	TaskType  string
-	Step      int64
+	// TaskType is the type of task.
+	TaskType string
+	// Step is the step of task.
+	Step int64
 )
 
 func (t TaskType) String() string {
