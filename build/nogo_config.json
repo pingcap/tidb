@@ -1266,6 +1266,14 @@
       "external/": "no need to vet third party code"
     }
   },
+  "constructor": {
+    "exclude_files": {
+      "parser/parser.go": "parser/parser.go code",
+      ".*_generated\\.go$": "ignore generated code",
+      "external/": "no need to vet third party code",
+      "build/linter/constructor/testdata/": "no need to vet the test inside the linter"
+    }
+  },
   "deferrecover": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
