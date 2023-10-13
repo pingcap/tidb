@@ -10,7 +10,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/statistics/handle/lockstats",
     visibility = ["//visibility:public"],
     deps = [
-        "//parser/terror",
         "//sessionctx",
         "//statistics/handle/cache",
         "//statistics/handle/util",
