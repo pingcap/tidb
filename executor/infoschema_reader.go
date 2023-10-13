@@ -560,6 +560,9 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 				if table.HasClusteredIndex() {
 					pkType = "CLUSTERED"
 				}
+				if table.IsGlobalTempTable() {
+					tableType = "GLOBAL TEMPORARY"
+				}
 				shardingInfo := infoschema.GetShardingInfo(schema, table)
 				var policyName interface{}
 				if table.PlacementPolicyRef != nil {
