@@ -970,14 +970,10 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 	colsInfo []*model.ColumnInfo) []*model.ColumnInfo {
 	copyColumn := make([]*model.ColumnInfo, len(columns))
 	copy(copyColumn, columns)
-	var extraColumn *expression.Column
-	var extraColumnModel *model.ColumnInfo
-	if schema.Columns[len(schema.Columns)-1].ID == model.ExtraHandleID {
-		extraColumn = schema.Columns[len(schema.Columns)-1]
-		extraColumnModel = copyColumn[len(copyColumn)-1]
-		schema.Columns = schema.Columns[:len(schema.Columns)-1]
-		copyColumn = copyColumn[:len(copyColumn)-1]
-	}
+	extraColumn, _ := schema.GetExtraHandleColumn()
+	schema.Columns = expression.CleanExtraColumns(schema.Columns)
+	extraColumnModel, _ := expression.GetExtraHandleColumnInfo(copyColumn)
+	copyColumn = expression.CleanExtraColumnInfos(copyColumn)
 	schemaColumns := schema.Columns
 	for _, col := range schemaColumns {
 		if col.VirtualExpr == nil {

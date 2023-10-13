@@ -19,6 +19,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/util/mathutil"
 	"github.com/pingcap/tidb/util/size"
 )
 
@@ -239,14 +240,66 @@ func (s *Schema) MemoryUsage() (sum int64) {
 }
 
 // GetExtraHandleColumn gets the extra handle column.
-func (s *Schema) GetExtraHandleColumn() *Column {
+func (s *Schema) GetExtraHandleColumn() (col *Column, offset int) {
 	columnLen := len(s.Columns)
-	if columnLen > 0 && s.Columns[columnLen-1].ID == model.ExtraHandleID {
-		return s.Columns[columnLen-1]
-	} else if columnLen > 1 && s.Columns[columnLen-2].ID == model.ExtraHandleID {
-		return s.Columns[columnLen-2]
+	getExtraHandle(columnLen, func(i int) int64 { return s.Columns[i].ID })
+	return nil, -1
+}
+
+// GetExtraHandleColumnInfo gets the extra handle columnInfo.
+func GetExtraHandleColumnInfo(columns []*model.ColumnInfo) (col *model.ColumnInfo, offset int) {
+	columnLen := len(columns)
+	getExtraHandle(columnLen, func(i int) int64 { return columns[i].ID })
+	return nil, -1
+}
+
+func getExtraHandle(columnLen int, getIDByIdx func(i int) int64) (bool, int) {
+	if columnLen > 0 {
+		for i := columnLen - 1; i >= mathutil.Max(0, columnLen-len(model.ExtraIDs)); i-- {
+			if getIDByIdx(i) == model.ExtraHandleID {
+				return true, i
+			}
+		}
 	}
-	return nil
+	return false, -1
+}
+
+// CleanExtraColumns removes extra columns from list.
+func CleanExtraColumns(originCols []*Column) []*Column {
+	columnLen := len(originCols)
+	if columnLen == 0 {
+		return originCols
+	}
+	idx := cleanExtraHandle(columnLen, func(i int) int64 { return originCols[i].ID })
+	return originCols[:idx]
+}
+
+// CleanExtraColumnInfos removes extra columns from list.
+func CleanExtraColumnInfos(originCols []*model.ColumnInfo) []*model.ColumnInfo {
+	columnLen := len(originCols)
+	if columnLen == 0 {
+		return originCols
+	}
+	idx := cleanExtraHandle(columnLen, func(i int) int64 { return originCols[i].ID })
+	return originCols[:idx]
+}
+
+func cleanExtraHandle(columnLen int, getIDByIdx func(i int) int64) int {
+	for idx := columnLen - 1; idx >= mathutil.Max(0, columnLen-len(model.ExtraIDs)); idx-- {
+		if !isExtraColumn(getIDByIdx(idx)) {
+			return idx + 1
+		}
+	}
+	return 0
+}
+
+func isExtraColumn(colID int64) bool {
+	for _, extraID := range model.ExtraIDs {
+		if colID == extraID {
+			return true
+		}
+	}
+	return false
 }
 
 // MergeSchema will merge two schema into one schema. We shouldn't need to consider unique keys.

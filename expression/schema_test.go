@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,4 +154,54 @@ func TestGetUsedList(t *testing.T) {
 
 	used := GetUsedList(usedCols, schema)
 	require.Equal(t, []bool{false, true, false, true, false}, used)
+}
+
+func TestGetExtraHandleColumn(t *testing.T) {
+	s := &schemaGenerator{}
+	schema := s.generateSchema(0)
+	extraHandleCol, _ := schema.GetExtraHandleColumn()
+	require.Nil(t, extraHandleCol)
+
+	col := &Column{
+		UniqueID: 100,
+	}
+	schema.Append(col)
+	extraHandleCol, _ = schema.GetExtraHandleColumn()
+	require.Nil(t, extraHandleCol)
+
+	extraCol := &Column{
+		UniqueID: 200,
+		ID:       model.ExtraHandleID,
+	}
+	schema.Append(extraCol)
+	extraHandleCol, _ = schema.GetExtraHandleColumn()
+	require.Equal(t, extraCol.ID, extraHandleCol.ID)
+}
+
+func TestCleanExtraColumns(t *testing.T) {
+	columns := make([]*Column, 0)
+	columns = CleanExtraColumns(columns)
+	require.Equal(t, 0, len(columns))
+
+	extraCol := &Column{
+		UniqueID: 100,
+		ID:       model.ExtraHandleID,
+	}
+	columns = append(columns, extraCol)
+	require.Equal(t, 1, len(columns))
+	columns = CleanExtraColumns(columns)
+	require.Equal(t, 0, len(columns))
+
+	col := &Column{
+		UniqueID: 200,
+	}
+	columns = append(columns, col)
+	columns = CleanExtraColumns(columns)
+	require.Equal(t, 1, len(columns))
+
+	columns = append(columns, extraCol)
+	require.Equal(t, 2, len(columns))
+	columns = CleanExtraColumns(columns)
+	require.Equal(t, 1, len(columns))
+	require.Equal(t, col.ID, columns[0].ID)
 }

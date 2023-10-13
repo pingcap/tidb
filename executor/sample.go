@@ -265,14 +265,17 @@ func (s *tableRegionSampler) buildSampleColAndDecodeColMap() ([]*table.Column, m
 		}
 	}
 	// Schema columns contain _tidb_rowid, append extra handle column info.
-	if len(cols) < len(schemaCols) && schemaCols[len(schemaCols)-1].ID == model.ExtraHandleID {
-		extraHandle := model.NewExtraHandleColInfo()
-		extraHandle.Offset = len(cols)
-		tableCol := &table.Column{ColumnInfo: extraHandle}
-		colMap[model.ExtraHandleID] = decoder.Column{
-			Col: tableCol,
+	if len(cols) < len(schemaCols) {
+		extraHandleCol, _ := s.schema.GetExtraHandleColumn()
+		if extraHandleCol != nil {
+			extraHandle := model.NewExtraHandleColInfo()
+			extraHandle.Offset = len(cols)
+			tableCol := &table.Column{ColumnInfo: extraHandle}
+			colMap[model.ExtraHandleID] = decoder.Column{
+				Col: tableCol,
+			}
+			cols = append(cols, tableCol)
 		}
-		cols = append(cols, tableCol)
 	}
 	return cols, colMap, nil
 }

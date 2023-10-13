@@ -1741,7 +1741,7 @@ func (ds *DataSource) deriveTablePathStats(path *util.AccessPath, conds []expres
 			pkCol = expression.ColInfo2Col(ds.schema.Columns, pkColInfo)
 		}
 	} else {
-		pkCol = ds.schema.GetExtraHandleColumn()
+		pkCol, _ = ds.schema.GetExtraHandleColumn()
 	}
 	if pkCol == nil {
 		path.Ranges = ranger.FullIntRange(isUnsigned)

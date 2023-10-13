@@ -404,9 +404,7 @@ func prepareV2AnalyzeJobInfo(e *AnalyzeColumnsExec, retry bool) {
 		b.WriteString("auto ")
 	}
 	b.WriteString("analyze table")
-	if len(cols) > 0 && cols[len(cols)-1].ID == model.ExtraHandleID {
-		cols = cols[:len(cols)-1]
-	}
+	cols = expression.CleanExtraColumnInfos(cols)
 	if len(cols) < len(e.tableInfo.Columns) {
 		b.WriteString(" columns ")
 		for i, col := range cols {
