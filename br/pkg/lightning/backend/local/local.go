@@ -19,6 +19,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"github.com/pingcap/tidb/metrics"
 	"io"
 	"math"
 	"net"
@@ -1333,7 +1334,9 @@ func (local *Backend) startWorker(
 				return nil
 			}
 
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := local.executeJob(ctx, job)
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 			switch job.stage {
 			case regionScanned, wrote, ingested:
 				jobOutCh <- job

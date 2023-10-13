@@ -272,6 +272,9 @@ func RegisterMetrics() {
 
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)
+	prometheus.MustRegister(GlobalSortReadFromCloudStorageRate)
+	prometheus.MustRegister(GlobalSortIngestWorkerCnt)
 	prometheus.MustRegister(AddIndexScanRate)
 
 	tikvmetrics.InitMetrics(TiDB, TiKVClient)
