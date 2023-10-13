@@ -89,13 +89,11 @@ import (
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 	pd "github.com/tikv/pd/client"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
+	"go.etcd.io/etcd/api/v3/v3rpc/rpctypes"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/backoff"
-	"google.golang.org/grpc/keepalive"
 )
 
 var (
@@ -1081,29 +1079,235 @@ func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duratio
 
 const serverIDForStandalone = 1 // serverID for standalone deployment.
 
+// TODO: fix other etcd client to use this function and move it to util.
+
+const (
+	DefaultRequestTimeout = 5 * time.Second
+)
+
+// IsHealthy checks if the etcd is healthy.
+func IsHealthy(ctx context.Context, client *clientv3.Client) bool {
+	timeout := DefaultRequestTimeout
+	failpoint.Inject("fastTick", func() {
+		timeout = 100 * time.Millisecond
+	})
+	ctx, cancel := context.WithTimeout(clientv3.WithRequireLeader(ctx), timeout)
+	defer cancel()
+	_, err := client.Get(ctx, "health")
+	// permission denied is OK since proposal goes through consensus to get it
+	// See: https://github.com/etcd-io/etcd/blob/85b640cee793e25f3837c47200089d14a8392dc7/etcdctl/ctlv3/command/ep_command.go#L124
+	return err == nil || err == rpctypes.ErrPermissionDenied
+}
+
+const (
+	// etcdServerOfflineTimeout is the timeout for an unhealthy etcd endpoint to be offline from healthy checker.
+	etcdServerOfflineTimeout = 30 * time.Minute
+	// etcdServerDisconnectedTimeout is the timeout for an unhealthy etcd endpoint to be disconnected from healthy checker.
+	etcdServerDisconnectedTimeout = 1 * time.Minute
+)
+
+// newEtcdCli creates etcd v3 client with detecting endpoints.
 func newEtcdCli(addrs []string, ebd kv.EtcdBackend) (*clientv3.Client, error) {
 	cfg := config.GetGlobalConfig()
 	etcdLogCfg := zap.NewProductionConfig()
 	etcdLogCfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
-	backoffCfg := backoff.DefaultConfig
-	backoffCfg.MaxDelay = 3 * time.Second
-	cli, err := clientv3.New(clientv3.Config{
-		LogConfig:        &etcdLogCfg,
-		Endpoints:        addrs,
-		AutoSyncInterval: 30 * time.Second,
-		DialTimeout:      5 * time.Second,
-		DialOptions: []grpc.DialOption{
-			grpc.WithConnectParams(grpc.ConnectParams{
-				Backoff: backoffCfg,
-			}),
-			grpc.WithKeepaliveParams(keepalive.ClientParameters{
-				Time:    time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second,
-				Timeout: time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second,
-			}),
-		},
-		TLS: ebd.TLSConfig(),
+	defaultDialKeepAliveTime := time.Duration(cfg.TiKVClient.GrpcKeepAliveTime) * time.Second
+	defaultDialKeepAliveTimeout := time.Duration(cfg.TiKVClient.GrpcKeepAliveTimeout) * time.Second
+	clientCfg := clientv3.Config{
+		LogConfig:            &etcdLogCfg,
+		Endpoints:            addrs,
+		DialTimeout:          DefaultRequestTimeout,
+		DialKeepAliveTime:    defaultDialKeepAliveTime,
+		DialKeepAliveTimeout: defaultDialKeepAliveTimeout,
+		TLS:                  ebd.TLSConfig(),
+	}
+	client, err := clientv3.New(clientCfg)
+	if err != nil {
+		return nil, err
+	}
+
+	tickerInterval := defaultDialKeepAliveTime
+	failpoint.Inject("fastTick", func() {
+		tickerInterval = 100 * time.Millisecond
 	})
-	return cli, err
+	failpoint.Inject("closeTick", func() {
+		tickerInterval = 0
+	})
+	if tickerInterval == 0 {
+		return client, err
+	}
+
+	checker := &healthyChecker{
+		config: clientCfg,
+	}
+	eps := syncUrls(client)
+	checker.update(eps)
+
+	// Create a goroutine to check the health of etcd endpoints periodically.
+	go func(client *clientv3.Client) {
+		ticker := time.NewTicker(tickerInterval)
+		defer ticker.Stop()
+		lastAvailable := time.Now()
+		for {
+			select {
+			case <-client.Ctx().Done():
+				log.Info("[etcd client] etcd client is closed, exit health check goroutine")
+				checker.Range(func(key, value interface{}) bool {
+					client := value.(*healthyClient)
+					client.Close()
+					return true
+				})
+				return
+			case <-ticker.C:
+				usedEps := client.Endpoints()
+				healthyEps := checker.patrol(client.Ctx())
+				if len(healthyEps) == 0 {
+					// when all endpoints are unhealthy, try to reset endpoints to update connect
+					// rather than delete them to avoid there is no any endpoint in client.
+					if time.Since(lastAvailable) > etcdServerDisconnectedTimeout {
+						log.Info("[etcd client] no available endpoint, try to reset endpoints", zap.Strings("last-endpoints", usedEps))
+						client.SetEndpoints([]string{}...)
+						client.SetEndpoints(usedEps...)
+					}
+				} else {
+					if !isEqual(healthyEps, usedEps) {
+						client.SetEndpoints(healthyEps...)
+						change := fmt.Sprintf("%d->%d", len(usedEps), len(healthyEps))
+						log.Info("[etcd client] update endpoints", zap.String("num-change", change),
+							zap.Strings("last-endpoints", usedEps), zap.Strings("endpoints", client.Endpoints()))
+					}
+					lastAvailable = time.Now()
+				}
+			}
+		}
+	}(client)
+
+	// Notes: use another goroutine to update endpoints to avoid blocking health check in the first goroutine.
+	go func(client *clientv3.Client) {
+		ticker := time.NewTicker(tickerInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-client.Ctx().Done():
+				log.Info("[etcd client] etcd client is closed, exit update endpoint goroutine")
+				return
+			case <-ticker.C:
+				eps := syncUrls(client)
+				checker.update(eps)
+			}
+		}
+	}(client)
+
+	return client, err
+}
+
+type healthyClient struct {
+	*clientv3.Client
+	lastHealth time.Time
+}
+
+type healthyChecker struct {
+	sync.Map // map[string]*healthyClient
+	config   clientv3.Config
+}
+
+func (checker *healthyChecker) patrol(ctx context.Context) []string {
+	// See https://github.com/etcd-io/etcd/blob/85b640cee793e25f3837c47200089d14a8392dc7/etcdctl/ctlv3/command/ep_command.go#L105-L145
+	var wg sync.WaitGroup
+	count := 0
+	checker.Range(func(key, value interface{}) bool {
+		count++
+		return true
+	})
+	hch := make(chan string, count)
+	healthyList := make([]string, 0, count)
+	checker.Range(func(key, value interface{}) bool {
+		wg.Add(1)
+		go func(key, value interface{}) {
+			defer wg.Done()
+			ep := key.(string)
+			client := value.(*healthyClient)
+			if IsHealthy(ctx, client.Client) {
+				hch <- ep
+				checker.Store(ep, &healthyClient{
+					Client:     client.Client,
+					lastHealth: time.Now(),
+				})
+				return
+			}
+		}(key, value)
+		return true
+	})
+	wg.Wait()
+	close(hch)
+	for h := range hch {
+		healthyList = append(healthyList, h)
+	}
+	return healthyList
+}
+
+func (checker *healthyChecker) update(eps []string) {
+	for _, ep := range eps {
+		// check if client exists, if not, create one, if exists, check if it's offline or disconnected.
+		if client, ok := checker.Load(ep); ok {
+			lastHealthy := client.(*healthyClient).lastHealth
+			if time.Since(lastHealthy) > etcdServerOfflineTimeout {
+				log.Info("[etcd client] some etcd server maybe offline", zap.String("endpoint", ep))
+				checker.Delete(ep)
+			}
+			if time.Since(lastHealthy) > etcdServerDisconnectedTimeout {
+				// try to reset client endpoint to trigger reconnect
+				client.(*healthyClient).Client.SetEndpoints([]string{}...)
+				client.(*healthyClient).Client.SetEndpoints(ep)
+			}
+			continue
+		}
+		checker.addClient(ep, time.Now())
+	}
+}
+
+func (checker *healthyChecker) addClient(ep string, lastHealth time.Time) {
+	client, err := clientv3.New(checker.config)
+	if err != nil {
+		log.Error("[etcd client] failed to create etcd healthy client", zap.Error(err))
+		return
+	}
+	checker.Store(ep, &healthyClient{
+		Client:     client,
+		lastHealth: lastHealth,
+	})
+}
+
+func syncUrls(client *clientv3.Client) []string {
+	// See https://github.com/etcd-io/etcd/blob/85b640cee793e25f3837c47200089d14a8392dc7/clientv3/client.go#L170-L183
+	ctx, cancel := context.WithTimeout(clientv3.WithRequireLeader(client.Ctx()), DefaultRequestTimeout)
+	defer cancel()
+	mresp, err := client.MemberList(ctx)
+	if err != nil {
+		log.Error("[etcd client] failed to list members", zap.Error(err))
+		return []string{}
+	}
+	var eps []string
+	for _, m := range mresp.Members {
+		if len(m.Name) != 0 && !m.IsLearner {
+			eps = append(eps, m.ClientURLs...)
+		}
+	}
+	return eps
+}
+
+func isEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sort.Strings(a)
+	sort.Strings(b)
+	for i, v := range a {
+		if v != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // Init initializes a domain.
