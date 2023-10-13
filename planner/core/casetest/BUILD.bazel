@@ -27,8 +27,12 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 50,
+=======
+    shard_count = 19,
+>>>>>>> 6e38182dc6a (planner: fix group concat projection elimination logic (#47612))
     deps = [
         "//config",
         "//domain",
