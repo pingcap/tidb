@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	dbsession "github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/testkit"
 	timerapi "github.com/pingcap/tidb/timer/api"
@@ -225,7 +224,7 @@ func TestTTLAutoAnalyze(t *testing.T) {
 
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	require.True(t, h.HandleAutoAnalyze(is))
 }

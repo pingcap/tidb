@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -216,10 +215,10 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values(5), (6), (7), (8)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string

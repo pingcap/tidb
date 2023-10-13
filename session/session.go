@@ -3074,7 +3074,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (Session, error) {
 	// Add stats collector, and it will be freed by background stats worker
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
-		s.statsCollector = do.StatsHandle().NewSessionStatsItem()
+		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
 		if GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
 		}
@@ -3626,7 +3626,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 func attachStatsCollector(s *session, dom *domain.Domain) *session {
 	if dom.StatsHandle() != nil && dom.StatsUpdating() {
 		if s.statsCollector == nil {
-			s.statsCollector = dom.StatsHandle().NewSessionStatsItem()
+			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
 		}
 		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)

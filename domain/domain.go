@@ -2426,7 +2426,7 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 				logutil.BgLogger().Error("handle ddl event failed", zap.String("event", t.String()), zap.Error(err))
 			}
 		case <-deltaUpdateTicker.C:
-			err := statsHandle.DumpStatsDeltaToKV(handle.DumpDelta)
+			err := statsHandle.DumpStatsDeltaToKV(false)
 			if err != nil {
 				logutil.BgLogger().Debug("dump stats delta failed", zap.Error(err))
 			}

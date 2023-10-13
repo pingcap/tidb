@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -94,7 +93,7 @@ func prepareForGlobalStatsWithOptsV2(t *testing.T, dom *domain.Domain, tk *testk
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 }
 
 // nolint:unused
@@ -118,7 +117,7 @@ func prepareForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, tk *testkit
 	tk.MustExec(buf2.String())
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 }
 
 func TestAnalyzeVirtualCol(t *testing.T) {

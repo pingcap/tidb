@@ -44,7 +44,6 @@ import (
 	plannercore "github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/store/copr"
 	"github.com/pingcap/tidb/store/mockstore"
 	"github.com/pingcap/tidb/tablecodec"
@@ -615,12 +614,12 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(store)
-	err := do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	err := do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	err = do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
@@ -628,7 +627,7 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	err = do.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll)
+	err = do.StatsHandle().DumpStatsDeltaToKV(true)
 	require.NoError(t, err)
 	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)

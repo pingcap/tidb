@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/server/internal/testutil"
 	"github.com/pingcap/tidb/server/internal/util"
 	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/statistics/handle/storage"
 	"github.com/pingcap/tidb/testkit"
@@ -155,12 +154,12 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	require.NoError(t, err)
 	tk.MustExec("create index c on test (a, b)")
 	tk.MustExec("insert test values (1, 's')")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table test")
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 }
 
@@ -202,7 +201,7 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	tk.MustExec("insert into test2 (a) values (1)")
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 }
 

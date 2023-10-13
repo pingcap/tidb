@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/types"
@@ -57,7 +56,7 @@ func TestCollationColumnEstimate(t *testing.T) {
 	tk.MustExec("insert into t values('aaa'), ('bbb'), ('AAA'), ('BBB')")
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustExec("explain select * from t where a = 'aaa'")
 	require.Nil(t, h.LoadNeededHistograms())
@@ -177,12 +176,12 @@ func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	for i := 0; i < 3000; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300))
 	}
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
 	// Data in [300, 500), 1000 rows in total, are deleted.
 	// 2000 rows left.
 	testKit.MustExec("delete from t where a < 500")
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(dom.InfoSchema()))
 	var (
 		input  []string
@@ -220,12 +219,12 @@ func TestEstimationForUnknownValues(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
 	}
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
 	for i := 0; i < 10; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i+10, i+10))
 	}
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(dom.InfoSchema()))
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -325,7 +324,7 @@ func TestColumnIndexNullEstimation(t *testing.T) {
 	testKit.MustExec("create table t(a int, b int, c int, index idx_b(b), index idx_c_a(c, a))")
 	testKit.MustExec("insert into t values(1,null,1),(2,null,2),(3,3,3),(4,null,4),(null,null,null);")
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
 	var (
 		input  []string
@@ -359,7 +358,7 @@ func TestUniqCompEqualEst(t *testing.T) {
 	testKit.MustExec("create table t(a int, b int, primary key(a, b))")
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(1,6),(1,7),(1,8),(1,9),(1,10)")
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
 	var (
 		input  []string
@@ -572,7 +571,7 @@ func TestRangeStepOverflow(t *testing.T) {
 	tk.MustExec("create table t (col datetime)")
 	tk.MustExec("insert into t values('3580-05-26 07:16:48'),('4055-03-06 22:27:16'),('4862-01-26 07:16:54')")
 	h := dom.StatsHandle()
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	// Trigger the loading of column stats.
 	tk.MustQuery("select * from t where col between '8499-1-23 2:14:38' and '9961-7-23 18:35:26'").Check(testkit.Rows())
@@ -817,7 +816,7 @@ func testTopNAssistedEstimationInner(t *testing.T, input []string, output []outp
 	tk.MustExec(`insert into t value("xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx", "xxxxxx")`)
 	tk.MustExec(`insert into t value("yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy", "yyyyyy")`)
 	tk.MustExec(`insert into t value("zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz", "zzzzzz")`)
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec(`analyze table t with 3 topn`)
 
 	for i, tt := range input {
@@ -852,10 +851,10 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	for i := 0; i < 3000; i++ {
 		testKit.MustExec(fmt.Sprintf("insert into t values (%v)", i/5+300)) // [300, 900)
 	}
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t with 1 samplerate, 0 topn")
 	testKit.MustExec("delete from t where a < 500")
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(dom.InfoSchema()))
 	var (
 		input  []string
@@ -1096,7 +1095,7 @@ func TestCrossValidationSelectivity(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, primary key (a, b) clustered)")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1,2,3), (1,4,5)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 0 and b < 1000 and c > 1000").Check(testkit.Rows(
 		"TableReader 0.00 root  data:Selection",
@@ -1115,7 +1114,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// 1. Insert 11 rows of data without ANALYZE.
 	testKit.MustExec("insert into t values(1,1),(1,2),(1,3),(1,4),(1,5),(2,1),(2,2),(2,3),(2,4),(2,5),(3,1)")
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(dom.InfoSchema()))
 
 	// 1-1. use real-time stats.
@@ -1153,7 +1152,7 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// 3. Insert another 4 rows of data.
 	testKit.MustExec("insert into t values(3,2),(3,3),(3,4),(3,5)")
-	require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(dom.InfoSchema()))
 
 	// 3-1. use real-time stats.

@@ -82,7 +82,6 @@ go_test(
         "//parser/mysql",
         "//sessionctx",
         "//sessionctx/stmtctx",
-        "//statistics/handle",
         "//statistics/handle/autoanalyze",
         "//testkit",
         "//testkit/testdata",

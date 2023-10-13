@@ -32,17 +32,37 @@ import (
 
 // statsUsageImpl implements utilstats.StatsUsage.
 type statsUsageImpl struct {
-	pool utilstats.SessionPool
+	pool              utilstats.SessionPool
+	tblInfo           utilstats.TableInfoGetter
+	statsCache        utilstats.StatsCache
+	statsHis          utilstats.StatsHistory
+	getLockedTables   func(tableIDs ...int64) (map[int64]struct{}, error) // TODO: use an interface instead of a method pointer
+	getPartitionStats func(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
+
+	// SessionStatsList contains all the stats collector required by session.
+	*SessionStatsList
 }
 
 // NewStatsUsageImpl creates a utilstats.StatsUsage.
-func NewStatsUsageImpl(pool utilstats.SessionPool) utilstats.StatsUsage {
+func NewStatsUsageImpl(pool utilstats.SessionPool,
+	tblInfo utilstats.TableInfoGetter,
+	statsCache utilstats.StatsCache,
+	statsHis utilstats.StatsHistory,
+	getLockedTables func(tableIDs ...int64) (map[int64]struct{}, error),
+	getPartitionStats func(tblInfo *model.TableInfo, pid int64) *statistics.Table,
+) utilstats.StatsUsage {
 	return &statsUsageImpl{
-		pool:             pool,
-		idxUsageListHead: newSessionIndexUsageCollector(nil),
+		pool:              pool,
+		tblInfo:           tblInfo,
+		statsCache:        statsCache,
+		statsHis:          statsHis,
+		getLockedTables:   getLockedTables,
+		getPartitionStats: getPartitionStats,
+		idxUsageListHead:  newSessionIndexUsageCollector(nil),
+		SessionStatsList:  NewSessionStatsList(),
 	}
 }
 

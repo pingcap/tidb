@@ -214,7 +214,7 @@ func TestLoadHist(t *testing.T) {
 	for i := 0; i < rowCount; i++ {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	err = h.Update(do.InfoSchema())
 	require.NoError(t, err)
 	newStatsTbl := h.GetTableStats(tableInfo)
@@ -1348,7 +1348,7 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	testKit.MustExec("insert into t values(1, 2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1400,7 +1400,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		tid := tblInfo.ID
 
 		tk.MustExec("insert into t values(1),(2),(3)")
-		require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		err = h.Update(dom.InfoSchema())
 		require.NoError(t, err)
 		tk.MustExec("analyze table t")
@@ -1415,7 +1415,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		tk.MustExec("commit")
 
 		tk.MustExec("insert into t values(4),(5),(6)")
-		require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		err = h.Update(dom.InfoSchema())
 		require.NoError(t, err)
 
@@ -1520,7 +1520,7 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	h := dom.StatsHandle()
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1670,7 +1670,7 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 	tk.MustExec("create table t (a int, b int, c int, index idx_b(b)) partition by range (a) (partition p0 values less than (100), partition p1 values less than (200), partition p2 values less than (300))")
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t partition p0, p1")
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)

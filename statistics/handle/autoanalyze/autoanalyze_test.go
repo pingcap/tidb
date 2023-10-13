@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/statistics"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
@@ -44,7 +43,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	h := do.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := do.InfoSchema()
 	require.NoError(t, h.Update(is))
 	// Auto analyze when global ver is 1.
@@ -62,7 +61,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	}
 	tk.MustExec("set @@global.tidb_analyze_version = 2")
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	// Auto analyze t whose version is 1 after setting global ver to 2.
 	h.HandleAutoAnalyze(is)
@@ -81,7 +80,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	tk.MustExec("insert into tt values(1), (2), (3), (4), (5)")
 	err = h.HandleDDLEvent(<-h.DDLEventCh())
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is = do.InfoSchema()
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
 	require.NoError(t, err)
@@ -222,7 +221,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, c json, d text, e mediumtext, f blob, g mediumblob, index idx(d(10)))")
 	tk.MustExec("insert into t values (1, 2, null, 'xxx', 'yyy', null, null)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
@@ -259,7 +258,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(autoanalyze.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
 	// test if it will be limited by the time range
@@ -294,7 +293,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(autoanalyze.AutoAnalyzeMinCnt)))
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))

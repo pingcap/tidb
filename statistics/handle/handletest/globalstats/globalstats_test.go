@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -181,13 +180,13 @@ partition by range (a) (
 	checkHealthy(100, 100, 100)
 
 	tk.MustExec("insert into t values (1), (2)") // update p0
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(2, 2, 2, 2, 0, 0)
 	checkHealthy(0, 0, 100)
 
 	tk.MustExec("insert into t values (11), (12), (13), (14)") // update p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(6, 6, 2, 2, 4, 4)
 	checkHealthy(0, 0, 0)
@@ -197,7 +196,7 @@ partition by range (a) (
 	checkHealthy(100, 100, 100)
 
 	tk.MustExec("insert into t values (4), (5), (15), (16)") // update p0 and p1 together
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 	checkModifyAndCount(4, 10, 2, 4, 2, 6)
 	checkHealthy(33, 0, 50)
@@ -220,7 +219,7 @@ partition by range (a) (
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (6), (null), (11), (12), (13), (14), (15), (16), (17), (18), (19), (19)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t with 0 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(
@@ -260,7 +259,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec("drop table if exists tint")
 	tk.MustExec("create table tint (c int, key(c)) partition by range (c) (partition p0 values less than (10), partition p1 values less than (20))")
 	tk.MustExec("insert into tint values (1), (2), (3), (4), (4), (5), (5), (5), (null), (11), (12), (13), (14), (15), (16), (16), (16), (16), (17), (17)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tint with 2 topn, 2 buckets")
 
 	tk.MustQuery("select modify_count, count from mysql.stats_meta order by table_id asc").Check(testkit.Rows(
@@ -319,7 +318,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tdouble values ` +
 		`(1, 1), (2, 2), (3, 3), (4, 4), (4, 4), (5, 5), (5, 5), (5, 5), (null, null), ` + // values in p0
 		`(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (16, 16), (16, 16), (16, 16), (17, 17), (17, 17)`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tdouble with 2 topn, 2 buckets")
 
 	rs := tk.MustQuery("show stats_meta where table_name='tdouble'").Rows()
@@ -384,7 +383,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tdecimal values ` +
 		`(1, 1), (2, 2), (3, 3), (4, 4), (4, 4), (5, 5), (5, 5), (5, 5), (null, null), ` + // values in p0
 		`(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (16, 16), (16, 16), (16, 16), (17, 17), (17, 17)`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tdecimal with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tdecimal'").Rows()
@@ -449,7 +448,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tdatetime values ` +
 		`(1, '2000-01-01'), (2, '2000-01-02'), (3, '2000-01-03'), (4, '2000-01-04'), (4, '2000-01-04'), (5, '2000-01-05'), (5, '2000-01-05'), (5, '2000-01-05'), (null, null), ` + // values in p0
 		`(11, '2000-01-11'), (12, '2000-01-12'), (13, '2000-01-13'), (14, '2000-01-14'), (15, '2000-01-15'), (16, '2000-01-16'), (16, '2000-01-16'), (16, '2000-01-16'), (16, '2000-01-16'), (17, '2000-01-17'), (17, '2000-01-17')`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tdatetime with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tdatetime'").Rows()
@@ -514,7 +513,7 @@ func TestGlobalStatsData2(t *testing.T) {
 	tk.MustExec(`insert into tstring values ` +
 		`(1, 'a1'), (2, 'a2'), (3, 'a3'), (4, 'a4'), (4, 'a4'), (5, 'a5'), (5, 'a5'), (5, 'a5'), (null, null), ` + // values in p0
 		`(11, 'b11'), (12, 'b12'), (13, 'b13'), (14, 'b14'), (15, 'b15'), (16, 'b16'), (16, 'b16'), (16, 'b16'), (16, 'b16'), (17, 'b17'), (17, 'b17')`) // values in p1
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table tstring with 2 topn, 2 buckets")
 
 	rs = tk.MustQuery("show stats_meta where table_name='tstring'").Rows()
@@ -766,7 +765,7 @@ partition by range (a) (
 )`)
 	require.NoError(t, dom.StatsHandle().HandleDDLEvent(<-dom.StatsHandle().DDLEventCh()))
 	tk.MustExec("insert into t values (1), (5), (null), (11), (15)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 
 	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("set @@session.tidb_analyze_version=1")
@@ -789,9 +788,9 @@ partition by range (a) (
 	// If we already have global-stats, we can get the latest global-stats by analyzing the newly added partition.
 	tk.MustExec("alter table t add partition (partition p2 values less than (30))")
 	tk.MustExec("insert t values (13), (14), (22), (23)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t partition p2") // it will success since p0 and p1 are both in ver2
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	do := dom
 	is := do.InfoSchema()
 	h := do.StatsHandle()
@@ -813,7 +812,7 @@ partition by range (a) (
 	require.Equal(t, int64(0), globalStats.ModifyCount)
 
 	tk.MustExec("alter table t drop partition p2;")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	tk.MustExec("analyze table t;")
 	globalStats = h.GetTableStats(tableInfo)
 	// global.count = p0.count(3) + p1.count(4)
@@ -844,7 +843,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3), (4), (5), " +
 		"(11), (21), (31), (41), (51)," +
 		"(12), (22), (32), (42), (52);")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	tk.MustExec("analyze table t")
 	result := tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -856,7 +855,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Equal(t, int64(15), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t drop partition p3, p5;")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.Update(is))
 	result = tk.MustQuery("show stats_meta where table_name = 't';").Rows()
@@ -866,7 +865,7 @@ func TestDDLPartition4GlobalStats(t *testing.T) {
 	require.Equal(t, int64(11), globalStats.RealtimeCount)
 
 	tk.MustExec("alter table t truncate partition p2, p4;")
-	require.NoError(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	require.NoError(t, h.Update(is))
 	// The value of global.count will not be updated automatically when we truncate the table partition.
@@ -1145,7 +1144,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
-		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t")
 		require.Nil(t, h.Update(dom.InfoSchema()))
 		tk.MustQuery("SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b").
@@ -1166,7 +1165,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
-		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index idx")
 		require.Nil(t, h.Update(dom.InfoSchema()))
 		rows := tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").Rows()
@@ -1184,7 +1183,7 @@ func TestGlobalIndexStatistics(t *testing.T) {
 		require.Nil(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 		tk.MustExec("insert into t(a,b) values (1,1), (2,2), (3,3), (15,15), (25,25), (35,35)")
 		tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b);")
-		require.Nil(t, h.DumpStatsDeltaToKV(handle.DumpAll))
+		require.Nil(t, h.DumpStatsDeltaToKV(true))
 		tk.MustExec("analyze table t index")
 		require.Nil(t, h.Update(dom.InfoSchema()))
 		tk.MustQuery("EXPLAIN SELECT b FROM t use index(idx) WHERE b < 16 ORDER BY b;").

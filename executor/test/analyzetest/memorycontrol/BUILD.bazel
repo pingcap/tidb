@@ -13,7 +13,6 @@ go_test(
         "//config",
         "//executor",
         "//sessionctx/variable",
-        "//statistics/handle",
         "//statistics/handle/autoanalyze",
         "//testkit",
         "//util",

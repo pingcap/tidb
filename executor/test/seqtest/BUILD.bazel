@@ -28,7 +28,6 @@ go_test(
         "//server",
         "//session",
         "//sessionctx/variable",
-        "//statistics/handle",
         "//store/copr",
         "//store/mockstore",
         "//tablecodec",

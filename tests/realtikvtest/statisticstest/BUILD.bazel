@@ -10,7 +10,6 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-        "//statistics/handle",
         "//testkit",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",

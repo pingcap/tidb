@@ -36,7 +36,6 @@ go_test(
         ":autoanalyze",
         "//parser/model",
         "//statistics",
-        "//statistics/handle",
         "//testkit",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",

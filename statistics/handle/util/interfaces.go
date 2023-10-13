@@ -70,6 +70,21 @@ type StatsUsage interface {
 
 	// GCIndexUsage removes unnecessary index usage data.
 	GCIndexUsage() error
+
+	// Blow methods are for table delta and stats usage.
+
+	// NewSessionStatsItem allocates a stats collector for a session.
+	// TODO: use interface{} to avoid cycle import, remove this interface{}.
+	NewSessionStatsItem() interface{}
+
+	// ResetSessionStatsList resets the sessions stats list.
+	ResetSessionStatsList()
+
+	// DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
+	DumpStatsDeltaToKV(dumpAll bool) error
+
+	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
+	DumpColStatsUsageToKV() error
 }
 
 // StatsHistory is used to manage historical stats.
