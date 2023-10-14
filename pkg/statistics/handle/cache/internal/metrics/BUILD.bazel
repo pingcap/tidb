@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "metrics",
+    srcs = ["metrics.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics",
+    visibility = ["//pkg/statistics/handle/cache:__subpackages__"],
+    deps = [
+        "//pkg/metrics",
+        "@com_github_prometheus_client_golang//prometheus",
+    ],
+)

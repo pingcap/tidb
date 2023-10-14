@@ -26,7 +26,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -276,4 +276,48 @@ func TestMemoryIngestData(t *testing.T) {
 	checkDupDB(t, db, nil, nil)
 	testNewIter(t, data, []byte("key6"), []byte("key9"), nil, nil)
 	checkDupDB(t, db, nil, nil)
+}
+
+func TestSplit(t *testing.T) {
+	cases := []struct {
+		input    []int
+		conc     int
+		expected [][]int
+	}{
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     1,
+			expected: [][]int{{1, 2, 3, 4, 5}},
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     2,
+			expected: [][]int{{1, 2, 3}, {4, 5}},
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     0,
+			expected: [][]int{{1, 2, 3, 4, 5}},
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     5,
+			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
+		},
+		{
+			input:    []int{},
+			conc:     5,
+			expected: nil,
+		},
+		{
+			input:    []int{1, 2, 3, 4, 5},
+			conc:     100,
+			expected: [][]int{{1}, {2}, {3}, {4}, {5}},
+		},
+	}
+
+	for _, c := range cases {
+		got := split(c.input, c.conc)
+		require.Equal(t, c.expected, got)
+	}
 }
