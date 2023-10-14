@@ -25,6 +25,7 @@ go_test(
     timeout = "short",
     srcs = [
         "lock_stats_test.go",
+        "main_test.go",
         "query_lock_test.go",
         "unlock_stats_test.go",
     ],
@@ -36,6 +37,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/statistics/handle/util",
+        "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/mock",
@@ -43,6 +45,7 @@ go_test(
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_goleak//:goleak",
         "@org_uber_go_mock//gomock",
     ],
 )
