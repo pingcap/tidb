@@ -3026,6 +3026,21 @@ func TestIssue16205(t *testing.T) {
 	require.NotEqual(t, rows1[0][0].(string), rows2[0][0].(string))
 }
 
+func TestIssue47136(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists test.test_interval")
+	tk.MustExec("create table test.test_interval(p int not null,o time not null,v int not null)")
+	tk.MustExec("insert into test.test_interval (p, o, v) values (0, '1:2:3', 1)")
+	rs, err := tk.Exec("select date_add(o, interval 1 day) from test_interval")
+	require.NoError(t, err)
+	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "25:02:03")
+
+	tk.MustExec("drop table test.test_interval")
+}
+
 // issues 14448, 19383, 17734
 func TestNoopFunctions(t *testing.T) {
 	store := testkit.CreateMockStore(t)

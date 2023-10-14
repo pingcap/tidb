@@ -2240,12 +2240,12 @@ func (s *InferTypeSuite) createTestCase4DateAddSubFuncs() []typeInferTestCase {
 		{"date_add(c_time, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
 
 		// time(3) + day.
-		{"date_add(c_time, interval c_char day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
-		{"date_add(c_time, interval c_varchar day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
-		{"date_add(c_time, interval c_int_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
-		{"date_add(c_time, interval c_bigint_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
-		{"date_add(c_time, interval c_double_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
-		{"date_add(c_time, interval c_decimal day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
+		{"date_add(c_time, interval c_char day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_varchar day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_int_d day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_bigint_d day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_double_d day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
+		{"date_add(c_time, interval c_decimal day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 14, 3},
 
 		// time(3) + week.
 		{"date_add(c_time, interval c_char week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, 23, 3},
@@ -2400,12 +2400,12 @@ func (s *InferTypeSuite) createTestCase4DateAddSubFuncs() []typeInferTestCase {
 		{"date_add(c_time_d, interval c_decimal day_hour)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
 
 		// time + day.
-		{"date_add(c_time_d, interval c_char day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
-		{"date_add(c_time_d, interval c_varchar day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
-		{"date_add(c_time_d, interval c_int_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
-		{"date_add(c_time_d, interval c_bigint_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
-		{"date_add(c_time_d, interval c_double_d day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
-		{"date_add(c_time_d, interval c_decimal day)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
+		{"date_add(c_time_d, interval c_char day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, types.MinFsp},
+		{"date_add(c_time_d, interval c_varchar day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, types.MinFsp},
+		{"date_add(c_time_d, interval c_int_d day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, types.MinFsp},
+		{"date_add(c_time_d, interval c_bigint_d day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, types.MinFsp},
+		{"date_add(c_time_d, interval c_double_d day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, types.MinFsp},
+		{"date_add(c_time_d, interval c_decimal day)", mysql.TypeDuration, charset.CharsetBin, mysql.BinaryFlag, 10, types.MinFsp},
 
 		// time + week.
 		{"date_add(c_time_d, interval c_char week)", mysql.TypeDatetime, charset.CharsetBin, mysql.BinaryFlag, mysql.MaxDatetimeWidthNoFsp, types.MinFsp},
