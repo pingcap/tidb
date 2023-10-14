@@ -6,6 +6,7 @@ go_library(
         "dispatcher.go",
         "dispatcher_manager.go",
         "interface.go",
+        "state_transform.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/dispatcher",
     visibility = ["//visibility:public"],

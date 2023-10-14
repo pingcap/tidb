@@ -280,6 +280,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 		}()
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
+		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		dm.finishCh <- struct{}{}
 	})
 }
