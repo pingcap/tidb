@@ -400,6 +400,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
 			}
 		}
+		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
 		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
 			return err
 		}
@@ -420,6 +421,7 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.Task.State
 	d.Task.State = taskState
+	logutil.BgLogger().Info("task state transform", zap.String("from", prevState), zap.String("to", taskState))
 	if !VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
@@ -707,61 +709,4 @@ func (d *BaseDispatcher) WithNewSession(fn func(se sessionctx.Context) error) er
 // WithNewTxn executes the fn in a new transaction.
 func (d *BaseDispatcher) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return d.taskMgr.WithNewTxn(ctx, fn)
-}
-
-// VerifyTaskStateTransform verifies whether the task state transform is valid.
-func VerifyTaskStateTransform(from, to string) bool {
-	rules := map[string][]string{
-		proto.TaskStatePending: {
-			proto.TaskStateRunning,
-			proto.TaskStateCancelling,
-			proto.TaskStatePausing,
-			proto.TaskStateSucceed,
-			proto.TaskStateFailed,
-		},
-		proto.TaskStateRunning: {
-			proto.TaskStateSucceed,
-			proto.TaskStateReverting,
-			proto.TaskStateFailed,
-			proto.TaskStateCancelling,
-			proto.TaskStatePausing,
-		},
-		proto.TaskStateSucceed: {},
-		proto.TaskStateReverting: {
-			proto.TaskStateReverted,
-			// no revert_failed now
-			// proto.TaskStateRevertFailed,
-		},
-		proto.TaskStateFailed:       {},
-		proto.TaskStateRevertFailed: {},
-		proto.TaskStateCancelling: {
-			proto.TaskStateReverting,
-			// no canceled now
-			// proto.TaskStateCanceled,
-		},
-		proto.TaskStateCanceled: {},
-		proto.TaskStatePausing: {
-			proto.TaskStatePaused,
-		},
-		proto.TaskStatePaused: {
-			proto.TaskStateResuming,
-		},
-		proto.TaskStateResuming: {
-			proto.TaskStateRunning,
-		},
-		proto.TaskStateRevertPending: {},
-		proto.TaskStateReverted:      {},
-	}
-	logutil.BgLogger().Info("task state transform", zap.String("from", from), zap.String("to", to))
-
-	if from == to {
-		return true
-	}
-
-	for _, state := range rules[from] {
-		if state == to {
-			return true
-		}
-	}
-	return false
 }
