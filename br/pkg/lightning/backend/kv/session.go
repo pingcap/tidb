@@ -29,12 +29,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/topsql/stmtstats"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
 
@@ -311,7 +311,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 			}
 		}
 	}
-	vars.StmtCtx.TimeZone = vars.Location()
+	vars.StmtCtx.SetTimeZone(vars.Location())
 	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
 		logger.Warn("new session: failed to set timestamp",
 			log.ShortError(err))

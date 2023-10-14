@@ -83,11 +83,11 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20230925123611-87bebcc0d071
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
-	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20230919054518-dfd7d194838f
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.16.0
-	github.com/prometheus/client_model v0.4.0
+	github.com/prometheus/client_model v0.5.0
 	github.com/prometheus/common v0.44.0
 	github.com/prometheus/prometheus v0.0.0-20190525122359-d20e84d0fb64
 	github.com/robfig/cron/v3 v3.0.1
@@ -295,7 +295,7 @@ require (
 	gonum.org/v1/gonum v0.8.2 // indirect
 	google.golang.org/appengine v1.6.7 // indirect
 	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
-	google.golang.org/protobuf v1.30.0 // indirect
+	google.golang.org/protobuf v1.31.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -311,5 +311,5 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	github.com/pingcap/tidb/parser => ./parser
+	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 )

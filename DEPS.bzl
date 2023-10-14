@@ -6027,13 +6027,13 @@ def go_deps():
         name = "com_github_prometheus_client_model",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_model",
-        sha256 = "93e312cfd357b420743c5f5534be6aed04fc860e7adb520dc2e879e055dba272",
-        strip_prefix = "github.com/prometheus/client_model@v0.4.0",
+        sha256 = "26ebacaae0529ef456e57d0a470e262bc1d49ef0583355062b518dd063d6a2bb",
+        strip_prefix = "github.com/prometheus/client_model@v0.5.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.4.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.4.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.4.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.4.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.5.0.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.5.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.5.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/client_model/com_github_prometheus_client_model-v0.5.0.zip",
         ],
     )
     go_repository(
@@ -10139,13 +10139,13 @@ def go_deps():
         name = "org_golang_google_protobuf",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/protobuf",
-        sha256 = "8fb83b4d6e898c75a8d305dd46d46bb975d0a7ebab1e0042acdf25e3273d50e4",
-        strip_prefix = "google.golang.org/protobuf@v1.30.0",
+        sha256 = "f01e7df25c79e12e4381b3f770b5fd97d8295e568e3a91b267dacb5b3622c203",
+        strip_prefix = "google.golang.org/protobuf@v1.31.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.30.0.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.30.0.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.30.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.30.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.31.0.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.31.0.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.31.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.31.0.zip",
         ],
     )
     go_repository(

@@ -17,7 +17,7 @@ package rtree_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
 
