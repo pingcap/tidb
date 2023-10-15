@@ -1417,6 +1417,18 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	require.Contains(t, val, "session-token=xxxxxx")
 	require.Equal(t, s3URI, CloudStorageURI.Load())
 
+	// ks3 is like s3
+	ks3URI := "ks3://tiflow-test/?region=test&access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
+	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, ks3URI)
+	require.NoError(t, err)
+	val, err1 = mock.SessionVars.GetSessionOrGlobalSystemVar(ctx, TiDBCloudStorageURI)
+	require.NoError(t, err1)
+	require.True(t, strings.HasPrefix(val, "ks3://tiflow-test/"))
+	require.Contains(t, val, "access-key=xxxxxx")
+	require.Contains(t, val, "secret-access-key=xxxxxx")
+	require.Contains(t, val, "session-token=xxxxxx")
+	require.Equal(t, ks3URI, CloudStorageURI.Load())
+
 	// Set to empty, should return no error
 	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "")
 	require.NoError(t, err)
