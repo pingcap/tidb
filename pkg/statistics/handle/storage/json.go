@@ -22,6 +22,7 @@ import (
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -266,6 +267,7 @@ func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 	if gzippedData.Len()%blockSize != 0 {
 		blocksNum = blocksNum + 1
 	}
+	log.Info("debug info", zap.Int("blocksNum", blocksNum), zap.Int("len", gzippedData.Len()), zap.Int("cap", gzippedData.Cap()))
 	blocks := make([][]byte, blocksNum)
 	for i := 0; i < blocksNum-1; i++ {
 		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]
