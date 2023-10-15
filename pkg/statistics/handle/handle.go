@@ -508,6 +508,11 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 	return version, err
 }
 
+// GetGPool returns the gpool of handle.
+func (h *Handle) GetGPool() *gp.Pool {
+	return h.gpool
+}
+
 // Close stops the background
 func (h *Handle) Close() {
 	h.gpool.Close()
