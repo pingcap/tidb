@@ -180,10 +180,10 @@ type WaitGroupPool struct {
 	gp *gp.Pool
 }
 
-func NewWaitGroupPool(gp *gp.Pool) WaitGroupPool {
+func NewWaitGroupPool(gp *gp.Pool) *WaitGroupPool {
 	var wg WaitGroupPool
 	wg.gp = gp
-	return wg
+	return &wg
 }
 
 // Run runs a function in a goroutine, adds 1 to WaitGroup

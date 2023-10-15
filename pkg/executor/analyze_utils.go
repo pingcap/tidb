@@ -109,7 +109,7 @@ func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
 // notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
 // Please add all goroutine count when to `Add` to avoid exiting in advance.
 type notifyErrorWaitGroupWrapper struct {
-	util.WaitGroupPool
+	*util.WaitGroupPool
 	notify chan error
 	cnt    atomic.Uint64
 }

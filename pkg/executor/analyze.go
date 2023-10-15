@@ -57,7 +57,7 @@ var _ exec.Executor = &AnalyzeExec{}
 type AnalyzeExec struct {
 	exec.BaseExecutor
 	tasks      []*analyzeTask
-	wg         util.WaitGroupPool
+	wg         *util.WaitGroupPool
 	opts       map[ast.AnalyzeOptionType]uint64
 	OptionsMap map[int64]core.V2AnalyzeOptions
 	gp         *gp.Pool
