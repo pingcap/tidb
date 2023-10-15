@@ -180,7 +180,8 @@ func (tk *TestKit) MustQueryWithContext(ctx context.Context, sql string, args ..
 // EventuallyMustIndexLookup checks whether the plan for the sql is IndexLookUp.
 func (tk *TestKit) EventuallyMustIndexLookup(sql string, args ...interface{}) *Result {
 	require.Eventually(tk.t, func() bool {
-		return tk.HasPlan(sql, "IndexLookUp", args...)
+		ok, _ := tk.hasPlan(sql, "IndexLookUp", args...)
+		return ok
 	}, 1*time.Second, 100*time.Millisecond)
 	return tk.MustQuery(sql, args...)
 }
