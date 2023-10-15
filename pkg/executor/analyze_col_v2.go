@@ -292,10 +292,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(samplingStatsConcurrency)
 	for i := 0; i < samplingStatsConcurrency; i++ {
+		id := i
 		gp.Go(func() {
-			func(a int) {
-				e.subMergeWorker(mergeResultCh, mergeTaskCh, l, a)
-			}(i)
+			e.subMergeWorker(mergeResultCh, mergeTaskCh, l, id)
 		})
 	}
 	// Merge the result from collectors.
