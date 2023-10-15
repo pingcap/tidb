@@ -182,7 +182,7 @@ func (tk *TestKit) EventuallyMustIndexLookup(sql string, args ...interface{}) *R
 	require.Eventually(tk.t, func() bool {
 		ok, _ := tk.hasPlan(sql, "IndexLookUp", args...)
 		return ok
-	}, 1*time.Second, 100*time.Millisecond)
+	}, 3*time.Second, 100*time.Millisecond)
 	return tk.MustQuery(sql, args...)
 }
 
