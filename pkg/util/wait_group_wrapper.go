@@ -180,6 +180,7 @@ type WaitGroupPool struct {
 	gp *gp.Pool
 }
 
+// NewWaitGroupPool returns WaitGroupPool
 func NewWaitGroupPool(gp *gp.Pool) *WaitGroupPool {
 	var wg WaitGroupPool
 	wg.gp = gp
