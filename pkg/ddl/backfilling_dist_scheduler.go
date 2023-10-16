@@ -49,6 +49,8 @@ type BackfillSubTaskMeta struct {
 	EndKey          []byte `json:"end_key"`
 
 	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+	DataFiles             []string `json:"data-files"`
+	StatFiles             []string `json:"stat-files"`
 	external.SortedKVMeta `json:",inline"`
 }
 

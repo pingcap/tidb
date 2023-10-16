@@ -343,8 +343,8 @@ func (w *Writer) Close(ctx context.Context) error {
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
-		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.String("startKey", hex.EncodeToString(w.minKey)),
+		zap.String("endKey", hex.EncodeToString(w.maxKey)))
 
 	w.writeBatch = nil
 

@@ -233,8 +233,8 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
 		SortedDataMeta: &external.SortedKVMeta{
-			MinKey:      []byte("ta"),
-			MaxKey:      []byte("tc"),
+			StartKey:    []byte("ta"),
+			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
 			DataFiles:   []string{"gs://sort-bucket/data/1"},
 			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},
@@ -248,8 +248,8 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 		},
 		SortedIndexMetas: map[int64]*external.SortedKVMeta{
 			1: {
-				MinKey:      []byte("ia"),
-				MaxKey:      []byte("ic"),
+				StartKey:    []byte("ia"),
+				EndKey:      []byte("ic"),
 				TotalKVSize: 12,
 				DataFiles:   []string{"gs://sort-bucket/index/1"},
 				StatFiles:   []string{"gs://sort-bucket/index/1.stat"},
@@ -295,8 +295,8 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{
 		KVGroup: "data",
 		SortedKVMeta: external.SortedKVMeta{
-			MinKey:      []byte("ta"),
-			MaxKey:      []byte("tc"),
+			StartKey:    []byte("ta"),
+			EndKey:      []byte("tc"),
 			TotalKVSize: 12,
 			DataFiles:   []string{"gs://sort-bucket/data/1"},
 			StatFiles:   []string{"gs://sort-bucket/data/1.stat"},

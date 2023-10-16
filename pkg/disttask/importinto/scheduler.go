@@ -373,10 +373,10 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
-			DataFiles:       sm.DataFiles,
-			StatFiles:       sm.StatFiles,
-			MinKey:          sm.MinKey,
-			MaxKey:          sm.MaxKey,
+			DataFiles:       sm.GetDataFiles(),
+			StatFiles:       sm.GetStatFiles(),
+			StartKey:        sm.StartKey,
+			EndKey:          sm.EndKey,
 			SplitKeys:       sm.RangeSplitKeys,
 			RegionSplitSize: sm.RangeSplitSize,
 			TotalFileSize:   int64(sm.TotalKVSize),
