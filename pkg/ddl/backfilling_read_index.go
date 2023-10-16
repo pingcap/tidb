@@ -174,7 +174,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	sum, _ := r.subtaskSummary.LoadAndDelete(subtask.ID)
 	s := sum.(*readIndexSummary)
 	subtaskMeta.StartKey = s.minKey
-	subtaskMeta.EndKey = s.maxKey
+	subtaskMeta.EndKey = kv.Key(s.maxKey).Next()
 	subtaskMeta.TotalKVSize = s.totalSize
 	subtaskMeta.MultipleFilesStats = s.stats
 	fileCnt := 0
