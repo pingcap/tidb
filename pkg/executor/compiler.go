@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -29,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
@@ -50,7 +49,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if r == nil {
 			return
 		}
-		if str, ok := r.(error); !ok || !strings.Contains(str.Error(), memory.PanicMemoryExceedWarnMsg) {
+		if err, ok := r.(error); !ok || !exeerrors.ErrMemoryExceed.Equal(err) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)

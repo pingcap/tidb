@@ -98,7 +98,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -2149,7 +2148,7 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 		if r == nil {
 			return
 		}
-		if str, ok := r.(error); !ok || !strings.HasPrefix(str.Error(), memory.PanicMemoryExceedWarnMsg) {
+		if err, ok := r.(error); !ok || !exeerrors.ErrMemoryExceed.Equal(err) {
 			panic(r)
 		}
 		// TODO(jianzhang.zj: add metrics here)

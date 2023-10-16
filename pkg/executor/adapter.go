@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -463,7 +462,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if str, ok := r.(error); !ok || !strings.Contains(str.Error(), memory.PanicMemoryExceedWarnMsg) {
+		if err, ok := r.(error); !ok || !exeerrors.ErrMemoryExceed.Equal(err) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)

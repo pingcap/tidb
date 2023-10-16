@@ -15,7 +15,6 @@
 package sqlkiller
 
 import (
-	"fmt"
 	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -23,9 +22,12 @@ import (
 	"go.uber.org/zap"
 )
 
+type killSignal = uint32
+
 // Kill reasons.
 const (
-	QueryInterrupted uint32 = iota + 1
+	UnspecifiedKillSignal killSignal = iota
+	QueryInterrupted
 	MaxExecTimeExceeded
 	QueryMemoryExceeded
 	ServerMemoryExceeded
@@ -33,12 +35,12 @@ const (
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Status uint32
+	Status killSignal
 	ConnID uint64
 }
 
 // SendKillSignal sends a kill signal to the query.
-func (killer *SQLKiller) SendKillSignal(reason uint32) {
+func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 	atomic.CompareAndSwapUint32(&killer.Status, 0, reason)
 }
 
@@ -51,30 +53,16 @@ func (killer *SQLKiller) HandleSignal() error {
 	case MaxExecTimeExceeded:
 		return exeerrors.ErrMaxExecTimeExceeded
 	case QueryMemoryExceeded:
-		return fmt.Errorf(PanicMemoryExceedWarnMsg + WarnMsgSuffixForSingleQuery + fmt.Sprintf("[conn=%d]", killer.ConnID))
+		return exeerrors.ErrMemoryExceed.GenWithStackByArgs("a single SQL query", "tidb_mem_quota_query", killer.ConnID)
 	case ServerMemoryExceeded:
 		logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
 			zap.Uint64("conn", killer.ConnID))
-		return fmt.Errorf(PanicMemoryExceedWarnMsg + WarnMsgSuffixForInstance + fmt.Sprintf("[conn=%d]", killer.ConnID))
+		return exeerrors.ErrMemoryExceed.GenWithStackByArgs("the tidb-server instance and this query is currently using the most memory", "tidb_mem_quota_query", killer.ConnID)
 	}
 	return nil
-}
-
-// NeedKill checks whether the sql need kill.
-func (killer *SQLKiller) NeedKill() bool {
-	return atomic.LoadUint32(&killer.Status) > 0
 }
 
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
 	atomic.StoreUint32(&killer.Status, 0)
 }
-
-const (
-	// PanicMemoryExceedWarnMsg represents the panic message when out of memory quota.
-	PanicMemoryExceedWarnMsg string = "Your query has been cancelled due to exceeding the allowed memory limit"
-	// WarnMsgSuffixForSingleQuery represents the suffix of the warning message when out of memory quota for a single query.
-	WarnMsgSuffixForSingleQuery string = " for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."
-	// WarnMsgSuffixForInstance represents the suffix of the warning message when out of memory quota for the tidb-server instance.
-	WarnMsgSuffixForInstance string = " for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."
-)

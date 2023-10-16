@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/atomic"
 )
@@ -67,7 +68,7 @@ func getAnalyzePanicErr(r interface{}) error {
 		if err.Error() == globalPanicAnalyzeMemoryExceed {
 			return errAnalyzeOOM
 		}
-		if strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg) {
+		if exeerrors.ErrMemoryExceed.Equal(err) {
 			return errors.Errorf("%s, %s", err.Error(), errAnalyzeOOM)
 		}
 		return err

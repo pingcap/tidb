@@ -15,7 +15,6 @@
 package memory
 
 import (
-	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -169,13 +168,10 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 		}
 	}
 	a.acted = true
-	if a.Killer != nil {
-		a.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
-		if err := a.Killer.HandleSignal(); err != nil {
-			panic(err)
-		}
+	a.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+	if err := a.Killer.HandleSignal(); err != nil {
+		panic(err)
 	}
-	panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForInstance + fmt.Sprintf("[conn=%d]", a.ConnID))
 }
 
 // GetPriority get the priority of the Action
