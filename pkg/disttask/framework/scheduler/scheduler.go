@@ -219,6 +219,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
 			}
+			time.Sleep(checkTime)
 			continue
 		}
 
