@@ -1,0 +1,22 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "generator_lib",
+    srcs = [
+        "magic.go",
+        "main.go",
+    ],
+    embedsrcs = [
+        "allkeys-4.0.0.txt",
+        "allkeys-9.0.0.txt",
+        "data.go.tpl",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/collate/ucadata/generator",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "generator",
+    embed = [":generator_lib"],
+    visibility = ["//visibility:public"],
+)

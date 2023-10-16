@@ -18,7 +18,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 )
 
 func TestMain(m *testing.M) {

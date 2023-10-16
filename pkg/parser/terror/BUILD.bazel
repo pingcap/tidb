@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "terror",
+    srcs = ["terror.go"],
+    importpath = "github.com/pingcap/tidb/pkg/parser/terror",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/mysql",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "terror_test",
+    timeout = "short",
+    srcs = ["terror_test.go"],
+    embed = [":terror"],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+    ],
+)
