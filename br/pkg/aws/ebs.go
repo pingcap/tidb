@@ -283,12 +283,12 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 
 // EnableDataFSR enables FSR for data volume snapshots
 func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) ([]*string, error) {
-	sourceSnapshotIDs, availableZones := fetchTargetSnapshots(meta, targetAZ)
+	sourceSnapshotIDs := fetchTargetSnapshots(meta)
 
 	log.Info("Start enable FSR for", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ))
 
 	resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
-		AvailabilityZones: availableZones,
+		AvailabilityZones: []*string{&targetAZ},
 		SourceSnapshotIds: sourceSnapshotIDs,
 	})
 
@@ -308,9 +308,13 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 // WaitDataFSREnabled waits FSR for data volume snapshots are all enabled
 func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, progress glue.Progress) error {
-	pendingSnapshots := make([]*string, 0, len(snapShotIDs))
+	// Create a map to store the strings as keys
+	pendingSnapshots := make(map[string]struct{})
 
-	pendingSnapshots = append(pendingSnapshots, snapShotIDs...)
+	// Populate the map with the strings from the array
+	for _, str := range snapShotIDs {
+		pendingSnapshots[*str] = struct{}{}
+	}
 
 	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots))
 	for {
@@ -340,23 +344,26 @@ func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, 
 			return errors.Trace(err)
 		}
 
-		var uncompletedSnapshots []*string
+		var uncompletedSnapshots map[string]struct{}
 		for _, fastRestore := range result.FastSnapshotRestores {
-			uncompletedSnapshots = append(uncompletedSnapshots, fastRestore.SnapshotId)
-			progress.IncBy(int64(len(pendingSnapshots) - len(uncompletedSnapshots)))
+			_, found := pendingSnapshots[*fastRestore.SnapshotId]
+			if found {
+				uncompletedSnapshots[*fastRestore.SnapshotId] = struct{}{}
+			}
 		}
+		progress.IncBy(int64(len(pendingSnapshots) - len(uncompletedSnapshots)))
 		pendingSnapshots = uncompletedSnapshots
 	}
 }
 
 // DisableDataFSR disables FSR for data volume snapshots
 func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) error {
-	sourceSnapshotIDs, availableZones := fetchTargetSnapshots(meta, targetAZ)
+	sourceSnapshotIDs := fetchTargetSnapshots(meta)
 
 	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ))
 
 	resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
-		AvailabilityZones: availableZones,
+		AvailabilityZones: []*string{&targetAZ},
 		SourceSnapshotIds: sourceSnapshotIDs,
 	})
 
@@ -374,8 +381,8 @@ func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string
 	return nil
 }
 
-func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, targetAZ string) ([]*string, []*string) {
-	var sourceSnapshotIDs, availableZones []*string
+func fetchTargetSnapshots(meta *config.EBSBasedBRMeta) []*string {
+	var sourceSnapshotIDs []*string
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
@@ -383,12 +390,11 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, targetAZ string) ([]*stri
 			// Handle data volume snapshots only
 			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
 				sourceSnapshotIDs = append(sourceSnapshotIDs, &oldVol.SnapshotID)
-				availableZones = append(availableZones, &targetAZ)
 			}
 		}
 	}
 
-	return sourceSnapshotIDs, availableZones
+	return sourceSnapshotIDs
 }
 
 // CreateVolumes create volumes from snapshots
