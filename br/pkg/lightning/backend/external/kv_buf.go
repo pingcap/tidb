@@ -24,9 +24,9 @@ type kvBuf struct {
 
 func (b *kvBuf) Alloc(s int) (base, buf []byte, offset int) {
 	if b.cap-b.curIdx < s {
-		b.curBuf = make([]byte, 4*units.MiB)
+		b.curBuf = make([]byte, 16*units.MiB)
 		b.curIdx = 0
-		b.cap = 4 * units.MiB
+		b.cap = 16 * units.MiB
 	}
 	base = b.curBuf
 	buf = base[b.curIdx : b.curIdx+s]

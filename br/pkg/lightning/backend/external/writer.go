@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
@@ -295,7 +296,8 @@ type Writer struct {
 	closed  bool
 
 	// Statistic information per batch.
-	batchSize uint64
+	batchSize  uint64
+	memorySize uint64
 
 	// Statistic information per 500 batches.
 	multiFileStats []MultipleFilesStat
@@ -313,7 +315,6 @@ type Writer struct {
 // WriteRow implements ingest.Writer.
 func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tidbkv.Handle) error {
 	keyAdapter := w.keyAdapter
-	w.batchSize += uint64(len(idxKey) + len(idxVal))
 
 	var rowID []byte
 	if handle != nil {
@@ -332,7 +333,9 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	}
 	w.kvPoss = append(w.kvPoss, kvPos{bufIdx: len(w.byteBufs) - 1, offset: off, length: length})
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
-	if w.batchSize >= w.memSizeLimit {
+	w.batchSize += uint64(length)
+	w.memorySize += uint64(length) + uint64(unsafe.Sizeof(kvPos{}))
+	if w.memorySize >= w.memSizeLimit {
 		if err := w.flushKVs(ctx, false); err != nil {
 			return err
 		}
@@ -527,6 +530,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	w.rc.reset()
 	w.batchSize = 0
+	w.memorySize = 0
 	return nil
 }
 
