@@ -26,7 +26,7 @@ import (
 	"github.com/cockroachdb/pebble"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
