@@ -344,7 +344,7 @@ func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, 
 			return errors.Trace(err)
 		}
 
-		var uncompletedSnapshots map[string]struct{}
+		uncompletedSnapshots := make(map[string]struct{})
 		for _, fastRestore := range result.FastSnapshotRestores {
 			_, found := pendingSnapshots[*fastRestore.SnapshotId]
 			if found {
