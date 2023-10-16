@@ -1,5 +1,5 @@
 create table a (
-    a int primary key nonclustered,
+    a int primary key clustered,
     b int not null,
     c int not null,
     d text,
