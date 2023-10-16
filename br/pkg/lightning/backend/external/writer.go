@@ -488,9 +488,6 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 
 // EngineWriter implements backend.EngineWriter interface.
 type EngineWriter struct {
-	// Only 1 writer is used for some kv group(data or some index), no matter
-	// how many routines are encoding data, so need to sync write to it.
-	sync.Mutex
 	w *Writer
 }
 
@@ -501,8 +498,6 @@ func NewEngineWriter(w *Writer) *EngineWriter {
 
 // AppendRows implements backend.EngineWriter interface.
 func (e *EngineWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
-	e.Lock()
-	defer e.Unlock()
 	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil
@@ -524,7 +519,5 @@ func (e *EngineWriter) IsSynced() bool {
 
 // Close implements backend.EngineWriter interface.
 func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
-	e.Lock()
-	defer e.Unlock()
 	return nil, e.w.Close(ctx)
 }
