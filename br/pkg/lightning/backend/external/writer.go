@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"path/filepath"
 	"slices"
@@ -197,10 +198,10 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		memSizeLimit:   b.memSizeLimit,
-		store:          store,
-		kvBuffer:       bp.NewBuffer(),
-		writeBatch:     make([]common.KvPair, 0, b.writeBatchCount),
+		memSizeLimit: b.memSizeLimit,
+		store:        store,
+		kvBuffer:     &kvBuf{},
+		//writeBatch:     make([]common.KvPair, 0, b.writeBatchCount),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
@@ -266,6 +267,12 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	return GetMaxOverlapping(points)
 }
 
+type kvPos struct {
+	bufIdx int
+	offset int
+	length int
+}
+
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
@@ -279,8 +286,10 @@ type Writer struct {
 
 	memSizeLimit uint64
 
-	kvBuffer   *membuf.Buffer
-	writeBatch []common.KvPair
+	kvBuffer *kvBuf
+	byteBufs [][]byte
+	kvPoss   []kvPos
+	kvSize   int64
 
 	onClose OnCloseFunc
 	closed  bool
@@ -310,11 +319,19 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	if handle != nil {
 		rowID = handle.Encoded()
 	}
-	buf := w.kvBuffer.AllocBytes(keyAdapter.EncodedLen(idxKey, rowID))
-	key := keyAdapter.Encode(buf[:0], idxKey, rowID)
-	val := w.kvBuffer.AddBytes(idxVal)
+	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
+	length := encodedKeyLen + len(idxVal) + 8*2
+	base, buf, off := w.kvBuffer.Alloc(length)
+	binary.BigEndian.AppendUint64(buf[:0], uint64(encodedKeyLen))
+	keyAdapter.Encode(buf[8:], idxKey, rowID)
+	binary.BigEndian.AppendUint64(buf[8+encodedKeyLen:], uint64(len(idxVal)))
+	copy(buf[8*2+encodedKeyLen:], idxVal)
 
-	w.writeBatch = append(w.writeBatch, common.KvPair{Key: key, Val: val})
+	if len(w.byteBufs) == 0 || &(w.byteBufs[len(w.byteBufs)-1]) != &base {
+		w.byteBufs = append(w.byteBufs, base)
+	}
+	w.kvPoss = append(w.kvPoss, kvPos{bufIdx: len(w.byteBufs) - 1, offset: off, length: length})
+	w.kvSize += int64(encodedKeyLen + len(idxVal))
 	if w.batchSize >= w.memSizeLimit {
 		if err := w.flushKVs(ctx, false); err != nil {
 			return err
@@ -336,7 +353,6 @@ func (w *Writer) Close(ctx context.Context) error {
 		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
 	w.closed = true
-	defer w.kvBuffer.Destroy()
 	err := w.flushKVs(ctx, true)
 	if err != nil {
 		return err
@@ -349,7 +365,8 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
-	w.writeBatch = nil
+	w.byteBufs = nil
+	w.kvPoss = nil
 
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
@@ -373,7 +390,7 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 }
 
 func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
-	if len(w.writeBatch) == 0 {
+	if len(w.kvPoss) == 0 {
 		return nil
 	}
 	if w.shareMu != nil {
@@ -405,7 +422,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		}
 		return units.HumanSize(float64(n) / dur)
 	}
-	kvCnt := len(w.writeBatch)
+	kvCnt := len(w.kvPoss)
 	defer func() {
 		w.currentSeq++
 		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
@@ -442,18 +459,21 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortStart := time.Now()
 	if w.shareMu != nil {
 		sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
-		sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
-			if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
+		sorty.Sort(len(w.kvPoss), func(i, j, r, s int) bool {
+			posi, posj := w.kvPoss[i], w.kvPoss[j]
+			if bytes.Compare(w.byteBufs[posi.bufIdx][posi.offset+8:], w.byteBufs[posj.bufIdx][posj.offset+8:]) < 0 {
 				if r != s {
-					w.writeBatch[r], w.writeBatch[s] = w.writeBatch[s], w.writeBatch[r]
+					w.kvPoss[r], w.kvPoss[s] = w.kvPoss[s], w.kvPoss[r]
 				}
 				return true
 			}
 			return false
 		})
 	} else {
-		slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) int {
-			return bytes.Compare(i.Key, j.Key)
+		slices.SortFunc(w.kvPoss, func(i, j kvPos) int {
+			bufI := w.byteBufs[i.bufIdx]
+			bufJ := w.byteBufs[j.bufIdx]
+			return bytes.Compare(bufI[i.offset+8:], bufJ[j.offset+8:])
 		})
 	}
 	sortDuration = time.Since(sortStart)
@@ -466,13 +486,11 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	var kvSize uint64
-	for _, pair := range w.writeBatch {
-		err = w.kvStore.AddKeyValue(pair.Key, pair.Val)
+	for _, pair := range w.kvPoss {
+		err = w.kvStore.AddKeyValue(w.byteBufs[pair.bufIdx][pair.offset : pair.offset+pair.length])
 		if err != nil {
 			return err
 		}
-		kvSize += uint64(len(pair.Key)) + uint64(len(pair.Val))
 	}
 
 	w.kvStore.Close()
@@ -483,7 +501,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	w.recordMinMax(w.writeBatch[0].Key, w.writeBatch[len(w.writeBatch)-1].Key, kvSize)
+	minKey, maxKey := w.getKey(0), w.getKey(len(w.kvPoss)-1)
+	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
 
@@ -491,8 +510,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
 		[2]string{dataFile, statFile},
 	)
-	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(w.writeBatch[0].Key).Clone())
-	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(w.writeBatch[len(w.writeBatch)-1].Key).Clone())
+	w.fileMinKeys = append(w.fileMinKeys, tidbkv.Key(minKey).Clone())
+	w.fileMaxKeys = append(w.fileMaxKeys, tidbkv.Key(maxKey).Clone())
 	if fromClose || len(w.multiFileStats[l-1].Filenames) == multiFileStatNum {
 		w.multiFileStats[l-1].build(w.fileMinKeys, w.fileMaxKeys)
 		w.multiFileStats = append(w.multiFileStats, MultipleFilesStat{
@@ -502,11 +521,19 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		w.fileMaxKeys = w.fileMaxKeys[:0]
 	}
 
-	w.writeBatch = w.writeBatch[:0]
+	w.byteBufs = w.byteBufs[:0]
+	w.kvPoss = w.kvPoss[:0]
+	w.kvSize = 0
+
 	w.rc.reset()
-	w.kvBuffer.Reset()
 	w.batchSize = 0
 	return nil
+}
+
+func (w *Writer) getKey(idx int) []byte {
+	byteBuf := w.byteBufs[w.kvPoss[idx].bufIdx]
+	keyLen := binary.BigEndian.Uint64(byteBuf[w.kvPoss[idx].offset : w.kvPoss[idx].offset+8])
+	return byteBuf[8 : 8+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
