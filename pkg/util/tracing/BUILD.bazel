@@ -1,0 +1,37 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "tracing",
+    srcs = [
+        "opt_trace.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/tracing",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/model",
+        "@com_github_opentracing_basictracer_go//:basictracer-go",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+    ],
+)
+
+go_test(
+    name = "tracing_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "noop_bench_test.go",
+        "opt_trace_test.go",
+        "util_test.go",
+    ],
+    embed = [":tracing"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/testkit/testsetup",
+        "@com_github_opentracing_basictracer_go//:basictracer-go",
+        "@com_github_opentracing_opentracing_go//:opentracing-go",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

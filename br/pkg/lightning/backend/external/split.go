@@ -121,6 +121,11 @@ func (r *RangeSplitter) Close() error {
 	return r.propIter.Close()
 }
 
+// GetRangeSplitSize returns the expected size of one range.
+func (r *RangeSplitter) GetRangeSplitSize() int64 {
+	return r.rangeSize
+}
+
 // SplitOneRangesGroup splits one group of ranges. `endKeyOfGroup` represents the
 // end key of the group, but it will be nil when the group is the last one.
 // `dataFiles` and `statFiles` are all the files that have overlapping key ranges

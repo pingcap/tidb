@@ -12,7 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/util/intest"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -214,6 +214,9 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *ExternalSt
 	case *backuppb.StorageBackend_S3:
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
+		}
+		if backend.S3.Provider == ks3SDKProvider {
+			return NewKS3Storage(ctx, backend.S3, opts)
 		}
 		return NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
