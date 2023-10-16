@@ -128,6 +128,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
+        "//pkg/util/disttask",
         "//pkg/util/domainutil",
         "//pkg/util/filter",
         "//pkg/util/gcutil",
