@@ -391,9 +391,9 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 
 	// test transactional
 	require.NoError(t, sm.DeleteSubtasksByTaskID(1))
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr"))
 	}()
 	prevState = task.State
 	task.State = proto.TaskStateFailed
@@ -499,9 +499,9 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Len(t, subTasks, 3)
 
 	// test GC history table.
-	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds"))
 	}()
 	time.Sleep(2 * time.Second)
 
