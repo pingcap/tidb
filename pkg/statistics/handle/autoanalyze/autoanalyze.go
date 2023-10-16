@@ -45,13 +45,34 @@ import (
 // statsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type statsAnalyze struct {
 	pool statsutil.SessionPool
+
+	// TODO: use interfaces instead of raw function pointers below
+	sysProcTracker          sessionctx.SysProcTracker
+	getLockedTables         func(tableIDs ...int64) (map[int64]struct{}, error)
+	getTableStats           func(tblInfo *model.TableInfo) *statistics.Table
+	getPartitionStats       func(tblInfo *model.TableInfo, pid int64) *statistics.Table
+	autoAnalyzeProcIDGetter func() uint64
+	statsLease              time.Duration
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
-func NewStatsAnalyze(pool statsutil.SessionPool) statsutil.StatsAnalyze {
-	return &statsAnalyze{pool: pool}
+func NewStatsAnalyze(pool statsutil.SessionPool,
+	sysProcTracker sessionctx.SysProcTracker,
+	getLockedTables func(tableIDs ...int64) (map[int64]struct{}, error),
+	getTableStats func(tblInfo *model.TableInfo) *statistics.Table,
+	getPartitionStats func(tblInfo *model.TableInfo, pid int64) *statistics.Table,
+	autoAnalyzeProcIDGetter func() uint64,
+	statsLease time.Duration) statsutil.StatsAnalyze {
+	return &statsAnalyze{pool: pool,
+		sysProcTracker:          sysProcTracker,
+		getLockedTables:         getLockedTables,
+		getTableStats:           getTableStats,
+		getPartitionStats:       getPartitionStats,
+		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
+		statsLease:              statsLease}
 }
 
+// InsertAnalyzeJob inserts the analyze job to the storage.
 func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
 	return statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
 		return insertAnalyzeJob(sctx, job, instance, procID)
@@ -64,6 +85,22 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 		return err
 	})
+}
+
+// HandleAutoAnalyze analyzes the newly created table or index.
+func (sa *statsAnalyze) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
+	_ = statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
+		analyzed = HandleAutoAnalyze(sctx, &Opt{
+			StatsLease:              sa.statsLease,
+			GetLockedTables:         sa.getLockedTables,
+			GetTableStats:           sa.getTableStats,
+			GetPartitionStats:       sa.getPartitionStats,
+			SysProcTracker:          sa.sysProcTracker,
+			AutoAnalyzeProcIDGetter: sa.autoAnalyzeProcIDGetter,
+		}, is)
+		return nil
+	})
+	return
 }
 
 func parseAutoAnalyzeRatio(ratio string) float64 {
