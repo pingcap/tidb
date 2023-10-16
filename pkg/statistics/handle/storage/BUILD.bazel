@@ -1,0 +1,56 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "storage",
+    srcs = [
+        "gc.go",
+        "json.go",
+        "read.go",
+        "save.go",
+        "update.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/storage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/infoschema",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/cache",
+        "//pkg/statistics/handle/lockstats",
+        "//pkg/statistics/handle/util",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/compress",
+        "//pkg/util/logutil",
+        "//pkg/util/mathutil",
+        "//pkg/util/memory",
+        "//pkg/util/sqlexec",
+        "@com_github_klauspost_compress//gzip",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "storage_test",
+    timeout = "short",
+    srcs = ["read_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/planner/cardinality",
+        "//pkg/testkit",
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+    ],
+)

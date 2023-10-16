@@ -66,7 +66,8 @@ require (
 	github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.3
-	github.com/klauspost/compress v1.17.0
+	github.com/klauspost/compress v1.17.1
+	github.com/ks3sdklib/aws-sdk-go v1.2.6
 	github.com/kyoh86/exportloopref v0.1.11
 	github.com/lestrrat-go/jwx/v2 v2.0.11
 	github.com/mgechev/revive v1.3.2
@@ -83,7 +84,7 @@ require (
 	github.com/pingcap/kvproto v0.0.0-20230925123611-87bebcc0d071
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
-	github.com/pingcap/tidb/parser v0.0.0-20211011031125-9b13dc409c5e
+	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20230919054518-dfd7d194838f
 	github.com/pkg/errors v0.9.1
 	github.com/prometheus/client_golang v1.16.0
@@ -122,7 +123,7 @@ require (
 	go.uber.org/goleak v1.2.1
 	go.uber.org/mock v0.2.0
 	go.uber.org/multierr v1.11.0
-	go.uber.org/zap v1.25.0
+	go.uber.org/zap v1.26.0
 	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
 	golang.org/x/net v0.17.0
 	golang.org/x/oauth2 v0.8.0
@@ -168,7 +169,6 @@ require (
 	github.com/acarl005/stripansi v0.0.0-20180116102854-5a71ef0e047d // indirect
 	github.com/alecthomas/units v0.0.0-20211218093645-b94a6e3cc137 // indirect
 	github.com/apache/thrift v0.13.1-0.20201008052519-daf620915714 // indirect
-	github.com/benbjohnson/clock v1.3.5 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bmatcuk/doublestar/v2 v2.0.4 // indirect
 	github.com/cespare/xxhash v1.1.0 // indirect
@@ -311,5 +311,5 @@ replace (
 	// fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	github.com/pingcap/tidb/parser => ./parser
+	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 )
