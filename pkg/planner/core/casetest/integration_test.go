@@ -423,7 +423,8 @@ func TestFixControl45132(t *testing.T) {
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:99"`)
-	tk.MustIndexLookup(`select * from t where a=2`) // index lookup
+	tk.MustExec(`analyze table t`)
+	tk.EventuallyMustIndexLookup(`select * from t where a=2`) // index lookup
 
 	tk.MustExec(`set @@tidb_opt_fix_control = "45132:500"`)
 	tk.MustHavePlan(`select * from t where a=2`, `TableFullScan`)
