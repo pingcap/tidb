@@ -140,7 +140,7 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 
 // Max column size is 6MB. Refer https://docs.pingcap.com/tidb/dev/tidb-limitations/#limitation-on-a-single-column
 // but here is 3MB, because stats_history has other info except stats_data.
-const maxColumnSize = 6 << 19
+const maxColumnSize = 5 << 20
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *storage.JSONTable) (uint64, error) {
