@@ -245,12 +245,12 @@ func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	jsonTbl, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
 	require.NoError(t, err)
 
-	ctx := context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+	ctx := context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl interface{}) error {
 		return errors.New("ERROR")
 	})
 	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)
 	require.ErrorContains(t, err, "ERROR")
-	ctx = context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+	ctx = context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl interface{}) error {
 		panic("PANIC")
 	})
 	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)

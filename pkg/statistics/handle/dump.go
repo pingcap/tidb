@@ -234,7 +234,7 @@ func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.In
 	tableInfo := table.Meta()
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil || jsonTbl.Partitions == nil {
-		err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, jsonTbl)
+		err := h.SaveStatsFromJSON(tableInfo, tableInfo.ID, jsonTbl)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -264,9 +264,9 @@ func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.In
 						continue
 					}
 
-					loadFunc := h.loadStatsFromJSON
+					loadFunc := h.SaveStatsFromJSON
 					if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
-						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *storage.JSONTable) error)
+						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, interface{}) error)
 					}
 
 					err := loadFunc(tableInfo, def.ID, tbl)
@@ -287,41 +287,10 @@ func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.In
 
 		// load global-stats if existed
 		if globalStats, ok := jsonTbl.Partitions[globalstats.TiDBGlobalStats]; ok {
-			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
+			if err := h.SaveStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
 				return errors.Trace(err)
 			}
 		}
 	}
 	return nil
-}
-
-func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
-	tbl, err := storage.TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for _, col := range tbl.Columns {
-		// loadStatsFromJSON doesn't support partition table now.
-		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
-		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), 1, false, StatsMetaHistorySourceLoadStats)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	for _, idx := range tbl.Indices {
-		// loadStatsFromJSON doesn't support partition table now.
-		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
-		// to care about them here.
-		err = h.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), 1, false, StatsMetaHistorySourceLoadStats)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-	err = h.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return h.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, StatsMetaHistorySourceLoadStats)
 }

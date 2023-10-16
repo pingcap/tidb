@@ -147,6 +147,39 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 	return
 }
 
+// SaveStatsFromJSON saves stats from JSON to the storage.
+func (s *statsReadWriter) SaveStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTblI interface{}) error {
+	jsonTbl := jsonTblI.(*JSONTable)
+	tbl, err := TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, col := range tbl.Columns {
+		// loadStatsFromJSON doesn't support partition table now.
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// to care about them here.
+		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), 1, false, "load stats")
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	for _, idx := range tbl.Indices {
+		// loadStatsFromJSON doesn't support partition table now.
+		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
+		// to care about them here.
+		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), 1, false, "load stats")
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	err = s.SaveExtendedStatsToStorage(tbl.PhysicalID, tbl.ExtendedStats, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return s.SaveMetaToStorage(tbl.PhysicalID, tbl.RealtimeCount, tbl.ModifyCount, "load stats")
+}
+
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10
 

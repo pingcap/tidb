@@ -229,6 +229,10 @@ type StatsReadWriter interface {
 	// SaveMetaToStorage saves stats meta to the storage.
 	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
 
+	// SaveStatsFromJSON saves stats from JSON to the storage.
+	// TODO: use *storage.JSONTable instead of interface{} (which is used to avoid cycle import).
+	SaveStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl interface{}) error
+
 	// Methods for extended stast.
 
 	// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
