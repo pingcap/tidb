@@ -115,15 +115,15 @@ func TestGlobalSortBasic(t *testing.T) {
 	<-dispatcher.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/forceMergeSort", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
 	tk.MustExec("alter table t add index idx1(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
 	<-dispatcher.WaitCleanUpFinished
 
 	checkFileCleaned(t, jobID, cloudStorageURI)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/forceMergeSort"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {

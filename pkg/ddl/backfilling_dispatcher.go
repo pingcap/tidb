@@ -86,6 +86,10 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		return nil, err
 	}
 
+	// StepOne: read index and write to backend.
+	// StepTwo: do merge sort to reduce the global sort reader reads files count. Only used in global sort.
+	// StepThree: ingest data.
+	// TODO: use planner.
 	switch step {
 	case proto.StepOne:
 		if tblInfo.Partition != nil {
@@ -104,7 +108,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 			if gTaskMeta.UseMergeSort {
 				prevStep = proto.StepTwo
 			}
-			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
+			return generateGlobalSortIngestPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
 		}
 		if tblInfo.Partition != nil {
 			return nil, nil
@@ -146,14 +150,14 @@ func (*backfillingDispatcherExt) GetNextStep(
 		}
 		// don't need merge step in local backend.
 		if len(meta.CloudStorageURI) == 0 {
-			return proto.StepTwo
+			return proto.StepThree
 		}
 
 		// if data files overlaps too much, we need a merge step.
 		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
 		if err != nil {
 			// TODO(lance6716): should we return error?
-			return proto.StepTwo
+			return proto.StepThree
 		}
 		multiStats := make([]external.MultipleFilesStat, 0, 100)
 		for _, bs := range subTaskMetas {
@@ -350,7 +354,7 @@ func generateIngestTaskPlan(
 	return subTaskMetas, nil
 }
 
-func generateMergeSortPlan(
+func generateGlobalSortIngestPlan(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
