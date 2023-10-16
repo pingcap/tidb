@@ -28,7 +28,9 @@ type AnalyzeJob struct {
 	JobInfo       string
 	StartTime     time.Time
 	EndTime       time.Time
-	Progress      AnalyzeProgress
+
+	Progress         AnalyzeProgress
+	SampleRateReason string // why this sample-rate is chosen
 }
 
 // AnalyzeProgress represents the process of one analyze job.
