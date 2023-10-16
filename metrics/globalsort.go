@@ -20,9 +20,10 @@ var (
 	GlobalSortWriteToCloudStorageDuration  *prometheus.HistogramVec
 	GlobalSortWriteToCloudStorageRate      *prometheus.HistogramVec
 	GlobalSortReadFromCloudStorageDuration *prometheus.HistogramVec
-	GlobalSortIngestWorkerCnt              *prometheus.GaugeVec
 	GlobalSortReadFromCloudStorageRate     *prometheus.HistogramVec
-	AddIndexScanRate                       *prometheus.HistogramVec
+	GlobalSortIngestWorkerCnt              *prometheus.GaugeVec
+
+	AddIndexScanRate *prometheus.HistogramVec
 )
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
