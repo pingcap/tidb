@@ -265,7 +265,7 @@ func indexStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *statis
 		if histID != idxInfo.ID {
 			continue
 		}
-		table.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+		table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
 		// 2. the index doesn't have any of buckets, topn, cmsketch in memory before, and:
@@ -341,7 +341,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		if histID != colInfo.ID {
 			continue
 		}
-		table.ColAndIndexExistenceMap.InsertCol(histID, colInfo, statsVer != statistics.Version0)
+		table.ColAndIdxExistenceMap.InsertCol(histID, colInfo, statsVer != statistics.Version0)
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
@@ -438,8 +438,8 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 			Indices:        make(map[int64]*statistics.Index, 4),
 		}
 		table = &statistics.Table{
-			HistColl:                histColl,
-			ColAndIndexExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
+			HistColl:              histColl,
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 		}
 	} else {
 		// We copy it before writing to avoid race.
@@ -527,7 +527,8 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 	var colInfo *model.ColumnInfo
 	statsVer := int64(-1)
 	c, ok := tbl.Columns[col.ID]
-	if (!ok && !tbl.ColAndIndexExistenceMap.Has(col.ID, false)) || (ok && !c.IsLoadNeeded()) {
+	// If this column hasn't been analyzed yet or it's fully loaded. We skip it.
+	if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false)) || (ok && !c.IsLoadNeeded()) {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
@@ -535,7 +536,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 		hgMeta = &c.Histogram
 		colInfo = c.Info
 	} else {
-		colInfo = tbl.ColAndIndexExistenceMap.GetCol(col.ID)
+		colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
 		hgMeta, _, statsVer, _, err = HistMetaFromStorage(sctx, &col, colInfo)
 		if hgMeta == nil || err != nil {
 			statistics.HistogramNeededItems.Delete(col)
@@ -613,7 +614,8 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 	)
 	statsVer := int64(-1)
 	index, ok := tbl.Indices[idx.ID]
-	if (!ok && !tbl.ColAndIndexExistenceMap.Has(idx.ID, true)) || (ok && index.IsFullLoad()) {
+	// If this index hasn't been analyzed or it's fully loaded, we skip it.
+	if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true)) || (ok && index.IsLoadNeeded()) {
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
@@ -625,10 +627,11 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 		lastAnalyzePos.SetUint64(index.LastUpdateVersion)
 	} else {
 		hgMeta, lastAnalyzePos, statsVer, flag, err = HistMetaFromStorage(sctx, &idx, nil)
-		if err != nil {
+		if hgMeta == nil || err != nil {
+			statistics.HistogramNeededItems.Delete(idx)
 			return err
 		}
-		idxInfo = tbl.ColAndIndexExistenceMap.GetIndex(idx.ID)
+		idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(idx.ID)
 	}
 	hg, err := HistogramFromStorage(sctx, idx.TableID, idx.ID, types.NewFieldType(mysql.TypeBlob), hgMeta.NDV, 1, hgMeta.LastUpdateVersion, hgMeta.NullCount, hgMeta.TotColSize, hgMeta.Correlation)
 	if err != nil {

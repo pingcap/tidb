@@ -129,10 +129,6 @@ func (idx *Index) TotalRowCount() float64 {
 
 // IndexStatsIsInvalid checks whether the index has valid stats or not.
 func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistColl, cid int64) (res bool) {
-	// When we are using stats from PseudoTable(), all column/index ID will be -1.
-	if ((idxStats != nil && idxStats.IsFullLoad()) || coll.PhysicalID <= 0) && !coll.CanNotTriggerLoad {
-		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
-	}
 	var totalCount float64
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
@@ -145,7 +141,9 @@ func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistCol
 			debugtrace.LeaveContextCommon(sctx)
 		}()
 	}
-	if idxStats == nil {
+	// If the given index statistics is nil or we found that the index's statistics hasn't been fully loaded, we add this index to NeededItems.
+	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
+	if (idxStats == nil || !idxStats.IsFullLoad()) && coll.PhysicalID > 0 && !coll.CanNotTriggerLoad {
 		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
 		return true
 	}
@@ -207,15 +205,6 @@ func (idx *Index) QueryBytes(sctx sessionctx.Context, d []byte) (result uint64) 
 	}
 	v, _ := idx.Histogram.EqualRowCount(sctx, types.NewBytesDatum(d), idx.StatsVer >= Version2)
 	return uint64(v)
-}
-
-// CheckStats will check if the index stats need to be updated.
-func (idx *Index) CheckStats() {
-	// When we are using stats from PseudoTable(), all column/index ID will be -1.
-	if idx.IsFullLoad() || idx.PhysicalID <= 0 {
-		return
-	}
-	HistogramNeededItems.insert(model.TableItemID{TableID: idx.PhysicalID, ID: idx.Info.ID, IsIndex: true})
 }
 
 // GetIncreaseFactor get the increase factor to adjust the final estimated count when the table is modified.

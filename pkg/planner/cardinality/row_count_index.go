@@ -60,6 +60,8 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
+	// For the mv index case, now we have supported collecting stats and async loading stats, but sync loading and
+	// estimation is not well-supported, so we keep mv index using pseudo estimation for this period of time.
 	if statistics.IndexStatsIsInvalid(idx, sctx, coll, idxID) || isMVIndex {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {

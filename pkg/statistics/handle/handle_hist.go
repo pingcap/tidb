@@ -154,7 +154,8 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []mo
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if (!ok && tbl.ColAndIndexExistenceMap.HasAnalyzed(item.ID, false)) || (ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad()) {
+		// If this column hasn't been analyzed yet, or it's already fully loaded. We skip it.
+		if (!ok && tbl.ColAndIdxExistenceMap.HasAnalyzed(item.ID, false)) || (ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad()) {
 			remainedItems = append(remainedItems, item)
 		}
 	}
@@ -233,25 +234,27 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
-		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
+		// If we don't have this index's stats or its statistics has been fully loaded. We skip it.
+		if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(item.ID, true)) || (ok && index.IsFullLoad()) {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
 		if ok {
 			wrapper.idxInfo = index.Info
 		} else {
-			wrapper.idxInfo = tbl.ColAndIndexExistenceMap.GetIndex(item.ID)
+			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
 		}
 	} else {
 		col, ok := tbl.Columns[item.ID]
-		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && col.IsFullLoad()) {
+		// If this column hasn't been analyzed yet or it has been fully loaded. We skip it.
+		if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(item.ID, false)) || (ok && col.IsFullLoad()) {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
 		if ok {
 			wrapper.colInfo = col.Info
 		} else {
-			wrapper.colInfo = tbl.ColAndIndexExistenceMap.GetCol(item.ID)
+			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)
 		}
 	}
 	// to avoid duplicated handling in concurrent scenario
@@ -301,9 +304,9 @@ func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItem
 		return nil, err
 	}
 	if hg == nil {
-		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
+		logutil.BgLogger().Error("fail to get hist meta for this histogram, possibly a deleted one", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
-		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
+		return nil, errors.Trace(fmt.Errorf("fail to get hist meta for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
 	if item.IsIndex {
 		isIndexFlag = 1
@@ -462,18 +465,27 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
-		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && c.IsFullLoad()) {
+		// If we don't have this column or its stats is fully loaded, we skip it.
+		if (!ok && !tbl.ColAndIdxExistenceMap.Has(item.ID, false)) || (ok && c.IsFullLoad()) {
 			return true
 		}
 		tbl = tbl.Copy()
 		tbl.Columns[item.ID] = colHist
+		// If the column is analyzed we refresh the map for the possible change.
+		if colHist.StatsAvailable() {
+			tbl.ColAndIdxExistenceMap.InsertCol(item.ID, colHist.Info, true)
+		}
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
-		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
+		// If we don't have this column or its stats is fully loaded, we skip it.
+		if (!ok && !tbl.ColAndIdxExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
 			return true
 		}
 		tbl = tbl.Copy()
 		tbl.Indices[item.ID] = idxHist
+		if idxHist.IsAnalyzed() {
+			tbl.ColAndIdxExistenceMap.InsertIndex(item.ID, idxHist.Info, true)
+		}
 	}
 	h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	return true

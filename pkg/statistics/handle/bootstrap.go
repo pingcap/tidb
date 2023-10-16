@@ -55,11 +55,11 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsC
 			Indices:        make(map[int64]*statistics.Index, 4),
 		}
 		tbl := &statistics.Table{
-			HistColl:                newHistColl,
-			Version:                 row.GetUint64(0),
-			Name:                    getFullTableName(is, tableInfo),
-			ColAndIndexExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
-			IsPkIsHandle:            tableInfo.PKIsHandle,
+			HistColl:              newHistColl,
+			Version:               row.GetUint64(0),
+			Name:                  getFullTableName(is, tableInfo),
+			ColAndIdxExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
+			IsPkIsHandle:          tableInfo.PKIsHandle,
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -101,6 +101,8 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 		}
 		isIndex := row.GetInt64(1)
 		id := row.GetInt64(2)
+		ndv := row.GetInt64(3)
+		nullCount := row.GetInt64(5)
 		statsVer := row.GetInt64(7)
 		tbl, _ := h.TableInfoByID(is, table.PhysicalID)
 		if isIndex > 0 {
@@ -114,7 +116,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 			if idxInfo == nil {
 				continue
 			}
-			table.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
+			table.ColAndIdxExistenceMap.InsertIndex(idxInfo.ID, idxInfo, statsVer != statistics.Version0)
 		} else {
 			var colInfo *model.ColumnInfo
 			for _, col := range tbl.Meta().Columns {
@@ -123,7 +125,7 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache u
 					break
 				}
 			}
-			table.ColAndIndexExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0)
+			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 		}
 		cache.Put(tblID, table) // put this table again since it is updated
 	}
