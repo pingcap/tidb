@@ -16,6 +16,7 @@ package sessionstates_test
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"strconv"
@@ -334,6 +335,18 @@ func TestInvisibleVars(t *testing.T) {
 			tk.MustExec(tt.cleanStmt)
 		}
 	}
+}
+
+func TestIssue47665(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
+	originSEM := config.GetGlobalConfig().Security.EnableSEM
+	config.GetGlobalConfig().Security.EnableSEM = true
+	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
+	config.GetGlobalConfig().Security.EnableSEM = originSEM
+	tk.MustExec("set @@global.require_secure_transport = on")
+	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
 }
 
 func TestSessionCtx(t *testing.T) {
