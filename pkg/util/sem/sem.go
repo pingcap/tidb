@@ -158,7 +158,8 @@ func IsInvisibleSysVar(varNameInLower string) bool {
 		variable.TiDBRestrictedReadOnly,
 		variable.TiDBTopSQLMaxTimeSeriesCount,
 		variable.TiDBTopSQLMaxMetaCount,
-		tidbAuditRetractLog:
+		tidbAuditRetractLog,
+		variable.RequireSecureTransport:
 		return true
 	}
 	return false
