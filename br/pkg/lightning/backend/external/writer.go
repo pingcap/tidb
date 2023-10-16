@@ -19,10 +19,12 @@ import (
 	"context"
 	"encoding/hex"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -384,9 +386,23 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	ts := time.Now()
-	var savedBytes uint64
+	var (
+		savedBytes                  uint64
+		statSize                    int
+		sortDuration, writeDuration time.Duration
+		writeStartTime              time.Time
+	)
 
+	getSpeed := func(n uint64, dur float64, isBytes bool) string {
+		if dur == 0 {
+			return "-"
+		}
+		if isBytes {
+			return units.BytesSize(float64(n) / dur)
+		}
+		return units.HumanSize(float64(n) / dur)
+	}
+	kvCnt := len(w.writeBatch)
 	defer func() {
 		w.currentSeq++
 		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
@@ -403,23 +419,38 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			err = err2
 			return
 		}
+		writeDuration = time.Since(writeStartTime)
 		logger.Info("flush kv",
-			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", savedBytes),
-			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
+			zap.Int("kv-cnt", kvCnt),
+			zap.Int("stat-size", statSize),
+			zap.Duration("sort-time", sortDuration),
+			zap.Duration("write-time", writeDuration),
+			zap.String("sort-speed(kv/s)", getSpeed(uint64(kvCnt), sortDuration.Seconds(), false)),
+			zap.String("write-speed(bytes/s)", getSpeed(savedBytes, writeDuration.Seconds(), true)),
+		)
 	}()
 
-	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
-	sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
-		if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
-			if r != s {
-				w.writeBatch[r], w.writeBatch[s] = w.writeBatch[s], w.writeBatch[r]
+	sortStart := time.Now()
+	if w.shareMu != nil {
+		sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
+		sorty.Sort(len(w.writeBatch), func(i, j, r, s int) bool {
+			if bytes.Compare(w.writeBatch[i].Key, w.writeBatch[j].Key) < 0 {
+				if r != s {
+					w.writeBatch[r], w.writeBatch[s] = w.writeBatch[s], w.writeBatch[r]
+				}
+				return true
 			}
-			return true
-		}
-		return false
-	})
+			return false
+		})
+	} else {
+		slices.SortFunc(w.writeBatch[:], func(i, j common.KvPair) int {
+			return bytes.Compare(i.Key, j.Key)
+		})
+	}
+	sortDuration = time.Since(sortStart)
 
+	writeStartTime = time.Now()
 	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return err
@@ -435,7 +466,9 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	w.kvStore.Close()
-	_, err = statWriter.Write(ctx, w.rc.encode())
+	encodedStat := w.rc.encode()
+	statSize = len(encodedStat)
+	_, err = statWriter.Write(ctx, encodedStat)
 	if err != nil {
 		return err
 	}
