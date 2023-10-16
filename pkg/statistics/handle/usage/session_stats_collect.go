@@ -46,7 +46,7 @@ var (
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
 func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
-	tbl, ok := s.tblInfo.TableInfoByID(is, id)
+	tbl, ok := s.statsHandle.TableInfoByID(is, id)
 	if !ok {
 		return false
 	}
@@ -67,7 +67,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		// Dump the stats to kv at least once an hour.
 		return true
 	}
-	statsTbl := s.getPartitionStats(tbl.Meta(), id)
+	statsTbl := s.statsHandle.GetPartitionStats(tbl.Meta(), id)
 	if statsTbl.Pseudo || statsTbl.RealtimeCount == 0 || float64(item.Count)/float64(statsTbl.RealtimeCount) > DumpStatsDeltaRatio {
 		// Dump the stats when there are many modifications.
 		return true
@@ -84,7 +84,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 		s.SessionTableDelta().Merge(deltaMap)
 	}()
 
-	return utilstats.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+	return utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 		currentTime := time.Now()
 		for id, item := range deltaMap {
@@ -120,14 +120,14 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 	statsVersion := uint64(0)
 	defer func() {
 		if err == nil && statsVersion != 0 {
-			s.statsHis.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats")
+			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats")
 		}
 	}()
 	if delta.Count == 0 {
 		return true, nil
 	}
 
-	err = utilstats.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+	err = utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		statsVersion, err = utilstats.GetStartTS(sctx)
 		if err != nil {
 			return errors.Trace(err)
@@ -140,7 +140,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 			tidAndPid = append(tidAndPid, tbl.Meta().ID)
 		}
 		tidAndPid = append(tidAndPid, physicalTableID)
-		lockedTables, err := s.getLockedTables(tidAndPid...)
+		lockedTables, err := s.statsHandle.GetLockedTables(tidAndPid...)
 		if err != nil {
 			return err
 		}
@@ -244,7 +244,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 			}
 		}
 		sqlexec.MustFormatSQL(sql, " ON DUPLICATE KEY UPDATE last_used_at = CASE WHEN last_used_at IS NULL THEN VALUES(last_used_at) ELSE GREATEST(last_used_at, VALUES(last_used_at)) END")
-		if err := utilstats.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		if err := utilstats.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 			_, _, err := utilstats.ExecRows(sctx, sql.String())
 			return err
 		}); err != nil {
