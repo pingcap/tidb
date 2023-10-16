@@ -302,7 +302,12 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 			end = len(recordRegionMetas)
 		}
 		batch := recordRegionMetas[i:end]
-		subTaskMeta := &BackfillSubTaskMeta{StartKey: batch[0].StartKey(), EndKey: batch[len(batch)-1].EndKey()}
+		subTaskMeta := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: batch[0].StartKey(),
+				EndKey:   batch[len(batch)-1].EndKey(),
+			},
+		}
 		if i == 0 {
 			subTaskMeta.StartKey = startKey
 		}
