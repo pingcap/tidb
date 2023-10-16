@@ -18,9 +18,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -32,6 +34,118 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
+
+// statsReadWriter implements the util.StatsReadWriter interface.
+type statsReadWriter struct {
+	pool         util.SessionPool
+	statsHistory util.StatsHistory
+	statsCache   util.StatsCache
+	lease        time.Duration
+}
+
+// NewStatsReadWriter creates a new StatsReadWriter.
+func NewStatsReadWriter(pool util.SessionPool, statsHis util.StatsHistory,
+	statsCache util.StatsCache, lease time.Duration) util.StatsReadWriter {
+	return &statsReadWriter{
+		pool:         pool,
+		statsHistory: statsHis,
+		statsCache:   statsCache,
+		lease:        lease,
+	}
+}
+
+// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
+func (s *statsReadWriter) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		count, modifyCount, _, err = StatsMetaCountAndModifyCount(sctx, tableID)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
+// TableStatsFromStorage loads table stats info from storage.
+func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		var ok bool
+		statsTbl, ok = s.statsCache.Get(physicalID)
+		if !ok {
+			statsTbl = nil
+		}
+		statsTbl, err = TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.lease, statsTbl)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
+// SaveStatsToStorage saves the stats to storage.
+// If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
+// fields in the stats_meta table will be updated.
+// TODO: refactor to reduce the number of parameters
+func (s *statsReadWriter) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error) {
+	var statsVer uint64
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		statsVer, err = SaveStatsToStorage(sctx, tableID,
+			count, modifyCount, isIndex, hg, cms, topN, statsVersion, isAnalyzed, updateAnalyzeTime)
+		return err
+	})
+	if err == nil && statsVer != 0 {
+		s.statsHistory.RecordHistoricalStatsMeta(tableID, statsVer, source)
+	}
+	return
+}
+
+// SaveMetaToStorage saves stats meta to the storage.
+func (s *statsReadWriter) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
+	var statsVer uint64
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		statsVer, err = SaveMetaToStorage(sctx, tableID, count, modifyCount)
+		return err
+	})
+	if err == nil && statsVer != 0 {
+		s.statsHistory.RecordHistoricalStatsMeta(tableID, statsVer, source)
+	}
+	return
+}
+
+// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
+func (s *statsReadWriter) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
+	var statsVer uint64
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		statsVer, err = InsertExtendedStats(sctx, s.statsCache, statsName, colIDs, tp, tableID, ifNotExists)
+		return err
+	})
+	if err == nil && statsVer != 0 {
+		s.statsHistory.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats")
+	}
+	return
+}
+
+// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+func (s *statsReadWriter) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
+	var statsVer uint64
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		statsVer, err = MarkExtendedStatsDeleted(sctx, s.statsCache, statsName, tableID, ifExists)
+		return err
+	})
+	if err == nil && statsVer != 0 {
+		s.statsHistory.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats")
+	}
+	return
+}
+
+// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
+func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
+	var statsVer uint64
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		statsVer, err = SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
+		return err
+	})
+	if err == nil && statsVer != 0 {
+		s.statsHistory.RecordHistoricalStatsMeta(tableID, statsVer, "extended stats")
+	}
+	return
+}
 
 // batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 const batchInsertSize = 10

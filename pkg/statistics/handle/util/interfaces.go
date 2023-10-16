@@ -128,6 +128,12 @@ type StatsCache interface {
 	// Get returns the specified table's stats.
 	Get(tableID int64) (*statistics.Table, bool)
 
+	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+
+	// GetPartitionStats retrieves the partition stats from cache.
+	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
 	// Put puts this table stats into the cache.
 	Put(tableID int64, t *statistics.Table)
 
@@ -149,6 +155,9 @@ type StatsCache interface {
 
 	// Replace replaces this cache.
 	Replace(cache StatsCache)
+
+	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+	UpdateStatsHealthyMetrics()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -200,4 +209,34 @@ type StatsLock interface {
 
 	// GetTableLockedAndClearForTest for unit test only.
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
+}
+
+// StatsReadWriter is used to read and write stats to the storage.
+type StatsReadWriter interface {
+	// TableStatsFromStorage loads table stats info from storage.
+	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
+
+	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
+	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
+
+	//// SaveTableStatsToStorage saves the stats of a table to storage.
+	//SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+
+	// SaveStatsToStorage save the stats data to the storage.
+	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+
+	// SaveMetaToStorage saves stats meta to the storage.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+
+	// Methods for extended stast.
+
+	// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
+	InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error)
+
+	// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+	MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error)
+
+	// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
+	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
 }

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -62,6 +63,26 @@ func NewStatsCacheImpl(pool util.SessionPool, tblInfo util.TableInfoGetter, stat
 // NewStatsCacheImplForTest creates a new StatsCache for test.
 func NewStatsCacheImplForTest() (util.StatsCache, error) {
 	return NewStatsCacheImpl(nil, nil, 0, nil)
+}
+
+// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+func (s *StatsCacheImpl) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
+	return s.GetPartitionStats(tblInfo, tblInfo.ID)
+}
+
+// GetPartitionStats retrieves the partition stats from cache.
+func (s *StatsCacheImpl) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	var tbl *statistics.Table
+	tbl, ok := s.Get(pid)
+	if !ok {
+		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl.PhysicalID = pid
+		if tblInfo.GetPartitionInfo() == nil || s.Len() < 64 {
+			s.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+		}
+		return tbl
+	}
+	return tbl
 }
 
 // Update reads stats meta from store and updates the stats map.
@@ -200,4 +221,28 @@ func (s *StatsCacheImpl) Len() int {
 // SetStatsCacheCapacity sets the cache's capacity.
 func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 	s.Load().SetCapacity(c)
+}
+
+// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
+	distribution := make([]int64, 5)
+	for _, tbl := range s.Values() {
+		healthy, ok := tbl.GetStatsHealthy()
+		if !ok {
+			continue
+		}
+		if healthy < 50 {
+			distribution[0]++
+		} else if healthy < 80 {
+			distribution[1]++
+		} else if healthy < 100 {
+			distribution[2]++
+		} else {
+			distribution[3]++
+		}
+		distribution[4]++
+	}
+	for i, val := range distribution {
+		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
+	}
 }
