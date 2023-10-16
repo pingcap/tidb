@@ -47,7 +47,21 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 		fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 }
 
-func TestGlobalSortCleanupCloudFiles(t *testing.T) {
+func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
+	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	require.NoError(t, err)
+	opts := &storage.ExternalStorageOptions{NoCredentials: true}
+	extStore, err := storage.New(context.Background(), storeBackend, opts)
+	require.NoError(t, err)
+	prefix := strconv.Itoa(int(jobID))
+	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	require.NoError(t, err)
+	require.Greater(t, jobID, int64(0))
+	require.Equal(t, 0, len(dataFiles))
+	require.Equal(t, 0, len(statFiles))
+}
+
+func TestGlobalSortBasic(t *testing.T) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -67,7 +81,7 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
-	variable.CloudStorageURI.Store(cloudStorageURI)
+	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
 	defer func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
@@ -94,22 +108,22 @@ func TestGlobalSortCleanupCloudFiles(t *testing.T) {
 	hook := &callback.TestDDLCallback{}
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
+
 	tk.MustExec("alter table t add index idx(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
 	<-dispatcher.WaitCleanUpFinished
-	storeBackend, err := storage.ParseBackend(cloudStorageURI, nil)
-	require.NoError(t, err)
-	opts := &storage.ExternalStorageOptions{NoCredentials: true}
-	extStore, err := storage.New(context.Background(), storeBackend, opts)
-	require.NoError(t, err)
-	prefix := strconv.Itoa(int(jobID))
-	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
-	require.NoError(t, err)
-	require.Greater(t, jobID, int64(0))
-	require.Equal(t, 0, len(dataFiles))
-	require.Equal(t, 0, len(statFiles))
+	checkFileCleaned(t, jobID, cloudStorageURI)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
+	tk.MustExec("alter table t add index idx1(a);")
+	dom.DDL().SetHook(origin)
+	tk.MustExec("admin check table t;")
+	<-dispatcher.WaitCleanUpFinished
+
+	checkFileCleaned(t, jobID, cloudStorageURI)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
