@@ -361,9 +361,8 @@ func generateMergeSortPlan(
 		}
 		m := &BackfillSubTaskMeta{
 			SortedKVMeta: external.SortedKVMeta{
-				StartKey: startKey,
-				EndKey:   endKey,
-
+				StartKey:    startKey,
+				EndKey:      endKey,
 				TotalKVSize: totalSize / uint64(len(instanceIDs)),
 			},
 			DataFiles:      dataFiles,

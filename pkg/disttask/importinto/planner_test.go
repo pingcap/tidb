@@ -129,8 +129,6 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				DataFiles:   []string{prefix + "/1"},
-				StatFiles:   []string{prefix + "/1.stat"},
 				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{
@@ -144,8 +142,6 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 					StartKey:    []byte(idxPrefix + "a"),
 					EndKey:      []byte(idxPrefix + "c"),
 					TotalKVSize: 12,
-					DataFiles:   []string{idxPrefix + "/1"},
-					StatFiles:   []string{idxPrefix + "/1.stat"},
 					MultipleFilesStats: []external.MultipleFilesStat{
 						{
 							Filenames: [][2]string{
@@ -204,8 +200,6 @@ func genMergeStepMetas(t *testing.T, cnt int) [][]byte {
 				StartKey:    []byte(prefix + "a"),
 				EndKey:      []byte(prefix + "c"),
 				TotalKVSize: 12,
-				DataFiles:   []string{prefix + "/1"},
-				StatFiles:   []string{prefix + "/1.stat"},
 				MultipleFilesStats: []external.MultipleFilesStat{
 					{
 						Filenames: [][2]string{

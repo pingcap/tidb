@@ -373,8 +373,8 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:      e.taskMeta.Plan.CloudStorageURI,
-			DataFiles:       sm.GetDataFiles(),
-			StatFiles:       sm.GetStatFiles(),
+			DataFiles:       sm.DataFiles,
+			StatFiles:       sm.StatFiles,
 			StartKey:        sm.StartKey,
 			EndKey:          sm.EndKey,
 			SplitKeys:       sm.RangeSplitKeys,
