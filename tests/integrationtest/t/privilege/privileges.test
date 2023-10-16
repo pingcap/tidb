@@ -44,6 +44,7 @@ DELETE FROM privilege__privileges.t1;
 DELETE FROM dbnotexists.t1;
 disconnect testnotexist;
 connection default;
+drop table t1;
 
 # TestGrantRoutine
 CREATE USER u1;
@@ -80,6 +81,7 @@ create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
 drop placement policy if exists x;
 disconnect placement_user;
 connection default;
+drop user placement_user;
 
 # TestResourceGroupAdminDynamicPriv
 CREATE USER resource_group_user;
@@ -402,6 +404,7 @@ DROP USER usr1;
 disconnect tcd1;
 disconnect tcd2;
 connection default;
+drop resource group rg1;
 
 
 
@@ -493,3 +496,313 @@ GRANT TRIGGER ON privilege__privileges.trigger_table TO ucorrect2;
 DROP TABLE privilege__privileges.trigger_table;
 --error ErrCantCreateUserWithGrant
 GRANT CREATE TEMPORARY TABLES,DELETE,EXECUTE,INSERT,SELECT,SHOW VIEW,TRIGGER,UPDATE ON privilege__privileges.* TO uincorrect;
+
+# TestShowColumnGrants
+CREATE USER 'column'@'%';
+CREATE TABLE column_table (a int, b int, c int);
+GRANT Select(a),Update(a,b),Insert(c) ON privilege__privileges.column_table TO  'column'@'%';
+connect (show_column_grants,localhost,column,,);
+connection show_column_grants;
+SHOW GRANTS;
+disconnect show_column_grants;
+connection default;
+
+# TestFieldList
+CREATE USER 'tableaccess'@'localhost';
+CREATE TABLE fieldlistt1 (a int);
+connect (field_list,localhost,tableaccess,,);
+connection field_list;
+--error ErrTableaccessDenied
+desc fieldlistt1;
+disconnect field_list;
+connection default;
+
+# TestReplaceAndInsertOnDuplicate
+CREATE USER tr_insert;
+CREATE USER tr_update;
+CREATE USER tr_delete;
+CREATE TABLE t1 (a int primary key, b int);
+GRANT INSERT ON t1 TO tr_insert;
+GRANT UPDATE ON t1 TO tr_update;
+GRANT DELETE ON t1 TO tr_delete;
+connect (tr_insert,localhost,tr_insert,,privilege__privileges);
+connection tr_insert;
+# REPLACE requires INSERT + DELETE privileges, having INSERT alone is insufficient.
+--error ErrTableaccessDenied
+REPLACE INTO t1 VALUES (1, 2);
+# INSERT ON DUPLICATE requires INSERT + UPDATE privileges, having INSERT alone is insufficient.
+--error ErrTableaccessDenied
+INSERT INTO t1 VALUES (3, 4) ON DUPLICATE KEY UPDATE b = 5;
+# Plain INSERT should work.
+INSERT INTO t1 VALUES (6, 7);
+disconnect tr_insert;
+
+# Also check that having DELETE alone is insufficient for REPLACE.
+connect (tr_delete,localhost,tr_delete,,privilege__privileges);
+connection tr_delete;
+--error ErrTableaccessDenied
+REPLACE INTO t1 VALUES (8, 9);
+disconnect tr_delete;
+
+# Also check that having UPDATE alone is insufficient for INSERT ON DUPLICATE.
+connect (tr_update,localhost,tr_update,,privilege__privileges);
+connection tr_update;
+--error ErrTableaccessDenied
+INSERT INTO t1 VALUES (10, 11) ON DUPLICATE KEY UPDATE b = 12;
+disconnect tr_update;
+connection default;
+
+
+# TestGrantPlacementAdminDynamicPriv
+CREATE DATABASE placement_db;
+USE placement_db;
+CREATE TABLE placement_table (a int);
+CREATE USER placement_user;
+GRANT PLACEMENT_ADMIN ON *.* TO placement_user;
+SHOW GRANTS FOR placement_user;
+DROP USER placement_user;
+DROP DATABASE placement_db;
+
+
+# TestAlterUserStmt
+CREATE USER superuser2, nobodyuser2, nobodyuser3, nobodyuser4, nobodyuser5, semuser1, semuser2, semuser3, semuser4;
+GRANT ALL ON *.* TO superuser2;
+GRANT CREATE USER ON *.* TO nobodyuser2;
+GRANT SYSTEM_USER ON *.* TO nobodyuser4;
+GRANT UPDATE ON mysql.user TO nobodyuser5, semuser1;
+GRANT RESTRICTED_TABLES_ADMIN ON *.* TO semuser1;
+GRANT RESTRICTED_USER_ADMIN ON *.* TO semuser1, semuser2, semuser3;
+GRANT SYSTEM_USER ON *.* to semuser3;
+# This should be the default value in the future.
+# set global tidb_enable_resource_control = 'on';
+CREATE RESOURCE GROUP rg1 ru_per_sec=1000;
+ALTER USER 'semuser1' RESOURCE GROUP rg1;
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+ALTER USER 'semuser1' COMMENT 'comment1';
+SELECT User_attributes FROM mysql.user WHERE User = "semuser1";
+
+connect (superuser2,localhost,superuser2,,);
+connection superuser2;
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+disconnect superuser2;
+
+connect (nobodyuser2,localhost,nobodyuser2,,);
+connection nobodyuser2;
+ALTER USER 'nobodyuser2' IDENTIFIED BY 'newpassword';
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+--error Access denied;
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+--error Access denied;
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+disconnect nobodyuser2;
+
+connect (nobodyuser3,localhost,nobodyuser3,,);
+connection nobodyuser3;
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+--error Access denied
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+--error Access denied
+ALTER USER 'superuser2' IDENTIFIED BY 'newpassword';
+disconnect nobodyuser3;
+
+connect (nobodyuser5,localhost,nobodyuser5,,);
+connection nobodyuser5;
+ALTER USER 'nobodyuser2' IDENTIFIED BY '';
+ALTER USER 'nobodyuser3' IDENTIFIED BY '';
+--error Access denied
+ALTER USER 'nobodyuser4' IDENTIFIED BY 'newpassword';
+disconnect nobodyuser5;
+
+connect (semuser1,localhost,semuser1,,);
+connection semuser1;
+ALTER USER 'semuser1' IDENTIFIED BY '';
+ALTER USER 'semuser2' IDENTIFIED BY '';
+ALTER USER 'semuser3' IDENTIFIED BY '';
+disconnect semuser1;
+connection default;
+
+
+# TestRenameUser
+DROP USER IF EXISTS 'ru1'@'localhost';
+DROP USER IF EXISTS ru3;
+DROP USER IF EXISTS ru6@localhost;
+CREATE USER 'ru1'@'localhost';
+CREATE USER ru3;
+CREATE USER ru6@localhost;
+
+connect (ru1,localhost,ru1,,);
+connection ru1;
+--error Access denied
+RENAME USER ru3 TO ru4;
+connection default;
+GRANT UPDATE ON mysql.user TO 'ru1'@'localhost';
+connection ru1;
+--error Access denied
+RENAME USER ru3 TO ru4;
+connection default;
+GRANT CREATE USER ON *.* TO 'ru1'@'localhost';
+connection ru1;
+RENAME USER ru3 TO ru4;
+RENAME USER 'ru4'@'%' TO 'ru3'@'localhost';
+RENAME USER 'ru3'@'localhost' TO 'ru3'@'%';
+connection default;
+--error Operation RENAME USER failed
+RENAME USER ru3 TO ru1@localhost;
+connection ru1;
+--error Operation RENAME USER failed
+RENAME USER ru4 TO ru5@localhost;
+--error Operation RENAME USER failed
+RENAME USER ru3 TO ru3;
+--error Operation RENAME USER failed
+RENAME USER ru3 TO ru5@localhost, ru4 TO ru7;
+--error Operation RENAME USER failed
+RENAME USER ru3 TO ru5@localhost, ru6@localhost TO ru1@localhost;
+--error Operation RENAME USER failed
+RENAME USER 'ru3' TO 'ru3_tmp', ru6@localhost TO ru3, 'ru3_tmp' to ru6@localhost;
+--error Operation RENAME USER failed
+RENAME USER 'ru6@localhost' TO '1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost';
+--error Operation RENAME USER failed
+RENAME USER 'ru6@localhost' TO 'some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X';
+connection default;
+DROP USER ru6@localhost;
+DROP USER ru3;
+DROP USER 'ru1'@'localhost';
+disconnect ru1;
+
+# TestClusterConfigInfoschema
+CREATE USER ccnobody, ccconfig, ccprocess;
+GRANT CONFIG ON *.* TO ccconfig;
+GRANT Process ON *.* TO ccprocess;
+connect (ccnobody,localhost,ccnobody,,);
+connection ccnobody;
+SHOW GRANTS;
+-- error 1227
+SELECT * FROM information_schema.cluster_config;
+-- error 1227
+SELECT * FROM information_schema.cluster_hardware;
+-- error 1227
+SELECT * FROM information_schema.cluster_info;
+-- error 1227
+SELECT * FROM information_schema.cluster_load;
+-- error 1227
+SELECT * FROM information_schema.cluster_systeminfo;
+-- error 1227
+SELECT * FROM information_schema.cluster_log WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+disconnect ccnobody;
+
+connect (ccconfig,localhost,ccconfig,,);
+connection ccconfig;
+SHOW GRANTS;
+SELECT * FROM information_schema.cluster_config limit 0;
+SELECT * FROM information_schema.cluster_HARDWARE limit 0;
+-- error 1227
+SELECT * FROM information_schema.cluster_INFO;
+-- error 1227
+SELECT * FROM information_schema.cluster_LOAD;
+-- error 1227
+SELECT * FROM information_schema.cluster_SYSTEMINFO;
+-- error 1227
+SELECT * FROM information_schema.cluster_LOG WHERE time BETWEEN '2021-07-13 00:00:00' AND '2021-07-13 02:00:00' AND message like '%';
+disconnect ccconfig;
+
+connect (ccprocess,localhost,ccprocess,,);
+connection ccprocess;
+SHOW GRANTS;
+SELECT * FROM information_schema.CLUSTER_info limit 0;
+SELECT * FROM information_schema.CLUSTER_load limit 0;
+SELECT * FROM information_schema.CLUSTER_systeminfo limit 0;
+SELECT * FROM information_schema.CLUSTER_log WHERE time BETWEEN '1970-07-13 00:00:00' AND '1970-07-13 02:00:00' AND message like '%';
+-- error 1227
+SELECT * FROM information_schema.CLUSTER_config;
+-- error 1227
+SELECT * FROM information_schema.CLUSTER_hardware;
+disconnect ccprocess;
+connection default;
+
+
+# TestSetPasswdStmt
+CREATE USER 'superuser';
+CREATE USER 'nobodyuser';
+GRANT ALL ON *.* TO 'superuser';
+connect (superuser,localhost,superuser,,);
+connection superuser;
+SET PASSWORD for 'nobodyuser' = 'newpassword';
+SET PASSWORD for 'nobodyuser' = '';
+disconnect superuser;
+
+connect (nobodyuser,localhost,nobodyuser,,);
+connection nobodyuser;
+--error Fail
+SET PASSWORD for 'superuser' = 'newpassword';
+disconnect nobodyuser;
+connection default;
+
+
+# TestShowGrantsWithRolesAndDynamicPrivs
+CREATE ROLE tsg_r1;
+CREATE USER tsg_u1, tsg_u2;
+GRANT CONNECTION_ADMIN, ROLE_ADMIN, SYSTEM_VARIABLES_ADMIN, PROCESS ON *.* TO tsg_r1;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u1 WITH GRANT OPTION;
+GRANT CONNECTION_ADMIN ON *.* TO tsg_u2 WITH GRANT OPTION;
+GRANT ROLE_ADMIN ON *.* TO tsg_u1;
+GRANT ROLE_ADMIN ON *.* TO tsg_u2;
+GRANT ROLE_ADMIN ON *.* TO tsg_r1 WITH GRANT OPTION;
+GRANT CONFIG ON *.* TO tsg_r1;
+GRANT tsg_r1 TO tsg_u1, tsg_u2;
+SET DEFAULT ROLE tsg_r1 TO tsg_u1;
+
+connect (tsg_u1,localhost,tsg_u1,,);
+connection tsg_u1;
+SHOW GRANTS;
+SHOW GRANTS FOR CURRENT_USER();
+SHOW GRANTS FOR 'tsg_u1';
+disconnect tsg_u1;
+
+connect (tsg_u2,localhost,tsg_u2,,);
+connection tsg_u2;
+SHOW GRANTS;
+SHOW GRANTS FOR CURRENT_USER();
+SHOW GRANTS FOR 'tsg_u2';
+SET ROLE tsg_r1;
+SHOW GRANTS;
+SHOW GRANTS FOR CURRENT_USER();
+SHOW GRANTS FOR 'tsg_u2';
+disconnect tsg_u2;
+connection default;
+
+
+# TestGetEncodedPassword
+CREATE USER 'test_encode_u'@'localhost' identified by 'root';
+select authentication_string from mysql.user where user='test_encode_u';
+
+
+# TestShowGrantsForCurrentUserUsingRole
+DROP USER IF EXISTS joe, engineering, notgranted, otherrole, delete_stuff_privilege;
+CREATE USER joe;
+CREATE ROLE engineering;
+CREATE ROLE admins;
+CREATE ROLE notgranted;
+CREATE ROLE otherrole;
+GRANT INSERT ON test.* TO engineering;
+GRANT DELETE ON test.* TO admins;
+GRANT SELECT on test.* to joe;
+GRANT engineering TO joe;
+GRANT admins TO joe;
+SET DEFAULT ROLE admins TO joe;
+GRANT otherrole TO joe;
+GRANT UPDATE ON role.* TO otherrole;
+GRANT SELECT ON mysql.user TO otherrole;
+CREATE ROLE delete_stuff_privilege;
+GRANT DELETE ON mysql.user TO delete_stuff_privilege;
+GRANT delete_stuff_privilege TO otherrole;
+
+connect (joe,localhost,joe,,);
+connection joe;
+-- error 3530
+SHOW GRANTS FOR CURRENT_USER() USING notgranted;
+SHOW GRANTS FOR current_user() USING otherrole;
+SHOW GRANTS FOR joe USING otherrole;
+disconnect joe;
+connection default;

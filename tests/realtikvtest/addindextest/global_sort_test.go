@@ -26,11 +26,11 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/ddl/util/callback"
-	"github.com/pingcap/tidb/disttask/framework/dispatcher"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctxs/variable"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/ddl/util/callback"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -75,7 +75,7 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
