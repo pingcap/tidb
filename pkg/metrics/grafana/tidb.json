@@ -14037,7 +14037,7 @@
             "y": 48
           },
           "type": "graph",
-          "title": "Add Index Scan Rate ",
+          "title": "Add Index Scan Rate",
           "datasource": "${DS_TEST-CLUSTER}",
           "thresholds": [],
           "pluginVersion": "8.5.27",
