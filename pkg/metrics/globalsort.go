@@ -22,8 +22,6 @@ var (
 	GlobalSortReadFromCloudStorageDuration *prometheus.HistogramVec
 	GlobalSortReadFromCloudStorageRate     *prometheus.HistogramVec
 	GlobalSortIngestWorkerCnt              *prometheus.GaugeVec
-
-	AddIndexScanRate *prometheus.HistogramVec
 )
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
@@ -65,13 +63,5 @@ func InitGlobalSortMetrics() {
 		Subsystem: "global_sort",
 		Name:      "ingest_worker_cnt",
 		Help:      "ingest worker cnt",
-	}, []string{LblType})
-
-	AddIndexScanRate = NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: "tidb",
-		Subsystem: "add_index",
-		Name:      "scan_rate",
-		Help:      "scan rate",
-		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 }
