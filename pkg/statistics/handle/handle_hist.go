@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,8 +36,10 @@ import (
 )
 
 type statsWrapper struct {
-	col *statistics.Column
-	idx *statistics.Index
+	colInfo *model.ColumnInfo
+	idxInfo *model.IndexInfo
+	col     *statistics.Column
+	idx     *statistics.Index
 }
 
 // StatsLoad is used to load stats concurrently
@@ -52,13 +53,13 @@ type StatsLoad struct {
 
 // NeededItemTask represents one needed column/indices with expire time.
 type NeededItemTask struct {
-	ToTimeout   time.Time
-	ResultCh    chan stmtctx.StatsLoadResult
-	TableItemID model.TableItemID
+	ToTimeout time.Time
+	ResultCh  chan stmtctx.StatsLoadResult
+	Item      model.StatsLoadItem
 }
 
 // SendLoadRequests send neededColumns requests
-func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error {
+func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.StatsLoadItem, timeout time.Duration) error {
 	remainedItems := h.removeHistLoadedColumns(neededHistItems)
 
 	failpoint.Inject("assertSyncLoadItems", func(val failpoint.Value) {
@@ -79,9 +80,9 @@ func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems 
 	tasks := make([]*NeededItemTask, 0)
 	for _, item := range remainedItems {
 		task := &NeededItemTask{
-			TableItemID: item,
-			ToTimeout:   time.Now().Local().Add(timeout),
-			ResultCh:    sc.StatsLoad.ResultCh,
+			Item:      item,
+			ToTimeout: time.Now().Local().Add(timeout),
+			ResultCh:  sc.StatsLoad.ResultCh,
 		}
 		tasks = append(tasks, task)
 	}
@@ -114,7 +115,7 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	}()
 	resultCheckMap := map[model.TableItemID]struct{}{}
 	for _, col := range sc.StatsLoad.NeededItems {
-		resultCheckMap[col] = struct{}{}
+		resultCheckMap[col.TableItemID] = struct{}{}
 	}
 	metrics.SyncLoadCounter.Inc()
 	timer := time.NewTimer(sc.StatsLoad.Timeout)
@@ -135,14 +136,14 @@ func (*Handle) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 			}
 		case <-timer.C:
 			metrics.SyncLoadTimeoutCounter.Inc()
-			return errors.New("sync load stats timeout")
+			return errors.Trace(fmt.Errorf("sync load stats timeout: timeout is %v", sc.StatsLoad.Timeout))
 		}
 	}
 }
 
 // removeHistLoadedColumns removed having-hist columns based on neededColumns and statsCache.
-func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []model.TableItemID {
-	remainedItems := make([]model.TableItemID, 0, len(neededItems))
+func (h *Handle) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []model.StatsLoadItem {
+	remainedItems := make([]model.StatsLoadItem, 0, len(neededItems))
 	for _, item := range neededItems {
 		tbl, ok := h.Get(item.TableID)
 		if !ok {
@@ -153,7 +154,7 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.TableItemID) []mode
 			continue
 		}
 		colHist, ok := tbl.Columns[item.ID]
-		if ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad() {
+		if (!ok && tbl.ColAndIndexExistenceMap.HasAnalyzed(item.ID, false)) || (ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad()) {
 			remainedItems = append(remainedItems, item)
 		}
 	}
@@ -221,7 +222,7 @@ func (h *Handle) HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask
 }
 
 func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask) (*NeededItemTask, error) {
-	result := stmtctx.StatsLoadResult{Item: task.TableItemID}
+	result := stmtctx.StatsLoadResult{Item: task.Item.TableItemID}
 	item := result.Item
 	tbl, ok := h.Get(item.TableID)
 	if !ok {
@@ -232,18 +233,26 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
 		index, ok := tbl.Indices[item.ID]
-		if !ok || index.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
-		wrapper.idx = index
+		if ok {
+			wrapper.idxInfo = index.Info
+		} else {
+			wrapper.idxInfo = tbl.ColAndIndexExistenceMap.GetIndex(item.ID)
+		}
 	} else {
 		col, ok := tbl.Columns[item.ID]
-		if !ok || col.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && col.IsFullLoad()) {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
-		wrapper.col = col
+		if ok {
+			wrapper.colInfo = col.Info
+		} else {
+			wrapper.colInfo = tbl.ColAndIndexExistenceMap.GetCol(item.ID)
+		}
 	}
 	// to avoid duplicated handling in concurrent scenario
 	working := h.setWorking(result.Item, task.ResultCh)
@@ -253,17 +262,17 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	}
 	t := time.Now()
 	needUpdate := false
-	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper)
+	wrapper, err = h.readStatsForOneItem(sctx, item, wrapper, tbl.IsPkIsHandle, task.Item.FullLoad)
 	if err != nil {
 		result.Error = err
 		return task, err
 	}
 	if item.IsIndex {
-		if wrapper.idx != nil {
+		if wrapper.idxInfo != nil {
 			needUpdate = true
 		}
 	} else {
-		if wrapper.col != nil {
+		if wrapper.colInfo != nil {
 			needUpdate = true
 		}
 	}
@@ -276,85 +285,92 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 }
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
-func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
+func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper, isPkIsHandle bool, fullLoad bool) (*statsWrapper, error) {
 	failpoint.Inject("mockReadStatsForOnePanic", nil)
 	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
 		}
 	})
-	c := w.col
-	index := w.idx
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	var hg *statistics.Histogram
 	var err error
 	isIndexFlag := int64(0)
-	if item.IsIndex {
-		isIndexFlag = 1
-	}
-	if item.IsIndex {
-		hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), index.Histogram.NDV, int(isIndexFlag), index.LastUpdateVersion, index.NullCount, index.TotColSize, index.Correlation)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
-		hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &c.Info.FieldType, c.Histogram.NDV, int(isIndexFlag), c.LastUpdateVersion, c.NullCount, c.TotColSize, c.Correlation)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	var cms *statistics.CMSketch
-	var topN *statistics.TopN
-	cms, topN, err = storage.CMSketchAndTopNFromStorage(sctx, item.TableID, isIndexFlag, item.ID)
+	hg, lastAnalyzePos, statsVer, flag, err := storage.HistMetaFromStorage(sctx, &item, w.colInfo)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, err
 	}
-	var fms *statistics.FMSketch
-	if loadFMSketch {
-		fms, err = storage.FMSketchFromStorage(sctx, item.TableID, isIndexFlag, item.ID)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	rows, _, err := utilstats.ExecRows(sctx, "select stats_ver from mysql.stats_histograms where table_id = %? and hist_id = %? and is_index = %?", item.TableID, item.ID, int(isIndexFlag))
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if len(rows) == 0 {
+	if hg == nil {
 		logutil.BgLogger().Error("fail to get stats version for this histogram", zap.Int64("table_id", item.TableID),
 			zap.Int64("hist_id", item.ID), zap.Bool("is_index", item.IsIndex))
 		return nil, errors.Trace(fmt.Errorf("fail to get stats version for this histogram, table_id:%v, hist_id:%v, is_index:%v", item.TableID, item.ID, item.IsIndex))
 	}
-	statsVer := rows[0].GetInt64(0)
+	if item.IsIndex {
+		isIndexFlag = 1
+	}
+	var cms *statistics.CMSketch
+	var topN *statistics.TopN
+	var fms *statistics.FMSketch
+	if fullLoad {
+		if item.IsIndex {
+			hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, types.NewFieldType(mysql.TypeBlob), hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		} else {
+			hg, err = storage.HistogramFromStorage(sctx, item.TableID, item.ID, &w.colInfo.FieldType, hg.NDV, int(isIndexFlag), hg.LastUpdateVersion, hg.NullCount, hg.TotColSize, hg.Correlation)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+		cms, topN, err = storage.CMSketchAndTopNFromStorage(sctx, item.TableID, isIndexFlag, item.ID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if loadFMSketch {
+			fms, err = storage.FMSketchFromStorage(sctx, item.TableID, isIndexFlag, item.ID)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+	}
 	if item.IsIndex {
 		idxHist := &statistics.Index{
 			Histogram:  *hg,
 			CMSketch:   cms,
 			TopN:       topN,
 			FMSketch:   fms,
-			Info:       index.Info,
+			Info:       w.idxInfo,
 			StatsVer:   statsVer,
-			Flag:       index.Flag,
-			PhysicalID: index.PhysicalID,
+			Flag:       flag,
+			PhysicalID: item.TableID,
 		}
 		if statsVer != statistics.Version0 {
-			idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			if fullLoad {
+				idxHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			} else {
+				idxHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
 		}
-		index.LastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
+		lastAnalyzePos.Copy(&idxHist.LastAnalyzePos)
 		w.idx = idxHist
 	} else {
 		colHist := &statistics.Column{
 			PhysicalID: item.TableID,
 			Histogram:  *hg,
-			Info:       c.Info,
+			Info:       w.colInfo,
 			CMSketch:   cms,
 			TopN:       topN,
 			FMSketch:   fms,
-			IsHandle:   c.IsHandle,
+			IsHandle:   isPkIsHandle && mysql.HasPriKeyFlag(w.colInfo.GetFlag()),
 			StatsVer:   statsVer,
 		}
 		if colHist.StatsAvailable() {
-			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			if fullLoad {
+				colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
+			} else {
+				colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
+			}
 		}
 		w.col = colHist
 	}
@@ -446,14 +462,14 @@ func (h *Handle) updateCachedItem(item model.TableItemID, colHist *statistics.Co
 	}
 	if !item.IsIndex && colHist != nil {
 		c, ok := tbl.Columns[item.ID]
-		if !ok || c.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, false)) || (ok && c.IsFullLoad()) {
 			return true
 		}
 		tbl = tbl.Copy()
-		tbl.Columns[c.ID] = colHist
+		tbl.Columns[item.ID] = colHist
 	} else if item.IsIndex && idxHist != nil {
 		index, ok := tbl.Indices[item.ID]
-		if !ok || index.IsFullLoad() {
+		if (!ok && !tbl.ColAndIndexExistenceMap.Has(item.ID, true)) || (ok && index.IsFullLoad()) {
 			return true
 		}
 		tbl = tbl.Copy()

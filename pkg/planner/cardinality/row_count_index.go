@@ -60,9 +60,7 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
-	// For the mv index case, now we have supported collecting stats and async loading stats, but sync loading and
-	// estimation is not well-supported, so we keep mv index using pseudo estimation for this period of time.
-	if !ok || idx.IsInvalid(sctx, coll.Pseudo) || isMVIndex {
+	if statistics.IndexStatsIsInvalid(idx, sctx, coll, idxID) || isMVIndex {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -430,7 +428,7 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 			err        error
 			foundStats bool
 		)
-		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
+		if !statistics.ColumnStatsIsInvalid(coll.Columns[colID], sctx, coll, colID) {
 			foundStats = true
 			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
 		}

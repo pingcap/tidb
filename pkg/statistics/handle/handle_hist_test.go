@@ -73,24 +73,22 @@ func TestConcurrentLoadHist(t *testing.T) {
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
+	col, ok := stat.Columns[tableInfo.Columns[0].ID]
+	require.True(t, !ok || col.Histogram.Len()+col.TopN.Num() == 0)
+	col, ok = stat.Columns[tableInfo.Columns[2].ID]
+	require.True(t, !ok || col.Histogram.Len()+col.TopN.Num() == 0)
 	stmtCtx := stmtctx.NewStmtCtx()
-	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
+	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
+		neededColumns = append(neededColumns, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false}, FullLoad: true})
 	}
 	timeout := time.Nanosecond * mathutil.MaxInt
 	h.SendLoadRequests(stmtCtx, neededColumns, timeout)
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Nil(t, rs)
 	stat = h.GetTableStats(tableInfo)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+	hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
+	topn := stat.Columns[tableInfo.Columns[2].ID].TopN
 	require.Greater(t, hg.Len()+topn.Num(), 0)
 }
 
@@ -118,24 +116,18 @@ func TestConcurrentLoadHistTimeout(t *testing.T) {
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 	stat := h.GetTableStats(tableInfo)
-	hg := stat.Columns[tableInfo.Columns[0].ID].Histogram
-	topn := stat.Columns[tableInfo.Columns[0].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
+	require.Nil(t, stat.Columns[tableInfo.Columns[0].ID])
+	require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
 	stmtCtx := stmtctx.NewStmtCtx()
-	neededColumns := make([]model.TableItemID, 0, len(tableInfo.Columns))
+	neededColumns := make([]model.StatsLoadItem, 0, len(tableInfo.Columns))
 	for _, col := range tableInfo.Columns {
-		neededColumns = append(neededColumns, model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false})
+		neededColumns = append(neededColumns, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: col.ID, IsIndex: false}, FullLoad: true})
 	}
 	h.SendLoadRequests(stmtCtx, neededColumns, 0) // set timeout to 0 so task will go to timeout channel
 	rs := h.SyncWaitStatsLoad(stmtCtx)
 	require.Error(t, rs)
 	stat = h.GetTableStats(tableInfo)
-	hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-	topn = stat.Columns[tableInfo.Columns[2].ID].TopN
-	require.Equal(t, 0, hg.Len()+topn.Num())
+	require.Nil(t, stat.Columns[tableInfo.Columns[2].ID])
 }
 
 func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
@@ -166,8 +158,8 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 	tableInfo := tbl.Meta()
 	h := dom.StatsHandle()
 
-	neededColumns := make([]model.TableItemID, 1)
-	neededColumns[0] = model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}
+	neededColumns := make([]model.StatsLoadItem, 1)
+	neededColumns[0] = model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[2].ID, IsIndex: false}, FullLoad: true}
 	timeout := time.Nanosecond * mathutil.MaxInt
 
 	failpoints := []struct {
@@ -191,9 +183,8 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 		// no stats at beginning
 		stat := h.GetTableStats(tableInfo)
-		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
-		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
-		require.Equal(t, 0, hg.Len()+topn.Num())
+		c, ok := stat.Columns[tableInfo.Columns[2].ID]
+		require.True(t, !ok || (c.Histogram.Len()+c.TopN.Num() == 0))
 
 		stmtCtx1 := stmtctx.NewStmtCtx()
 		h.SendLoadRequests(stmtCtx1, neededColumns, timeout)
@@ -206,7 +197,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
-		list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
+		list, ok := h.StatsLoad.WorkingColMap[neededColumns[0].TableItemID]
 		require.True(t, ok)
 		require.Len(t, list, 1)
 		require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
@@ -214,7 +205,7 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task2, err2 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Nil(t, err2)
 		require.Nil(t, task2)
-		list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
+		list, ok = h.StatsLoad.WorkingColMap[neededColumns[0].TableItemID]
 		require.True(t, ok)
 		require.Len(t, list, 2)
 		require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
@@ -229,14 +220,14 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 
 		rs1, ok1 := <-stmtCtx1.StatsLoad.ResultCh
 		require.True(t, ok1)
-		require.Equal(t, neededColumns[0], rs1.Item)
+		require.Equal(t, neededColumns[0].TableItemID, rs1.Item)
 		rs2, ok2 := <-stmtCtx2.StatsLoad.ResultCh
 		require.True(t, ok2)
-		require.Equal(t, neededColumns[0], rs2.Item)
+		require.Equal(t, neededColumns[0].TableItemID, rs2.Item)
 
 		stat = h.GetTableStats(tableInfo)
-		hg = stat.Columns[tableInfo.Columns[2].ID].Histogram
-		topn = stat.Columns[tableInfo.Columns[2].ID].TopN
+		hg := stat.Columns[tableInfo.Columns[2].ID].Histogram
+		topn := stat.Columns[tableInfo.Columns[2].ID].TopN
 		require.Greater(t, hg.Len()+topn.Num(), 0)
 	}
 }

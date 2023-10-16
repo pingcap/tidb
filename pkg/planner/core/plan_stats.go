@@ -100,7 +100,7 @@ func (syncWaitStatsLoadPoint) name() string {
 const maxDuration = 1<<63 - 1
 
 // RequestLoadStats send load column/index stats requests to stats handle
-func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemID, syncWait int64) error {
+func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.StatsLoadItem, syncWait int64) error {
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	hintMaxExecutionTime := int64(stmtCtx.MaxExecutionTime)
 	if hintMaxExecutionTime <= 0 {
@@ -116,11 +116,9 @@ func RequestLoadStats(ctx sessionctx.Context, neededHistItems []model.TableItemI
 	if err != nil {
 		stmtCtx.IsSyncStatsFailed = true
 		if variable.StatsLoadPseudoTimeout.Load() {
-			logutil.BgLogger().Warn("RequestLoadStats failed", zap.Error(err))
 			stmtCtx.AppendWarning(err)
 			return nil
 		}
-		logutil.BgLogger().Error("RequestLoadStats failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -176,8 +174,8 @@ func SyncWaitStatsLoad(plan LogicalPlan) error {
 // but d will not be collected.
 // It's because currently it's impossible that statistics related to indirectly depending columns are actually needed.
 // If we need to check indirect dependency some day, we can easily extend the logic here.
-func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []model.TableItemID) []model.TableItemID {
-	generatedCols := make([]model.TableItemID, 0)
+func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []model.StatsLoadItem) []model.StatsLoadItem {
+	generatedCols := make([]model.StatsLoadItem, 0)
 
 	// group the neededItems by table id
 	tblID2neededColIDs := make(map[int64][]int64, len(tblID2Tbl))
@@ -217,7 +215,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 			// then we think this virtual column is needed.
 			for depCol := range col.Dependences {
 				if _, ok := colNameSet[depCol]; ok {
-					generatedCols = append(generatedCols, model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false})
+					generatedCols = append(generatedCols, model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tblID, ID: col.ID, IsIndex: false}, FullLoad: true})
 					break
 				}
 			}
@@ -231,7 +229,7 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]table.Table, neededItems []
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
 func collectSyncIndices(ctx sessionctx.Context,
-	histNeededColumns []model.TableItemID,
+	histNeededColumns []model.StatsLoadItem,
 	tblID2Tbl map[int64]table.Table,
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
@@ -260,18 +258,23 @@ func collectSyncIndices(ctx sessionctx.Context,
 					continue
 				}
 				idxStats, ok := tblStats.Indices[idx.Meta().ID]
-				if ok && idxStats.IsStatsInitialized() && !idxStats.IsFullLoad() {
-					histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
+				if ok && (idxStats.IsFullLoad() || !idxStats.IsStatsInitialized()) {
+					continue
 				}
+				if !ok && !tblStats.ColAndIndexExistenceMap.Has(idxID, true) {
+					continue
+				}
+				histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
 			}
 		}
 	}
 	return histNeededIndices
 }
 
-func collectHistNeededItems(histNeededColumns []model.TableItemID, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.TableItemID) {
+func collectHistNeededItems(histNeededColumns []model.StatsLoadItem, histNeededIndices map[model.TableItemID]struct{}) (histNeededItems []model.StatsLoadItem) {
+	histNeededItems = make([]model.StatsLoadItem, 0, len(histNeededColumns)+len(histNeededIndices))
 	for idx := range histNeededIndices {
-		histNeededItems = append(histNeededItems, idx)
+		histNeededItems = append(histNeededItems, model.StatsLoadItem{TableItemID: idx, FullLoad: true})
 	}
 	histNeededItems = append(histNeededItems, histNeededColumns...)
 	return

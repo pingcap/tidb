@@ -4716,7 +4716,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	}
 	// 1. tidb-server started and statistics handle has not been initialized.
 	if statsHandle == nil {
-		return statistics.PseudoTable(tblInfo, false)
+		return statistics.PseudoTable(tblInfo, false, true)
 	}
 
 	if pid == tblInfo.ID || ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -4754,7 +4754,7 @@ func getStatsTable(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) 
 	if statsTbl.RealtimeCount == 0 {
 		countIs0 = true
 		core_metrics.PseudoEstimationNotAvailable.Inc()
-		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading)
+		return statistics.PseudoTable(tblInfo, allowPseudoTblTriggerLoading, true)
 	}
 
 	// 3. statistics is uninitialized or outdated.
@@ -4999,7 +4999,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				h := domain.GetDomain(b.ctx).StatsHandle()
 				tblStats := h.GetTableStats(tableInfo)
 				isDynamicEnabled := b.ctx.GetSessionVars().IsDynamicPartitionPruneEnabled()
-				globalStatsReady := tblStats.IsInitialized()
+				globalStatsReady := tblStats.HasStatsItemInKV()
 				allowDynamicWithoutStats := fixcontrol.GetBoolWithDefault(b.ctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix44262, false)
 
 				// If dynamic partition prune isn't enabled or global stats is not ready, we won't enable dynamic prune mode in query

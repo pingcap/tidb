@@ -59,7 +59,9 @@ var (
 // Table represents statistics for a table.
 type Table struct {
 	ExtendedStats *ExtendedStatsColl
-	Name          string
+
+	ColAndIndexExistenceMap *ColAndIdxExistenceMap
+	Name                    string
 	HistColl
 	Version uint64
 	// TblInfoUpdateTS is the UpdateTS of the TableInfo used when filling this struct.
@@ -68,6 +70,112 @@ type Table struct {
 	// and the schema of the table does not change, we don't need to load the stats for this
 	// table again.
 	TblInfoUpdateTS uint64
+
+	IsPkIsHandle bool
+}
+
+// ColAndIdxExistenceMap is the meta map for statistics.Table.
+// It can tell whether a column/index really has its statistics. So we won't send useless kv request when we do online stats loading.
+type ColAndIdxExistenceMap struct {
+	m1            map[int64]*model.ColumnInfo
+	colAnalyzed   map[int64]bool
+	m2            map[int64]*model.IndexInfo
+	indexAnalyzed map[int64]bool
+}
+
+// SomeAnalyzed checks whether some part of the table is analyzed.
+// The newly added column/index might not have its stats.
+func (m *ColAndIdxExistenceMap) SomeAnalyzed() bool {
+	if m == nil {
+		return false
+	}
+	for _, v := range m.colAnalyzed {
+		if v {
+			return true
+		}
+	}
+	for _, v := range m.indexAnalyzed {
+		if v {
+			return true
+		}
+	}
+	return false
+}
+
+// Has checks whether a column/index stats exists.
+func (m *ColAndIdxExistenceMap) Has(id int64, isIndex bool) bool {
+	if isIndex {
+		_, ok := m.m2[id]
+		return ok
+	}
+	_, ok := m.m1[id]
+	return ok
+}
+
+// HasAnalyzed checks whether a column/index stats exists and it has stats.
+// TODO: the map should only keep the analyzed cols.
+func (m *ColAndIdxExistenceMap) HasAnalyzed(id int64, isIndex bool) bool {
+	if isIndex {
+		analyzed, ok := m.indexAnalyzed[id]
+		return ok && analyzed
+	}
+	analyzed, ok := m.colAnalyzed[id]
+	return ok && analyzed
+}
+
+// InsertCol inserts a column with its meta into the map.
+func (m *ColAndIdxExistenceMap) InsertCol(id int64, info *model.ColumnInfo, analyzed bool) {
+	m.m1[id] = info
+	m.colAnalyzed[id] = analyzed
+}
+
+// GetCol gets the meta data of the given column.
+func (m *ColAndIdxExistenceMap) GetCol(id int64) *model.ColumnInfo {
+	return m.m1[id]
+}
+
+// InsertIndex inserts an index with its meta into the map.
+func (m *ColAndIdxExistenceMap) InsertIndex(id int64, info *model.IndexInfo, analyzed bool) {
+	m.m2[id] = info
+	m.indexAnalyzed[id] = analyzed
+}
+
+// GetIndex gets the meta data of the given index.
+func (m *ColAndIdxExistenceMap) GetIndex(id int64) *model.IndexInfo {
+	return m.m2[id]
+}
+
+// IsEmpty checks whether the map is empty.
+func (m *ColAndIdxExistenceMap) IsEmpty() bool {
+	return len(m.m1)+len(m.m2) == 0
+}
+
+// Clone deeply copies the map.
+func (m *ColAndIdxExistenceMap) Clone() *ColAndIdxExistenceMap {
+	mm := NewColAndIndexExistenceMap(len(m.m1), len(m.m2))
+	for k, v := range m.m1 {
+		mm.m1[k] = v
+	}
+	for k, v := range m.colAnalyzed {
+		mm.colAnalyzed[k] = v
+	}
+	for k, v := range m.m2 {
+		mm.m2[k] = v
+	}
+	for k, v := range m.indexAnalyzed {
+		mm.indexAnalyzed[k] = v
+	}
+	return mm
+}
+
+// NewColAndIndexExistenceMap return a new object with the given capcity.
+func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
+	return &ColAndIdxExistenceMap{
+		m1:            make(map[int64]*model.ColumnInfo, colCap),
+		colAnalyzed:   make(map[int64]bool, colCap),
+		m2:            make(map[int64]*model.IndexInfo, idxCap),
+		indexAnalyzed: make(map[int64]bool, idxCap),
+	}
 }
 
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
@@ -113,8 +221,9 @@ type HistColl struct {
 
 	// HavePhysicalID is true means this HistColl is from single table and have its ID's information.
 	// The physical id is used when try to load column stats from storage.
-	HavePhysicalID bool
-	Pseudo         bool
+	HavePhysicalID    bool
+	Pseudo            bool
+	CanNotTriggerLoad bool
 }
 
 // TableMemoryUsage records tbl memory usage
@@ -295,6 +404,7 @@ func (t *Table) Copy() *Table {
 		Version:         t.Version,
 		Name:            t.Name,
 		TblInfoUpdateTS: t.TblInfoUpdateTS,
+		IsPkIsHandle:    t.IsPkIsHandle,
 	}
 	if t.ExtendedStats != nil {
 		newExtStatsColl := &ExtendedStatsColl{
@@ -305,6 +415,9 @@ func (t *Table) Copy() *Table {
 			newExtStatsColl.Stats[name] = item
 		}
 		nt.ExtendedStats = newExtStatsColl
+	}
+	if t.ColAndIndexExistenceMap != nil {
+		nt.ColAndIndexExistenceMap = t.ColAndIndexExistenceMap.Clone()
 	}
 	return nt
 }
@@ -323,11 +436,12 @@ func (t *Table) ShallowCopy() *Table {
 		ModifyCount:    t.ModifyCount,
 	}
 	nt := &Table{
-		HistColl:        newHistColl,
-		Version:         t.Version,
-		Name:            t.Name,
-		TblInfoUpdateTS: t.TblInfoUpdateTS,
-		ExtendedStats:   t.ExtendedStats,
+		HistColl:                newHistColl,
+		Version:                 t.Version,
+		Name:                    t.Name,
+		TblInfoUpdateTS:         t.TblInfoUpdateTS,
+		ExtendedStats:           t.ExtendedStats,
+		ColAndIndexExistenceMap: t.ColAndIndexExistenceMap,
 	}
 	return nt
 }
@@ -503,6 +617,14 @@ func (t *Table) IsInitialized() bool {
 	return false
 }
 
+// HasStatsItemInKV checks whether this table has some stats in storage.(In other words, ANALYZE is triggered for it before.)
+func (t *Table) HasStatsItemInKV() bool {
+	if t.ColAndIndexExistenceMap.SomeAnalyzed() {
+		return true
+	}
+	return t.IsInitialized()
+}
+
 // IsOutdated returns true if the table stats is outdated.
 func (t *Table) IsOutdated() bool {
 	rowcount := t.GetAnalyzeRowCount()
@@ -610,44 +732,45 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 // Usually, we don't want to trigger stats loading for pseudo table.
 // But there are exceptional cases. In such cases, we should pass allowTriggerLoading as true.
 // Such case could possibly happen in getStatsTable().
-func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool) *Table {
-	const fakePhysicalID int64 = -1
+func PseudoTable(tblInfo *model.TableInfo, allowTriggerLoading bool, allowFillHistMeta bool) *Table {
 	pseudoHistColl := HistColl{
-		RealtimeCount:  PseudoRowCount,
-		PhysicalID:     tblInfo.ID,
-		HavePhysicalID: true,
-		Columns:        make(map[int64]*Column, len(tblInfo.Columns)),
-		Indices:        make(map[int64]*Index, len(tblInfo.Indices)),
-		Pseudo:         true,
+		RealtimeCount:     PseudoRowCount,
+		PhysicalID:        tblInfo.ID,
+		HavePhysicalID:    true,
+		Columns:           make(map[int64]*Column, 2),
+		Indices:           make(map[int64]*Index, 2),
+		Pseudo:            true,
+		CanNotTriggerLoad: !allowTriggerLoading,
 	}
 	t := &Table{
-		HistColl: pseudoHistColl,
+		HistColl:                pseudoHistColl,
+		ColAndIndexExistenceMap: NewColAndIndexExistenceMap(len(tblInfo.Columns), len(tblInfo.Indices)),
 	}
 	for _, col := range tblInfo.Columns {
 		// The column is public to use. Also we should check the column is not hidden since hidden means that it's used by expression index.
 		// We would not collect stats for the hidden column and we won't use the hidden column to estimate.
 		// Thus we don't create pseudo stats for it.
 		if col.State == model.StatePublic && !col.Hidden {
-			t.Columns[col.ID] = &Column{
-				PhysicalID: fakePhysicalID,
-				Info:       col,
-				IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
-				Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
-			}
-			if allowTriggerLoading {
-				t.Columns[col.ID].PhysicalID = tblInfo.ID
+			t.ColAndIndexExistenceMap.InsertCol(col.ID, col, false)
+			if allowFillHistMeta {
+				t.Columns[col.ID] = &Column{
+					PhysicalID: tblInfo.ID,
+					Info:       col,
+					IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
+					Histogram:  *NewHistogram(col.ID, 0, 0, 0, &col.FieldType, 0, 0),
+				}
 			}
 		}
 	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State == model.StatePublic {
-			t.Indices[idx.ID] = &Index{
-				PhysicalID: fakePhysicalID,
-				Info:       idx,
-				Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
-			}
-			if allowTriggerLoading {
-				t.Indices[idx.ID].PhysicalID = tblInfo.ID
+			t.ColAndIndexExistenceMap.InsertIndex(idx.ID, idx, false)
+			if allowFillHistMeta {
+				t.Indices[idx.ID] = &Index{
+					PhysicalID: tblInfo.ID,
+					Info:       idx,
+					Histogram:  *NewHistogram(idx.ID, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0),
+				}
 			}
 		}
 	}

@@ -1150,7 +1150,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Equal(t, lastVersion, tblStats.Columns[tblInfo.Columns[2].ID].LastUpdateVersion)
 
 	tk.MustExec("analyze table t columns a")
-	tblStats = h.GetTableStats(tblInfo)
+	// TODO: the a's meta should be keep. Or the previous a's meta should be clear.
+	tblStats, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	require.NoError(t, err)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column a is analyzed
@@ -1160,7 +1162,9 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select column_choice, column_ids from mysql.analyze_options where table_id = %v", tblInfo.ID)).Check(testkit.Rows(fmt.Sprintf("LIST %v", tblInfo.Columns[0].ID)))
 
 	tk.MustExec("analyze table t all columns")
-	tblStats = h.GetTableStats(tblInfo)
+	// TODO: the a's meta should be keep. Or the previous a's meta should be clear.
+	tblStats, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	require.NoError(t, err)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
 	// column a, b, c are analyzed
@@ -2420,9 +2424,11 @@ PARTITION BY RANGE ( a ) (
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
-	p0 = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
-	p1 = h.GetPartitionStats(tableInfo, pi.Definitions[1].ID)
-	require.NotEqual(t, 3, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
+	p0, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[0].ID, true, 0)
+	require.NoError(t, err)
+	p1, err = h.TableStatsFromStorage(tableInfo, pi.Definitions[1].ID, true, 0)
+	require.NoError(t, err)
+	require.Equal(t, 0, len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
 	require.Equal(t, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets), len(p0.Columns[tableInfo.Columns[0].ID].Buckets))
 	require.Equal(t, len(tbl.Columns[tableInfo.Columns[0].ID].Buckets), len(p1.Columns[tableInfo.Columns[0].ID].Buckets))
 	rs = tk.MustQuery("select buckets,topn from mysql.analyze_options where table_id=" + strconv.FormatInt(pi.Definitions[0].ID, 10))
@@ -2778,7 +2784,8 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec("analyze table t partition p1 columns a")
 	tk.MustExec("set @@session.tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t partition p0")
-	tbl := h.GetTableStats(tableInfo)
+	tbl, err := h.TableStatsFromStorage(table.Meta(), table.Meta().ID, true, 0)
+	require.NoError(t, err)
 	require.Equal(t, int64(6), tbl.Columns[tableInfo.Columns[0].ID].Histogram.NDV)
 }
 
@@ -3025,28 +3032,28 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	tk.MustExec("set session tidb_stats_load_sync_wait = 0")
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_unsigned:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_unsigned:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain format = brief select * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
 		"TableReader 21.60 root  data:Selection",
 		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
-		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:pseudo",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	// 3.2. emulate the background async loading
 	require.NoError(t, h.LoadNeededHistograms())
@@ -3084,23 +3091,23 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	tk.MustExec("set session tidb_stats_load_sync_wait = 1000")
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
 	// 4. check stats content in the memory

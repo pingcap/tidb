@@ -22,6 +22,7 @@ import (
 
 	"github.com/klauspost/compress/gzip"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -161,7 +162,8 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 		Indices:        make(map[int64]*statistics.Index, len(jsonTbl.Indices)),
 	}
 	tbl := &statistics.Table{
-		HistColl: newHistColl,
+		HistColl:                newHistColl,
+		ColAndIndexExistenceMap: statistics.NewColAndIndexExistenceMap(len(tableInfo.Columns), len(tableInfo.Indices)),
 	}
 	for id, jsonIdx := range jsonTbl.Indices {
 		for _, idxInfo := range tableInfo.Indices {
@@ -189,6 +191,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
 			tbl.Indices[idx.ID] = idx
+			tbl.ColAndIndexExistenceMap.InsertIndex(idxInfo.ID, idxInfo, true)
 		}
 	}
 
@@ -237,6 +240,7 @@ func TableStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *J
 				StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
 			}
 			tbl.Columns[col.ID] = col
+			tbl.ColAndIndexExistenceMap.InsertCol(colInfo.ID, colInfo, true)
 		}
 	}
 	tbl.ExtendedStats = extendedStatsFromJSON(jsonTbl.ExtStats)
@@ -263,6 +267,7 @@ func JSONTableToBlocks(jsTable *JSONTable, blockSize int) ([][]byte, error) {
 	if gzippedData.Len()%blockSize != 0 {
 		blocksNum = blocksNum + 1
 	}
+	log.Info("debug info", zap.Int("blocksNum", blocksNum), zap.Int("len", gzippedData.Len()), zap.Int("cap", gzippedData.Cap()))
 	blocks := make([][]byte, blocksNum)
 	for i := 0; i < blocksNum-1; i++ {
 		blocks[i] = gzippedData.Bytes()[blockSize*i : blockSize*(i+1)]

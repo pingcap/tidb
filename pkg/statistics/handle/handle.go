@@ -289,13 +289,13 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
-		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl = statistics.PseudoTable(tblInfo, false, false)
 		tbl.PhysicalID = pid
 		return tbl
 	}
 	tbl, ok := h.Get(pid)
 	if !ok {
-		tbl = statistics.PseudoTable(tblInfo, false)
+		tbl = statistics.PseudoTable(tblInfo, false, true)
 		tbl.PhysicalID = pid
 		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
 			h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
@@ -506,6 +506,11 @@ func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.
 		return err
 	}, util.FlagWrapTxn)
 	return version, err
+}
+
+// GetGPool returns the gpool of handle.
+func (h *Handle) GetGPool() *gp.Pool {
+	return h.gpool
 }
 
 // Close stops the background

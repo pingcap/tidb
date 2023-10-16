@@ -15,8 +15,10 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/funcdep"
 )
 
 const (
@@ -39,8 +41,8 @@ type columnStatsUsageCollector struct {
 	// we don't know `ndv(t.a, t.b)`(see (*LogicalAggregation).DeriveStats and getColsNDV for details). So when calculating the statistics
 	// of column `e`, we may use the statistics of column `t.a` and `t.b`.
 	colMap map[int64]map[model.TableItemID]struct{}
-	// histNeededCols records histogram-needed columns
-	histNeededCols map[model.TableItemID]struct{}
+	// histNeededCols records histogram-needed columns. The value field of the map indicates that whether we need to load the full stats of the time or not.
+	histNeededCols map[model.TableItemID]bool
 	// cols is used to store columns collected from expressions and saves some allocation.
 	cols []*expression.Column
 
@@ -61,7 +63,7 @@ func newColumnStatsUsageCollector(collectMode uint64, enabledPlanCapture bool) *
 		collector.colMap = make(map[int64]map[model.TableItemID]struct{})
 	}
 	if collectMode&collectHistNeededColumns != 0 {
-		collector.histNeededCols = make(map[model.TableItemID]struct{})
+		collector.histNeededCols = make(map[model.TableItemID]bool)
 	}
 	if enabledPlanCapture {
 		collector.collectVisitedTable = true
@@ -163,10 +165,31 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		tblID := ds.TableInfo().ID
 		c.visitedtbls[tblID] = struct{}{}
 	}
+	stats := domain.GetDomain(ds.SCtx()).StatsHandle()
+	tblStats := stats.GetPartitionStats(ds.tableInfo, ds.physicalTableID)
+	// Since we can not get the stats tbl, this table is not analyzed. So we don't need to consider load stats.
+	if tblStats.Pseudo {
+		return
+	}
 	columns := expression.ExtractColumnsFromExpressions(c.cols[:0], ds.pushedDownConds, nil)
+
+	colIDSet := funcdep.NewFastIntSet()
+
 	for _, col := range columns {
-		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
-		c.histNeededCols[tblColID] = struct{}{}
+		if tblStats.ColAndIndexExistenceMap.Has(col.ID, false) {
+			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
+			colIDSet.Insert(int(col.ID))
+			c.histNeededCols[tblColID] = true
+		}
+	}
+	for _, col := range ds.Columns {
+		if tblStats.ColAndIndexExistenceMap.HasAnalyzed(col.ID, false) && !colIDSet.Has(int(col.ID)) {
+			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
+			if _, ok := c.histNeededCols[tblColID]; ok {
+				continue
+			}
+			c.histNeededCols[tblColID] = false
+		}
 	}
 }
 
@@ -291,7 +314,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 // CollectColumnStatsUsage collects column stats usage from logical plan.
 // predicate indicates whether to collect predicate columns and histNeeded indicates whether to collect histogram-needed columns.
 // The first return value is predicate columns(nil if predicate is false) and the second return value is histogram-needed columns(nil if histNeeded is false).
-func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableItemID, []model.TableItemID) {
+func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]model.TableItemID, []model.StatsLoadItem) {
 	var mode uint64
 	if predicate {
 		mode |= collectPredicateColumns
@@ -311,12 +334,22 @@ func CollectColumnStatsUsage(lp LogicalPlan, predicate, histNeeded bool) ([]mode
 		}
 		return ret
 	}
-	var predicateCols, histNeededCols []model.TableItemID
+	itemSet2slice := func(set map[model.TableItemID]bool) []model.StatsLoadItem {
+		ret := make([]model.StatsLoadItem, 0, len(set))
+		for item, fullLoad := range set {
+			ret = append(ret, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
+		}
+		return ret
+	}
+	var (
+		predicateCols  []model.TableItemID
+		histNeededCols []model.StatsLoadItem
+	)
 	if predicate {
 		predicateCols = set2slice(collector.predicateCols)
 	}
 	if histNeeded {
-		histNeededCols = set2slice(collector.histNeededCols)
+		histNeededCols = itemSet2slice(collector.histNeededCols)
 	}
 	return predicateCols, histNeededCols
 }

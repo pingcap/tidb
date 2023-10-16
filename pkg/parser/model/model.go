@@ -1766,6 +1766,12 @@ type TableItemID struct {
 	IsIndex bool
 }
 
+// StatsLoadItem represents the load unit for statistics's memory loading.
+type StatsLoadItem struct {
+	TableItemID
+	FullLoad bool
+}
+
 // PolicyRefInfo is the struct to refer the placement policy.
 type PolicyRefInfo struct {
 	ID   int64 `json:"id"`

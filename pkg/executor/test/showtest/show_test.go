@@ -47,7 +47,7 @@ func TestShowHistogramsInFlight(t *testing.T) {
 	result := tk.MustQuery("show histograms_in_flight")
 	rows := result.Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, rows[0][0], "0")
+	require.Greater(t, rows[0][0], "0")
 }
 
 func TestShowOpenTables(t *testing.T) {
