@@ -428,6 +428,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			zap.Duration("write-time", writeDuration),
 			zap.String("sort-speed(kv/s)", getSpeed(uint64(kvCnt), sortDuration.Seconds(), false)),
 			zap.String("write-speed(bytes/s)", getSpeed(savedBytes, writeDuration.Seconds(), true)),
+			zap.String("writerID", w.writerID),
 		)
 	}()
 
