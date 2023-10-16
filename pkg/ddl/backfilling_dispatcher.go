@@ -360,7 +360,7 @@ func generateGlobalSortIngestPlan(
 	task *proto.Task,
 	jobID int64,
 	cloudStorageURI string,
-	step int64,
+	step proto.Step,
 ) ([][]byte, error) {
 	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
 	if err != nil {
@@ -499,7 +499,7 @@ func getRangeSplitter(
 func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
-	step int64,
+	step proto.Step,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
