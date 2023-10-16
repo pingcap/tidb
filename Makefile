@@ -171,7 +171,7 @@ else
 endif
 
 init-submodule:
-	# git submodule init && git submodule update --force
+	git submodule init && git submodule update --force
 
 enterprise-prepare:
 	cd pkg/extension/enterprise/generate && $(GO) generate -run genfile main.go
