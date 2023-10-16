@@ -561,7 +561,8 @@ func (em *ErrorManager) ReplaceConflictKeys(
 	pool.ApplyOnErrorGroup(g, func() error {
 		// TODO: provide a detailed document to explain the algorithm and link it here
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
-		// check index KV first
+		// check index KV
+		var deletedDataKv []common.KvPair
 		indexKvRows, err := em.db.QueryContext(
 			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
 			tableName)
@@ -647,6 +648,11 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				// Only if there is a->1 we dare to delete data KV with key "1".
 
 				if bytes.Equal(kvPair.Key, rawKey) && bytes.Equal(kvPair.Val, rawValue) {
+					newDeletedDataKv := common.KvPair{
+						Key: rawHandle,
+						Val: overwritten,
+					}
+					deletedDataKv = append(deletedDataKv, newDeletedDataKv)
 					if err := fnDeleteKey(gCtx, rawHandle); err != nil {
 						return errors.Trace(err)
 					}
@@ -764,6 +770,61 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			return errors.Trace(err)
 		}
 
+		// check the data KV that were deleted in index KV checking
+		for _, deletedKvPair := range deletedDataKv {
+			latestValue, err = fnGetLatest(gCtx, deletedKvPair.Key)
+			if tikverr.IsErrNotFound(err) || latestValue == nil {
+				continue
+			}
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// if the latest value of deletedKvPair.Key equals to deletedKvPair.Val, that means this data KV is maintained in downstream TiDB
+			// if not, that means this data KV has been deleted due to overwritten index KV
+			if bytes.Equal(deletedKvPair.Val, latestValue) {
+				continue
+			}
+
+			handle, err := tablecodec.DecodeRowKey(deletedKvPair.Key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			decodedData, _, err := tables.DecodeRawRowData(encoder.SessionCtx,
+				tbl.Meta(), handle, tbl.Cols(), deletedKvPair.Val)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			// find out all the KV pairs that are contained in the deleted data KV
+			kvPairs := encoder.SessionCtx.TakeKvPairs()
+			for _, kvPair := range kvPairs.Pairs {
+				em.logger.Debug("got encoded KV",
+					logutil.Key("key", kvPair.Key),
+					zap.Binary("value", kvPair.Val))
+				kvLatestValue, err := fnGetLatest(gCtx, kvPair.Key)
+				if tikverr.IsErrNotFound(err) || kvLatestValue == nil {
+					continue
+				}
+				if err != nil {
+					return errors.Trace(err)
+				}
+
+				// if the value of the KV pair is not equal to the latest value of the key of the KV pair
+				// that means the value of the KV pair has been overwritten, so it needs no extra operation
+				if !bytes.Equal(kvLatestValue, kvPair.Val) {
+					continue
+				}
+
+				if err := fnDeleteKey(gCtx, kvPair.Key); err != nil {
+					return errors.Trace(err)
+				}
+			}
+		}
 		return nil
 	})
 
