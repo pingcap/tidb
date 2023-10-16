@@ -35,9 +35,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -155,6 +155,27 @@ func (j *regionJob) convertStageTo(stage jobStageTp) {
 		}
 	case needRescan:
 		j.region = nil
+	}
+}
+
+// ref means that the ingestData of job will be accessed soon.
+func (j *regionJob) ref(wg *sync.WaitGroup) {
+	if wg != nil {
+		wg.Add(1)
+	}
+	if j.ingestData != nil {
+		j.ingestData.IncRef()
+	}
+}
+
+// done promises that the ingestData of job will not be accessed. Same amount of
+// done should be called to release the ingestData.
+func (j *regionJob) done(wg *sync.WaitGroup) {
+	if j.ingestData != nil {
+		j.ingestData.DecRef()
+	}
+	if wg != nil {
+		wg.Done()
 	}
 }
 
@@ -809,13 +830,11 @@ func (q *regionJobRetryer) close() {
 	defer q.protectedClosed.mu.Unlock()
 	q.protectedClosed.closed = true
 
-	count := len(q.protectedQueue.q)
 	if q.protectedToPutBack.toPutBack != nil {
-		count++
+		q.protectedToPutBack.toPutBack.done(q.jobWg)
 	}
-	for count > 0 {
-		q.jobWg.Done()
-		count--
+	for _, job := range q.protectedQueue.q {
+		job.done(q.jobWg)
 	}
 }
 

@@ -1,0 +1,46 @@
+# TestRuleConstantPropagation
+drop table if exists t, s;
+create table t (id int, name varchar(10));
+create table s (id int, name varchar(10));
+explain select * from t, (select * from s where s.id>1) tmp where t.id=tmp.id; -- inner join;
+explain select * from t, (select * from s where s.id>1) tmp where t.name=tmp.name; -- can't, without id equal predicate;
+explain select * from t, (select name from s where s.id>1) tmp where t.name=tmp.name; -- can't, projection without id column;
+explain select * from t, (select id as id1, name as name1 from s where s.id>1) tmp where t.id=tmp.id1; -- projection above of s.id>1;
+explain select * from t, (select id +1 as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- can't optimize, projection has column function;
+
+
+# TestDifferentJoinTypeConstantPropagation
+drop table if exists t, s;
+create table t (id int, name varchar(10));
+create table s (id int, name varchar(10));
+explain select * from (select * from t where t.id >1) tmp1, (select * from s where s.id <4) tmp2 where tmp1.id=tmp2.id; -- inner join, both children can be optimized;
+explain select * from (select * from t where t.id>1) tmp, s where tmp.id=s.id; -- inner join, child 0;
+explain select * from (select * from t where t.id>1) tmp left join s on tmp.id=s.id; -- left join, only left child can be optimized;
+explain select * from t left join (select * from s where s.id>1) tmp on t.id=tmp.id; -- can't, left join;
+explain select * from t right join (select * from s where s.id>1) tmp on t.id=tmp.id; -- right join, only right child can be optimized;
+explain select * from (select * from t where t.id>1) tmp  right join s on tmp.id=s.id; -- can't, right join;
+
+
+# TestSelectionThroughPlanNode
+drop table if exists t, s;
+create table t (id int, name varchar(10));
+create table s (id int, name varchar(10));
+explain select * from t, (select id as id1 from s where s.id>1) tmp where t.id=tmp.id1; -- constant propagation can through the projection node;
+explain select * from t, (select id, count(name) from s where s.id>1 group by id) tmp where t.id=tmp.id; -- can't, constant propagation can't through the aggregation node;
+explain select * from t, (select id from s where s.id>1 order by id limit 2) tmp where t.id=tmp.id; -- can't, constant propagation can't through the sort node;
+
+
+# TestUpdate
+drop table if exists t, s;
+create table t (id int, name varchar(10));
+create table s (id int, name varchar(10));
+explain Update t, (select * from s where s.id>1) tmp set t.name=tmp.name where t.id=tmp.id;
+
+
+# TestMultiSubtreeMatch
+drop table if exists t, s;
+create table t (id int, name varchar(10));
+create table s (id int, name varchar(10));
+explain select * from (select * from (select t.id+1 as id1, t.name from t, (select * from s where s.id>1) s1 where t.id=s1.id ) tmp order by id1) a union (select tmp.* from (select * from t where t.id <3) tmp left join s on tmp.id=s.id); -- match twice;
+
+

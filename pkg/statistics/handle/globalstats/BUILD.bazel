@@ -1,0 +1,61 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "globalstats",
+    srcs = [
+        "global_stats.go",
+        "global_stats_async.go",
+        "merge_worker.go",
+        "topn.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/globalstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
+        "//pkg/table",
+        "//pkg/types",
+        "//pkg/util/hack",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "globalstats_test",
+    timeout = "short",
+    srcs = [
+        "globalstats_test.go",
+        "main_test.go",
+        "topn_bench_test.go",
+    ],
+    flaky = True,
+    shard_count = 14,
+    deps = [
+        ":globalstats",
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/statistics",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/chunk",
+        "//pkg/util/codec",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tiancaiamao_gp//:gp",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)
