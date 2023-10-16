@@ -355,16 +355,11 @@ func NewImportControllerWithPauser(
 		}
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-<<<<<<< HEAD
-			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
 					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
 					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
 				} else {
-=======
-			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
-				if !berrors.Is(err, berrors.ErrVersionMismatch) {
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680))
 					return nil, common.ErrCheckKVVersion.Wrap(err).GenWithStackByArgs()
 				}
 			}
@@ -475,10 +470,6 @@ func NewImportControllerWithPauser(
 		preInfoGetter:       preInfoGetter,
 		precheckItemBuilder: preCheckBuilder,
 		encBuilder:          encodingBuilder,
-<<<<<<< HEAD
-=======
-		tikvModeSwitcher:    local.NewTiKVModeSwitcher(tls, pdCli, log.FromContext(ctx).Logger),
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680))
 
 		keyspaceName: p.KeyspaceName,
 	}

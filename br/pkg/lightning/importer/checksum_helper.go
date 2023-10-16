@@ -52,17 +52,7 @@ func NewChecksumManager(ctx context.Context, rc *Controller, store kv.Storage) (
 			log.FromContext(ctx).Info("set tidb_backoff_weight to default", zap.Int("backoff_weight", local.DefaultBackoffWeight))
 			backoffWeight = local.DefaultBackoffWeight
 		}
-<<<<<<< HEAD
-		manager = local.NewTiKVChecksumManager(store.GetClient(), pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight)
-=======
-
-		explicitRequestSourceType, err := common.GetExplicitRequestSourceTypeFromDB(ctx, rc.db)
-		if err != nil {
-			log.FromContext(ctx).Warn("get tidb_request_source_type failed", zap.Error(err), zap.String("tidb_request_source_type", explicitRequestSourceType))
-			return nil, errors.Trace(err)
-		}
-		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight, rc.resourceGroupName, explicitRequestSourceType)
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680))
+		manager = local.NewTiKVChecksumManager(store.GetClient(), rc.pdCli, uint(rc.cfg.TiDB.DistSQLScanConcurrency), backoffWeight)
 	} else {
 		manager = local.NewTiDBChecksumExecutor(rc.db)
 	}

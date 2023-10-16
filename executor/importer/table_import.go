@@ -44,104 +44,14 @@ import (
 	"github.com/pingcap/tidb/table"
 	"github.com/pingcap/tidb/table/tables"
 	"github.com/pingcap/tidb/util"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/util/syncutil"
-	pd "github.com/tikv/pd/client"
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680))
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
-<<<<<<< HEAD
 func prepareSortDir(e *LoadDataController, jobID int64) (string, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
 	sortPath := filepath.Join(tidbCfg.TempDir, sortPathSuffix, strconv.FormatInt(jobID, 10))
-=======
-// NewTiKVModeSwitcher make it a var, so we can mock it in tests.
-var NewTiKVModeSwitcher = local.NewTiKVModeSwitcher
-
-var (
-	// CheckDiskQuotaInterval is the default time interval to check disk quota.
-	// TODO: make it dynamically adjusting according to the speed of import and the disk size.
-	CheckDiskQuotaInterval = 10 * time.Second
-
-	// defaultMaxEngineSize is the default max engine size in bytes.
-	// we make it 5 times larger than lightning default engine size to reduce range overlap, especially for index,
-	// since we have an index engine per distributed subtask.
-	// for 1TiB data, we can divide it into 2 engines that runs on 2 TiDB. it can have a good balance between
-	// range overlap and sort speed in one of our test of:
-	// 	- 10 columns, PK + 6 secondary index 2 of which is mv index
-	//	- 1.05 KiB per row, 527 MiB per file, 1024000000 rows, 1 TiB total
-	//
-	// it might not be the optimal value for other cases.
-	defaultMaxEngineSize = int64(5 * config.DefaultBatchSize)
-)
-
-// prepareSortDir creates a new directory for import, remove previous sort directory if exists.
-func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
-	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
-	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
-	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
-
-	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
-		if err != nil && !os.IsNotExist(err) {
-			e.logger.Error("stat import dir failed", zap.String("import_dir", importDir), zap.Error(err))
-			return "", errors.Trace(err)
-		}
-		if info != nil && !info.IsDir() {
-			e.logger.Warn("import dir is not a dir, remove it", zap.String("import_dir", importDir))
-			if err := os.RemoveAll(importDir); err != nil {
-				return "", errors.Trace(err)
-			}
-		}
-		e.logger.Info("import dir not exists, create it", zap.String("import_dir", importDir))
-		if err := os.MkdirAll(importDir, 0o700); err != nil {
-			e.logger.Error("failed to make dir", zap.String("import_dir", importDir), zap.Error(err))
-			return "", errors.Trace(err)
-		}
-	}
-
-	// todo: remove this after we support checkpoint
-	if _, err := os.Stat(sortDir); err != nil {
-		if !os.IsNotExist(err) {
-			e.logger.Error("stat sort dir failed", zap.String("sort_dir", sortDir), zap.Error(err))
-			return "", errors.Trace(err)
-		}
-	} else {
-		e.logger.Warn("sort dir already exists, remove it", zap.String("sort_dir", sortDir))
-		if err := os.RemoveAll(sortDir); err != nil {
-			return "", errors.Trace(err)
-		}
-	}
-	return sortDir, nil
-}
-
-// GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
-func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (pd.Client, local.TiKVModeSwitcher, error) {
-	tidbCfg := tidb.GetGlobalConfig()
-	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
-	tls, err := common.NewTLS(
-		tidbCfg.Security.ClusterSSLCA,
-		tidbCfg.Security.ClusterSSLCert,
-		tidbCfg.Security.ClusterSSLKey,
-		hostPort,
-		nil, nil, nil,
-	)
-	if err != nil {
-		return nil, nil, err
-	}
-	tlsOpt := tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
-	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
-}
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680))
-
 	if info, err := os.Stat(sortPath); err != nil {
 		if !os.IsNotExist(err) {
 			e.logger.Error("stat sort dir failed", zap.String("path", sortPath), zap.Error(err))

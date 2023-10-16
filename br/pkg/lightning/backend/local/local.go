@@ -1690,54 +1690,6 @@ func (local *Backend) LocalWriter(_ context.Context, cfg *backend.LocalWriterCon
 	return openLocalWriter(cfg, engine, local.tikvCodec, local.LocalWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
-<<<<<<< HEAD
-=======
-// SwitchModeByKeyRanges will switch tikv mode for regions in the specific key range for multirocksdb.
-// This function will spawn a goroutine to keep switch mode periodically until the context is done.
-// The return done channel is used to notify the caller that the background goroutine is exited.
-func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []Range) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls, local.pdCtl.GetPDClient(), log.FromContext(ctx).Logger)
-	done := make(chan struct{})
-
-	keyRanges := make([]*sst.Range, 0, len(ranges))
-	for _, r := range ranges {
-		startKey := r.start
-		if len(r.start) > 0 {
-			startKey = codec.EncodeBytes(nil, r.start)
-		}
-		endKey := r.end
-		if len(r.end) > 0 {
-			endKey = codec.EncodeBytes(nil, r.end)
-		}
-		keyRanges = append(keyRanges, &sst.Range{
-			Start: startKey,
-			End:   endKey,
-		})
-	}
-
-	go func() {
-		defer close(done)
-		ticker := time.NewTicker(local.BackendConfig.RaftKV2SwitchModeDuration)
-		defer ticker.Stop()
-		switcher.ToImportMode(ctx, keyRanges...)
-	loop:
-		for {
-			select {
-			case <-ctx.Done():
-				break loop
-			case <-ticker.C:
-				switcher.ToImportMode(ctx, keyRanges...)
-			}
-		}
-		// Use a new context to avoid the context is canceled by the caller.
-		recoverCtx, cancel := context.WithTimeout(context.Background(), time.Second*5)
-		defer cancel()
-		switcher.ToNormalMode(recoverCtx, keyRanges...)
-	}()
-	return done, nil
-}
-
->>>>>>> 9c213aac21d (lightning: fix pd http request using old address (#45680))
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
 	w := &Writer{
 		engine:             engine,
