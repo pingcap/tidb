@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/parser/model"
@@ -69,12 +70,16 @@ func (b *BytesBuf) add(v []byte) []byte {
 
 func newBytesBuf(size int) *BytesBuf {
 	return &BytesBuf{
-		buf: make([]byte, size),
+		buf: manual.New(size),
 		cap: size,
 	}
 }
 
 func (b *BytesBuf) destroy() {
+	if b != nil {
+		manual.Free(b.buf)
+		b.buf = nil
+	}
 }
 
 // MemBuf used to store the data in memory.
@@ -89,12 +94,42 @@ type MemBuf struct {
 
 // Recycle recycles the byte buffer.
 func (mb *MemBuf) Recycle(buf *BytesBuf) {
+	buf.idx = 0
+	buf.cap = len(buf.buf)
+	mb.Lock()
+	if len(mb.availableBufs) >= maxAvailableBufSize {
+		// too many byte buffers, evict one byte buffer and continue
+		evictedByteBuf := mb.availableBufs[0]
+		evictedByteBuf.destroy()
+		mb.availableBufs = mb.availableBufs[1:]
+	}
+	mb.availableBufs = append(mb.availableBufs, buf)
+	mb.Unlock()
 }
 
 // AllocateBuf allocates a byte buffer.
 func (mb *MemBuf) AllocateBuf(size int) {
+	mb.Lock()
 	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
-	mb.buf = newBytesBuf(size)
+	var (
+		existingBuf    *BytesBuf
+		existingBufIdx int
+	)
+	for i, buf := range mb.availableBufs {
+		if buf.cap >= size {
+			existingBuf = buf
+			existingBufIdx = i
+			break
+		}
+	}
+	if existingBuf != nil {
+		mb.buf = existingBuf
+		mb.availableBufs[existingBufIdx] = mb.availableBufs[0]
+		mb.availableBufs = mb.availableBufs[1:]
+	} else {
+		mb.buf = newBytesBuf(size)
+	}
+	mb.Unlock()
 }
 
 // Set sets the key-value pair.
