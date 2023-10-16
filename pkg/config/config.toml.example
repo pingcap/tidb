@@ -196,7 +196,7 @@ cluster-ssl-key = ""
 spilled-file-encryption-method = "plaintext"
 
 # Security Enhanced Mode (SEM) restricts the "SUPER" privilege and requires fine-grained privileges instead.
-enable-sem = false
+enable-sem = true
 
 # Automatic creation of TLS certificates.
 # Setting it to 'true' is recommended because it is safer and tie with the default configuration of MySQL.
