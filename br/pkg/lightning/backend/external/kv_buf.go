@@ -16,21 +16,55 @@ package external
 
 import "github.com/docker/go-units"
 
+const blockSize = 16 * units.MiB
+
 type kvBuf struct {
-	curBuf []byte
-	curIdx int
-	cap    int
+	bufs      [][]byte
+	curBuf    []byte
+	curBufIdx int
+	curIdx    int
+	cap       int
 }
 
-func (b *kvBuf) Alloc(s int) (base, buf []byte, offset int) {
+func newKVBuf(memLimit uint64) *kvBuf {
+	blockCount := (memLimit + blockSize - 1) / blockSize
+	b := &kvBuf{
+		bufs: make([][]byte, 0, blockCount),
+	}
+	for i := 0; i < int(blockCount); i++ {
+		b.bufs = append(b.bufs, make([]byte, blockSize))
+	}
+	b.reset()
+	return b
+}
+
+func (b *kvBuf) Alloc(s int) (base, buf []byte, offset int, allocated bool) {
 	if b.cap-b.curIdx < s {
-		b.curBuf = make([]byte, 16*units.MiB)
+		if b.curBufIdx+1 >= len(b.bufs) {
+			return
+		}
+		b.curBufIdx++
+		b.curBuf = b.bufs[b.curBufIdx]
 		b.curIdx = 0
-		b.cap = 16 * units.MiB
+		b.cap = blockSize
 	}
 	base = b.curBuf
 	buf = base[b.curIdx : b.curIdx+s]
 	offset = b.curIdx
+	allocated = true
+
 	b.curIdx += s
 	return
+}
+
+func (b *kvBuf) reset() {
+	b.curBufIdx = 0
+	b.curBuf = b.bufs[0]
+	b.curIdx = 0
+	b.cap = blockSize
+}
+
+func (b *kvBuf) destroy() {
+	b.bufs = nil
+	b.curBuf = nil
 }
