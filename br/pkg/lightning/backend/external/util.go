@@ -212,10 +212,10 @@ type SortedKVMeta struct {
 }
 
 // NewSortedKVMeta creates a SortedKVMeta from a WriterSummary. If the summary
-// is empty, it will return nil.
+// is empty, it will return a pointer to zero SortedKVMeta.
 func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
-	if summary == nil || summary.Min.Cmp(summary.Max) == 0 {
-		return nil
+	if summary == nil || (len(summary.Min) == 0 && len(summary.Max) == 0) {
+		return &SortedKVMeta{}
 	}
 	return &SortedKVMeta{
 		StartKey:           summary.Min.Clone(),
@@ -227,10 +227,15 @@ func NewSortedKVMeta(summary *WriterSummary) *SortedKVMeta {
 
 // Merge merges the other SortedKVMeta into this one.
 func (m *SortedKVMeta) Merge(other *SortedKVMeta) {
-	if other == nil {
+	logutil.BgLogger().Info("lance test",
+		zap.Binary("m.StartKey", m.StartKey),
+		zap.Binary("m.EndKey", m.EndKey),
+		zap.Binary("other.StartKey", other.StartKey),
+		zap.Binary("other.EndKey", other.EndKey))
+	if len(other.StartKey) == 0 && len(other.EndKey) == 0 {
 		return
 	}
-	if m == nil {
+	if len(m.StartKey) == 0 && len(m.EndKey) == 0 {
 		*m = *other
 		return
 	}
