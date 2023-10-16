@@ -3420,8 +3420,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:5RDmWGqvcYbwpd5HuD+q81bYFbwPP4YwOH5nhzFnNaQ=",
-        version = "v0.0.0-20230928035053-f4a2db6417b6",
+        sum = "h1:so6ffMPEx9HYGOOi9T0ezTZlI7LvpYBUQyWWyz8kND8=",
+        version = "v0.0.0-20231011074246-fa00d2b03372",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4179,8 +4179,8 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sum = "h1:4BuoY88x2ejo8wpeGOnZmpHznZxTK6Zjsb6FDd5JKuc=",
-        version = "v2.0.8-0.20231011043713-4e9060a1dc67",
+        sum = "h1:rJGhMdMHG8EjdPhpNB6UejQwuE8rtSqBxBVvbiQHyrY=",
+        version = "v2.0.8-0.20231012084106-14934ce6283e",
     )
     go_repository(
         name = "com_github_tikv_pd",
@@ -6193,8 +6193,8 @@ def go_deps():
         name = "org_uber_go_automaxprocs",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/automaxprocs",
-        sum = "h1:kWazyxZUrS3Gs4qUpbwo5kEIMGe/DAvi5Z4tl2NW4j8=",
-        version = "v1.5.3",
+        sum = "h1:CpDZl6aOlLhReez+8S3eEotD7Jx0Os++lemPlMULQP0=",
+        version = "v1.4.0",
     )
     go_repository(
         name = "org_uber_go_dig",
