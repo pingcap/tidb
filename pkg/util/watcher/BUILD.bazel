@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "watcher",
+    srcs = [
+        "event.go",
+        "watcher.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/watcher",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_atomic//:atomic",
+    ],
+)
+
+go_test(
+    name = "watcher_test",
+    timeout = "short",
+    srcs = ["watcher_test.go"],
+    embed = [":watcher"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

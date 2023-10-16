@@ -1,0 +1,38 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "disk",
+    srcs = [
+        "tempDir.go",
+        "tracker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/disk",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/terror",
+        "//pkg/util/memory",
+        "@com_github_danjacques_gofslock//fslock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_golang_x_sync//singleflight",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "disk_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "tempDir_test.go",
+    ],
+    embed = [":disk"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

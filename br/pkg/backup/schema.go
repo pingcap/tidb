@@ -18,10 +18,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -147,7 +147,7 @@ func (ss *Schemas) BackupSchemas(
 					}
 				}
 				if statsHandle != nil {
-					if err := schema.dumpStatsToJSON(statsHandle); err != nil {
+					if err := schema.dumpStatsToJSON(statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
 					}
 				}
@@ -209,9 +209,9 @@ func (s *schemaInfo) calculateChecksum(
 	return nil
 }
 
-func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle) error {
-	jsonTable, err := statsHandle.DumpStatsToJSON(
-		s.dbInfo.Name.String(), s.tableInfo, nil, true)
+func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle, backupTS uint64) error {
+	jsonTable, err := statsHandle.DumpStatsToJSONBySnapshot(
+		s.dbInfo.Name.String(), s.tableInfo, backupTS, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
