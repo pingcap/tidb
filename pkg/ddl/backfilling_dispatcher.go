@@ -23,6 +23,7 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -85,6 +86,10 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		return nil, err
 	}
 
+	// StepOne: read index and write to backend.
+	// StepTwo: do merge sort to reduce the global sort reader reads files count. Only used in global sort.
+	// StepThree: ingest data.
+	// TODO: use planner.
 	switch step {
 	case proto.StepOne:
 		if tblInfo.Partition != nil {
@@ -92,10 +97,18 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(h.d, tblInfo, job)
 	case proto.StepTwo:
+		gTaskMeta.UseMergeSort = true
+		if err := updateMeta(gTask, &gTaskMeta); err != nil {
+			return nil, err
+		}
 		return generateMergePlan(taskHandle, gTask)
 	case proto.StepThree:
 		if useExtStore {
-			return generateMergeSortPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI)
+			prevStep := proto.StepOne
+			if gTaskMeta.UseMergeSort {
+				prevStep = proto.StepTwo
+			}
+			return generateGlobalSortIngestPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
 		}
 		if tblInfo.Partition != nil {
 			return nil, nil
@@ -104,6 +117,15 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 	default:
 		return nil, nil
 	}
+}
+
+func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
+	bs, err := json.Marshal(taskMeta)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	gTask.Meta = bs
+	return nil
 }
 
 func (*backfillingDispatcherExt) GetNextStep(
@@ -118,11 +140,24 @@ func (*backfillingDispatcherExt) GetNextStep(
 		if taskHandle == nil {
 			return proto.StepThree
 		}
+
+		var meta BackfillGlobalMeta
+		if err := json.Unmarshal(task.Meta, &meta); err != nil {
+			logutil.BgLogger().Info(
+				"unmarshal task meta met error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
+		}
+		// don't need merge step in local backend.
+		if len(meta.CloudStorageURI) == 0 {
+			return proto.StepThree
+		}
+
 		// if data files overlaps too much, we need a merge step.
 		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
 		if err != nil {
 			// TODO(lance6716): should we return error?
-			return proto.StepTwo
+			return proto.StepThree
 		}
 		multiStats := make([]external.MultipleFilesStat, 0, 100)
 		for _, bs := range subTaskMetas {
@@ -134,16 +169,23 @@ func (*backfillingDispatcherExt) GetNextStep(
 			}
 			multiStats = append(multiStats, subtask.MultipleFilesStats...)
 		}
-		if external.GetMaxOverlappingTotal(multiStats) > external.MergeSortOverlapThreshold {
-			return proto.StepTwo
+		if skipMergeSort(multiStats) {
+			return proto.StepThree
 		}
-		return proto.StepThree
+		return proto.StepTwo
 	case proto.StepTwo:
 		return proto.StepThree
 	default:
 		// current step should be proto.StepThree
 		return proto.StepDone
 	}
+}
+
+func skipMergeSort(stats []external.MultipleFilesStat) bool {
+	failpoint.Inject("forceMergeSort", func() {
+		failpoint.Return(false)
+	})
+	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
 // OnErrStage generate error handling stage's plan.
@@ -312,14 +354,15 @@ func generateIngestTaskPlan(
 	return subTaskMetas, nil
 }
 
-func generateMergeSortPlan(
+func generateGlobalSortIngestPlan(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 	jobID int64,
 	cloudStorageURI string,
+	step proto.Step,
 ) ([][]byte, error) {
-	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID)
+	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
 	if err != nil {
 		return nil, err
 	}
@@ -385,7 +428,7 @@ func generateMergePlan(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 ) ([][]byte, error) {
-	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID)
+	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, proto.StepOne)
 	if err != nil {
 		return nil, err
 	}
@@ -456,8 +499,9 @@ func getRangeSplitter(
 func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
+	step proto.Step,
 ) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, proto.StepOne)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
