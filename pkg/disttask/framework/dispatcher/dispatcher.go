@@ -29,6 +29,7 @@ import (
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+
 	"go.uber.org/zap"
 )
 
@@ -79,7 +80,7 @@ type Dispatcher interface {
 // each task type embed this struct and implement the Extension interface.
 type BaseDispatcher struct {
 	ctx     context.Context
-	taskMgr *storage.TaskManager
+	taskMgr TaskManager
 	Task    *proto.Task
 	logCtx  context.Context
 	// serverID, it's value is ip:port now.
@@ -103,7 +104,7 @@ type BaseDispatcher struct {
 var MockOwnerChange func()
 
 // NewBaseDispatcher creates a new BaseDispatcher.
-func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
+func NewBaseDispatcher(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
 		zap.String("task-type", task.Type))
 	return &BaseDispatcher{
@@ -137,17 +138,12 @@ func (*BaseDispatcher) Close() {
 }
 
 // refreshTask fetch task state from tidb_global_task table.
-func (d *BaseDispatcher) refreshTask() error {
-	newTask, err := d.taskMgr.GetGlobalTaskByID(d.Task.ID)
+func (d *BaseDispatcher) refreshTask() (err error) {
+	d.Task, err = d.taskMgr.GetGlobalTaskByID(d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Error("refresh task failed", zap.Error(err))
-		return err
 	}
-	// newTask might be nil when GC routine move the task into history table.
-	if newTask != nil {
-		d.Task = newTask
-	}
-	return nil
+	return err
 }
 
 // scheduleTask schedule the task execution step by step.
@@ -243,7 +239,7 @@ func (d *BaseDispatcher) onCancelling() error {
 // handle task in pausing state, cancel all running subtasks.
 func (d *BaseDispatcher) onPausing() error {
 	logutil.Logger(d.logCtx).Info("on pausing state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
-	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending)
+	cnt, err := d.taskMgr.GetSubtaskInStatesCnt(d.Task.ID, proto.TaskStateRunning, proto.TaskStatePending) // ywq todo remove
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -256,17 +252,9 @@ func (d *BaseDispatcher) onPausing() error {
 	return nil
 }
 
-// MockDMLExecutionOnPausedState is used to mock DML execution when tasks paused.
-var MockDMLExecutionOnPausedState func(task *proto.Task)
-
 // handle task in paused state
 func (d *BaseDispatcher) onPaused() error {
 	logutil.Logger(d.logCtx).Info("on paused state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
-	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
-		if val.(bool) {
-			MockDMLExecutionOnPausedState(d.Task)
-		}
-	})
 	return nil
 }
 
@@ -394,14 +382,18 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 	}
 	if len(d.liveNodes) > 0 {
 		replaceNodes := make(map[string]string)
+		cleanNodes := make([]string, 0)
 		for _, nodeID := range d.taskNodes {
 			if ok := disttaskutil.MatchServerInfo(d.liveNodes, nodeID); !ok {
 				n := d.liveNodes[d.rand.Int()%len(d.liveNodes)] //nolint:gosec
 				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
+				cleanNodes = append(cleanNodes, nodeID)
 			}
 		}
-		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
 		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
+			return err
+		}
+		if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
 			return err
 		}
 		// replace local cache.
@@ -421,7 +413,6 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
 	prevState := d.Task.State
 	d.Task.State = taskState
-	logutil.BgLogger().Info("task state transform", zap.String("from", prevState), zap.String("to", taskState))
 	if !VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}

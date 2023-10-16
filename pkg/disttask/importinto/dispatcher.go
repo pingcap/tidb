@@ -435,7 +435,7 @@ type importDispatcher struct {
 	*dispatcher.BaseDispatcher
 }
 
-func newImportDispatcher(ctx context.Context, taskMgr *storage.TaskManager,
+func newImportDispatcher(ctx context.Context, taskMgr dispatcher.TaskManager,
 	serverID string, task *proto.Task) dispatcher.Dispatcher {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)

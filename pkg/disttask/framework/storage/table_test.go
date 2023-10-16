@@ -391,9 +391,9 @@ func TestBothGlobalAndSubTaskTable(t *testing.T) {
 
 	// test transactional
 	require.NoError(t, sm.DeleteSubtasksByTaskID(1))
-	failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/MockUpdateTaskErr"))
 	}()
 	prevState = task.State
 	task.State = proto.TaskStateFailed
@@ -418,6 +418,11 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.NoError(t, sm.StartManager(":4000", "background"))
 	require.NoError(t, sm.StartManager(":4001", ""))
 	require.NoError(t, sm.StartManager(":4002", "background"))
+
+	allNodes, err := sm.GetAllNodes()
+	require.NoError(t, err)
+	require.Equal(t, []string{":4000", ":4001", ":4002"}, allNodes)
+
 	nodes, err := sm.GetNodesByRole("background")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{
@@ -430,6 +435,18 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.Equal(t, map[string]bool{
 		":4001": true,
 	}, nodes)
+
+	require.NoError(t, sm.CleanUpMeta([]string{":4000"}))
+	nodes, err = sm.GetNodesByRole("background")
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		":4002": true,
+	}, nodes)
+
+	require.NoError(t, sm.CleanUpMeta([]string{":4002"}))
+	nodes, err = sm.GetNodesByRole("background")
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{}, nodes)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
@@ -482,9 +499,9 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Len(t, subTasks, 3)
 
 	// test GC history table.
-	failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	failpoint.Enable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/disttask/framework/storage/subtaskHistoryKeepSeconds"))
 	}()
 	time.Sleep(2 * time.Second)
 
