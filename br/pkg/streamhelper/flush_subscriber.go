@@ -248,22 +248,14 @@ func (s *subscription) close() {
 
 func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 	storeID := s.storeID
-<<<<<<< HEAD
-	log.Info("[log backup flush subscriber] Listen starting.", zap.Uint64("store", storeID))
-=======
 	logutil.CL(ctx).Info("Listen starting.", zap.Uint64("store", storeID))
->>>>>>> 512934e3b66 (log_backup: Fix owner transfer panic (#47537))
 	for {
 		// Shall we use RecvMsg for better performance?
 		// Note that the spans.Full requires the input slice be immutable.
 		msg, err := cli.Recv()
 		if err != nil {
-<<<<<<< HEAD
-			log.Info("[log backup flush subscriber] Listen stopped.", zap.Uint64("store", storeID), logutil.ShortError(err))
-=======
 			logutil.CL(ctx).Info("Listen stopped.",
 				zap.Uint64("store", storeID), logutil.ShortError(err))
->>>>>>> 512934e3b66 (log_backup: Fix owner transfer panic (#47537))
 			if err == io.EOF || err == context.Canceled || status.Code(err) == codes.Canceled {
 				return
 			}
