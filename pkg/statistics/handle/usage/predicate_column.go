@@ -43,7 +43,10 @@ type statsUsageImpl struct {
 
 // NewStatsUsageImpl creates a utilstats.StatsUsage.
 func NewStatsUsageImpl(statsHandle utilstats.StatsHandle) utilstats.StatsUsage {
-	return &statsUsageImpl{statsHandle: statsHandle}
+	return &statsUsageImpl{
+		statsHandle:      statsHandle,
+		idxUsageListHead: newSessionIndexUsageCollector(nil),
+		SessionStatsList: NewSessionStatsList()}
 }
 
 // LoadColumnStatsUsage returns all columns' usage information.
