@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -152,6 +153,8 @@ type StatementContext struct {
 	// NoCopy indicates that this struct cannot be copied because
 	// copying this object will make the copied TypeCtx field to refer a wrong `AppendWarnings` func.
 	_ nocopy.NoCopy
+
+	_ constructor.Constructor `ctor:"NewStmtCtx,NewStmtCtxWithTimeZone,Reset"`
 
 	// TypeCtx is used to indicate how make the type conversation.
 	TypeCtx typectx.Context

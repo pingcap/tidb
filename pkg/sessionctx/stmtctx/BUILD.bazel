@@ -17,6 +17,7 @@ go_library(
         "//pkg/util/disk",
         "//pkg/util/execdetails",
         "//pkg/util/intest",
+        "//pkg/util/linter/constructor",
         "//pkg/util/memory",
         "//pkg/util/nocopy",
         "//pkg/util/resourcegrouptag",

@@ -145,6 +145,7 @@ nogo(
                "//build/linter/asciicheck",
                "//build/linter/bodyclose",
                "//build/linter/bootstrap",
+               "//build/linter/constructor",
                "//build/linter/deferrecover",
                "//build/linter/durationcheck",
                "//build/linter/etcdconfig",
