@@ -67,8 +67,8 @@ LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shel
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
 EXTENSION_FLAG =
-ifeq ($(shell if [ -d extension/enterprise/.git ]; then echo "true"; fi),true)
-	EXTENSION_FLAG += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd extension/enterprise && git rev-parse HEAD)"
+ifeq ($(shell if [ -d .git/modules/extension/enterprise ]; then echo "true"; fi),true)
+	EXTENSION_FLAG += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd pkg/extension/enterprise && git rev-parse HEAD)"
 endif
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/pkg/config.checkBeforeDropLDFlag=1"
