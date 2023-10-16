@@ -40,6 +40,9 @@ type BackfillGlobalMeta struct {
 	EleTypeKey []byte `json:"ele_type_key"`
 
 	CloudStorageURI string `json:"cloud_storage_uri"`
+	// UseMergeSort indicate whether the backfilling task use merge sort step for global sort.
+	// Merge Sort step aims to support more data.
+	UseMergeSort bool `json:"use_merge_sort"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.

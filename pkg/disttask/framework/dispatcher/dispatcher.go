@@ -400,16 +400,18 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
 			}
 		}
-		logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
-		if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
-			return err
-		}
-		// replace local cache.
-		for k, v := range replaceNodes {
-			for m, n := range d.taskNodes {
-				if n == k {
-					d.taskNodes[m] = v
-					break
+		if len(replaceNodes) > 0 {
+			logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
+			if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
+				return err
+			}
+			// replace local cache.
+			for k, v := range replaceNodes {
+				for m, n := range d.taskNodes {
+					if n == k {
+						d.taskNodes[m] = v
+						break
+					}
 				}
 			}
 		}
