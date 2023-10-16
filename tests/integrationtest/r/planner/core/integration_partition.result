@@ -653,11 +653,12 @@ c1	c2	c3	c4
 4	4	4	4
 drop table t2;
 drop database issue_27532;
-use test;
+use planner__core__integration_partition;
 set @@tidb_partition_prune_mode = 'dynamic';
 select @@tidb_partition_prune_mode;
 @@tidb_partition_prune_mode
 dynamic
+drop table if exists t1;
 create table t1 (id int, c date) partition by range (to_days(c))
 (partition p0 values less than (to_days('2022-01-11')),
 partition p1 values less than (to_days('2022-02-11')),
@@ -666,14 +667,14 @@ analyze table t1;
 explain select * from t1 where c in ('2022-01-23', '2022-01-22');
 id	estRows	task	access object	operator info
 TableReader_7	20.00	root	partition:p1	data:Selection_6
-└─Selection_6	20.00	cop[tikv]		in(test.t1.c, 2022-01-23 00:00:00.000000, 2022-01-22 00:00:00.000000)
+└─Selection_6	20.00	cop[tikv]		in(planner__core__integration_partition.t1.c, 2022-01-23 00:00:00.000000, 2022-01-22 00:00:00.000000)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where c in ('2022-01-23', '2022-01-22');
 id	c
 explain select * from t1 where c in (NULL, '2022-01-23');
 id	estRows	task	access object	operator info
 TableReader_7	10.00	root	partition:p0,p1	data:Selection_6
-└─Selection_6	10.00	cop[tikv]		in(test.t1.c, NULL, 2022-01-23 00:00:00.000000)
+└─Selection_6	10.00	cop[tikv]		in(planner__core__integration_partition.t1.c, NULL, 2022-01-23 00:00:00.000000)
   └─TableFullScan_5	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select * from t1 where c in (NULL, '2022-01-23');
 id	c

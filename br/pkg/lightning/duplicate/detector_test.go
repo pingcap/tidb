@@ -26,7 +26,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/duplicate"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/util/extsort"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"github.com/stretchr/testify/require"
 )
 
