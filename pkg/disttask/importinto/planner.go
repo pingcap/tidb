@@ -383,7 +383,8 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 				}
 				logutil.Logger(ctx).Info("kv range as subtask",
 					zap.String("startKey", hex.EncodeToString(startKey)),
-					zap.String("endKey", hex.EncodeToString(endKey)))
+					zap.String("endKey", hex.EncodeToString(endKey)),
+					zap.Int("dataFiles", len(dataFiles)))
 				if startKey.Cmp(endKey) >= 0 {
 					return errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 						hex.EncodeToString(startKey), hex.EncodeToString(endKey))
