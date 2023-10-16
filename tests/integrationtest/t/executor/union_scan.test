@@ -189,6 +189,7 @@ CREATE TABLE t_vwvgdc (wkey int, pkey int NOT NULL, c_rdsfbc double DEFAULT NULL
 insert into t_vwvgdc values (2, 15000, 61.75);
 BEGIN OPTIMISTIC;
 insert into t_vwvgdc (wkey, pkey, c_rdsfbc) values (155, 228000, 99.50);
+--sorted_result
 select pkey from t_vwvgdc where 0 <> 0 union select pkey from t_vwvgdc;
 rollback;
 
@@ -198,8 +199,10 @@ drop table if exists t;
 create table t ( c_int int, c_str varchar(40), primary key(c_int, c_str) );
 begin;
 insert into t values (1, 'amazing almeida'), (2, 'boring bardeen'), (3, 'busy wescoff');
+--sorted_result
 select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t;
 commit;
+--sorted_result
 select c_int, (select t1.c_int from t t1 where t1.c_int = 3 and t1.c_int > t.c_int order by t1.c_int limit 1) x from t;
 
 # https://github.com/pingcap/tidb/issues/19435
@@ -209,6 +212,7 @@ create table t(c_int int);
 insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9);
 begin;
 insert into t1 values(18);
+--sorted_result
 select (select min(t1.c_int) from t1 where t1.c_int > t.c_int), (select max(t1.c_int) from t1 where t1.c_int> t.c_int), (select sum(t1.c_int) from t1 where t1.c_int> t.c_int) from t;
 rollback;
 
@@ -222,6 +226,7 @@ INSERT INTO `t1` VALUES (19,'nervous johnson','2020-05-04 13:15:19'),(22,'pedant
 begin;
 insert into t values (59, 'suspicious feistel', '2020-01-29 19:52:14');
 insert into t1 values (60, 'practical thompson', '2020-03-25 04:33:10');
+--sorted_result
 select c_int, c_str from t where (select count(*) from t1 where t1.c_int in (t.c_int, t.c_int + 2, t.c_int + 10)) > 2;
 rollback;
 
