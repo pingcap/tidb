@@ -669,6 +669,28 @@ func (stm *TaskManager) UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[
 	return err
 }
 
+// CleanUpMeta cleanup the outdated row in dist_framework_meta when some tidb down.
+func (stm *TaskManager) CleanUpMeta(nodes []string) error {
+	if len(nodes) == 0 {
+		return nil
+	}
+	return stm.WithNewTxn(stm.ctx, func(se sessionctx.Context) error {
+		deleteSQL := new(strings.Builder)
+		if err := sqlexec.FormatSQL(deleteSQL, "delete from mysql.dist_framework_meta where host in("); err != nil {
+			return err
+		}
+		deleteElems := make([]string, 0, len(nodes))
+		for _, node := range nodes {
+			deleteElems = append(deleteElems, fmt.Sprintf(`"%s"`, node))
+		}
+
+		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
+		deleteSQL.WriteString(")")
+		_, err := ExecSQL(stm.ctx, se, deleteSQL.String())
+		return err
+	})
+}
+
 // PauseSubtasks update all running/pending subtasks to pasued state.
 func (stm *TaskManager) PauseSubtasks(tidbID string, taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(stm.ctx,
@@ -982,6 +1004,20 @@ func (stm *TaskManager) GetNodesByRole(role string) (map[string]bool, error) {
 	nodes := make(map[string]bool, len(rs))
 	for _, r := range rs {
 		nodes[r.GetString(0)] = true
+	}
+	return nodes, nil
+}
+
+// GetAllNodes gets nodes in dist_framework_meta.
+func (stm *TaskManager) GetAllNodes() ([]string, error) {
+	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+		"select host from mysql.dist_framework_meta")
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]string, 0, len(rs))
+	for _, r := range rs {
+		nodes = append(nodes, r.GetString(0))
 	}
 	return nodes, nil
 }

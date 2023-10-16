@@ -79,7 +79,7 @@ type Dispatcher interface {
 // each task type embed this struct and implement the Extension interface.
 type BaseDispatcher struct {
 	ctx     context.Context
-	taskMgr *storage.TaskManager
+	taskMgr TaskManager
 	Task    *proto.Task
 	logCtx  context.Context
 	// serverID, it's value is ip:port now.
@@ -103,7 +103,7 @@ type BaseDispatcher struct {
 var MockOwnerChange func()
 
 // NewBaseDispatcher creates a new BaseDispatcher.
-func NewBaseDispatcher(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
+func NewBaseDispatcher(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) *BaseDispatcher {
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
 		zap.Stringer("task-type", task.Type))
 	return &BaseDispatcher{
@@ -394,15 +394,20 @@ func (d *BaseDispatcher) replaceDeadNodesIfAny() error {
 	}
 	if len(d.liveNodes) > 0 {
 		replaceNodes := make(map[string]string)
+		cleanNodes := make([]string, 0)
 		for _, nodeID := range d.taskNodes {
 			if ok := disttaskutil.MatchServerInfo(d.liveNodes, nodeID); !ok {
 				n := d.liveNodes[d.rand.Int()%len(d.liveNodes)] //nolint:gosec
 				replaceNodes[nodeID] = disttaskutil.GenerateExecID(n.IP, n.Port)
+				cleanNodes = append(cleanNodes, nodeID)
 			}
 		}
 		if len(replaceNodes) > 0 {
 			logutil.Logger(d.logCtx).Info("reschedule subtasks to other nodes", zap.Int("node-cnt", len(replaceNodes)))
 			if err := d.taskMgr.UpdateFailedSchedulerIDs(d.Task.ID, replaceNodes); err != nil {
+				return err
+			}
+			if err := d.taskMgr.CleanUpMeta(cleanNodes); err != nil {
 				return err
 			}
 			// replace local cache.

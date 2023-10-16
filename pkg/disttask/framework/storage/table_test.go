@@ -418,6 +418,11 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.NoError(t, sm.StartManager(":4000", "background"))
 	require.NoError(t, sm.StartManager(":4001", ""))
 	require.NoError(t, sm.StartManager(":4002", "background"))
+
+	allNodes, err := sm.GetAllNodes()
+	require.NoError(t, err)
+	require.Equal(t, []string{":4000", ":4001", ":4002"}, allNodes)
+
 	nodes, err := sm.GetNodesByRole("background")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{
@@ -430,6 +435,18 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.Equal(t, map[string]bool{
 		":4001": true,
 	}, nodes)
+
+	require.NoError(t, sm.CleanUpMeta([]string{":4000"}))
+	nodes, err = sm.GetNodesByRole("background")
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		":4002": true,
+	}, nodes)
+
+	require.NoError(t, sm.CleanUpMeta([]string{":4002"}))
+	nodes, err = sm.GetNodesByRole("background")
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{}, nodes)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
