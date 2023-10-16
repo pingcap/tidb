@@ -526,9 +526,8 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 	var hgMeta *statistics.Histogram
 	var colInfo *model.ColumnInfo
 	statsVer := int64(-1)
-	c, ok := tbl.Columns[col.ID]
-	// If this column hasn't been analyzed yet or it's fully loaded. We skip it.
-	if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false)) || (ok && !c.IsLoadNeeded()) {
+	c, loadNeeded := tbl.ColumnIsLoadNeeded(col.ID)
+	if !loadNeeded {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
@@ -613,9 +612,8 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 		idxInfo        *model.IndexInfo
 	)
 	statsVer := int64(-1)
-	index, ok := tbl.Indices[idx.ID]
-	// If this index hasn't been analyzed or it's fully loaded, we skip it.
-	if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true)) || (ok && index.IsLoadNeeded()) {
+	index, loadNeeded := tbl.IndexIsLoadNeeded(idx.ID)
+	if !loadNeeded {
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}

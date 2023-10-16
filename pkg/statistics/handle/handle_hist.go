@@ -153,9 +153,8 @@ func (h *Handle) removeHistLoadedColumns(neededItems []model.StatsLoadItem) []mo
 			remainedItems = append(remainedItems, item)
 			continue
 		}
-		colHist, ok := tbl.Columns[item.ID]
-		// If this column hasn't been analyzed yet, or it's already fully loaded. We skip it.
-		if (!ok && tbl.ColAndIdxExistenceMap.HasAnalyzed(item.ID, false)) || (ok && colHist.IsStatsInitialized() && !colHist.IsFullLoad()) {
+		_, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID)
+		if loadNeeded {
 			remainedItems = append(remainedItems, item)
 		}
 	}
@@ -233,9 +232,8 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 	var err error
 	wrapper := &statsWrapper{}
 	if item.IsIndex {
-		index, ok := tbl.Indices[item.ID]
-		// If we don't have this index's stats or its statistics has been fully loaded. We skip it.
-		if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(item.ID, true)) || (ok && index.IsFullLoad()) {
+		index, loadNeeded := tbl.IndexIsLoadNeeded(item.ID)
+		if !loadNeeded {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
@@ -245,9 +243,8 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
 		}
 	} else {
-		col, ok := tbl.Columns[item.ID]
-		// If this column hasn't been analyzed yet or it has been fully loaded. We skip it.
-		if (!ok && !tbl.ColAndIdxExistenceMap.HasAnalyzed(item.ID, false)) || (ok && col.IsFullLoad()) {
+		col, loadNeeded := tbl.ColumnIsLoadNeeded(item.ID)
+		if !loadNeeded {
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}

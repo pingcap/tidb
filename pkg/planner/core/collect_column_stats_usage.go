@@ -176,14 +176,12 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 	colIDSet := funcdep.NewFastIntSet()
 
 	for _, col := range columns {
-		if tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) {
-			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
-			colIDSet.Insert(int(col.ID))
-			c.histNeededCols[tblColID] = true
-		}
+		tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
+		colIDSet.Insert(int(col.ID))
+		c.histNeededCols[tblColID] = true
 	}
 	for _, col := range ds.Columns {
-		if tblStats.ColAndIdxExistenceMap.HasAnalyzed(col.ID, false) && !colIDSet.Has(int(col.ID)) {
+		if !colIDSet.Has(int(col.ID)) {
 			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; ok {
 				continue

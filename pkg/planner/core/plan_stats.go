@@ -257,11 +257,8 @@ func collectSyncIndices(ctx sessionctx.Context,
 				if tblStats == nil || tblStats.Pseudo {
 					continue
 				}
-				idxStats, ok := tblStats.Indices[idx.Meta().ID]
-				if ok && (idxStats.IsFullLoad() || !idxStats.IsStatsInitialized()) {
-					continue
-				}
-				if !ok && !tblStats.ColAndIdxExistenceMap.HasAnalyzed(idxID, true) {
+				_, loadNeeded := tblStats.IndexIsLoadNeeded(idxID)
+				if !loadNeeded {
 					continue
 				}
 				histNeededIndices[model.TableItemID{TableID: column.TableID, ID: idxID, IsIndex: true}] = struct{}{}
