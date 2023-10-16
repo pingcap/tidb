@@ -37,7 +37,7 @@ var _ dispatcher.Extension = (*haTestDispatcherExt)(nil)
 func (*haTestDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (dsp *haTestDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ int64) (metas [][]byte, err error) {
+func (dsp *haTestDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, gTask *proto.Task, _ proto.Step) (metas [][]byte, err error) {
 	if gTask.Step == proto.StepInit {
 		dsp.cnt = 10
 		return [][]byte{
@@ -78,7 +78,7 @@ func (*haTestDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *haTestDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+func (dsp *haTestDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne

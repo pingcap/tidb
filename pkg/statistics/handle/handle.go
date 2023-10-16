@@ -19,7 +19,6 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	ddlUtil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -44,6 +43,13 @@ import (
 	"github.com/tiancaiamao/gp"
 	atomic2 "go.uber.org/atomic"
 	"go.uber.org/zap"
+)
+
+const (
+	// StatsOwnerKey is the stats owner path that is saved to etcd.
+	StatsOwnerKey = "/tidb/stats/owner"
+	// StatsPrompt is the prompt for stats owner manager.
+	StatsPrompt = "stats"
 )
 
 // Handle can update stats info periodically.
@@ -123,21 +129,26 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		autoAnalyzeProcIDGetter: autoAnalyzeProcIDGetter,
 		InitStatsDone:           make(chan struct{}),
 		TableInfoGetter:         util.NewTableInfoGetter(),
-		StatsAnalyze:            autoanalyze.NewStatsAnalyze(pool),
 		StatsLock:               lockstats.NewStatsLock(pool),
 	}
 	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
 
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	statsCache, err := cache.NewStatsCacheImpl()
+	statsCache, err := cache.NewStatsCacheImpl(handle.pool, handle.TableInfoGetter, handle.Lease(), handle.TableStatsFromStorage)
 	if err != nil {
 		return nil, err
 	}
 	handle.StatsCache = statsCache
-	handle.StatsHistory = history.NewStatsHistory(pool, handle.StatsCache)
+	handle.StatsHistory = history.NewStatsHistory(pool, handle.StatsCache, handle.tableStatsToJSON, handle.DumpStatsToJSON)
 	handle.StatsUsage = usage.NewStatsUsageImpl(pool, handle.TableInfoGetter, handle.StatsCache,
 		handle.StatsHistory, handle.GetLockedTables, handle.GetPartitionStats)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(pool, handle.sysProcTracker,
+		handle.GetLockedTables,
+		handle.GetTableStats,
+		handle.GetPartitionStats,
+		handle.autoAnalyzeProcIDGetter,
+		handle.Lease())
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -177,62 +188,6 @@ func (h *Handle) UpdateStatsHealthyMetrics() {
 	for i, val := range distribution {
 		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
 	}
-}
-
-// Update reads stats meta from store and updates the stats map.
-func (h *Handle) Update(is infoschema.InfoSchema) error {
-	lastVersion := h.MaxTableStatsVersion()
-	// We need this because for two tables, the smaller version may write later than the one with larger version.
-	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
-	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
-	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
-	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := util.DurationToTS(3 * h.Lease())
-	if h.MaxTableStatsVersion() >= offset {
-		lastVersion = lastVersion - offset
-	} else {
-		lastVersion = 0
-	}
-	rows, _, err := h.execRows("SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	tables := make([]*statistics.Table, 0, len(rows))
-	deletedTableIDs := make([]int64, 0, len(rows))
-	for _, row := range rows {
-		version := row.GetUint64(0)
-		physicalID := row.GetInt64(1)
-		modifyCount := row.GetInt64(2)
-		count := row.GetInt64(3)
-		table, ok := h.TableInfoByID(is, physicalID)
-		if !ok {
-			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
-			deletedTableIDs = append(deletedTableIDs, physicalID)
-			continue
-		}
-		tableInfo := table.Meta()
-		if oldTbl, ok := h.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
-			continue
-		}
-		tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, false, 0)
-		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
-		if err != nil {
-			logutil.BgLogger().Error("error occurred when read table stats", zap.String("category", "stats"), zap.String("table", tableInfo.Name.O), zap.Error(err))
-			continue
-		}
-		if tbl == nil {
-			deletedTableIDs = append(deletedTableIDs, physicalID)
-			continue
-		}
-		tbl.Version = version
-		tbl.RealtimeCount = count
-		tbl.ModifyCount = modifyCount
-		tbl.Name = getFullTableName(is, tableInfo)
-		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
-		tables = append(tables, tbl)
-	}
-	h.UpdateStatsCache(tables, deletedTableIDs)
-	return nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -430,8 +385,6 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 	return
 }
 
-const updateStatsCacheRetryCnt = 5
-
 // ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 // TODO: move this method to the `extstats` package.
 func (h *Handle) ReloadExtendedStatistics() error {
@@ -487,31 +440,23 @@ func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int
 	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
-// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-func (h *Handle) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error) {
-	var js *storage.JSONTable
-	var err error
-	if isPartition {
-		js, err = h.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
-	} else {
-		js, err = h.DumpStatsToJSON(dbName, tableInfo, nil, true)
-	}
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
-	var version uint64
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		version, err = history.RecordHistoricalStatsToStorage(sctx, physicalID, js)
-		return err
-	}, util.FlagWrapTxn)
-	return version, err
-}
-
 // Close stops the background
 func (h *Handle) Close() {
 	h.gpool.Close()
 	h.StatsCache.Close()
+}
+
+func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error, flags ...int) (err error) {
+	return util.CallWithSCtx(h.pool, f, flags...)
+}
+
+// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
+	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
+		return nil
+	})
+	return
 }
 
 const (
