@@ -16,6 +16,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessiontxn",
         "//pkg/statistics",
         "//pkg/statistics/handle/storage",
         "//pkg/statistics/handle/util",

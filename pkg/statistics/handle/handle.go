@@ -361,7 +361,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -374,7 +374,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -413,7 +413,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
