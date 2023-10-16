@@ -145,9 +145,6 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 	N := c.m.records.inMemory.NumChunks()
 	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
-<<<<<<< HEAD
-	for i := 0; i < N; i++ {
-=======
 	defer func() {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("%v", r)
@@ -164,8 +161,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 		c.m.records.spillError = preSpillError
 		return
 	}
-	for i := 0; i < n; i++ {
->>>>>>> 11b09e657c7 (executor: Fix crash during sort spill (#47581))
+	for i := 0; i < N; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
 		if err != nil {
@@ -445,11 +441,7 @@ func (a *baseSpillDiskAction) Reset() {
 func (a *SpillDiskAction) SetLogHook(hook func(uint64)) {}
 
 // GetPriority get the priority of the Action.
-<<<<<<< HEAD
-func (a *SpillDiskAction) GetPriority() int64 {
-=======
-func (*baseSpillDiskAction) GetPriority() int64 {
->>>>>>> 11b09e657c7 (executor: Fix crash during sort spill (#47581))
+func (a *baseSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
 }
 
