@@ -44,7 +44,7 @@ index idx2(a, b, (cast(j->'$.str' as char(10) array)), c))`)
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
 	tk.MustExec("analyze table t index idx")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty, use sample-rate=1\"",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty and cannot get row count from PD, use sample-rate=1\"",
 		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx",
 		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx2"))
