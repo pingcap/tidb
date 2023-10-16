@@ -204,6 +204,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(TotalQueryProcHistogram)
 	prometheus.MustRegister(TotalCopProcHistogram)
 	prometheus.MustRegister(TotalCopWaitHistogram)
+	prometheus.MustRegister(CopMVCCRatioHistogram)
 	prometheus.MustRegister(HandleSchemaValidate)
 	prometheus.MustRegister(MaxProcs)
 	prometheus.MustRegister(GOGC)
