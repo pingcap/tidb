@@ -27,7 +27,7 @@ import (
 type TaskManager interface {
 	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
 	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
-	UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState string) (bool, error)
+	UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
 	GCSubtasks() error
 	GetAllNodes() ([]string, error)
 	CleanUpMeta(nodes []string) error
@@ -41,8 +41,8 @@ type TaskManager interface {
 	UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[string]string) error
 	GetNodesByRole(role string) (map[string]bool, error)
 	GetSchedulerIDsByTaskID(taskID int64) ([]string, error)
-	GetSucceedSubtasksByStep(taskID int64, step int64) ([]*proto.Subtask, error)
-	GetSchedulerIDsByTaskIDAndStep(taskID int64, step int64) ([]string, error)
+	GetSucceedSubtasksByStep(taskID int64, step proto.Step) ([]*proto.Subtask, error)
+	GetSchedulerIDsByTaskIDAndStep(taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error

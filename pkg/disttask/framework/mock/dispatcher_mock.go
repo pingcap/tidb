@@ -271,7 +271,7 @@ func (mr *MockTaskManagerMockRecorder) GetSchedulerIDsByTaskID(arg0 interface{})
 }
 
 // GetSchedulerIDsByTaskIDAndStep mocks base method.
-func (m *MockTaskManager) GetSchedulerIDsByTaskIDAndStep(arg0, arg1 int64) ([]string, error) {
+func (m *MockTaskManager) GetSchedulerIDsByTaskIDAndStep(arg0 int64, arg1 proto.Step) ([]string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSchedulerIDsByTaskIDAndStep", arg0, arg1)
 	ret0, _ := ret[0].([]string)
@@ -306,7 +306,7 @@ func (mr *MockTaskManagerMockRecorder) GetSubtaskInStatesCnt(arg0 interface{}, a
 }
 
 // GetSucceedSubtasksByStep mocks base method.
-func (m *MockTaskManager) GetSucceedSubtasksByStep(arg0, arg1 int64) ([]*proto.Subtask, error) {
+func (m *MockTaskManager) GetSucceedSubtasksByStep(arg0 int64, arg1 proto.Step) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSucceedSubtasksByStep", arg0, arg1)
 	ret0, _ := ret[0].([]*proto.Subtask)
@@ -392,7 +392,7 @@ func (mr *MockTaskManagerMockRecorder) UpdateFailedSchedulerIDs(arg0, arg1 inter
 }
 
 // UpdateGlobalTaskAndAddSubTasks mocks base method.
-func (m *MockTaskManager) UpdateGlobalTaskAndAddSubTasks(arg0 *proto.Task, arg1 []*proto.Subtask, arg2 string) (bool, error) {
+func (m *MockTaskManager) UpdateGlobalTaskAndAddSubTasks(arg0 *proto.Task, arg1 []*proto.Subtask, arg2 proto.TaskState) (bool, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateGlobalTaskAndAddSubTasks", arg0, arg1, arg2)
 	ret0, _ := ret[0].(bool)
