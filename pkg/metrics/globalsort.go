@@ -17,11 +17,16 @@ package metrics
 import "github.com/prometheus/client_golang/prometheus"
 
 var (
-	GlobalSortWriteToCloudStorageDuration  *prometheus.HistogramVec
-	GlobalSortWriteToCloudStorageRate      *prometheus.HistogramVec
+	// GlobalSortWriteToCloudStorageDuration records the duration of writing to cloud storage.
+	GlobalSortWriteToCloudStorageDuration *prometheus.HistogramVec
+	// GlobalSortWriteToCloudStorageRate records the rate of writing to cloud storage.
+	GlobalSortWriteToCloudStorageRate *prometheus.HistogramVec
+	// GlobalSortReadFromCloudStorageDuration records the duration of reading from cloud storage.
 	GlobalSortReadFromCloudStorageDuration *prometheus.HistogramVec
-	GlobalSortReadFromCloudStorageRate     *prometheus.HistogramVec
-	GlobalSortIngestWorkerCnt              *prometheus.GaugeVec
+	// GlobalSortReadFromCloudStorageRate records the rate of reading from cloud storage.
+	GlobalSortReadFromCloudStorageRate *prometheus.HistogramVec
+	// GlobalSortIngestWorkerCnt records the working number of ingest workers.
+	GlobalSortIngestWorkerCnt *prometheus.GaugeVec
 )
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
