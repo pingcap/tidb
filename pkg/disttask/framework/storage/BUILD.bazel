@@ -1,0 +1,46 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "storage",
+    srcs = [
+        "task_table.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/framework/storage",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/disttask/framework/proto",
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx",
+        "//pkg/util/chunk",
+        "//pkg/util/intest",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "storage_test",
+    timeout = "short",
+    srcs = ["table_test.go"],
+    flaky = True,
+    race = "on",
+    shard_count = 7,
+    deps = [
+        ":storage",
+        "//pkg/disttask/framework/proto",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_ngaut_pools//:pools",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "handler",
+    srcs = [
+        "tikv_handler.go",
+        "upgrade_handler.go",
+        "util.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/server/handler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain/infosync",
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/parser/model",
+        "//pkg/parser/terror",
+        "//pkg/session",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/store/driver/error",
+        "//pkg/store/helper",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/logutil",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_zap//:zap",
+    ],
+)
