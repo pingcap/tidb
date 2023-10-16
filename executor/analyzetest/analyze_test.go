@@ -2127,7 +2127,7 @@ func TestAnalyzeSampleRateReason(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(handle.DumpAll))
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows(
-		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`))
+		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"TiDB assumes that the table is empty and cannot get row count from PD, use sample-rate=1\"`))
 }
 
 func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
