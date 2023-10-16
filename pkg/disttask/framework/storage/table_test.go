@@ -70,7 +70,7 @@ func TestGlobalTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "key1", task.Key)
-	require.Equal(t, "test", task.Type)
+	require.Equal(t, proto.TaskType("test"), task.Type)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Equal(t, uint64(4), task.Concurrency)
 	require.Equal(t, []byte("test"), task.Meta)
