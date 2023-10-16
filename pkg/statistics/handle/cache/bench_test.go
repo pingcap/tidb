@@ -96,7 +96,7 @@ func BenchmarkStatsCacheLFUCopyAndUpdate(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	cache, err := NewStatsCacheImpl()
+	cache, err := NewStatsCacheImplForTest()
 	if err != nil {
 		b.Fail()
 	}
@@ -109,7 +109,7 @@ func BenchmarkStatsCacheMapCacheCopyAndUpdate(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	cache, err := NewStatsCacheImpl()
+	cache, err := NewStatsCacheImplForTest()
 	if err != nil {
 		b.Fail()
 	}
@@ -122,7 +122,7 @@ func BenchmarkLFUCachePutGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	cache, err := NewStatsCacheImpl()
+	cache, err := NewStatsCacheImplForTest()
 	if err != nil {
 		b.Fail()
 	}
@@ -135,7 +135,7 @@ func BenchmarkMapCachePutGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	cache, err := NewStatsCacheImpl()
+	cache, err := NewStatsCacheImplForTest()
 	if err != nil {
 		b.Fail()
 	}
@@ -148,7 +148,7 @@ func BenchmarkLFUCacheGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = true
 	})
-	cache, err := NewStatsCacheImpl()
+	cache, err := NewStatsCacheImplForTest()
 	if err != nil {
 		b.Fail()
 	}
@@ -161,7 +161,7 @@ func BenchmarkMapCacheGet(b *testing.B) {
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Performance.EnableStatsCacheMemQuota = false
 	})
-	cache, err := NewStatsCacheImpl()
+	cache, err := NewStatsCacheImplForTest()
 	if err != nil {
 		b.Fail()
 	}

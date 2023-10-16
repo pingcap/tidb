@@ -8,7 +8,6 @@ go_library(
         "dump.go",
         "handle.go",
         "handle_hist.go",
-        "update.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle",
     visibility = ["//visibility:public"],

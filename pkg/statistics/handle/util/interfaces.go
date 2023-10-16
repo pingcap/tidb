@@ -95,7 +95,8 @@ type StatsHistory interface {
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
 
-	// TODO: RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
+	// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
+	RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error)
 }
 
 // StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
@@ -106,7 +107,8 @@ type StatsAnalyze interface {
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
-	// TODO: HandleAutoAnalyze
+	// HandleAutoAnalyze analyzes the newly created table or index.
+	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
 }
 
 // StatsCache is used to manage all table statistics in memory.
@@ -116,6 +118,9 @@ type StatsCache interface {
 
 	// Clear clears this cache.
 	Clear()
+
+	// Update reads stats meta from store and updates the stats map.
+	Update(is infoschema.InfoSchema) error
 
 	// MemConsumed returns its memory usage.
 	MemConsumed() (size int64)
