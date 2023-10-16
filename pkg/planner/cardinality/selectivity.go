@@ -277,7 +277,7 @@ func Selectivity(
 			ret *= 0
 			mask &^= 1 << uint64(i)
 			delete(notCoveredConstants, i)
-		} else if isTrue, err := c.Value.ToBool(sc); err == nil {
+		} else if isTrue, err := c.Value.ToBool(sc.TypeCtx); err == nil {
 			if isTrue == 0 {
 				// c is false
 				ret *= 0
