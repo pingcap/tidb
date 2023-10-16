@@ -5,8 +5,13 @@
   ],
   "bazel": {
     "fileMatch": [
-      "(^|/)WORKSPACE(|\\.bazel)$",
       "\\.bzl$"
-    ]
-  }
+    ]    
+  },
+  "packageRules": [
+    {
+      "matchCategories": ["bazel", "golang"],
+      "groupName": "gg"
+    }
+  ]
 }
