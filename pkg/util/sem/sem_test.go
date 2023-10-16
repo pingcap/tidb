@@ -104,4 +104,5 @@ func TestIsInvisibleSysVar(t *testing.T) {
 	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
 	assert.True(IsInvisibleSysVar(variable.TiDBTopSQLMaxTimeSeriesCount))
 	assert.True(IsInvisibleSysVar(tidbAuditRetractLog))
+	assert.True(IsInvisibleSysVar(variable.RequireSecureTransport))
 }
