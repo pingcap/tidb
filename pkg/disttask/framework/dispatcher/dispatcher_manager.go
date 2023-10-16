@@ -274,10 +274,13 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 			dm.failTask(task, err)
 			return
 		}
-		defer dispatcher.Close()
+		defer func() {
+			dispatcher.Close()
+			dm.delRunningTask(task.ID)
+		}()
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
-		dm.delRunningTask(task.ID)
+		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		dm.finishCh <- struct{}{}
 	})
 }
@@ -355,6 +358,9 @@ func (dm *Manager) CleanUpMeta() int {
 		if ok := disttaskutil.MatchServerInfo(serverInfos, nodeID); !ok {
 			cleanNodes = append(cleanNodes, nodeID)
 		}
+	}
+	if len(cleanNodes) == 0 {
+		return 0
 	}
 	logutil.BgLogger().Info("start to clean up dist_framework_meta")
 	err = dm.taskMgr.CleanUpMeta(cleanNodes)
