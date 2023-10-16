@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -x
+set -eux
 
 check_cluster_version 5 2 0 'duplicate detection' || exit 0
 
@@ -33,6 +33,6 @@ check_contains 'c: 1.csv'
 check_contains 'a: 2'
 check_contains 'b: 2'
 check_contains 'c: 1.csv'
-check_contains 'a: 3'
-check_contains 'b: 3'
-check_contains 'c: 3.csv'
+check_contains 'a: 5'
+check_contains 'b: 5'
+check_contains 'c: 5.csv'
