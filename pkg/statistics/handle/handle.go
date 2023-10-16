@@ -367,7 +367,7 @@ func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, t
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -380,7 +380,7 @@ func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExi
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -419,7 +419,7 @@ func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.
 		return err
 	})
 	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, StatsMetaHistorySourceExtendedStats)
+		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
 	}
 	return
 }
@@ -458,16 +458,3 @@ func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
 	})
 	return
 }
-
-const (
-	// StatsMetaHistorySourceAnalyze indicates stats history meta source from analyze
-	StatsMetaHistorySourceAnalyze = "analyze"
-	// StatsMetaHistorySourceLoadStats indicates stats history meta source from load stats
-	StatsMetaHistorySourceLoadStats = "load stats"
-	// StatsMetaHistorySourceFlushStats indicates stats history meta source from flush stats
-	StatsMetaHistorySourceFlushStats = "flush stats"
-	// StatsMetaHistorySourceSchemaChange indicates stats history meta source from schema change
-	StatsMetaHistorySourceSchemaChange = "schema change"
-	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
-	StatsMetaHistorySourceExtendedStats = "extended stats"
-)

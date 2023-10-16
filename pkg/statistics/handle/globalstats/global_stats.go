@@ -20,7 +20,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
@@ -63,8 +65,10 @@ func newGlobalStats(histCount int) *GlobalStats {
 }
 
 type (
-	getTableByPhysicalIDFunc func(is infoschema.InfoSchema, tableID int64) (table.Table, bool)
-	callWithSCtxFunc         func(f func(sctx sessionctx.Context) error, flags ...int) (err error)
+	getTableByPhysicalIDFunc  func(is infoschema.InfoSchema, tableID int64) (table.Table, bool)
+	callWithSCtxFunc          func(f func(sctx sessionctx.Context) error, flags ...int) error
+	saveStatsToStorageFunc    func(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+	tableStatsFromStorageFunc func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (*statistics.Table, error)
 )
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
@@ -134,6 +138,118 @@ func MergePartitionStats2GlobalStatsByTableID(
 		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", globalTableInfo.Name.L),
 			zap.String("item", item), zap.Strings("missing", globalStats.MissingPartitionStats))
 	}
-
 	return
+}
+
+// analyzeOptionDefault saves the default values of NumBuckets and NumTopN.
+// These values will be used in dynamic mode when we drop table partition and then need to merge global-stats.
+// These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
+var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
+	ast.AnalyzeOptNumBuckets: 256,
+	ast.AnalyzeOptNumTopN:    20,
+}
+
+// UpdateGlobalStats update the global-level stats based on the partition-level stats.
+func UpdateGlobalStats(
+	sctx sessionctx.Context,
+	tblInfo *model.TableInfo,
+	gpool *gp.Pool,
+	tableStatsFromStorage tableStatsFromStorageFunc,
+	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
+	callWithSCtxFunc callWithSCtxFunc,
+	saveStatsToStorage saveStatsToStorageFunc) error {
+	tableID := tblInfo.ID
+	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
+	globalStats, err := tableStatsFromStorage(tblInfo, tableID, true, 0)
+	if err != nil {
+		return err
+	}
+	// If we do not currently have global-stats, no new global-stats will be generated.
+	if globalStats == nil {
+		return nil
+	}
+	opts := make(map[ast.AnalyzeOptionType]uint64, len(analyzeOptionDefault))
+	for key, val := range analyzeOptionDefault {
+		opts[key] = val
+	}
+	// Use current global-stats related information to construct the opts for `MergePartitionStats2GlobalStats` function.
+	globalColStatsTopNNum, globalColStatsBucketNum := 0, 0
+	for colID := range globalStats.Columns {
+		globalColStatsTopN := globalStats.Columns[colID].TopN
+		if globalColStatsTopN != nil && len(globalColStatsTopN.TopN) > globalColStatsTopNNum {
+			globalColStatsTopNNum = len(globalColStatsTopN.TopN)
+		}
+		globalColStats := globalStats.Columns[colID]
+		if globalColStats != nil && len(globalColStats.Buckets) > globalColStatsBucketNum {
+			globalColStatsBucketNum = len(globalColStats.Buckets)
+		}
+	}
+	if globalColStatsTopNNum != 0 {
+		opts[ast.AnalyzeOptNumTopN] = uint64(globalColStatsTopNNum)
+	}
+	if globalColStatsBucketNum != 0 {
+		opts[ast.AnalyzeOptNumBuckets] = uint64(globalColStatsBucketNum)
+	}
+	// Generate the new column global-stats
+	newColGlobalStats, err := MergePartitionStats2GlobalStats(sctx, gpool, opts, is, tblInfo, false, nil, getTableByPhysicalIDFn, callWithSCtxFunc)
+	if err != nil {
+		return err
+	}
+	if len(newColGlobalStats.MissingPartitionStats) > 0 {
+		logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+			zap.String("item", "columns"), zap.Strings("missing", newColGlobalStats.MissingPartitionStats))
+	}
+	for i := 0; i < newColGlobalStats.Num; i++ {
+		hg, cms, topN := newColGlobalStats.Hg[i], newColGlobalStats.Cms[i], newColGlobalStats.TopN[i]
+		if hg == nil {
+			// All partitions have no stats so global stats are not created.
+			continue
+		}
+		// fms for global stats doesn't need to dump to kv.
+		err = saveStatsToStorage(tableID, newColGlobalStats.Count, newColGlobalStats.ModifyCount,
+			0, hg, cms, topN, 2, 1, false, util.StatsMetaHistorySourceSchemaChange)
+		if err != nil {
+			return err
+		}
+	}
+
+	// Generate the new index global-stats
+	globalIdxStatsTopNNum, globalIdxStatsBucketNum := 0, 0
+	for _, idx := range tblInfo.Indices {
+		globalIdxStatsTopN := globalStats.Indices[idx.ID].TopN
+		if globalIdxStatsTopN != nil && len(globalIdxStatsTopN.TopN) > globalIdxStatsTopNNum {
+			globalIdxStatsTopNNum = len(globalIdxStatsTopN.TopN)
+		}
+		globalIdxStats := globalStats.Indices[idx.ID]
+		if globalIdxStats != nil && len(globalIdxStats.Buckets) > globalIdxStatsBucketNum {
+			globalIdxStatsBucketNum = len(globalIdxStats.Buckets)
+		}
+		if globalIdxStatsTopNNum != 0 {
+			opts[ast.AnalyzeOptNumTopN] = uint64(globalIdxStatsTopNNum)
+		}
+		if globalIdxStatsBucketNum != 0 {
+			opts[ast.AnalyzeOptNumBuckets] = uint64(globalIdxStatsBucketNum)
+		}
+		newIndexGlobalStats, err := MergePartitionStats2GlobalStats(sctx, gpool, opts, is, tblInfo, true, []int64{idx.ID}, getTableByPhysicalIDFn, callWithSCtxFunc)
+		if err != nil {
+			return err
+		}
+		if len(newIndexGlobalStats.MissingPartitionStats) > 0 {
+			logutil.BgLogger().Warn("missing partition stats when merging global stats", zap.String("table", tblInfo.Name.L),
+				zap.String("item", "index "+idx.Name.L), zap.Strings("missing", newIndexGlobalStats.MissingPartitionStats))
+		}
+		for i := 0; i < newIndexGlobalStats.Num; i++ {
+			hg, cms, topN := newIndexGlobalStats.Hg[i], newIndexGlobalStats.Cms[i], newIndexGlobalStats.TopN[i]
+			if hg == nil {
+				// All partitions have no stats so global stats are not created.
+				continue
+			}
+			// fms for global stats doesn't need to dump to kv.
+			err = saveStatsToStorage(tableID, newIndexGlobalStats.Count, newIndexGlobalStats.ModifyCount, 1, hg, cms, topN, 2, 1, false, util.StatsMetaHistorySourceSchemaChange)
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
