@@ -52,6 +52,8 @@ const (
 
 	runawayRecordGCBatchSize       = 100
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
+
+	maxIDRetries = 3
 )
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
@@ -307,21 +309,17 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 	if err != nil {
 		return 0, err
 	}
-	for i := 0; i < 3; i++ {
+	for retry := 1; retry <= maxIDRetries; retry++ {
 		rs, err := exec.ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
-		if err != nil {
-			continue
+		if err == nil {
+			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+			rs.Close()
+			if err == nil && len(rows) == 1 {
+				return rows[0].GetUint64(0), nil
+			}
 		}
-		//nolint: errcheck
-		defer rs.Close()
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-		if err != nil {
-			continue
-		}
-		if len(rows) != 1 {
-			continue
-		}
-		return rows[0].GetUint64(0), nil
+		logutil.BgLogger().Warn("failed to get last insert id when adding runaway watch", zap.Error(err))
+		time.Sleep(time.Millisecond * time.Duration(retry*100))
 	}
 	return 0, errors.Errorf("An error occurred while getting the ID of the newly added watch record. Try querying information_schema.runaway_watches later")
 }
