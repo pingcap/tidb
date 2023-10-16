@@ -16,29 +16,114 @@ package cache
 
 import (
 	"sync/atomic"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // StatsCacheImpl implements util.StatsCache.
 type StatsCacheImpl struct {
+	pool    util.SessionPool
+	tblInfo util.TableInfoGetter
 	atomic.Pointer[StatsCache]
+
+	tableStatsFromStorage func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
+	statsLease            time.Duration
 }
 
 // NewStatsCacheImpl creates a new StatsCache.
-func NewStatsCacheImpl() (util.StatsCache, error) {
+func NewStatsCacheImpl(pool util.SessionPool, tblInfo util.TableInfoGetter, statsLease time.Duration,
+	tableStatsFromStorage func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error),
+) (util.StatsCache, error) {
 	newCache, err := NewStatsCache()
 	if err != nil {
 		return nil, err
 	}
-	result := &StatsCacheImpl{}
+	result := &StatsCacheImpl{
+		pool:                  pool,
+		tblInfo:               tblInfo,
+		statsLease:            statsLease,
+		tableStatsFromStorage: tableStatsFromStorage,
+	}
 	result.Store(newCache)
 	return result, nil
+}
+
+// NewStatsCacheImplForTest creates a new StatsCache for test.
+func NewStatsCacheImplForTest() (util.StatsCache, error) {
+	return NewStatsCacheImpl(nil, nil, 0, nil)
+}
+
+// Update reads stats meta from store and updates the stats map.
+func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
+	lastVersion := s.MaxTableStatsVersion()
+	// We need this because for two tables, the smaller version may write later than the one with larger version.
+	// Consider the case that there are two tables A and B, their version and commit time is (A0, A1) and (B0, B1),
+	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
+	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
+	// We can read the stats if the diff between commit time and version is less than three lease.
+	offset := util.DurationToTS(3 * s.statsLease)
+	if s.MaxTableStatsVersion() >= offset {
+		lastVersion = lastVersion - offset
+	} else {
+		lastVersion = 0
+	}
+
+	var rows []chunk.Row
+	var err error
+	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+		rows, _, err = util.ExecRows(sctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
+		return err
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	tables := make([]*statistics.Table, 0, len(rows))
+	deletedTableIDs := make([]int64, 0, len(rows))
+	for _, row := range rows {
+		version := row.GetUint64(0)
+		physicalID := row.GetInt64(1)
+		modifyCount := row.GetInt64(2)
+		count := row.GetInt64(3)
+		table, ok := s.tblInfo.TableInfoByID(is, physicalID)
+		if !ok {
+			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
+			deletedTableIDs = append(deletedTableIDs, physicalID)
+			continue
+		}
+		tableInfo := table.Meta()
+		if oldTbl, ok := s.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
+			continue
+		}
+		tbl, err := s.tableStatsFromStorage(tableInfo, physicalID, false, 0)
+		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
+		if err != nil {
+			logutil.BgLogger().Error("error occurred when read table stats", zap.String("category", "stats"), zap.String("table", tableInfo.Name.O), zap.Error(err))
+			continue
+		}
+		if tbl == nil {
+			deletedTableIDs = append(deletedTableIDs, physicalID)
+			continue
+		}
+		tbl.Version = version
+		tbl.RealtimeCount = count
+		tbl.ModifyCount = modifyCount
+		tbl.Name = util.GetFullTableName(is, tableInfo)
+		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
+		tables = append(tables, tbl)
+	}
+	s.UpdateStatsCache(tables, deletedTableIDs)
+	return nil
 }
 
 // Replace replaces this cache.

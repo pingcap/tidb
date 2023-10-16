@@ -16,7 +16,6 @@ package handle
 
 import (
 	"context"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -57,7 +56,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache util.StatsC
 		tbl := &statistics.Table{
 			HistColl: newHistColl,
 			Version:  row.GetUint64(0),
-			Name:     getFullTableName(is, tableInfo),
+			Name:     util.GetFullTableName(is, tableInfo),
 		}
 		cache.Put(physicalID, tbl) // put this table again since it is updated
 	}
@@ -543,15 +542,4 @@ func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	}
 	h.Replace(cache)
 	return nil
-}
-
-func getFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string {
-	for _, schema := range is.AllSchemas() {
-		if t, err := is.TableByName(schema.Name, tblInfo.Name); err == nil {
-			if t.Meta().ID == tblInfo.ID {
-				return schema.Name.O + "." + tblInfo.Name.O
-			}
-		}
-	}
-	return strconv.FormatInt(tblInfo.ID, 10)
 }
