@@ -289,7 +289,7 @@ var testContexts sync.Map
 
 // onRunnableTask handles a runnable task.
 func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
-	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.String("type", task.Type))
+	logutil.Logger(m.logCtx).Info("onRunnableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 	// runCtx only used in scheduler.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := getSchedulerFactory(task.Type)
 	if factory == nil {
@@ -331,7 +331,7 @@ func (m *Manager) onRunnableTask(ctx context.Context, task *proto.Task) {
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
 			logutil.Logger(m.logCtx).Info("onRunnableTask exit",
-				zap.Int64("task-id", task.ID), zap.Int64("step", task.Step), zap.String("state", task.State))
+				zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)), zap.Stringer("state", task.State))
 			return
 		}
 		if exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,

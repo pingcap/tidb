@@ -3486,7 +3486,8 @@ func RedactURL(str string) string {
 	failpoint.Inject("forceRedactURL", func() {
 		scheme = "s3"
 	})
-	if strings.ToLower(scheme) == "s3" {
+	switch strings.ToLower(scheme) {
+	case "s3", "ks3":
 		values := u.Query()
 		for k := range values {
 			// see below on why we normalize key

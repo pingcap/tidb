@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
@@ -90,7 +90,7 @@ func (dm *Manager) clearRunningTasks() {
 type Manager struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
-	taskMgr *storage.TaskManager
+	taskMgr TaskManager
 	wg      tidbutil.WaitGroupWrapper
 	gPool   *spool.Pool
 	inited  bool
@@ -107,9 +107,9 @@ type Manager struct {
 }
 
 // NewManager creates a dispatcher struct.
-func NewManager(ctx context.Context, taskTable *storage.TaskManager, serverID string) (*Manager, error) {
+func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Manager, error) {
 	dispatcherManager := &Manager{
-		taskMgr:  taskTable,
+		taskMgr:  taskMgr,
 		serverID: serverID,
 	}
 	gPool, err := spool.NewPool("dispatch_pool", int32(DefaultDispatchConcurrency), util.DistTask, spool.WithBlocking(true))
@@ -186,14 +186,14 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
-				metrics.DistTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
+				metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.DispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
 				// directly.
 				if getDispatcherFactory(task.Type) == nil {
 					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
-						zap.String("task-type", task.Type))
+						zap.Stringer("task-type", task.Type))
 					dm.failTask(task, errors.New("unknown task type"))
 					continue
 				}
@@ -280,6 +280,7 @@ func (dm *Manager) startDispatcher(task *proto.Task) {
 		}()
 		dm.setRunningTask(task, dispatcher)
 		dispatcher.ExecuteTask()
+		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		dm.finishCh <- struct{}{}
 	})
 }
@@ -304,11 +305,15 @@ func (dm *Manager) cleanUpLoop() {
 // WaitCleanUpFinished is used to sync the test.
 var WaitCleanUpFinished = make(chan struct{})
 
-// doCleanUpRoutine processes clean up routine defined by each type of tasks.
+// doCleanUpRoutine processes clean up routine defined by each type of tasks and cleanUpMeta.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
 func (dm *Manager) doCleanUpRoutine() {
+	cnt := dm.CleanUpMeta()
+	if cnt != 0 {
+		logutil.BgLogger().Info("clean up nodes in framework meta since nodes shutdown", zap.Int("cnt", cnt))
+	}
 	tasks, err := dm.taskMgr.GetGlobalTasksInStates(
 		proto.TaskStateFailed,
 		proto.TaskStateReverted,
@@ -331,6 +336,39 @@ func (dm *Manager) doCleanUpRoutine() {
 		WaitCleanUpFinished <- struct{}{}
 	})
 	logutil.Logger(dm.ctx).Info("cleanUp routine success")
+}
+
+// CleanUpMeta clean up old node info in dist_framework_meta table.
+func (dm *Manager) CleanUpMeta() int {
+	// Safe to discard errors since this function can be called at regular intervals.
+	serverInfos, err := GenerateSchedulerNodes(dm.ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("generate scheduler nodes met error")
+		return 0
+	}
+
+	oldNodes, err := dm.taskMgr.GetAllNodes()
+	if err != nil {
+		logutil.BgLogger().Warn("get all nodes met error")
+		return 0
+	}
+
+	cleanNodes := make([]string, 0)
+	for _, nodeID := range oldNodes {
+		if ok := disttaskutil.MatchServerInfo(serverInfos, nodeID); !ok {
+			cleanNodes = append(cleanNodes, nodeID)
+		}
+	}
+	if len(cleanNodes) == 0 {
+		return 0
+	}
+	logutil.BgLogger().Info("start to clean up dist_framework_meta")
+	err = dm.taskMgr.CleanUpMeta(cleanNodes)
+	if err != nil {
+		logutil.BgLogger().Warn("clean up dist_framework_meta met error")
+		return 0
+	}
+	return len(cleanNodes)
 }
 
 func (dm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {

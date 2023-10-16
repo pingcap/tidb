@@ -39,21 +39,16 @@ import (
 
 // statsGCImpl implements StatsGC interface.
 type statsGCImpl struct {
-	pool          util.SessionPool // used to recycle sessionctx.
-	tblInfoGetter util.TableInfoGetter
-
+	statsHandle util.StatsHandle
 	// TODO: it's ugly to use a raw function, solve it later on.
 	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)
-	statsLease               time.Duration // statistics lease
 }
 
 // NewStatsGC creates a new StatsGC.
-func NewStatsGC(pool util.SessionPool, statsLease time.Duration, tblInfo util.TableInfoGetter,
+func NewStatsGC(statsHandle util.StatsHandle,
 	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)) util.StatsGC {
 	return &statsGCImpl{
-		pool:                     pool,
-		statsLease:               statsLease,
-		tblInfoGetter:            tblInfo,
+		statsHandle:              statsHandle,
 		markExtendedStatsDeleted: markExtendedStatsDeleted,
 	}
 }
@@ -62,21 +57,21 @@ func NewStatsGC(pool util.SessionPool, statsLease time.Duration, tblInfo util.Ta
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
-	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
-		return GCStats(sctx, gc.tblInfoGetter, gc.markExtendedStatsDeleted, is, gc.statsLease, ddlLease)
+	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		return GCStats(sctx, gc.statsHandle, gc.markExtendedStatsDeleted, is, ddlLease)
 	})
 }
 
 // ClearOutdatedHistoryStats clear outdated historical stats.
 // Only for test.
 func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
-	return util.CallWithSCtx(gc.pool, ClearOutdatedHistoryStats)
+	return util.CallWithSCtx(gc.statsHandle.SPool(), ClearOutdatedHistoryStats)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
-	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return DeleteTableStatsFromKV(sctx, statsIDs)
 	}, util.FlagWrapTxn)
 }
@@ -85,12 +80,12 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func GCStats(sctx sessionctx.Context,
-	tableInfoGetter util.TableInfoGetter,
+	statsHandle util.StatsHandle,
 	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
-	is infoschema.InfoSchema, statsLease, ddlLease time.Duration) (err error) {
+	is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
-	lease := max(statsLease, ddlLease)
+	lease := max(statsHandle.Lease(), ddlLease)
 	offset := util.DurationToTS(10 * lease)
 	now := oracle.GoTimeToTS(time.Now())
 	if now < offset {
@@ -115,7 +110,7 @@ func GCStats(sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		if err := gcTableStats(sctx, tableInfoGetter, markExtendedStatsDeleted, is, row.GetInt64(0)); err != nil {
+		if err := gcTableStats(sctx, statsHandle, markExtendedStatsDeleted, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
 		_, existed := is.TableByID(row.GetInt64(0))
