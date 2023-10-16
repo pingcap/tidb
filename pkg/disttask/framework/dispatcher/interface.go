@@ -39,7 +39,7 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks dispatched has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step int64) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, step proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
@@ -56,7 +56,7 @@ type Extension interface {
 	// GetNextStep is used to get the next step for the task.
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then dispatcher will mark it as finished.
-	GetNextStep(h TaskHandle, task *proto.Task) int64
+	GetNextStep(h TaskHandle, task *proto.Task) proto.Step
 }
 
 // dispatcherFactoryFn is used to create a dispatcher.
@@ -64,9 +64,9 @@ type dispatcherFactoryFn func(ctx context.Context, taskMgr *storage.TaskManager,
 
 var dispatcherFactoryMap = struct {
 	syncutil.RWMutex
-	m map[string]dispatcherFactoryFn
+	m map[proto.TaskType]dispatcherFactoryFn
 }{
-	m: make(map[string]dispatcherFactoryFn),
+	m: make(map[proto.TaskType]dispatcherFactoryFn),
 }
 
 // RegisterDispatcherFactory is used to register the dispatcher factory.
@@ -75,14 +75,14 @@ var dispatcherFactoryMap = struct {
 // after the server start, there's should be no write to the map.
 // but for index backfill, the register call stack is so deep, not sure
 // if it's safe to do so, so we use a lock here.
-func RegisterDispatcherFactory(taskType string, ctor dispatcherFactoryFn) {
+func RegisterDispatcherFactory(taskType proto.TaskType, ctor dispatcherFactoryFn) {
 	dispatcherFactoryMap.Lock()
 	defer dispatcherFactoryMap.Unlock()
 	dispatcherFactoryMap.m[taskType] = ctor
 }
 
 // getDispatcherFactory is used to get the dispatcher factory.
-func getDispatcherFactory(taskType string) dispatcherFactoryFn {
+func getDispatcherFactory(taskType proto.TaskType) dispatcherFactoryFn {
 	dispatcherFactoryMap.RLock()
 	defer dispatcherFactoryMap.RUnlock()
 	return dispatcherFactoryMap.m[taskType]
@@ -92,7 +92,7 @@ func getDispatcherFactory(taskType string) dispatcherFactoryFn {
 func ClearDispatcherFactory() {
 	dispatcherFactoryMap.Lock()
 	defer dispatcherFactoryMap.Unlock()
-	dispatcherFactoryMap.m = make(map[string]dispatcherFactoryFn)
+	dispatcherFactoryMap.m = make(map[proto.TaskType]dispatcherFactoryFn)
 }
 
 // CleanUpRoutine is used for the framework to do some clean up work if the task is finished.
@@ -104,22 +104,22 @@ type cleanUpFactoryFn func() CleanUpRoutine
 
 var cleanUpFactoryMap = struct {
 	syncutil.RWMutex
-	m map[string]cleanUpFactoryFn
+	m map[proto.TaskType]cleanUpFactoryFn
 }{
-	m: make(map[string]cleanUpFactoryFn),
+	m: make(map[proto.TaskType]cleanUpFactoryFn),
 }
 
 // RegisterDispatcherCleanUpFactory is used to register the dispatcher clean up factory.
 // normally dispatcher cleanup is used in the dispatcher_manager gcTaskLoop to do clean up
 // works when tasks are finished.
-func RegisterDispatcherCleanUpFactory(taskType string, ctor cleanUpFactoryFn) {
+func RegisterDispatcherCleanUpFactory(taskType proto.TaskType, ctor cleanUpFactoryFn) {
 	cleanUpFactoryMap.Lock()
 	defer cleanUpFactoryMap.Unlock()
 	cleanUpFactoryMap.m[taskType] = ctor
 }
 
 // getDispatcherCleanUpFactory is used to get the dispatcher factory.
-func getDispatcherCleanUpFactory(taskType string) cleanUpFactoryFn {
+func getDispatcherCleanUpFactory(taskType proto.TaskType) cleanUpFactoryFn {
 	cleanUpFactoryMap.RLock()
 	defer cleanUpFactoryMap.RUnlock()
 	return cleanUpFactoryMap.m[taskType]
@@ -129,5 +129,5 @@ func getDispatcherCleanUpFactory(taskType string) cleanUpFactoryFn {
 func ClearDispatcherCleanUpFactory() {
 	cleanUpFactoryMap.Lock()
 	defer cleanUpFactoryMap.Unlock()
-	cleanUpFactoryMap.m = make(map[string]cleanUpFactoryFn)
+	cleanUpFactoryMap.m = make(map[proto.TaskType]cleanUpFactoryFn)
 }

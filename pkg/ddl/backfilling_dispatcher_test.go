@@ -44,7 +44,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 		"PARTITION p1 VALUES LESS THAN (100),\n" +
 		"PARTITION p2 VALUES LESS THAN (1000),\n" +
 		"PARTITION p3 VALUES LESS THAN MAXVALUE\n);")
-	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", ddl.BackfillTaskType)
+	gTask := createAddIndexGlobalTask(t, dom, "test", "tp1", proto.Backfill)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("tp1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
@@ -87,7 +87,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 	/// 2. test non partition table.
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
-	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", ddl.BackfillTaskType)
+	gTask = createAddIndexGlobalTask(t, dom, "test", "t1", proto.Backfill)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
@@ -97,7 +97,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
-	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", ddl.BackfillTaskType)
+	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", proto.Backfill)
 	// 2.2.1 stepInit
 	gTask.Step = dsp.GetNextStep(nil, gTask)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
@@ -118,7 +118,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 	require.Equal(t, 0, len(metas))
 }
 
-func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType string) *proto.Task {
+func createAddIndexGlobalTask(t *testing.T, dom *domain.Domain, dbName, tblName string, taskType proto.TaskType) *proto.Task {
 	db, ok := dom.InfoSchema().SchemaByName(model.NewCIStr(dbName))
 	require.True(t, ok)
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))

@@ -17,6 +17,7 @@ package planner
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
@@ -28,14 +29,14 @@ type PlanCtx struct {
 	SessionCtx sessionctx.Context
 	TaskID     int64
 	TaskKey    string
-	TaskType   string
+	TaskType   proto.TaskType
 	ThreadCnt  int
 
 	// PreviousSubtaskMetas is subtask metas of previous steps.
 	// We can remove this field if we find a better way to pass the result between steps.
-	PreviousSubtaskMetas map[int64][][]byte
+	PreviousSubtaskMetas map[proto.Step][][]byte
 	GlobalSort           bool
-	NextTaskStep         int64
+	NextTaskStep         proto.Step
 }
 
 // LogicalPlan represents a logical plan in distribute framework.
@@ -61,7 +62,7 @@ func (p *PhysicalPlan) AddProcessor(processor ProcessorSpec) {
 }
 
 // ToSubtaskMetas converts the physical plan to a list of subtask metas.
-func (p *PhysicalPlan) ToSubtaskMetas(ctx PlanCtx, step int64) ([][]byte, error) {
+func (p *PhysicalPlan) ToSubtaskMetas(ctx PlanCtx, step proto.Step) ([][]byte, error) {
 	subtaskMetas := make([][]byte, 0, len(p.Processors))
 	for _, processor := range p.Processors {
 		if processor.Step != step {
@@ -86,7 +87,7 @@ type ProcessorSpec struct {
 	Pipeline PipelineSpec
 	Output   OutputSpec
 	// We can remove this field if we find a better way to pass the result between steps.
-	Step int64
+	Step proto.Step
 }
 
 // InputSpec is the specification of an input.

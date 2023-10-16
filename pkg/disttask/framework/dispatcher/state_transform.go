@@ -19,8 +19,8 @@ import (
 )
 
 // VerifyTaskStateTransform verifies whether the task state transform is valid.
-func VerifyTaskStateTransform(from, to string) bool {
-	rules := map[string][]string{
+func VerifyTaskStateTransform(from, to proto.TaskState) bool {
+	rules := map[proto.TaskState][]proto.TaskState{
 		proto.TaskStatePending: {
 			proto.TaskStateRunning,
 			proto.TaskStateCancelling,

@@ -186,14 +186,14 @@ func (dm *Manager) dispatchTaskLoop() {
 				if dm.isRunningTask(task.ID) {
 					continue
 				}
-				metrics.DistTaskGauge.WithLabelValues(task.Type, metrics.DispatchingStatus).Inc()
+				metrics.DistTaskGauge.WithLabelValues(task.Type.String(), metrics.DispatchingStatus).Inc()
 				// we check it before start dispatcher, so no need to check it again.
 				// see startDispatcher.
 				// this should not happen normally, unless user modify system table
 				// directly.
 				if getDispatcherFactory(task.Type) == nil {
 					logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
-						zap.String("task-type", task.Type))
+						zap.Stringer("task-type", task.Type))
 					dm.failTask(task, errors.New("unknown task type"))
 					continue
 				}

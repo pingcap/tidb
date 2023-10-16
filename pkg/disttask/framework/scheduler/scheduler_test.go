@@ -36,7 +36,7 @@ var (
 )
 
 func TestSchedulerRun(t *testing.T) {
-	tp := "test_scheduler_run"
+	var tp proto.TaskType = "test_scheduler_run"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -210,7 +210,7 @@ func TestSchedulerRun(t *testing.T) {
 }
 
 func TestSchedulerRollback(t *testing.T) {
-	tp := "test_scheduler_rollback"
+	var tp proto.TaskType = "test_scheduler_rollback"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -292,7 +292,7 @@ func TestSchedulerRollback(t *testing.T) {
 }
 
 func TestSchedulerPause(t *testing.T) {
-	tp := "test_scheduler_pause"
+	var tp proto.TaskType = "test_scheduler_pause"
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	runCtx, runCancel := context.WithCancel(ctx)
@@ -316,7 +316,7 @@ func TestSchedulerPause(t *testing.T) {
 }
 
 func TestScheduler(t *testing.T) {
-	tp := "test_scheduler"
+	var tp proto.TaskType = "test_scheduler"
 	var taskID int64 = 1
 	var concurrency uint64 = 10
 	ctx, cancel := context.WithCancel(context.Background())
@@ -341,7 +341,7 @@ func TestScheduler(t *testing.T) {
 	mockSubtaskTable.EXPECT().GetSubtasksInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}}, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", proto.StepOne, taskID,
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates("id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
 		ID: 1, Type: tp, Step: proto.StepOne, State: proto.TaskStatePending}, nil)
 	mockSubtaskTable.EXPECT().StartSubtask(taskID).Return(nil)

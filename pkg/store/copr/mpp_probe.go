@@ -114,7 +114,7 @@ func (t *MPPStoreState) isRecovery(ctx context.Context, recoveryTTL time.Duratio
 func (t MPPFailedStoreProber) scan(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			logutil.Logger(ctx).Warn("mpp failed store probe scan error,will restart", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.Logger(ctx).Warn("mpp failed store probe scan error, will restart", zap.Any("recover", r), zap.Stack("stack"))
 		}
 	}()
 

@@ -87,27 +87,27 @@ func InitDistTaskMetrics() {
 // IncDistTaskSubTaskCnt increases the count of dist task subtask.
 func IncDistTaskSubTaskCnt(subtask *proto.Subtask) {
 	DistTaskSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
+		subtask.Type.String(),
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 	).Inc()
 }
 
 // DecDistTaskSubTaskCnt decreases the count of dist task subtask.
 func DecDistTaskSubTaskCnt(subtask *proto.Subtask) {
 	DistTaskSubTaskCntGauge.WithLabelValues(
-		subtask.Type,
+		subtask.Type.String(),
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 	).Dec()
 }
 
 // StartDistTaskSubTask sets the start time of dist task subtask.
 func StartDistTaskSubTask(subtask *proto.Subtask) {
 	DistTaskSubTaskStartTimeGauge.WithLabelValues(
-		subtask.Type,
+		subtask.Type.String(),
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 		strconv.Itoa(int(subtask.ID)),
 	).SetToCurrentTime()
 }
@@ -115,35 +115,35 @@ func StartDistTaskSubTask(subtask *proto.Subtask) {
 // EndDistTaskSubTask deletes the start time of dist task subtask.
 func EndDistTaskSubTask(subtask *proto.Subtask) {
 	DistTaskSubTaskStartTimeGauge.DeleteLabelValues(
-		subtask.Type,
+		subtask.Type.String(),
 		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State,
+		subtask.State.String(),
 		strconv.Itoa(int(subtask.ID)),
 	)
 }
 
 // UpdateMetricsForAddTask update metrics when a task is added
 func UpdateMetricsForAddTask(task *proto.Task) {
-	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Inc()
-	DistTaskStarttimeGauge.WithLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
+	DistTaskGauge.WithLabelValues(task.Type.String(), WaitingStatus).Inc()
+	DistTaskStarttimeGauge.WithLabelValues(task.Type.String(), WaitingStatus, fmt.Sprint(task.ID)).Set(float64(time.Now().UnixMicro()))
 }
 
 // UpdateMetricsForDispatchTask update metrics when a task is added
 func UpdateMetricsForDispatchTask(task *proto.Task) {
-	DistTaskGauge.WithLabelValues(task.Type, WaitingStatus).Dec()
-	DistTaskStarttimeGauge.DeleteLabelValues(task.Type, WaitingStatus, fmt.Sprint(task.ID))
-	DistTaskStarttimeGauge.WithLabelValues(task.Type, DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
+	DistTaskGauge.WithLabelValues(task.Type.String(), WaitingStatus).Dec()
+	DistTaskStarttimeGauge.DeleteLabelValues(task.Type.String(), WaitingStatus, fmt.Sprint(task.ID))
+	DistTaskStarttimeGauge.WithLabelValues(task.Type.String(), DispatchingStatus, fmt.Sprint(task.ID)).SetToCurrentTime()
 }
 
 // UpdateMetricsForRunTask update metrics when a task starts running
 func UpdateMetricsForRunTask(task *proto.Task) {
-	DistTaskStarttimeGauge.DeleteLabelValues(task.Type, DispatchingStatus, fmt.Sprint(task.ID))
-	DistTaskGauge.WithLabelValues(task.Type, DispatchingStatus).Dec()
-	DistTaskGauge.WithLabelValues(task.Type, RunningStatus).Inc()
+	DistTaskStarttimeGauge.DeleteLabelValues(task.Type.String(), DispatchingStatus, fmt.Sprint(task.ID))
+	DistTaskGauge.WithLabelValues(task.Type.String(), DispatchingStatus).Dec()
+	DistTaskGauge.WithLabelValues(task.Type.String(), RunningStatus).Inc()
 }
 
 // UpdateMetricsForFinishTask update metrics when a task is finished
 func UpdateMetricsForFinishTask(task *proto.Task) {
-	DistTaskGauge.WithLabelValues(task.Type, RunningStatus).Dec()
-	DistTaskGauge.WithLabelValues(task.Type, CompletedStatus).Inc()
+	DistTaskGauge.WithLabelValues(task.Type.String(), RunningStatus).Dec()
+	DistTaskGauge.WithLabelValues(task.Type.String(), CompletedStatus).Inc()
 }

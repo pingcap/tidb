@@ -51,7 +51,7 @@ type testDispatcherExt struct{}
 func (*testDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ int64) (metas [][]byte, err error) {
+func (*testDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ proto.Step) (metas [][]byte, err error) {
 	return nil, nil
 }
 
@@ -69,7 +69,7 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*testDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) int64 {
+func (*testDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) proto.Step {
 	return proto.StepDone
 }
 
@@ -78,7 +78,7 @@ type numberExampleDispatcherExt struct{}
 func (*numberExampleDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
-func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ int64) (metas [][]byte, err error) {
+func (n *numberExampleDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, _ proto.Step) (metas [][]byte, err error) {
 	switch task.Step {
 	case proto.StepInit:
 		for i := 0; i < subtaskCnt; i++ {
@@ -107,7 +107,7 @@ func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*numberExampleDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+func (*numberExampleDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
@@ -335,7 +335,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	}
 
 	// test DetectTaskLoop
-	checkGetTaskState := func(expectedState string) {
+	checkGetTaskState := func(expectedState proto.TaskState) {
 		i := 0
 		for ; i < cnt; i++ {
 			tasks, err := mgr.GetGlobalTasksInStates(expectedState)
@@ -472,8 +472,8 @@ func TestParallelPause(t *testing.T) {
 
 func TestVerifyTaskStateTransform(t *testing.T) {
 	testCases := []struct {
-		oldState string
-		newState string
+		oldState proto.TaskState
+		newState proto.TaskState
 		expect   bool
 	}{
 		{proto.TaskStateRunning, proto.TaskStateRunning, true},

@@ -73,30 +73,47 @@ import (
 //	 3. rollback:		revert_pending -> reverting -> reverted/revert_failed
 //	 4. pause/resume:	pending -> running -> paused -> running
 const (
-	TaskStatePending       = "pending"
-	TaskStateRunning       = "running"
-	TaskStateSucceed       = "succeed"
-	TaskStateReverting     = "reverting"
-	TaskStateFailed        = "failed"
-	TaskStateRevertFailed  = "revert_failed"
-	TaskStateCancelling    = "cancelling"
-	TaskStateCanceled      = "canceled"
-	TaskStatePausing       = "pausing"
-	TaskStatePaused        = "paused"
-	TaskStateResuming      = "resuming"
-	TaskStateRevertPending = "revert_pending"
-	TaskStateReverted      = "reverted"
+	TaskStatePending       TaskState = "pending"
+	TaskStateRunning       TaskState = "running"
+	TaskStateSucceed       TaskState = "succeed"
+	TaskStateReverting     TaskState = "reverting"
+	TaskStateFailed        TaskState = "failed"
+	TaskStateRevertFailed  TaskState = "revert_failed"
+	TaskStateCancelling    TaskState = "cancelling"
+	TaskStateCanceled      TaskState = "canceled"
+	TaskStatePausing       TaskState = "pausing"
+	TaskStatePaused        TaskState = "paused"
+	TaskStateResuming      TaskState = "resuming"
+	TaskStateRevertPending TaskState = "revert_pending"
+	TaskStateReverted      TaskState = "reverted"
 )
+
+type (
+	// TaskState is the state of task.
+	TaskState string
+	// TaskType is the type of task.
+	TaskType string
+	// Step is the step of task.
+	Step int64
+)
+
+func (t TaskType) String() string {
+	return string(t)
+}
+
+func (s TaskState) String() string {
+	return string(s)
+}
 
 // TaskStep is the step of task.
 // DO NOT change the value of the constants, will break backward compatibility.
 // successfully task MUST go from StepInit to business steps, then StepDone.
 const (
-	StepInit  int64 = -1
-	StepDone  int64 = -2
-	StepOne   int64 = 1
-	StepTwo   int64 = 2
-	StepThree int64 = 3
+	StepInit  Step = -1
+	StepDone  Step = -2
+	StepOne   Step = 1
+	StepTwo   Step = 2
+	StepThree Step = 3
 )
 
 // TaskIDLabelName is the label name of task id.
@@ -106,9 +123,9 @@ const TaskIDLabelName = "task_id"
 type Task struct {
 	ID    int64
 	Key   string
-	Type  string
-	State string
-	Step  int64
+	Type  TaskType
+	State TaskState
+	Step  Step
 	// DispatcherID is not used now.
 	DispatcherID    string
 	Concurrency     uint64
@@ -127,11 +144,11 @@ func (t *Task) IsFinished() bool {
 // Each task is divided into multiple subtasks by dispatcher.
 type Subtask struct {
 	ID   int64
-	Step int64
-	Type string
+	Step Step
+	Type TaskType
 	// taken from task_key of the subtask table
 	TaskID int64
-	State  string
+	State  TaskState
 	// SchedulerID is the ID of scheduler, right now it's the same as instance_id, exec_id.
 	// its value is IP:PORT, see GenerateExecID
 	SchedulerID string
@@ -153,7 +170,7 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step int64, taskID int64, tp, schedulerID string, meta []byte) *Subtask {
+func NewSubtask(step Step, taskID int64, tp TaskType, schedulerID string, meta []byte) *Subtask {
 	return &Subtask{
 		Step:        step,
 		Type:        tp,
@@ -173,19 +190,19 @@ type MinimalTask interface {
 
 const (
 	// TaskTypeExample is TaskType of Example.
-	TaskTypeExample = "Example"
+	TaskTypeExample TaskType = "Example"
 	// TaskTypeExample2 is TaskType of Example.
-	TaskTypeExample2 = "Example1"
+	TaskTypeExample2 TaskType = "Example1"
 	// TaskTypeExample3 is TaskType of Example.
-	TaskTypeExample3 = "Example2"
+	TaskTypeExample3 TaskType = "Example2"
 	// ImportInto is TaskType of ImportInto.
-	ImportInto = "ImportInto"
+	ImportInto TaskType = "ImportInto"
 	// Backfill is TaskType of add index Backfilling process.
-	Backfill = "backfill"
+	Backfill TaskType = "backfill"
 )
 
 // Type2Int converts task type to int.
-func Type2Int(t string) int {
+func Type2Int(t TaskType) int {
 	switch t {
 	case TaskTypeExample:
 		return 1
@@ -201,7 +218,7 @@ func Type2Int(t string) int {
 }
 
 // Int2Type converts int to task type.
-func Int2Type(i int) string {
+func Int2Type(i int) TaskType {
 	switch i {
 	case 1:
 		return TaskTypeExample

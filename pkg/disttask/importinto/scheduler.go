@@ -478,7 +478,7 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 		return nil, errors.Trace(err)
 	}
 	logger := logutil.BgLogger().With(
-		zap.String("type", proto.ImportInto),
+		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
 		zap.String("step", stepStr(task.Step)),
 	)

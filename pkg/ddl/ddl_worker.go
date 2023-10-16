@@ -382,32 +382,34 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		startTS = txn.StartTS()
 		return nil
 	})
-	if err == nil {
-		jobTasks := make([]*model.Job, 0, len(tasks))
-		for i, task := range tasks {
-			job := task.job
-			job.Version = currentVersion
-			job.StartTS = startTS
-			job.ID = ids[i]
-			setJobStateToQueueing(job)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
-			if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
-				if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
-					logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
-					task.cacheErr = err
-					continue
-				}
-				logutil.BgLogger().Info("pause user DDL by system successful", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job))
+	jobTasks := make([]*model.Job, 0, len(tasks))
+	for i, task := range tasks {
+		job := task.job
+		job.Version = currentVersion
+		job.StartTS = startTS
+		job.ID = ids[i]
+		setJobStateToQueueing(job)
+
+		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
+			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
+				logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
+				task.cacheErr = err
+				continue
 			}
-
-			jobTasks = append(jobTasks, job)
-			injectModifyJobArgFailPoint(job)
+			logutil.BgLogger().Info("pause user DDL by system successful", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job))
 		}
 
-		se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-		err = insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...)
+		jobTasks = append(jobTasks, job)
+		injectModifyJobArgFailPoint(job)
 	}
-	return errors.Trace(err)
+
+	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+
+	return errors.Trace(insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...))
 }
 
 func injectFailPointForGetJob(job *model.Job) {
