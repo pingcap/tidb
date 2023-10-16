@@ -2180,7 +2180,16 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		}
 	})
 
-	stmtLabel := ast.GetStmtLabel(stmtNode)
+	var stmtLabel string
+	if execStmt, ok := stmtNode.(*ast.ExecuteStmt); ok {
+		prepareStmt, err := plannercore.GetPreparedStmt(execStmt, s.sessionVars)
+		if err == nil && prepareStmt.PreparedAst != nil {
+			stmtLabel = ast.GetStmtLabel(prepareStmt.PreparedAst.Stmt)
+		}
+	}
+	if stmtLabel == "" {
+		stmtLabel = ast.GetStmtLabel(stmtNode)
+	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
 	// Backup the original resource group name since sql hint might change it during optimization
@@ -4280,9 +4289,8 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 	if !s.isInternal() {
 		if txn, _ := s.Txn(false); txn != nil && txn.Valid() {
 			txn.SetOption(kv.RequestSourceType, stmtLabel)
-		} else {
-			s.sessionVars.RequestSourceType = stmtLabel
 		}
+		s.sessionVars.RequestSourceType = stmtLabel
 		return
 	}
 	if source := ctx.Value(kv.RequestSourceKey); source != nil {
