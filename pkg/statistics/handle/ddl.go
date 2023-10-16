@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -173,7 +172,7 @@ func (h *Handle) insertTableStats2KV(info *model.TableInfo, physicalID int64) (e
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.RecordHistoricalStatsMeta(physicalID, statsVer, handleutil.StatsMetaHistorySourceSchemaChange)
+			h.RecordHistoricalStatsMeta(physicalID, statsVer, statsutil.StatsMetaHistorySourceSchemaChange)
 		}
 	}()
 
@@ -205,7 +204,7 @@ func (h *Handle) resetTableStats2KVForDrop(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.RecordHistoricalStatsMeta(physicalID, statsVer, handleutil.StatsMetaHistorySourceSchemaChange)
+			h.RecordHistoricalStatsMeta(physicalID, statsVer, statsutil.StatsMetaHistorySourceSchemaChange)
 		}
 	}()
 
@@ -227,7 +226,7 @@ func (h *Handle) insertColStats2KV(physicalID int64, colInfos []*model.ColumnInf
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
-			h.RecordHistoricalStatsMeta(physicalID, statsVer, handleutil.StatsMetaHistorySourceSchemaChange)
+			h.RecordHistoricalStatsMeta(physicalID, statsVer, statsutil.StatsMetaHistorySourceSchemaChange)
 		}
 	}()
 

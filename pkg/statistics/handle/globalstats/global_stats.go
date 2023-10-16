@@ -65,8 +65,10 @@ func newGlobalStats(histCount int) *GlobalStats {
 }
 
 type (
-	getTableByPhysicalIDFunc func(is infoschema.InfoSchema, tableID int64) (table.Table, bool)
-	callWithSCtxFunc         func(f func(sctx sessionctx.Context) error, flags ...int) (err error)
+	getTableByPhysicalIDFunc  func(is infoschema.InfoSchema, tableID int64) (table.Table, bool)
+	callWithSCtxFunc          func(f func(sctx sessionctx.Context) error, flags ...int) error
+	saveStatsToStorageFunc    func(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+	tableStatsFromStorageFunc func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (*statistics.Table, error)
 )
 
 // MergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
@@ -152,10 +154,10 @@ func UpdateGlobalStats(
 	sctx sessionctx.Context,
 	tblInfo *model.TableInfo,
 	gpool *gp.Pool,
-	tableStatsFromStorage func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (_ *statistics.Table, err error),
+	tableStatsFromStorage tableStatsFromStorageFunc,
 	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
 	callWithSCtxFunc callWithSCtxFunc,
-	saveStatsToStorage func(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram, cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)) error {
+	saveStatsToStorage saveStatsToStorageFunc) error {
 	tableID := tblInfo.ID
 	is := sessiontxn.GetTxnManager(sctx).GetTxnInfoSchema()
 	globalStats, err := tableStatsFromStorage(tblInfo, tableID, true, 0)
