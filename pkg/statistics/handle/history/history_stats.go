@@ -68,7 +68,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	err = util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
 		version, err = RecordHistoricalStatsToStorage(sctx, physicalID, js)
 		return err
-	})
+	}, util.FlagWrapTxn)
 	return version, err
 }
 
