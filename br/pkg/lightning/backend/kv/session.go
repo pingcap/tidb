@@ -312,6 +312,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 			}
 		}
 	}
+
 	vars.StmtCtx.SetTimeZone(vars.Location())
 	vars.StmtCtx.SetTypeFlags(types.StrictFlags.
 		WithClipNegativeToZero(true),

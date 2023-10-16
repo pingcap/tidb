@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
@@ -149,11 +148,6 @@ func initSessCtx(
 	sqlMode mysql.SQLMode,
 	tzLocation *model.TimeZoneLocation,
 ) error {
-	// Unify the TimeZone settings in newContext.
-	if sessCtx.GetSessionVars().StmtCtx.TimeZone() == nil {
-		tz := *time.UTC
-		sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
-	}
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
@@ -162,6 +156,7 @@ func initSessCtx(
 	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
 		return errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
