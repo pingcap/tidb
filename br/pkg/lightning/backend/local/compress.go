@@ -18,7 +18,7 @@ import (
 	"io"
 
 	"github.com/klauspost/compress/gzip" // faster than stdlib
-	"github.com/pingcap/tidb/util/compress"
+	"github.com/pingcap/tidb/pkg/util/compress"
 	"google.golang.org/grpc"
 )
 
