@@ -72,6 +72,7 @@ const (
 	flagSemiJoinRewrite
 	flagEliminateAgg
 	flagSkewDistinctAgg
+	flagEliminateApply
 	flagEliminateProjection
 	flagMaxMinEliminate
 	flagConstantPropagation
@@ -88,7 +89,6 @@ const (
 	flagPrunColumnsAgain
 	flagPushDownSequence
 	flagResolveExpand
-	flagEliminateApply
 )
 
 var optRuleList = []logicalOptRule{

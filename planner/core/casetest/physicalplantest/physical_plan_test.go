@@ -167,6 +167,35 @@ func TestAggEliminator(t *testing.T) {
 	}
 }
 
+func TestApplyEliminator(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	var input []string
+	var output []struct {
+		SQL  string
+		Best string
+	}
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	p := parser.New()
+	is := infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
+	tk.MustExec("use test")
+	for i, tt := range input {
+		comment := fmt.Sprintf("input: %s", tt)
+		stmt, err := p.ParseOneStmt(tt, "", "")
+		require.NoError(t, err, comment)
+		sc := tk.Session().GetSessionVars().StmtCtx
+		sc.IgnoreTruncate.Store(false)
+		p, _, err := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Best = core.ToString(p)
+		})
+		require.Equal(t, output[i].Best, core.ToString(p), fmt.Sprintf("input: %s", tt))
+	}
+}
+
 func TestINMJHint(t *testing.T) {
 	var (
 		input  []string

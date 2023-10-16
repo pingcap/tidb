@@ -2064,36 +2064,6 @@ func TestUpdateEQCond(t *testing.T) {
 	}
 }
 
-func TestApplyEliminate(t *testing.T) {
-	tests := []struct {
-		sql  string
-		best string
-	}{
-		{
-			sql:  "select count(*) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t",
-			best: "DataScan(t1)->Aggr(count(1))->Projection",
-		},
-	}
-	s := createPlannerSuite()
-	defer s.Close()
-	ctx := context.TODO()
-	for i, tt := range tests {
-		comment := fmt.Sprintf("case:%v sql:%s", i, tt.sql)
-		stmt, err := s.p.ParseOneStmt(tt.sql, "", "")
-		require.NoError(t, err, comment)
-		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
-		require.NoError(t, err)
-		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
-		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
-		p, err := builder.Build(ctx, stmt)
-		require.NoError(t, err)
-		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
-		require.NoError(t, err)
-		require.Equal(t, tt.best, ToString(p), comment)
-		domain.GetDomain(sctx).StatsHandle().Close()
-	}
-}
 func TestConflictedJoinTypeHints(t *testing.T) {
 	sql := "select /*+ INL_JOIN(t1) HASH_JOIN(t1) */ * from t t1, t t2 where t1.e = t2.e"
 	s := createPlannerSuite()

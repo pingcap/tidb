@@ -1,4 +1,4 @@
-// Copyright 2016 PingCAP, Inc.
+// Copyright 2023 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -22,6 +22,10 @@ import (
 	"github.com/pingcap/tidb/expression"
 )
 
+// applyEliminator tries to eliminate apply operator.
+// For SQL like `select count(*) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t1) t;`, we could optimize it to `select count(*) from t1;`.
+// For SQL like `select count(a) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t1) t;`, we could optimize it to `select count(a) from t1;`.
+// For SQL like `select count(t) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t1) t;`, we couldn't optimize it.
 type applyEliminator struct {
 }
 
@@ -31,19 +35,45 @@ func (pe *applyEliminator) optimize(_ context.Context, lp LogicalPlan, opt *logi
 	return root, nil
 }
 
-// eliminate useless scalar subquery in a logical plan.
-func (pe *applyEliminator) eliminate(p LogicalPlan, opt *logicalOptimizeOp) LogicalPlan {
-	// LogicalCTE's logical optimization is independent.
+// eliminateApplyRecursively eliminates unnecessary scalar subqueries in a logical plan recursively.
+func eliminateApplyRecursively(p LogicalPlan, opt *logicalOptimizeOp) LogicalPlan {
 	if _, ok := p.(*LogicalCTE); ok {
+		// If the node is a LogicalCTE, return it without processing.
 		return p
 	}
-	child := p.Children()[0]
-	if _, isAgg := child.(*LogicalAggregation); isAgg {
-		subchild := child.Children()[0]
-		if _, isProj := subchild.(*LogicalProjection); isProj {
-			subsubchild := subchild.Children()[0]
-			if _, isApply := subsubchild.(*LogicalApply); isApply {
-				usedlist := expression.GetUsedList(subchild.Schema().Columns, subsubchild.Children()[1].Schema())
+
+	// Recursively process the children nodes.
+	children := p.Children()
+	if len(children) > 0 {
+		for i := range children {
+			children[i] = eliminateApplyRecursively(children[i], opt)
+		}
+
+		// Handle specific node types.
+		switch node := p.(type) {
+		case *LogicalAggregation:
+			// For LogicalAggregation node, handle it accordingly.
+			aggChild := node.Children()[0]
+			if proj, isProj := aggChild.(*LogicalProjection); isProj {
+				// If the child node is a LogicalProjection, we need to check whether the child node contains a LogicalApply.
+				projChild := proj.Children()[0]
+				if apply, isApply := projChild.(*LogicalApply); isApply {
+					usedlist := expression.GetUsedList(proj.Schema().Columns, apply.Children()[1].Schema())
+					used := false
+					for i := len(usedlist) - 1; i >= 0; i-- {
+						if usedlist[i] {
+							used = true
+							break
+						}
+					}
+					if !used {
+						applyEliminateTraceStep(projChild, opt)
+						proj.Children()[0] = apply.Children()[0]
+					}
+				}
+			} else if _, isApply := aggChild.(*LogicalApply); isApply {
+				// If the child node is a LogicalApply, we can check if the column is used by the parent node.
+				usedlist := expression.GetUsedList(node.Schema().Columns, aggChild.Children()[1].Schema())
 				used := false
 				for i := len(usedlist) - 1; i >= 0; i-- {
 					if usedlist[i] {
@@ -52,25 +82,19 @@ func (pe *applyEliminator) eliminate(p LogicalPlan, opt *logicalOptimizeOp) Logi
 					}
 				}
 				if !used {
-					applyEliminateTraceStep(subsubchild, opt)
-					subchild.Children()[0] = subsubchild.Children()[0]
+					applyEliminateTraceStep(aggChild, opt)
+					node.Children()[0] = aggChild.Children()[0]
 				}
-			}
-		} else if _, isApply := subchild.(*LogicalApply); isApply {
-			usedlist := expression.GetUsedList(child.Schema().Columns, subchild.Children()[1].Schema())
-			used := false
-			for i := len(usedlist) - 1; i >= 0; i-- {
-				if usedlist[i] {
-					used = true
-					break
-				}
-			}
-			if !used {
-				applyEliminateTraceStep(subchild, opt)
-				child.Children()[0] = subchild.Children()[0]
 			}
 		}
 	}
+
+	return p
+}
+
+// You can call this recursive function in the original function as follows.
+func (pe *applyEliminator) eliminate(p LogicalPlan, opt *logicalOptimizeOp) LogicalPlan {
+	p = eliminateApplyRecursively(p, opt)
 	return p
 }
 

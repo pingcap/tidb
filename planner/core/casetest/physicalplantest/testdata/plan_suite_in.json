@@ -355,6 +355,17 @@
     ]
   },
   {
+    "name": "TestApplyEliminator",
+    "cases": [
+      // count(*) can be eliminated.
+      "select count(*) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t",
+      // count(a) can be eliminated.
+      "select count(a) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t",
+      // count(t) can't be eliminated.
+      "select count(t) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t"
+    ]
+  },
+  {
     "name": "TestUnmatchedTableInHint",
     "cases": [
       "SELECT /*+ TIDB_SMJ(t3, t4) */ * from t t1, t t2 where t1.a = t2.a",
