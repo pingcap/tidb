@@ -155,13 +155,15 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		}
 		p.compressedSequence++
 		p.compressedWriter.compressedSequence = p.compressedSequence
+		compressedLength := int(uint32(compressedHeader[0]) | uint32(compressedHeader[1])<<8 | uint32(compressedHeader[2])<<16)
 		uncompressedLength := int(uint32(compressedHeader[4]) | uint32(compressedHeader[5])<<8 | uint32(compressedHeader[6])<<16)
 
 		if uncompressedLength > 0 {
 			switch p.compressionAlgorithm {
 			case mysql.CompressionZlib:
 				var err error
-				r, err = zlib.NewReader(p.bufReadConn)
+				lr := io.LimitReader(p.bufReadConn, int64(compressedLength))
+				r, err = zlib.NewReader(lr)
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
