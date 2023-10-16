@@ -1758,6 +1758,9 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
 	workers := utils.NewWorkerPool(16, "UpdateStats")
+	// The rc.db is not thread safe
+	var updateMetaLock sync.Mutex
+
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
 		// Not need to return err when failed because of update analysis-meta
@@ -1765,6 +1768,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 		if err != nil {
 			log.Error("getTS failed", zap.Error(err))
 		} else {
+			updateMetaLock.Lock()
+
 			log.Info("start update metas",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name))
@@ -1772,6 +1777,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 			if err != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 			}
+
+			updateMetaLock.Unlock()
 		}
 
 		if oldTable.Stats != nil {
