@@ -1323,6 +1323,7 @@ func (local *Backend) startWorker(
 	jobInCh, jobOutCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
 	for {
 		select {
 		case <-ctx.Done():
