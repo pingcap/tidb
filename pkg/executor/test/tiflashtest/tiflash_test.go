@@ -682,7 +682,7 @@ func TestCancelMppTasks(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 0)
+	atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Status, 0)
 	require.Nil(t, failpoint.Enable(hang, `return(true)`))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
@@ -693,7 +693,7 @@ func TestCancelMppTasks(t *testing.T) {
 		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	time.Sleep(1 * time.Second)
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
+	atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Status, 1)
 	wg.Wait()
 	require.Nil(t, failpoint.Disable(hang))
 }

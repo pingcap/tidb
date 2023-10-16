@@ -20,7 +20,6 @@ import (
 	"io"
 	"math"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -45,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -245,7 +245,7 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 		controller:     e.controller,
 		colAssignExprs: colAssignExprs,
 		exprWarnings:   exprWarnings,
-		killed:         &e.UserSctx.GetSessionVars().Killed,
+		killer:         &e.UserSctx.GetSessionVars().SQLKiller,
 	}
 	enc.resetBatch()
 	com := &commitWorker{
@@ -293,7 +293,7 @@ type encodeWorker struct {
 	// sessionCtx generate warnings when rewrite AST node into expression.
 	// we should generate such warnings for each row encoded.
 	exprWarnings []stmtctx.SQLWarn
-	killed       *uint32
+	killer       *sqlkiller.SQLKiller
 	rows         [][]types.Datum
 }
 
@@ -368,9 +368,9 @@ func (w *encodeWorker) processOneStream(
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-checkKilled.C:
-			if atomic.CompareAndSwapUint32(w.killed, 1, 0) {
+			if err := w.killer.HandleSignal(); err != nil {
 				logutil.Logger(ctx).Info("load data query interrupted quit data processing")
-				return exeerrors.ErrQueryInterrupted
+				return err
 			}
 			goto TrySendTask
 		case outCh <- commitTask{

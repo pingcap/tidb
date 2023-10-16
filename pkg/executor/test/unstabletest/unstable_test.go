@@ -16,7 +16,6 @@ package unstabletest
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
@@ -81,19 +80,19 @@ func TestGlobalMemoryControl(t *testing.T) {
 	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
 
 	// Kill Top1
-	require.False(t, tracker1.NeedKill.Load())
-	require.False(t, tracker2.NeedKill.Load())
-	require.True(t, tracker3.NeedKill.Load())
+	require.False(t, tracker1.Killer.NeedKill())
+	require.False(t, tracker2.Killer.NeedKill())
+	require.True(t, tracker3.Killer.NeedKill())
 	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
 	util.WithRecovery( // Next Consume() will panic and cancel the SQL
 		func() {
 			tracker3.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
+			require.ErrorContains(t, r.(error), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance)
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
-	require.False(t, tracker2.NeedKill.Load())
+	require.False(t, tracker2.Killer.NeedKill())
 	// Kill Finished
 	tracker3.Consume(-(300 << 20))
 	// Simulated SQL is Canceled and the time is updated
@@ -108,7 +107,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker2.Consume(1)
 		}, func(r interface{}) {
-			require.True(t, strings.Contains(r.(string), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance))
+			require.ErrorContains(t, r.(error), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance)
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
 }

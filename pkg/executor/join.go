@@ -1017,14 +1017,14 @@ func (w *probeWorker) join2Chunk(probeSideChk *chunk.Chunk, hCtx *hashContext, j
 	}
 
 	for i := range selected {
-		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
+		err := w.hashJoinCtx.sessCtx.GetSessionVars().SQLKiller.HandleSignal()
 		failpoint.Inject("killedInJoin2Chunk", func(val failpoint.Value) {
 			if val.(bool) {
-				killed = true
+				err = exeerrors.ErrQueryInterrupted
 			}
 		})
-		if killed {
-			joinResult.err = exeerrors.ErrQueryInterrupted
+		if err != nil {
+			joinResult.err = err
 			return false, joinResult
 		}
 		if isNAAJ {
@@ -1083,14 +1083,14 @@ func (w *probeWorker) join2ChunkForOuterHashJoin(probeSideChk *chunk.Chunk, hCtx
 		}
 	}
 	for i := 0; i < probeSideChk.NumRows(); i++ {
-		killed := atomic.LoadUint32(&w.hashJoinCtx.sessCtx.GetSessionVars().Killed) == 1
+		err := w.hashJoinCtx.sessCtx.GetSessionVars().SQLKiller.HandleSignal()
 		failpoint.Inject("killedInJoin2ChunkForOuterHashJoin", func(val failpoint.Value) {
 			if val.(bool) {
-				killed = true
+				err = exeerrors.ErrQueryInterrupted
 			}
 		})
-		if killed {
-			joinResult.err = exeerrors.ErrQueryInterrupted
+		if err != nil {
+			joinResult.err = err
 			return false, joinResult
 		}
 		probeKey, probeRow := hCtx.hashVals[i].Sum64(), probeSideChk.GetRow(i)

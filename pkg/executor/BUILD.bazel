@@ -220,6 +220,7 @@ go_library(
         "//pkg/util/set",
         "//pkg/util/size",
         "//pkg/util/sqlexec",
+        "//pkg/util/sqlkiller",
         "//pkg/util/stmtsummary",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/stringutil",

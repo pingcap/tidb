@@ -23,7 +23,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -37,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -815,7 +815,7 @@ func NewTopN(n int) *TopN {
 //  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
 func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram,
-	isIndex bool, killed *uint32) (*TopN, []TopNMeta, []*Histogram, error) {
+	isIndex bool, killer *sqlkiller.SQLKiller) (*TopN, []TopNMeta, []*Histogram, error) {
 	if CheckEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
@@ -826,8 +826,8 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	// The datum is used to find the value in the histogram.
 	datumMap := NewDatumMapCache()
 	for i, topN := range topNs {
-		if atomic.LoadUint32(killed) == 1 {
-			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+		if err := killer.HandleSignal(); err != nil {
+			return nil, nil, nil, errors.Trace(err)
 		}
 		if topN.TotalCount() == 0 {
 			continue
@@ -844,8 +844,8 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
-				if atomic.LoadUint32(killed) == 1 {
-					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+				if err := killer.HandleSignal(); err != nil {
+					return nil, nil, nil, errors.Trace(err)
 				}
 				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
 					continue

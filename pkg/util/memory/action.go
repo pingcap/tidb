@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 )
 
@@ -61,21 +62,6 @@ func NewActionWithPriority(action ActionOnExceed, priority int64) *actionWithPri
 
 func (a *actionWithPriority) GetPriority() int64 {
 	return a.priority
-}
-
-// ActionInvoker indicates the invoker of the Action.
-type ActionInvoker byte
-
-const (
-	// SingleQuery indicates the Action is invoked by a tidb_mem_quota_query.
-	SingleQuery ActionInvoker = iota
-	// Instance indicates the Action is invoked by a tidb_server_memory_limit.
-	Instance
-)
-
-// ActionCareInvoker is the interface for the Actions which need to be aware of the invoker.
-type ActionCareInvoker interface {
-	SetInvoker(invoker ActionInvoker)
 }
 
 // BaseOOMAction manages the fallback action for all Action.
@@ -155,12 +141,12 @@ func (*LogOnExceed) GetPriority() int64 {
 
 // PanicOnExceed panics when memory usage exceeds memory quota.
 type PanicOnExceed struct {
+	Killer  *sqlkiller.SQLKiller
 	logHook func(uint64)
 	BaseOOMAction
-	ConnID  uint64
-	mutex   sync.Mutex // For synchronization.
-	acted   bool
-	invoker ActionInvoker
+	ConnID uint64
+	mutex  sync.Mutex // For synchronization.
+	acted  bool
 }
 
 // SetLogHook sets a hook for PanicOnExceed.
@@ -183,8 +169,11 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 		}
 	}
 	a.acted = true
-	if a.invoker == SingleQuery {
-		panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForSingleQuery + fmt.Sprintf("[conn=%d]", a.ConnID))
+	if a.Killer != nil {
+		a.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
+		if err := a.Killer.HandleSignal(); err != nil {
+			panic(err)
+		}
 	}
 	panic(PanicMemoryExceedWarnMsg + WarnMsgSuffixForInstance + fmt.Sprintf("[conn=%d]", a.ConnID))
 }
@@ -192,11 +181,6 @@ func (a *PanicOnExceed) Action(t *Tracker) {
 // GetPriority get the priority of the Action
 func (*PanicOnExceed) GetPriority() int64 {
 	return DefPanicPriority
-}
-
-// SetInvoker sets the invoker of the Action.
-func (a *PanicOnExceed) SetInvoker(invoker ActionInvoker) {
-	a.invoker = invoker
 }
 
 var (

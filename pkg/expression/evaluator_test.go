@@ -152,7 +152,7 @@ func TestSleep(t *testing.T) {
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
-		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().SQLKiller.Status, 0, 1)
 	}()
 	ret, isNull, err = f.evalInt(chunk.Row{})
 	sub = time.Since(start)

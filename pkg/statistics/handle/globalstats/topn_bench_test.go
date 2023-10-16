@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tiancaiamao/gp"
 )
@@ -35,7 +36,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
-	isKilled := uint32(0)
+	killer := &sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
@@ -77,7 +78,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Benchmark merge 10 topN.
-		_, _, _, _ = statistics.MergePartTopN2GlobalTopN(loc, version, topNs, 10, hists, false, &isKilled)
+		_, _, _, _ = statistics.MergePartTopN2GlobalTopN(loc, version, topNs, 10, hists, false, killer)
 	}
 }
 
@@ -86,7 +87,7 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
-	isKilled := uint32(0)
+	killer := &sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
@@ -137,7 +138,7 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Benchmark merge 10 topN.
-		_, _, _, _ = globalstats.MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, &isKilled)
+		_, _, _, _ = globalstats.MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, killer)
 	}
 }
 

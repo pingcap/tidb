@@ -85,6 +85,7 @@ go_library(
         "//pkg/util/memory",
         "//pkg/util/printer",
         "//pkg/util/sqlexec",
+        "//pkg/util/sqlkiller",
         "//pkg/util/sys/linux",
         "//pkg/util/timeutil",
         "//pkg/util/tls",

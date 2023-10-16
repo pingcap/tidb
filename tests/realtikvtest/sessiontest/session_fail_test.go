@@ -18,7 +18,9 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -109,10 +111,13 @@ func TestKillFlagInBackoff(t *testing.T) {
 	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table kill_backoff (id int)")
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")->return("")`))
+	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `sleep(1000)->return("timeout")->return("")`))
 	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
 	// Set kill flag and check its passed to backoffer.
-	tk.Session().GetSessionVars().Killed = 1
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Status, 1)
+	}()
 	rs, err := tk.Exec("select * from kill_backoff")
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(context.TODO(), tk.Session(), rs)
