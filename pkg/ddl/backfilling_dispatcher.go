@@ -71,7 +71,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
-	step int64,
+	step proto.Step,
 ) (taskMeta [][]byte, err error) {
 	var gTaskMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &gTaskMeta); err != nil {
@@ -131,7 +131,7 @@ func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
 func (*backfillingDispatcherExt) GetNextStep(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
-) int64 {
+) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
