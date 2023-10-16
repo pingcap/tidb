@@ -120,7 +120,6 @@ func TestCleanUpMeta(t *testing.T) {
 	require.Equal(t, 1, dspMgr.CleanUpMeta())
 
 	mockTaskMgr.EXPECT().GetAllNodes().Return([]string{":4000"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any()).Return(nil)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	require.Equal(t, 0, dspMgr.CleanUpMeta())
 
