@@ -116,7 +116,6 @@ func TestGlobalSortBasic(t *testing.T) {
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/forceMergeSort", "return()"))
-	dom.DDL().SetHook(hook)
 	tk.MustExec("alter table t add index idx1(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
