@@ -67,13 +67,8 @@ LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBGitBranch=$(shell gi
 LDFLAGS += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
 EXTENSION_FLAG =
-<<<<<<< HEAD
-ifeq ($(shell if [ -d extension/enterprise/.git ]; then echo "true"; fi),true)
+ifeq ($(shell if [ -f extension/enterprise/.git ]; then echo "true"; fi),true)
 	EXTENSION_FLAG += -X "github.com/pingcap/tidb/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd extension/enterprise && git rev-parse HEAD)"
-=======
-ifeq ($(shell if [ -d .git/modules/extension/enterprise ]; then echo "true"; fi),true)
-	EXTENSION_FLAG += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd pkg/extension/enterprise && git rev-parse HEAD)"
->>>>>>> 34bc3a197a5 (extension: fix enterprise git commit hash display in `tidb-server -V` (#47647))
 endif
 
 TEST_LDFLAGS =  -X "github.com/pingcap/tidb/config.checkBeforeDropLDFlag=1"
