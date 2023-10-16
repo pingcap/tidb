@@ -32,12 +32,7 @@ import (
 
 // statsUsageImpl implements utilstats.StatsUsage.
 type statsUsageImpl struct {
-	pool              utilstats.SessionPool
-	tblInfo           utilstats.TableInfoGetter
-	statsCache        utilstats.StatsCache
-	statsHis          utilstats.StatsHistory
-	getLockedTables   func(tableIDs ...int64) (map[int64]struct{}, error) // TODO: use an interface instead of a method pointer
-	getPartitionStats func(tblInfo *model.TableInfo, pid int64) *statistics.Table
+	statsHandle utilstats.StatsHandle
 
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
@@ -47,28 +42,16 @@ type statsUsageImpl struct {
 }
 
 // NewStatsUsageImpl creates a utilstats.StatsUsage.
-func NewStatsUsageImpl(pool utilstats.SessionPool,
-	tblInfo utilstats.TableInfoGetter,
-	statsCache utilstats.StatsCache,
-	statsHis utilstats.StatsHistory,
-	getLockedTables func(tableIDs ...int64) (map[int64]struct{}, error),
-	getPartitionStats func(tblInfo *model.TableInfo, pid int64) *statistics.Table,
-) utilstats.StatsUsage {
+func NewStatsUsageImpl(statsHandle utilstats.StatsHandle) utilstats.StatsUsage {
 	return &statsUsageImpl{
-		pool:              pool,
-		tblInfo:           tblInfo,
-		statsCache:        statsCache,
-		statsHis:          statsHis,
-		getLockedTables:   getLockedTables,
-		getPartitionStats: getPartitionStats,
-		idxUsageListHead:  newSessionIndexUsageCollector(nil),
-		SessionStatsList:  NewSessionStatsList(),
-	}
+		statsHandle:      statsHandle,
+		idxUsageListHead: newSessionIndexUsageCollector(nil),
+		SessionStatsList: NewSessionStatsList()}
 }
 
 // LoadColumnStatsUsage returns all columns' usage information.
 func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]utilstats.ColStatsTimeInfo, err error) {
-	err = utilstats.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		colStatsMap, err = LoadColumnStatsUsage(sctx, loc)
 		return err
 	})
@@ -77,7 +60,7 @@ func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap m
 
 // GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
-	err = utilstats.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		columnIDs, err = GetPredicateColumns(sctx, tableID)
 		return err
 	})
@@ -86,7 +69,7 @@ func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, 
 
 // CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 func (u *statsUsageImpl) CollectColumnsInExtendedStats(tableID int64) (columnIDs []int64, err error) {
-	err = utilstats.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		columnIDs, err = CollectColumnsInExtendedStats(sctx, tableID)
 		return err
 	})

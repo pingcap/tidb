@@ -19,8 +19,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/tiancaiamao/gp"
 )
 
 // StatsGC is used to GC unnecessary stats.
@@ -200,4 +202,49 @@ type StatsLock interface {
 
 	// GetTableLockedAndClearForTest for unit test only.
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
+}
+
+// StatsHandle is used to manage TiDB Statistics.
+type StatsHandle interface {
+	// GPool returns the goroutine pool.
+	GPool() *gp.Pool
+
+	// SPool returns the session pool.
+	SPool() SessionPool
+
+	// Lease returns the stats lease.
+	Lease() time.Duration
+
+	// SysProcTracker is used to track sys process like analyze
+	SysProcTracker() sessionctx.SysProcTracker
+
+	// AutoAnalyzeProcID generates an analyze ID.
+	AutoAnalyzeProcID() uint64
+
+	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
+	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
+
+	// GetPartitionStats retrieves the partition stats from cache.
+	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// TableInfoGetter is used to get table meta info.
+	TableInfoGetter
+
+	// StatsGC is used to do the GC job.
+	StatsGC
+
+	// StatsUsage is used to handle table delta and stats usage.
+	StatsUsage
+
+	// StatsHistory is used to manage historical stats.
+	StatsHistory
+
+	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
+	StatsAnalyze
+
+	// StatsCache is used to manage all table statistics in memory.
+	StatsCache
+
+	// StatsLock is used to manage locked stats.
+	StatsLock
 }

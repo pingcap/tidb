@@ -16,7 +16,6 @@ package cache
 
 import (
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
@@ -33,16 +32,14 @@ import (
 
 // StatsCacheImpl implements util.StatsCache.
 type StatsCacheImpl struct {
-	pool    util.SessionPool
-	tblInfo util.TableInfoGetter
 	atomic.Pointer[StatsCache]
 
+	statsHandle           util.StatsHandle
 	tableStatsFromStorage func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
-	statsLease            time.Duration
 }
 
 // NewStatsCacheImpl creates a new StatsCache.
-func NewStatsCacheImpl(pool util.SessionPool, tblInfo util.TableInfoGetter, statsLease time.Duration,
+func NewStatsCacheImpl(statsHandle util.StatsHandle,
 	tableStatsFromStorage func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error),
 ) (util.StatsCache, error) {
 	newCache, err := NewStatsCache()
@@ -50,9 +47,7 @@ func NewStatsCacheImpl(pool util.SessionPool, tblInfo util.TableInfoGetter, stat
 		return nil, err
 	}
 	result := &StatsCacheImpl{
-		pool:                  pool,
-		tblInfo:               tblInfo,
-		statsLease:            statsLease,
+		statsHandle:           statsHandle,
 		tableStatsFromStorage: tableStatsFromStorage,
 	}
 	result.Store(newCache)
@@ -61,7 +56,7 @@ func NewStatsCacheImpl(pool util.SessionPool, tblInfo util.TableInfoGetter, stat
 
 // NewStatsCacheImplForTest creates a new StatsCache for test.
 func NewStatsCacheImplForTest() (util.StatsCache, error) {
-	return NewStatsCacheImpl(nil, nil, 0, nil)
+	return NewStatsCacheImpl(nil, nil)
 }
 
 // Update reads stats meta from store and updates the stats map.
@@ -72,7 +67,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := util.DurationToTS(3 * s.statsLease)
+	offset := util.DurationToTS(3 * s.statsHandle.Lease())
 	if s.MaxTableStatsVersion() >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -81,7 +76,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 
 	var rows []chunk.Row
 	var err error
-	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		rows, _, err = util.ExecRows(sctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
 		return err
 	})
@@ -95,7 +90,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
-		table, ok := s.tblInfo.TableInfoByID(is, physicalID)
+		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)

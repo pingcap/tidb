@@ -35,14 +35,14 @@ func (u *statsUsageImpl) NewSessionIndexUsageCollector() interface{} {
 
 // DumpIndexUsageToKV dumps all collected index usage info to storage.
 func (u *statsUsageImpl) DumpIndexUsageToKV() error {
-	return util.CallWithSCtx(u.pool, func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return dumpIndexUsageToKV(sctx, u.idxUsageListHead)
 	})
 }
 
 // GCIndexUsage removes unnecessary index usage data.
 func (u *statsUsageImpl) GCIndexUsage() error {
-	return util.CallWithSCtx(u.pool, gcIndexUsageOnKV)
+	return util.CallWithSCtx(u.statsHandle.SPool(), gcIndexUsageOnKV)
 }
 
 // IndexUsageInformation is the data struct to store index usage information.

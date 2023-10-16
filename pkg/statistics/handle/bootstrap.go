@@ -70,7 +70,7 @@ func (h *Handle) initStatsMeta(is infoschema.InfoSchema) (util.StatsCache, error
 		return nil, errors.Trace(err)
 	}
 	defer terror.Call(rc.Close)
-	tables, err := cache.NewStatsCacheImpl(h.pool, h.TableInfoGetter, h.Lease(), h.TableStatsFromStorage)
+	tables, err := cache.NewStatsCacheImpl(h, h.TableStatsFromStorage)
 	if err != nil {
 		return nil, err
 	}

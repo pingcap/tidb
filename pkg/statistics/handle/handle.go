@@ -131,24 +131,18 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		TableInfoGetter:         util.NewTableInfoGetter(),
 		StatsLock:               lockstats.NewStatsLock(pool),
 	}
-	handle.StatsGC = storage.NewStatsGC(pool, lease, handle.TableInfoGetter, handle.MarkExtendedStatsDeleted)
+	handle.StatsGC = storage.NewStatsGC(handle, handle.MarkExtendedStatsDeleted)
 
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	statsCache, err := cache.NewStatsCacheImpl(handle.pool, handle.TableInfoGetter, handle.Lease(), handle.TableStatsFromStorage)
+	statsCache, err := cache.NewStatsCacheImpl(handle, handle.TableStatsFromStorage)
 	if err != nil {
 		return nil, err
 	}
 	handle.StatsCache = statsCache
-	handle.StatsHistory = history.NewStatsHistory(pool, handle.StatsCache, handle.tableStatsToJSON, handle.DumpStatsToJSON)
-	handle.StatsUsage = usage.NewStatsUsageImpl(pool, handle.TableInfoGetter, handle.StatsCache,
-		handle.StatsHistory, handle.GetLockedTables, handle.GetPartitionStats)
-	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(pool, handle.sysProcTracker,
-		handle.GetLockedTables,
-		handle.GetTableStats,
-		handle.GetPartitionStats,
-		handle.autoAnalyzeProcIDGetter,
-		handle.Lease())
+	handle.StatsHistory = history.NewStatsHistory(handle, handle.tableStatsToJSON, handle.DumpStatsToJSON)
+	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
+	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -457,4 +451,24 @@ func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
 		return nil
 	})
 	return
+}
+
+// GPool returns the goroutine pool of handle.
+func (h *Handle) GPool() *gp.Pool {
+	return h.gpool
+}
+
+// SPool returns the session pool.
+func (h *Handle) SPool() util.SessionPool {
+	return h.pool
+}
+
+// SysProcTracker is used to track sys process like analyze
+func (h *Handle) SysProcTracker() sessionctx.SysProcTracker {
+	return h.sysProcTracker
+}
+
+// AutoAnalyzeProcID generates an analyze ID.
+func (h *Handle) AutoAnalyzeProcID() uint64 {
+	return h.autoAnalyzeProcIDGetter()
 }
