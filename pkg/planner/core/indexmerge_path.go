@@ -80,6 +80,10 @@ func (ds *DataSource) generateIndexMergePath() error {
 	if err := ds.generateIndexMerge4MVIndex(regularPathCount, indexMergeConds); err != nil {
 		return err
 	}
+	oldIndexMergeCount := len(ds.possibleAccessPaths)
+	if err := ds.generateIndexMerge4ComposedIndex(regularPathCount, indexMergeConds); err != nil {
+		return err
+	}
 
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
@@ -94,7 +98,12 @@ func (ds *DataSource) generateIndexMergePath() error {
 	}
 
 	// If len(indexMergeHints) > 0 and some index-merge paths were added, then prune all other non-index-merge paths.
-	ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+	// if len(ds.possibleAccessPaths) > oldIndexMergeCount, it means composed index merge path is generated, prune others.
+	if len(ds.possibleAccessPaths) > oldIndexMergeCount {
+		ds.possibleAccessPaths = ds.possibleAccessPaths[oldIndexMergeCount:]
+	} else {
+		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+	}
 	minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
 	for _, path := range ds.possibleAccessPaths {
 		if minRowCount < path.CountAfterAccess {
@@ -376,12 +385,20 @@ func (ds *DataSource) buildIndexMergeOrPath(
 	return indexMergePath
 }
 
+func (ds *DataSource) generateNormalIndexPartialPath4And(normalPathCnt int, usedAccessMap map[string]expression.Expression) []*util.AccessPath {
+	if res := ds.generateIndexMergeAndPaths(normalPathCnt, usedAccessMap); res != nil {
+		return res.PartialIndexPaths
+	}
+	return nil
+}
+
 // generateIndexMergeAndPaths generates IndexMerge paths for `AND` (a.k.a. intersection type IndexMerge)
-func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.AccessPath {
+func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMap map[string]expression.Expression) *util.AccessPath {
 	// For now, we only consider intersection type IndexMerge when the index names are specified in the hints.
 	if !ds.indexMergeHintsHasSpecifiedIdx() {
 		return nil
 	}
+	composedWithMvIndex := len(usedAccessMap) != 0
 
 	// 1. Collect partial paths from normal paths.
 	var partialPaths []*util.AccessPath
@@ -391,6 +408,10 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 		if ds.possibleAccessPaths[i].IsTablePath() {
 			continue
 		}
+		// since this code path is only for normal index, skip mv index here.
+		if ds.possibleAccessPaths[i].Index.MVIndex {
+			continue
+		}
 		if !ds.isSpecifiedInIndexMergeHints(originalPath.Index.Name.L) {
 			continue
 		}
@@ -398,11 +419,36 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 		if ranger.HasFullRange(originalPath.Ranges, false) {
 			continue
 		}
+		if composedWithMvIndex {
+			// case:
+			// idx1: mv(c, cast(`a` as signed array))
+			// idx2: idx(c)
+			// idx3: idx(c, d)
+			// for condition: (1 member of a) AND (c = 1) AND (d = 2), we should pick idx1 and idx3,
+			// since idx2's access cond has already been covered by idx1.
+			containRelation := true
+			for _, access := range originalPath.AccessConds {
+				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
+					// some condition is not covered in previous mv index partial path, use it!
+					containRelation = false
+					break
+				}
+			}
+			if containRelation {
+				continue
+			}
+		}
 		newPath := originalPath.Clone()
 		partialPaths = append(partialPaths, newPath)
 	}
-	if len(partialPaths) < 2 {
+	if len(partialPaths) < 1 {
 		return nil
+	}
+	if len(partialPaths) == 1 {
+		// even single normal index path here, it can be composed with other mv index partial paths.
+		if !composedWithMvIndex {
+			return nil
+		}
 	}
 
 	// 2. Collect filters that can't be covered by the partial paths and deduplicate them.
@@ -478,6 +524,59 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int) *util.Access
 	return indexMergePath
 }
 
+func (ds *DataSource) generateIndexMergePartialPaths4And(normalPathCnt int,
+	indexMergeConds []expression.Expression) ([]*util.AccessPath, map[string]expression.Expression, error) {
+	// step1: collect all mv index paths
+	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	for idx := 0; idx < normalPathCnt; idx++ {
+		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
+			continue // not a MVIndex path
+		}
+		possibleMVIndexPaths = append(possibleMVIndexPaths, ds.possibleAccessPaths[idx])
+	}
+	// step2: mapping index merge conditions into possible mv index path
+	mvAndPartialPath := make([]*util.AccessPath, 0, len(possibleMVIndexPaths))
+	usedAccessCondsMap := make(map[string]expression.Expression, len(indexMergeConds))
+	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
+		idxCols, ok := ds.prepareCols4MVIndex(possibleMVIndexPaths[idx].Index)
+		if !ok {
+			continue
+		}
+		accessFilters, _, mvColOffset, mvFilterMutations := ds.collectFilters4MVIndexMutations(indexMergeConds, idxCols)
+		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
+			continue
+		}
+		// in traveling of these mv index conditions, we can only use one of them to build index merge path, just fetch it out first.
+		// build index merge partial path for every mutation combination access filters.
+		for _, mvFilterMu := range mvFilterMutations {
+			// derive each mutation access filters
+			accessFilters[mvColOffset] = mvFilterMu
+
+			partialPaths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, possibleMVIndexPaths[idx].Index)
+			if err != nil {
+				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
+				return nil, nil, err
+			}
+			if !ok {
+				// for this mutation we couldn't build index merge partial path correctly, skip it.
+				continue
+			}
+			// how we can merge mv index paths with normal index paths from index merge (intersection)?
+			// 1: len(partialPaths) = 1, no matter what it type is:
+			//		And(path1, path2, Or(path3)) => And(path1, path2, path3, merge(table-action like filters))
+			// 2: it's an original intersection type:
+			//		And(path1, path2, And(path3, path4)) => And(path1, path2, path3, path4, merge(table-action like filter)
+			if len(partialPaths) == 1 || isIntersection {
+				for _, accessF := range accessFilters {
+					usedAccessCondsMap[string(accessF.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = accessF
+				}
+				mvAndPartialPath = append(mvAndPartialPath, partialPaths...)
+			}
+		}
+	}
+	return mvAndPartialPath, usedAccessCondsMap, nil
+}
+
 func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, indexMergeConds []expression.Expression) (string, error) {
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
 		len(ds.possibleAccessPaths) > 1 // have multiple index paths
@@ -490,6 +589,7 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 	// 2. TODO: If there exists exprs that cannot be pushed down. This is to avoid wrongly estRow of Selection added by rule_predicate_push_down.
 	stmtCtx := ds.SCtx().GetSessionVars().StmtCtx
 	needConsiderIndexMerge := true
+	// if current index merge hint is nil, once there is a no-access-cond in one of possible access path.
 	if len(ds.indexMergeHints) == 0 {
 		for i := 1; i < len(ds.possibleAccessPaths); i++ {
 			if len(ds.possibleAccessPaths[i].AccessConds) != 0 {
@@ -520,7 +620,7 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 		return "", err
 	}
 	// 2. Generate possible IndexMerge paths for `AND`.
-	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount)
+	indexMergeAndPath := ds.generateIndexMergeAndPaths(regularPathCount, nil)
 	if indexMergeAndPath != nil {
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, indexMergeAndPath)
 	}
@@ -596,7 +696,86 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 	return
 }
 
-// generateIndexMergeJSONMVIndexPath generates paths for (json_member_of / json_overlaps / json_contains) on multi-valued index.
+// generateIndexMerge4ComposedIndex generates index path composed of multi indexes including multivalued index from
+// (json_member_of / json_overlaps / json_contains) and single-valued index from normal indexes.
+/*
+	1. select * from t where ((1 member of (a) and c=1) and (2 member of (b) and d=2) and (other index predicates))
+		flatten as: select * from t where 1 member of (a) and 2 member of (b) and c=1 and c=2 and other index predicates
+		analyze: find and utilize index access filter items as much as possible:
+		IndexMerge(AND-INTERSECTION)                  --- ROOT
+			IndexRangeScan(mv-index-a)(1)             --- COP   ---> expand as: IndexMerge(AND)          ---> simplify: since memberof only have 1 partial index plan, we can defer the TableRowIdScan(t).
+			IndexRangeScan(mv-index-b)(2)             --- COP						IndexRangeScan(a, [1,1])
+			IndexRangeScan(non-mv-index-if-any)(?)    --- COP		        		TableRowIdScan(t)
+			Selection(remained-non-index-predicates)  --- COP
+				TableRowIdScan(t)  					  --- COP
+	2. select * from t where ((1 member of (a) and c=1) and (json_contains(b, '[1, 2, 3]') and d=2) and (other index predicates))
+		flatten as: select * from t where 1 member of (a) and json_contains(b, '[1, 2, 3]') and c=1 and c=2 and other index predicates
+		analyze: find and utilize index access filter items as much as possible:
+		IndexMerge(AND-INTERSECTION)                  --- ROOT
+			IndexRangeScan(mv-index-a)(1)             --- COP
+			IndexMerge(mv-index-b AND-INTERSECTION)   --- ROOT (embedded index merge) ---> simplify: we can defer the TableRowIdScan(t) to the outer index merge.
+				IndexRangeScan(a, [1,1])              --- COP
+				IndexRangeScan(a, [2,2])              --- COP
+				IndexRangeScan(a, [3,3])              --- COP
+			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
+			TableRowIdScan(t)                         --- COP
+	3. select * from t where ((1 member of (a) and c=1) and (json_overlap(a, '[1, 2, 3]') and d=2) and (other index predicates))
+		flatten as: select * from t where 1 member of (a) and json_overlap(a, '[1, 2, 3]') and c=1 and c=2 and other index predicates
+		analyze: find and utilize index access filter items as much as possible:
+		IndexMerge(AND-INTERSECTION)                  --- ROOT
+			IndexRangeScan(mv-index-a)(1)             --- COP
+			IndexMerge(mv-index-b OR-UNION)           --- ROOT (embedded index merge) ---> simplify: we can defer the TableRowIdScan(t) to the outer index merge.
+				IndexRangeScan(a, [1,1])              --- COP
+				IndexRangeScan(a, [2,2])              --- COP
+				IndexRangeScan(a, [3,3])              --- COP
+			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
+			TableRowIdScan(t)                         --- COP
+*/
+func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int,
+	indexMergeConds []expression.Expression) error {
+	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
+		len(ds.possibleAccessPaths) > 1 // have multiple index paths
+	if !isPossibleIdxMerge {
+		return nil
+	}
+	// after fillIndexPath, all cnf items are filled into the suitable index paths, for these normal index paths,
+	// fetch them out as partialIndexPaths of a outerScope index merge.
+	// note that:
+	// 1: for normal index idx(b): b=2 and b=1 will lead a constant folding, finally leading an invalid range.
+	// 		so it's possible that multi condition about the column b can be filled into same index b path.
+	// 2: for mv index mv(j): 1 member of (j->'$.path') and 2 member of (j->'$.path') couldn't be classified
+	// 		into a single index path conditions in fillIndexPath calling.
+	// 3: The predicate of mv index can not converge into a linear interval range at physical phase like EQ and
+	//		GT in normal index. Among the predicates in mv index (member-of/contains/overlap), multi conditions
+	//		about them should be built as self-independent index path, deriving the final intersection/union handles,
+	//		which means a mv index path may be reused for multi related conditions.
+	// so we do this:
+	// step1: firstly collect all the potential normal index partial paths.
+	// step2: secondly collect all the potential mv index partial path, and merge them into one if possible.
+	// step3: thirdly merge normal index paths and mv index paths together to compose a bigger index merge path.
+	mvIndexPartialPaths, usedAccessMap, err := ds.generateIndexMergePartialPaths4And(normalPathCnt, indexMergeConds)
+	if err != nil {
+		return err
+	}
+	normalIndexPartialPaths := ds.generateNormalIndexPartialPath4And(normalPathCnt, usedAccessMap)
+
+	var combinedPartialPaths []*util.AccessPath
+	// todo: make this as the portal of all index merge case.
+	if len(normalIndexPartialPaths) != 0 {
+		combinedPartialPaths = normalIndexPartialPaths
+	}
+	if len(mvIndexPartialPaths) != 0 {
+		combinedPartialPaths = append(combinedPartialPaths, mvIndexPartialPaths...)
+	}
+	// here we directly use the all index merge conditions as the table filers for simplicity.
+	// todo:  make estimation more correct rather than pruning other index merge path.
+	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, indexMergeConds)
+
+	ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvp)
+	return nil
+}
+
+// generateIndexMerge4MVIndex generates paths for (json_member_of / json_overlaps / json_contains) on multi-valued index.
 /*
 	1. select * from t where 1 member of (a)
 		IndexMerge(AND)
@@ -817,7 +996,7 @@ func (ds *DataSource) prepareCols4MVIndex(mvIndex *model.IndexInfo) (idxCols []*
 }
 
 // collectFilters4MVIndex splits these filters into 2 parts where accessFilters can be used to access this index directly.
-// For idx(x, cast(a as array), z), `x=1 and (2 member of a) and z=1 and x+z>0` is splitted to:
+// For idx(x, cast(a as array), z), `x=1 and (2 member of a) and z=1 and x+z>0` is split to:
 // accessFilters: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
 func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
@@ -844,6 +1023,66 @@ func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, id
 		}
 	}
 	return accessFilters, remainingFilters
+}
+
+// For idx(x, cast(a as array), z), `x=1 and (2 member of a) and (1 member of a) and z=1 and x+z>0` is split to:
+// accessFilters combination:
+// 1: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
+// 2: `x=1 and (1 member of a) and z=1`, remaining: `x+z>0`.
+//
+// just as the 3rd point as we said in generateIndexMerge4ComposedIndex
+//
+// 3: The predicate of mv index can not converge to a linear interval range at physical phase like EQ and
+// GT in normal index. Among the predicates in mv index (member-of/contains/overlap), multi conditions
+// about them should be built as self-independent index path, deriving the final intersection/union handles,
+// which means a mv index path may be reused for multi related conditions. Here means whether (2 member of a)
+// And (1 member of a) is valid composed range or empty range can't be told until runtime intersection/union.
+//
+// therefore, for multi condition about a single mv index virtual json col here: (2 member of a) and (1 member of a)
+// we should build indexMerge above them, and each of them can access to the same mv index. That's why
+// we should derive the mutations of virtual json col's access condition, output the accessFilter combination
+// for each mutation of it.
+
+// todo: case like idx(x, cast(a as array), z), condition like: x=1 and x=2 and (
+// 2 member of a)? we can derive the x is invalid range?
+func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expression,
+	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
+	usedAsAccess := make([]bool, len(filters))
+	// accessFilters [x, a<json>, z]
+	//                    |
+	//                    +----> it may have several substitutions in mvFilterMutations if it's json col.
+	mvFilterMutations = make([]expression.Expression, 0, 1)
+	mvColOffset = -1
+	for z, col := range idxCols {
+		found := false
+		for i, f := range filters {
+			if usedAsAccess[i] {
+				continue
+			}
+			if ds.checkFilter4MVIndexColumn(f, col) {
+				// todo: ban the virtual col in mv index except the json col it self.
+				if col.VirtualExpr != nil {
+					// assert jsonColOffset should always be the same.
+					// if the filter is from virtual expression, it means it is about the mv json col.
+					mvFilterMutations = append(mvFilterMutations, f)
+					mvColOffset = z
+				}
+				accessFilters = append(accessFilters, f)
+				usedAsAccess[i] = true
+				found = true
+				// shouldn't break once found here, because we want to collect all the mutation mv filters here.
+			}
+		}
+		if !found {
+			break
+		}
+	}
+	for i := range usedAsAccess {
+		if !usedAsAccess[i] {
+			remainingFilters = append(remainingFilters, filters[i])
+		}
+	}
+	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
 }
 
 // checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
