@@ -143,7 +143,7 @@ func NewAddIndexIngestPipeline(
 	}
 	readerCnt, writerCnt := expectedIngestWorkerCnt()
 
-	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
+	srcOp := NewTableScanTaskSource(jobID, ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
@@ -211,7 +211,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	}
 	memSize := (memTotal / 2) / uint64(len(indexes))
 
-	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
+	srcOp := NewTableScanTaskSource(jobID, ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu, memSize)
@@ -249,7 +249,8 @@ type IndexRecordChunk struct {
 
 // TableScanTaskSource produces TableScanTask by splitting table records into ranges.
 type TableScanTaskSource struct {
-	ctx context.Context
+	jobID int64
+	ctx   context.Context
 
 	errGroup errgroup.Group
 	sink     operator.DataChannel[TableScanTask]
@@ -262,6 +263,7 @@ type TableScanTaskSource struct {
 
 // NewTableScanTaskSource creates a new TableScanTaskSource.
 func NewTableScanTaskSource(
+	jobID int64,
 	ctx context.Context,
 	store kv.Storage,
 	physicalTable table.PhysicalTable,
@@ -269,6 +271,7 @@ func NewTableScanTaskSource(
 	endKey kv.Key,
 ) *TableScanTaskSource {
 	return &TableScanTaskSource{
+		jobID:    jobID,
 		ctx:      ctx,
 		errGroup: errgroup.Group{},
 		tbl:      physicalTable,
@@ -311,11 +314,14 @@ func (src *TableScanTaskSource) generateTasks() error {
 
 		batchTasks := src.getBatchTableScanTask(kvRanges, taskIDAlloc)
 		for _, task := range batchTasks {
+			finish := util2.InjectSpan(src.jobID, "op-send-scan-task")
 			select {
 			case <-src.ctx.Done():
+				finish()
 				return src.ctx.Err()
 			case src.sink.Channel() <- task:
 			}
+			finish()
 		}
 		startKey = kvRanges[len(kvRanges)-1].EndKey
 		if startKey.Cmp(endKey) >= 0 {
@@ -454,10 +460,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				return err
 			}
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
-			finish := func() {}
-			if w.seq == 1 {
-				finish = util2.InjectSpan(w.copCtx.GetBase().JobID, "op-send-chunk")
-			}
+			finish := util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-send-chunk-%d", w.seq))
 			sender(idxResult)
 			finish()
 		}
@@ -469,9 +472,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 }
 
 func (w *tableScanWorker) getChunk() *chunk.Chunk {
-	if w.seq == 1 {
-		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "op-get-chunk")()
-	}
+	defer util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-get-chunk-%d", w.seq))()
 	chk := <-w.srcChkPool
 	newCap := copReadBatchSize()
 	if chk.Capacity() != newCap {
@@ -633,9 +634,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 		}
 		w.se = session.NewSession(sessCtx)
 	}
-	if w.seq == 1 {
-		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "op-write-local")()
-	}
+	defer util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-write-local-%d", w.seq))()
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
 		w.ctx.onError(err)
@@ -655,9 +654,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 }
 
 func (w *indexIngestWorker) Close() {
-	if w.seq == 1 {
-		defer util2.InjectSpan(w.copCtx.GetBase().JobID, "op-close-write-flush")()
-	}
+	defer util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-close-write-flush-%d", w.seq))()
 	for _, writer := range w.writers {
 		err := writer.Close(w.ctx)
 		if err != nil {

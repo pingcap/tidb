@@ -501,10 +501,7 @@ func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool
 			return
 		}
 	}
-	finish := func() {}
-	if w.seq == 1 {
-		finish = util2.InjectSpan(w.jobID, "write-local")
-	}
+	finish := util2.InjectSpan(w.jobID, fmt.Sprintf("write-local-%d", w.seq))
 	count, nextKey, err := w.WriteLocal(&rs)
 	if err != nil {
 		finish()

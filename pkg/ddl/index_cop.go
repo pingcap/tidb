@@ -17,6 +17,7 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"sync"
 	"sync/atomic"
 
@@ -124,25 +125,17 @@ func (c *copReqSender) run() {
 				zap.String("task end key", hex.EncodeToString(task.endKey)))
 			continue
 		}
-		finish := func() {}
-		if c.seq == 1 {
-			finish = util2.InjectSpan(p.copCtx.GetBase().JobID, "scan-records")
-		}
-		err := scanRecords(p, task, se)
+		finish := util2.InjectSpan(p.copCtx.GetBase().JobID, fmt.Sprintf("scan-records-%d", c.seq))
+		err := scanRecords(c.seq, p, task, se)
 		finish()
 		if err != nil {
-			finish = func() {}
-			if c.seq == 1 {
-				finish = util2.InjectSpan(p.copCtx.GetBase().JobID, "send-chunk")
-			}
 			p.chunkSender.AddTask(IndexRecordChunk{ID: task.id, Err: err})
-			finish()
 			return
 		}
 	}
 }
 
-func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
+func scanRecords(seq int, p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
 
@@ -175,7 +168,9 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.Err = errors.New("mock cop error")
 			})
+			finish := util2.InjectSpan(p.copCtx.GetBase().JobID, fmt.Sprintf("send-chunk-%d", seq))
 			p.chunkSender.AddTask(idxRs)
+			finish()
 		}
 		terror.Call(rs.Close)
 		return nil
@@ -305,9 +300,7 @@ func fetchTableScanResult(
 	result distsql.SelectResult,
 	chk *chunk.Chunk,
 ) (bool, error) {
-	if seq == 1 {
-		defer util2.InjectSpan(copCtx.JobID, "op-read-into-chunk")()
-	}
+	defer util2.InjectSpan(copCtx.JobID, fmt.Sprintf("op-read-into-chunk-%d", seq))()
 	err := result.Next(ctx, chk)
 	if err != nil {
 		return false, errors.Trace(err)

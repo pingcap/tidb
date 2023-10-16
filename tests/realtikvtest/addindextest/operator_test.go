@@ -52,7 +52,7 @@ func TestBackfillOperators(t *testing.T) {
 		ctx := context.Background()
 		opCtx := ddl.NewOperatorCtx(ctx)
 		pTbl := tbl.(table.PhysicalTable)
-		src := ddl.NewTableScanTaskSource(opCtx, store, pTbl, startKey, endKey)
+		src := ddl.NewTableScanTaskSource(0, opCtx, store, pTbl, startKey, endKey)
 		sink := newTestSink[ddl.TableScanTask]()
 
 		operator.Compose[ddl.TableScanTask](src, sink)

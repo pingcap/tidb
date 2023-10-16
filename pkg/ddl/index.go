@@ -982,7 +982,9 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		return false, ver, nil
 	}
 	for _, indexInfo := range allIndexInfos {
+		finish := ddlutil.InjectSpan(job.ID, fmt.Sprintf("finish-import-%d", w.id))
 		err = bc.FinishImport(indexInfo.ID, indexInfo.Unique, tbl)
+		finish()
 		if err != nil {
 			if common.ErrFoundDuplicateKeys.Equal(err) {
 				err = convertToKeyExistsErr(err, indexInfo, tbl.Meta())
