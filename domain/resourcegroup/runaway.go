@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -190,6 +191,7 @@ type RunawayManager struct {
 	// activeGroup is used to manage the active runaway watches of resource group
 	activeGroup map[string]int64
 	activeLock  sync.RWMutex
+	metricsMap  map[string]prometheus.Counter
 
 	resourceGroupCtl   *rmclient.ResourceGroupsController
 	serverID           string
@@ -253,7 +255,12 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 	if group.RunawaySettings == nil && rm.activeGroup[resourceGroupName] == 0 {
 		return nil
 	}
-	metrics.RunawayCheckerCounter.WithLabelValues(resourceGroupName, "hit", "").Inc()
+	counter, ok := rm.metricsMap[resourceGroupName]
+	if !ok {
+		counter = metrics.RunawayCheckerCounter.WithLabelValues(resourceGroupName, "hit", "")
+		rm.metricsMap[resourceGroupName] = counter
+	}
+	counter.Inc()
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
 }
 
