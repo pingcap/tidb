@@ -201,11 +201,11 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
-	nextStep int64,
+	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
-		zap.String("type", gTask.Type),
+		zap.Stringer("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("curr-step", stepStr(gTask.Step)),
 		zap.String("next-step", stepStr(nextStep)),
@@ -233,7 +233,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		}
 	}()
 
-	previousSubtaskMetas := make(map[int64][][]byte, 1)
+	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
 	case StepImport, StepEncodeAndSort:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
@@ -325,7 +325,7 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 // OnErrStage implements dispatcher.Extension interface.
 func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(
-		zap.String("type", gTask.Type),
+		zap.Stringer("type", gTask.Type),
 		zap.Int64("task-id", gTask.ID),
 		zap.String("step", stepStr(gTask.Step)),
 	)
@@ -381,7 +381,7 @@ func (*ImportDispatcherExt) IsRetryableErr(error) bool {
 }
 
 // GetNextStep implements dispatcher.Extension interface.
-func (dsp *ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) int64 {
+func (dsp *ImportDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if dsp.GlobalSort {
@@ -558,7 +558,7 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 	return chunkMap
 }
 
-func getStepOfEncode(globalSort bool) int64 {
+func getStepOfEncode(globalSort bool) proto.Step {
 	if globalSort {
 		return StepEncodeAndSort
 	}
@@ -731,7 +731,7 @@ func rollback(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Ta
 	return executeSQL(ctx, handle, logger, "TRUNCATE "+tableName)
 }
 
-func stepStr(step int64) string {
+func stepStr(step proto.Step) string {
 	switch step {
 	case proto.StepInit:
 		return "init"
