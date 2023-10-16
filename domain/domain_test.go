@@ -34,8 +34,11 @@ import (
 	"github.com/pingcap/tidb/metrics"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/store/mockstore"
+	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/mock"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
@@ -186,6 +189,17 @@ func TestStatWorkRecoverFromPanic(t *testing.T) {
 
 	scope := dom.GetScope("status")
 	require.Equal(t, variable.DefaultStatusVarScopeFlag, scope)
+
+	// default expiredTimeStamp4PC = "0000-00-00 00:00:00"
+	ts := types.NewTime(types.ZeroCoreTime, mysql.TypeTimestamp, types.DefaultFsp)
+	expiredTimeStamp := dom.ExpiredTimeStamp4PC()
+	require.Equal(t, expiredTimeStamp, ts)
+
+	// set expiredTimeStamp4PC to "2023-08-02 12:15:00"
+	ts, _ = types.ParseTimestamp(&stmtctx.StatementContext{TimeZone: time.UTC}, "2023-08-02 12:15:00")
+	dom.SetExpiredTimeStamp4PC(ts)
+	expiredTimeStamp = dom.ExpiredTimeStamp4PC()
+	require.Equal(t, expiredTimeStamp, ts)
 
 	err = store.Close()
 	require.NoError(t, err)
