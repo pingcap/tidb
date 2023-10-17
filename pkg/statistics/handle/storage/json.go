@@ -69,8 +69,8 @@ func extendedStatsFromJSON(statsColl []*util.JSONExtendedStats) *statistics.Exte
 	return stats
 }
 
-func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *util.JsonColumn {
-	jsonCol := &util.JsonColumn{
+func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *util.JSONColumn {
+	jsonCol := &util.JSONColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
@@ -92,8 +92,8 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 	jsonTbl := &util.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Columns:      make(map[string]*util.JsonColumn, len(tbl.Columns)),
-		Indices:      make(map[string]*util.JsonColumn, len(tbl.Indices)),
+		Columns:      make(map[string]*util.JSONColumn, len(tbl.Columns)),
+		Indices:      make(map[string]*util.JSONColumn, len(tbl.Indices)),
 		Count:        tbl.RealtimeCount,
 		ModifyCount:  tbl.ModifyCount,
 		Version:      tbl.Version,

@@ -247,8 +247,8 @@ func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string
 
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
-	Columns           map[string]*JsonColumn `json:"columns"`
-	Indices           map[string]*JsonColumn `json:"indices"`
+	Columns           map[string]*JSONColumn `json:"columns"`
+	Indices           map[string]*JSONColumn `json:"indices"`
 	Partitions        map[string]*JSONTable  `json:"partitions"`
 	DatabaseName      string                 `json:"database_name"`
 	TableName         string                 `json:"table_name"`
@@ -268,8 +268,8 @@ type JSONExtendedStats struct {
 	Tp         uint8   `json:"type"`
 }
 
-// JsonColumn is used for dumping statistics.
-type JsonColumn struct {
+// JSONColumn is used for dumping statistics.
+type JSONColumn struct {
 	Histogram *tipb.Histogram `json:"histogram"`
 	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
 	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
