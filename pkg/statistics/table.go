@@ -581,7 +581,7 @@ func (t *Table) ColumnIsLoadNeeded(id int64) (*Column, bool) {
 	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, false) {
 		return nil, true
 	}
-	// If the column is in the memroy, we check its embeded func.
+	// If the column is in the memory, we check its embedded func.
 	if ok && col.StatsAvailable() && !col.IsFullLoad() {
 		return col, true
 	}
@@ -598,7 +598,7 @@ func (t *Table) IndexIsLoadNeeded(id int64) (*Index, bool) {
 	if !ok && t.ColAndIdxExistenceMap.HasAnalyzed(id, true) {
 		return nil, true
 	}
-	// If the column is in the memroy, we check its embeded func.
+	// If the column is in the memory, we check its embedded func.
 	if ok && idx.IsAnalyzed() && !idx.IsFullLoad() {
 		return idx, true
 	}
