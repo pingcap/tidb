@@ -2,6 +2,7 @@ set tidb_cost_model_version=2;
 set @@tidb_opt_tiflash_concurrency_factor = 0;
 SHOW WARNINGS;
 Level	Code	Message
+Warning	1292	Truncated incorrect tidb_opt_tiflash_concurrency_factor value: '0'
 select @@tidb_opt_tiflash_concurrency_factor;
 @@tidb_opt_tiflash_concurrency_factor
 1

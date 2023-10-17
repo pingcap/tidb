@@ -1,15 +1,3 @@
-diff -uprN old/io_etcd_go_etcd_api_v3/etcdserverpb/BUILD.bazel new/io_etcd_go_etcd_api_v3/etcdserverpb/BUILD.bazel
---- old/io_etcd_go_etcd_api_v3/etcdserverpb/BUILD.bazel	2022-04-12 02:09:57.000000000 +0800
-+++ new/io_etcd_go_etcd_api_v3/etcdserverpb/BUILD.bazel	2022-04-12 02:12:31.000000000 +0800
-@@ -17,7 +17,7 @@ go_library(
-         "//mvccpb",
-         "@com_github_gogo_protobuf//gogoproto",
-         "@com_github_golang_protobuf//proto:go_default_library",
--        "@go_googleapis//google/api:annotations_go_proto",
-+        "@org_golang_google_genproto//googleapis/api/annotations:annotations",
-         "@org_golang_google_grpc//:go_default_library",
-         "@org_golang_google_grpc//codes",
-         "@org_golang_google_grpc//status",
 diff -uprN old/io_etcd_go_etcd_api_v3/etcdserverpb/gw/BUILD.bazel new/io_etcd_go_etcd_api_v3/etcdserverpb/gw/BUILD.bazel
 --- old/io_etcd_go_etcd_api_v3/etcdserverpb/gw/BUILD.bazel	2022-04-12 02:12:01.000000000 +0800
 +++ new/io_etcd_go_etcd_api_v3/etcdserverpb/gw/BUILD.bazel	2022-04-12 02:09:59.000000000 +0800

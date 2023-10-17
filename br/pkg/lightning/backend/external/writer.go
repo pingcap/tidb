@@ -31,10 +31,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/size"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -420,7 +420,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return false
 	})
 
-	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc, w.currentSeq)
+	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return err
 	}
