@@ -426,7 +426,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			return annotateErr(closeErr, allPeers[i], "when close write stream")
 		}
 		if resp.Error != nil {
-			return annotateErr(errors.New(resp.Error.Message), allPeers[i], "when close write stream")
+			return annotateErr(errors.New("resp error: "+resp.Error.Message), allPeers[i], "when close write stream")
 		}
 		if leaderID == region.Peers[i].GetId() {
 			leaderPeerMetas = resp.Metas
