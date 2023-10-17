@@ -47,6 +47,9 @@ const (
 	StatsMetaHistorySourceSchemaChange = "schema change"
 	// StatsMetaHistorySourceExtendedStats indicates stats history meta source from extended stats
 	StatsMetaHistorySourceExtendedStats = "extended stats"
+
+	// TiDBGlobalStats represents the global-stats for a partitioned table.
+	TiDBGlobalStats = "global"
 )
 
 var (

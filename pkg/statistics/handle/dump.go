@@ -24,187 +24,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
-	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // TestLoadStatsErr is only for test.
 type TestLoadStatsErr struct{}
-
-// DumpStatsToJSON dumps statistic to json.
-func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
-	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*utilstats.JSONTable, error) {
-	var snapshot uint64
-	if historyStatsExec != nil {
-		sctx := historyStatsExec.(sessionctx.Context)
-		snapshot = sctx.GetSessionVars().SnapshotTS
-	}
-	return h.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
-}
-
-// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
-// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
-// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
-func (h *Handle) DumpHistoricalStatsBySnapshot(
-	dbName string,
-	tableInfo *model.TableInfo,
-	snapshot uint64,
-) (
-	jt *utilstats.JSONTable,
-	fallbackTbls []string,
-	err error,
-) {
-	historicalStatsEnabled, err := h.CheckHistoricalStatsEnable()
-	if err != nil {
-		return nil, nil, errors.Errorf("check %v failed: %v", variable.TiDBEnableHistoricalStats, err)
-	}
-	if !historicalStatsEnabled {
-		return nil, nil, errors.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats)
-	}
-
-	defer func() {
-		if err == nil {
-			handle_metrics.DumpHistoricalStatsSuccessCounter.Inc()
-		} else {
-			handle_metrics.DumpHistoricalStatsFailedCounter.Inc()
-		}
-	}()
-	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
-		jt, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
-		if fallback {
-			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s", dbName, tableInfo.Name.O))
-		}
-		return jt, fallbackTbls, err
-	}
-	jsonTbl := &utilstats.JSONTable{
-		DatabaseName: dbName,
-		TableName:    tableInfo.Name.L,
-		Partitions:   make(map[string]*utilstats.JSONTable, len(pi.Definitions)),
-	}
-	for _, def := range pi.Definitions {
-		tbl, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
-		if err != nil {
-			return nil, nil, errors.Trace(err)
-		}
-		if fallback {
-			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s %s", dbName, tableInfo.Name.O, def.Name.O))
-		}
-		jsonTbl.Partitions[def.Name.L] = tbl
-	}
-	tbl, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
-	if err != nil {
-		return nil, nil, err
-	}
-	if fallback {
-		fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s global", dbName, tableInfo.Name.O))
-	}
-	// dump its global-stats if existed
-	if tbl != nil {
-		jsonTbl.Partitions[globalstats.TiDBGlobalStats] = tbl
-	}
-	return jsonTbl, fallbackTbls, nil
-}
-
-// DumpStatsToJSONBySnapshot dumps statistic to json.
-func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*utilstats.JSONTable, error) {
-	pruneMode, err := h.GetCurrentPruneMode()
-	if err != nil {
-		return nil, err
-	}
-	isDynamicMode := variable.PartitionPruneMode(pruneMode) == variable.Dynamic
-	pi := tableInfo.GetPartitionInfo()
-	if pi == nil {
-		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
-	}
-	jsonTbl := &utilstats.JSONTable{
-		DatabaseName: dbName,
-		TableName:    tableInfo.Name.L,
-		Partitions:   make(map[string]*utilstats.JSONTable, len(pi.Definitions)),
-	}
-	// dump partition stats only if in static mode or enable dumpPartitionStats flag in dynamic mode
-	if !isDynamicMode || dumpPartitionStats {
-		for _, def := range pi.Definitions {
-			tbl, err := h.tableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
-			if err != nil {
-				return nil, errors.Trace(err)
-			}
-			if tbl == nil {
-				continue
-			}
-			jsonTbl.Partitions[def.Name.L] = tbl
-		}
-	}
-	// dump its global-stats if existed
-	tbl, err := h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	if tbl != nil {
-		jsonTbl.Partitions[globalstats.TiDBGlobalStats] = tbl
-	}
-	return jsonTbl, nil
-}
-
-// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exist, directly fallback to the
-// latest stats, and the second return value would be true.
-func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
-	dbName string,
-	tableInfo *model.TableInfo,
-	physicalID int64,
-	snapshot uint64,
-) (
-	*utilstats.JSONTable,
-	bool,
-	error,
-) {
-	jt, exist, err := h.tableHistoricalStatsToJSON(physicalID, snapshot)
-	if err != nil {
-		return nil, false, err
-	}
-	if !exist {
-		jt, err = h.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
-		fallback := true
-		if snapshot == 0 {
-			fallback = false
-		}
-		return jt, fallback, err
-	}
-	return jt, false, nil
-}
-
-func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *utilstats.JSONTable, exist bool, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		jt, exist, err = storage.TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
-		return err
-	}, utilstats.FlagWrapTxn)
-	return
-}
-
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*utilstats.JSONTable, error) {
-	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
-	if err != nil || tbl == nil {
-		return nil, err
-	}
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = storage.StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
-		return err
-	})
-	if err != nil {
-		return nil, err
-	}
-	jsonTbl, err := storage.GenJSONTableFromStats(dbName, tableInfo, tbl)
-	if err != nil {
-		return nil, err
-	}
-	return jsonTbl, nil
-}
 
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 // In final, it will also udpate the stats cache.
@@ -286,7 +112,7 @@ func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.In
 		}
 
 		// load global-stats if existed
-		if globalStats, ok := jsonTbl.Partitions[globalstats.TiDBGlobalStats]; ok {
+		if globalStats, ok := jsonTbl.Partitions[utilstats.TiDBGlobalStats]; ok {
 			if err := h.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
 				return errors.Trace(err)
 			}

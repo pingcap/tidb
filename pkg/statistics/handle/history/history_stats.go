@@ -24,28 +24,19 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
 // statsHistoryImpl implements util.StatsHistory.
 type statsHistoryImpl struct {
 	statsHandle util.StatsHandle
-
-	// TODO: use interfaces instead of raw function pointers
-	tableStatsToJSON func(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*util.JSONTable, error)
-	dumpStatsToJSON  func(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*util.JSONTable, error)
 }
 
 // NewStatsHistory creates a new StatsHistory.
 func NewStatsHistory(statsHandle util.StatsHandle,
-	tableStatsToJSON func(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*util.JSONTable, error),
-	dumpStatsToJSON func(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*util.JSONTable, error),
 ) util.StatsHistory {
 	return &statsHistoryImpl{
-		statsHandle:      statsHandle,
-		tableStatsToJSON: tableStatsToJSON,
-		dumpStatsToJSON:  dumpStatsToJSON,
+		statsHandle: statsHandle,
 	}
 }
 
@@ -54,9 +45,9 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	var js *util.JSONTable
 	var err error
 	if isPartition {
-		js, err = sh.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
+		js, err = sh.statsHandle.TableStatsToJSON(dbName, tableInfo, physicalID, 0)
 	} else {
-		js, err = sh.dumpStatsToJSON(dbName, tableInfo, nil, true)
+		js, err = sh.statsHandle.DumpStatsToJSON(dbName, tableInfo, nil, true)
 	}
 	if err != nil {
 		return 0, errors.Trace(err)
