@@ -150,16 +150,16 @@ func (e *ShowExec) fetchShowPlacementForDB(ctx context.Context) (err error) {
 	}
 
 	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
-		if rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(dbInfo.ID)); err == nil {
-			state, err := fetchDBScheduleState(ctx, nil, dbInfo)
-			if err != nil {
-				return err
-			}
-			e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), rule.JSONToString(), state.String()})
-			return nil
-		} else {
+		rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(dbInfo.ID))
+		if err != nil {
 			return err
 		}
+		state, err := fetchDBScheduleState(ctx, nil, dbInfo)
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{"DATABASE " + dbInfo.Name.String(), rule.JSONToString(), state.String()})
+		return nil
 	}
 
 	placement, err := e.getDBPlacement(dbInfo)
@@ -187,16 +187,16 @@ func (e *ShowExec) fetchShowPlacementForTable(ctx context.Context) (err error) {
 	tblInfo := tbl.Meta()
 	ident := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
 	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
-		if rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(tblInfo.ID)); err == nil {
-			state, err := fetchTableScheduleState(ctx, nil, tblInfo)
-			if err != nil {
-				return err
-			}
-			e.appendRow([]interface{}{"TABLE " + ident.String(), rule.JSONToString(), state.String()})
-			return nil
-		} else {
+		rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(tblInfo.ID))
+		if err != nil {
 			return err
 		}
+		state, err := fetchTableScheduleState(ctx, nil, tblInfo)
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{"TABLE " + ident.String(), rule.JSONToString(), state.String()})
+		return nil
 	}
 
 	placement, err := e.getTablePlacement(tblInfo)
@@ -242,28 +242,28 @@ func (e *ShowExec) fetchShowPlacementForPartition(ctx context.Context) (err erro
 	tableIndent := ast.Ident{Schema: e.Table.DBInfo.Name, Name: tblInfo.Name}
 	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
 		// get partition rule firstly.
-		if rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(partition.ID)); err == nil {
-			var state infosync.PlacementScheduleState
-			if rule == nil {
-				// if partition rule not exists, get table rule.
-				if rule, err = infosync.GetRuleBundle(ctx, placement.GroupID(tblInfo.ID)); err == nil {
-					state, err = fetchTableScheduleState(ctx, nil, tblInfo)
-				}
-			} else {
-				state, err = fetchPartitionScheduleState(ctx, nil, partition)
-			}
-			if err != nil {
-				return err
-			}
-			e.appendRow([]interface{}{
-				fmt.Sprintf("TABLE %s PARTITION %s", tableIndent.String(), partition.Name.String()),
-				rule.JSONToString(),
-				state.String(),
-			})
-			return nil
-		} else {
+		rule, err := infosync.GetRuleBundle(ctx, placement.GroupID(partition.ID))
+		if err != nil {
 			return err
 		}
+		var state infosync.PlacementScheduleState
+		if rule == nil {
+			// if partition rule not exists, get table rule.
+			if rule, err = infosync.GetRuleBundle(ctx, placement.GroupID(tblInfo.ID)); err == nil {
+				state, err = fetchTableScheduleState(ctx, nil, tblInfo)
+			}
+		} else {
+			state, err = fetchPartitionScheduleState(ctx, nil, partition)
+		}
+		if err != nil {
+			return err
+		}
+		e.appendRow([]interface{}{
+			fmt.Sprintf("TABLE %s PARTITION %s", tableIndent.String(), partition.Name.String()),
+			rule.JSONToString(),
+			state.String(),
+		})
+		return nil
 	}
 
 	placement, err := e.getTablePlacement(tblInfo)
@@ -297,14 +297,14 @@ func (e *ShowExec) fetchShowPlacement(ctx context.Context) error {
 	}
 
 	if strings.ToLower(e.PlacementPolicyFormat) == FormatRaw {
-		if rules, err := infosync.GetAllRuleBundles(ctx); err == nil {
-			for _, r := range rules {
-				e.appendRow([]interface{}{"Rule " + r.ID, r.JSONToString(), "NULL"})
-			}
-			return nil
-		} else {
+		rules, err := infosync.GetAllRuleBundles(ctx)
+		if err != nil {
 			return err
 		}
+		for _, r := range rules {
+			e.appendRow([]interface{}{"Rule " + r.ID, r.JSONToString(), "NULL"})
+		}
+		return nil
 	}
 
 	scheduled := make(map[int64]infosync.PlacementScheduleState)
