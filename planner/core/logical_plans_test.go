@@ -20,10 +20,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/expression"
+	"github.com/pingcap/tidb/infoschema"
+	"github.com/pingcap/tidb/parser"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +35,26 @@ func newTypeWithFlen(typeByte byte, flen int) *types.FieldType {
 	tp := types.NewFieldType(typeByte)
 	tp.SetFlen(flen)
 	return tp
+}
+
+func (p *plannerSuite) GetParser() *parser.Parser {
+	return p.p
+}
+
+func (p *plannerSuite) GetIS() infoschema.InfoSchema {
+	return p.is
+}
+
+func (p *plannerSuite) GetCtx() sessionctx.Context {
+	return p.ctx
+}
+
+func CreatePlannerSuite(sctx sessionctx.Context, is infoschema.InfoSchema) (s *plannerSuite) {
+	s = new(plannerSuite)
+	s.is = is
+	s.p = parser.New()
+	s.ctx = sctx
+	return s
 }
 
 func SubstituteCol2CorCol(expr expression.Expression, colIDs map[int64]struct{}) (expression.Expression, error) {
