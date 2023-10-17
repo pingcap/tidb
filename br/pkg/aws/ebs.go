@@ -348,6 +348,11 @@ func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, 
 		for _, fastRestore := range result.FastSnapshotRestores {
 			_, found := pendingSnapshots[*fastRestore.SnapshotId]
 			if found {
+				// Detect some conflict states
+				if strings.EqualFold(*fastRestore.State, "disabled") || strings.EqualFold(*fastRestore.State, "disabling") {
+					log.Error("detect conflict status", zap.String("snapshot", *fastRestore.SnapshotId), zap.String("status", *fastRestore.State))
+					return errors.Errorf("status of snapshot %s is %s ", *fastRestore.SnapshotId, *fastRestore.State)
+				}
 				uncompletedSnapshots[*fastRestore.SnapshotId] = struct{}{}
 			}
 		}
