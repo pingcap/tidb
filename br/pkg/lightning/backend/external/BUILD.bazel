@@ -28,6 +28,7 @@ go_library(
         "//br/pkg/membuf",
         "//br/pkg/storage",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/sessionctx/variable",
         "//pkg/util/hack",
         "//pkg/util/logutil",

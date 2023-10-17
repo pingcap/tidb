@@ -47,6 +47,7 @@ go_library(
         "//pkg/distsql",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/metrics",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
