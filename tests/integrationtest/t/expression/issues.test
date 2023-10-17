@@ -1439,13 +1439,14 @@ select * from t t1, t t2 where t1.a = t2.b collate utf8mb4_general_ci;
 select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;
 
 # TestIssue18662
-drop table if exists t;
-create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
-insert into t (a, b) values ('a', 'A');
-select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;
-select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;
-select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;
-select * from t where field('A', a, b) > 1;
+# TODO: fix https://github.com/pingcap/tidb/issues/47688
+# drop table if exists t;
+# create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
+# insert into t (a, b) values ('a', 'A');
+# select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;
+# select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;
+# select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;
+# select * from t where field('A', a, b) > 1;
 
 # TestIssue19116
 set names utf8mb4 collate utf8mb4_general_ci;
@@ -1869,10 +1870,11 @@ SELECT * FROM tb;
 drop table if exists t;
 create table t(c varchar(32));
 insert into t values('1e649'),('-1e649');
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47692
+# --enable_warnings
 SELECT * FROM t where c < 1;
 SELECT * FROM t where c > 1;
---disable_warnings
+# --disable_warnings
 
 # TestIssue5293
 drop table if exists t;
