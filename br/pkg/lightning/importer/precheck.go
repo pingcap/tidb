@@ -9,6 +9,7 @@ import (
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
+	pd "github.com/tikv/pd/client"
 )
 
 type precheckContextKey string
@@ -29,7 +30,8 @@ type PrecheckItemBuilder struct {
 }
 
 // NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+// pdCli **must not** be nil for local backend
+func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, pdCli pd.Client, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
 	var gerr error
 	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
@@ -39,7 +41,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

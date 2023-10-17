@@ -203,6 +203,7 @@ type Controller struct {
 	engineMgr     backend.EngineManager
 	backend       backend.Backend
 	db            *sql.DB
+	pdCli         pd.Client
 
 	alterTableLock sync.Mutex
 	sysVars        map[string]string
@@ -332,6 +333,7 @@ func NewImportControllerWithPauser(
 
 	var encodingBuilder encode.EncodingBuilder
 	var backendObj backend.Backend
+	var pdCli pd.Client
 	switch cfg.TikvImporter.Backend {
 	case config.BackendTiDB:
 		encodingBuilder = tidb.NewEncodingBuilder()
@@ -347,9 +349,13 @@ func NewImportControllerWithPauser(
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
 		}
+		pdCli, err = pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
-			if err := tikv.CheckTiKVVersion(ctx, tls, cfg.TiDB.PdAddr, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
+			if err := tikv.CheckTiKVVersion(ctx, tls, pdCli.GetLeaderAddr(), minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {
 				if berrors.Is(err, berrors.ErrVersionMismatch) {
 					log.FromContext(ctx).Warn("TiKV version doesn't support duplicate resolution. The resolution algorithm will fall back to 'none'", zap.Error(err))
 					cfg.TikvImporter.DuplicateResolution = config.DupeResAlgNone
@@ -399,7 +405,7 @@ func NewImportControllerWithPauser(
 
 	var wrapper backend.TargetInfoGetter
 	if cfg.TikvImporter.Backend == config.BackendLocal {
-		wrapper = local.NewTargetInfoGetter(tls, db, cfg.TiDB.PdAddr)
+		wrapper = local.NewTargetInfoGetter(tls, db, pdCli)
 	} else {
 		wrapper = tidb.NewTargetInfoGetter(db)
 	}
@@ -409,6 +415,7 @@ func NewImportControllerWithPauser(
 		db:      db,
 		tls:     tls,
 		backend: wrapper,
+		pdCli:   pdCli,
 	}
 	preInfoGetter, err := NewPreImportInfoGetter(
 		cfg,
@@ -438,6 +445,7 @@ func NewImportControllerWithPauser(
 		pauser:        p.Pauser,
 		engineMgr:     backend.MakeEngineManager(backendObj),
 		backend:       backendObj,
+		pdCli:         pdCli,
 		db:            db,
 		sysVars:       common.DefaultImportantVariables,
 		tls:           tls,
@@ -473,6 +481,9 @@ func NewImportControllerWithPauser(
 func (rc *Controller) Close() {
 	rc.backend.Close()
 	_ = rc.db.Close()
+	if rc.pdCli != nil {
+		rc.pdCli.Close()
+	}
 }
 
 // Run starts the restore task.
@@ -1925,7 +1936,7 @@ func (rc *Controller) fullCompact(ctx context.Context) error {
 }
 
 func (rc *Controller) doCompact(ctx context.Context, level int32) error {
-	tls := rc.tls.WithHost(rc.cfg.TiDB.PdAddr)
+	tls := rc.tls.WithHost(rc.pdCli.GetLeaderAddr())
 	return tikv.ForAllStores(
 		ctx,
 		tls,
