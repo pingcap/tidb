@@ -24,6 +24,7 @@ import (
 
 type killSignal = uint32
 
+// KillSignal types.
 const (
 	UnspecifiedKillSignal killSignal = iota
 	QueryInterrupted
