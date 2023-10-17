@@ -1120,7 +1120,7 @@ var defaultSysVars = []*SysVar{
 				// On tidbcloud dedicated cluster with the default configuration, if an user modify
 				// @@global.require_secure_transport=on, he can not login the cluster anymore!
 				// A workaround for this is making require_secure_transport read-only for that case.
-				// SEM(secure enhanced mode) is enabled by default with only that settings.
+				// SEM(security enhanced mode) is enabled by default with only that settings.
 				cfg := config.GetGlobalConfig()
 				if cfg.Security.EnableSEM {
 					return "", errors.New("require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
