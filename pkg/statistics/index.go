@@ -147,8 +147,7 @@ func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistCol
 		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
 		return true
 	}
-	totalCount = idxStats.TotalRowCount()
-	return (coll.Pseudo) || totalCount == 0
+	return idxStats == nil || coll.Pseudo || idxStats.TotalRowCount() == 0
 }
 
 // EvictAllStats evicts all stats
