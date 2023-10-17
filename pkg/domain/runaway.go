@@ -313,7 +313,7 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 		rs, err := exec.ExecuteInternal(ctx, `SELECT LAST_INSERT_ID();`)
 		if err == nil {
 			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-			rs.Close()
+			err = rs.Close()
 			if err == nil && len(rows) == 1 {
 				return rows[0].GetUint64(0), nil
 			}
