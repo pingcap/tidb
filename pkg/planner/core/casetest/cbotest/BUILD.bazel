@@ -20,7 +20,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
-        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",

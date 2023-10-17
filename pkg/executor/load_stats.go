@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -79,7 +79,7 @@ func (*LoadStatsExec) Open(context.Context) error {
 
 // Update updates the stats of the corresponding table according to the data.
 func (e *LoadStatsInfo) Update(data []byte) error {
-	jsonTbl := &storage.JSONTable{}
+	jsonTbl := &util.JSONTable{}
 	if err := json.Unmarshal(data, jsonTbl); err != nil {
 		return errors.Trace(err)
 	}

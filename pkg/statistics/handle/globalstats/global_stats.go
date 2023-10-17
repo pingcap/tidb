@@ -30,8 +30,6 @@ import (
 )
 
 const (
-	// TiDBGlobalStats represents the global-stats for a partitioned table.
-	TiDBGlobalStats = "global"
 	// MaxPartitionMergeBatchSize indicates the max batch size for a worker to merge partition stats
 	MaxPartitionMergeBatchSize = 256
 )

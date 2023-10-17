@@ -32,7 +32,7 @@ go_library(
         "//pkg/meta",
         "//pkg/parser/model",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/ranger",
