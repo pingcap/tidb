@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -246,7 +245,7 @@ func (e *CommandDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if e.cursor >= len(e.jobIDs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobIDs)-e.cursor)
+	numCurBatch := min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendString(0, strconv.FormatInt(e.jobIDs[i], 10))
 		if e.errs != nil && e.errs[i] != nil {
@@ -621,7 +620,7 @@ func (e *ShowDDLJobQueriesExec) Next(_ context.Context, req *chunk.Chunk) error 
 	if len(e.jobIDs) >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	numCurBatch := min(req.Capacity(), len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			if id == e.jobs[i].ID {
@@ -713,7 +712,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(_ context.Context, req *chunk.Chun
 	if int(e.offset) > len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	numCurBatch := min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		// i is make true to be >= int(e.offset)
 		if i >= int(e.offset+e.limit) {
@@ -763,7 +762,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 
 	// Append running ddl jobs.
 	if e.cursor < len(e.runningJobs) {
-		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
+		numCurBatch := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], nil)
 		}
@@ -776,7 +775,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if count < req.Capacity() {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
-		num = mathutil.Min(num, remainNum)
+		num = min(num, remainNum)
 		e.cacheJobs, err = e.historyJobIter.GetLastJobs(num, e.cacheJobs)
 		if err != nil {
 			return err
@@ -942,7 +941,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	taskCh := make(chan *IndexLookUpExecutor, len(e.srcs))
 	failure := atomicutil.NewBool(false)
-	concurrency := mathutil.Min(3, len(e.srcs))
+	concurrency := min(3, len(e.srcs))
 	var wg util.WaitGroupWrapper
 	for _, src := range e.srcs {
 		taskCh <- src
@@ -1422,7 +1421,7 @@ func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
 		limitRequired = chk.RequiredRows()
 	}
 
-	return chk.SetRequiredRows(mathutil.Min(limitTotal, limitRequired), e.MaxChunkSize())
+	return chk.SetRequiredRows(min(limitTotal, limitRequired), e.MaxChunkSize())
 }
 
 func init() {
