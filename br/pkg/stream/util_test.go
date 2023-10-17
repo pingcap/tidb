@@ -23,12 +23,20 @@ func TestDateFormat(t *testing.T) {
 			434605479096221697,
 			"2022-07-15 20:32:12.734 +0800",
 		},
+		{
+			434605479096221697,
+			"2022-07-15 20:32:12 +0800",
+		},
 	}
 
 	timeZone, _ := time.LoadLocation("Asia/Shanghai")
 	for _, ca := range cases {
-		date := FormatDate(oracle.GetTimeFromTS(ca.ts).In(timeZone))
+		ts := oracle.GetTimeFromTS(ca.ts).In(timeZone)
+		date := FormatDate(ts)
 		require.Equal(t, ca.target, date)
+		ts2, err := ParseDate(date)
+		require.NoError(t, err)
+		require.Equal(t, ts, ts2.In(timeZone))
 	}
 }
 
