@@ -72,11 +72,11 @@ func (*MockSchemaSyncer) WatchGlobalSchemaVer(context.Context) {}
 
 // UpdateSelfVersion implements SchemaSyncer.UpdateSelfVersion interface.
 func (s *MockSchemaSyncer) UpdateSelfVersion(_ context.Context, jobID int64, version int64) error {
-	failpoint.Inject("mockUpdateMDLToETCDError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockUpdateMDLToETCDError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(errors.New("mock update mdl to etcd error"))
+			return errors.New("mock update mdl to etcd error")
 		}
-	})
+	}
 	if variable.EnableMDL.Load() {
 		s.mdlSchemaVersions.Store(jobID, version)
 	} else {
@@ -118,11 +118,11 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 	for {
 		select {
 		case <-ctx.Done():
-			failpoint.Inject("checkOwnerCheckAllVersionsWaitTime", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("checkOwnerCheckAllVersionsWaitTime")); _err_ == nil {
 				if v.(bool) {
 					panic("shouldn't happen")
 				}
-			})
+			}
 			return errors.Trace(ctx.Err())
 		case <-ticker.C:
 			if variable.EnableMDL.Load() {
@@ -171,12 +171,12 @@ func (s *MockStateSyncer) Init(context.Context) error {
 
 // UpdateGlobalState implements StateSyncer.UpdateGlobalState interface.
 func (s *MockStateSyncer) UpdateGlobalState(_ context.Context, stateInfo *syncer.StateInfo) error {
-	failpoint.Inject("mockUpgradingState", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockUpgradingState")); _err_ == nil {
 		if val.(bool) {
 			clusterState.Store(stateInfo)
-			failpoint.Return(nil)
+			return nil
 		}
-	})
+	}
 	s.globalVerCh <- clientv3.WatchResponse{}
 	clusterState.Store(stateInfo)
 	return nil

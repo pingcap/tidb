@@ -228,13 +228,13 @@ func (dm *Manager) failTask(task *proto.Task, err error) {
 
 func (dm *Manager) gcSubtaskHistoryTableLoop() {
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
-	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("historySubtaskTableGcInterval")); _err_ == nil {
 		if seconds, ok := val.(int); ok {
 			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
 		}
 
 		<-WaitTaskFinished
-	})
+	}
 
 	logutil.Logger(dm.ctx).Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
@@ -328,9 +328,9 @@ func (dm *Manager) doCleanUpRoutine() {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
 		return
 	}
-	failpoint.Inject("WaitCleanUpFinished", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("WaitCleanUpFinished")); _err_ == nil {
 		WaitCleanUpFinished <- struct{}{}
-	})
+	}
 	logutil.Logger(dm.ctx).Info("cleanUp routine success")
 }
 

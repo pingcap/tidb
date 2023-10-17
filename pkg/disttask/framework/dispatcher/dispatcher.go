@@ -164,16 +164,16 @@ func (d *BaseDispatcher) scheduleTask() {
 			if err != nil {
 				continue
 			}
-			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("cancelTaskAfterRefreshTask")); _err_ == nil {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
 					err := d.taskMgr.CancelGlobalTask(d.Task.ID)
 					if err != nil {
 						logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 					}
 				}
-			})
+			}
 
-			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("pausePendingTask")); _err_ == nil {
 				if val.(bool) && d.Task.State == proto.TaskStatePending {
 					_, err := d.taskMgr.PauseTask(d.Task.Key)
 					if err != nil {
@@ -181,9 +181,9 @@ func (d *BaseDispatcher) scheduleTask() {
 					}
 					d.Task.State = proto.TaskStatePausing
 				}
-			})
+			}
 
-			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("pauseTaskAfterRefreshTask")); _err_ == nil {
 				if val.(bool) && d.Task.State == proto.TaskStateRunning {
 					_, err := d.taskMgr.PauseTask(d.Task.Key)
 					if err != nil {
@@ -191,7 +191,7 @@ func (d *BaseDispatcher) scheduleTask() {
 					}
 					d.Task.State = proto.TaskStatePausing
 				}
-			})
+			}
 
 			switch d.Task.State {
 			case proto.TaskStateCancelling:
@@ -222,13 +222,13 @@ func (d *BaseDispatcher) scheduleTask() {
 				logutil.Logger(d.logCtx).Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("mockOwnerChange")); _err_ == nil {
 				if val.(bool) {
 					logutil.Logger(d.logCtx).Info("mockOwnerChange called")
 					MockOwnerChange()
 					time.Sleep(time.Second)
 				}
-			})
+			}
 		}
 	}
 }
@@ -262,11 +262,11 @@ var MockDMLExecutionOnPausedState func(task *proto.Task)
 // handle task in paused state
 func (d *BaseDispatcher) onPaused() error {
 	logutil.Logger(d.logCtx).Info("on paused state", zap.String("state", d.Task.State), zap.Int64("stage", d.Task.Step))
-	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionOnPausedState")); _err_ == nil {
 		if val.(bool) {
 			MockDMLExecutionOnPausedState(d.Task)
 		}
-	})
+	}
 	return nil
 }
 
@@ -285,9 +285,9 @@ func (d *BaseDispatcher) onResuming() error {
 		// Finish the resuming process.
 		logutil.Logger(d.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
 		err := d.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
-		failpoint.Inject("syncAfterResume", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("syncAfterResume")); _err_ == nil {
 			TestSyncChan <- struct{}{}
-		})
+		}
 		return err
 	}
 
@@ -426,12 +426,12 @@ func (d *BaseDispatcher) updateTask(taskState string, newSubTasks []*proto.Subta
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
 
-	failpoint.Inject("cancelBeforeUpdate", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("cancelBeforeUpdate")); _err_ == nil {
 		err := d.taskMgr.CancelGlobalTask(d.Task.ID)
 		if err != nil {
 			logutil.Logger(d.logCtx).Error("cancel task failed", zap.Error(err))
 		}
-	})
+	}
 
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
@@ -488,9 +488,9 @@ func (*BaseDispatcher) nextStepSubtaskDispatched(*proto.Task) bool {
 
 func (d *BaseDispatcher) onNextStage() (err error) {
 	/// dynamic dispatch subtasks.
-	failpoint.Inject("mockDynamicDispatchErr", func() {
-		failpoint.Return(errors.New("mockDynamicDispatchErr"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockDynamicDispatchErr")); _err_ == nil {
+		return errors.New("mockDynamicDispatchErr")
+	}
 
 	nextStep := d.GetNextStep(d, d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
@@ -544,9 +544,9 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			return d.handlePlanErr(err)
 		}
 
-		failpoint.Inject("mockDynamicDispatchErr1", func() {
-			failpoint.Return(errors.New("mockDynamicDispatchErr1"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("mockDynamicDispatchErr1")); _err_ == nil {
+			return errors.New("mockDynamicDispatchErr1")
+		}
 
 		// 4. dispatch batch of subtasks to EligibleInstances.
 		err = d.dispatchSubTask(nextStep, metas)
@@ -558,9 +558,9 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 			break
 		}
 
-		failpoint.Inject("mockDynamicDispatchErr2", func() {
-			failpoint.Return(errors.New("mockDynamicDispatchErr2"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("mockDynamicDispatchErr2")); _err_ == nil {
+			return errors.New("mockDynamicDispatchErr2")
+		}
 	}
 	return nil
 }

@@ -199,11 +199,11 @@ func (e *HashAggExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *HashAggExec) Open(ctx context.Context) error {
-	failpoint.Inject("mockHashAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockHashAggExecBaseExecutorOpenReturnedError")); _err_ == nil {
 		if val, _ := val.(bool); val {
-			failpoint.Return(errors.New("mock HashAggExec.baseExecutor.Open returned error"))
+			return errors.New("mock HashAggExec.baseExecutor.Open returned error")
 		}
-	})
+	}
 
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
@@ -232,7 +232,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(AggPartialResultMapper)
 	e.bInMap = 0
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice*(1<<e.bInMap) + setSize)
 	e.groupKeyBuffer = make([][]byte, 0, 8)
 	e.childResult = exec.TryNewCacheChunk(e.Children(0))
@@ -287,7 +287,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			groupKey:          make([][]byte, 0, 8),
 		}
 		// There is a bucket in the empty partialResultsMap.
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
 		if e.stats != nil {
 			w.stats = &AggWorkerStat{}
@@ -377,7 +377,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			e.memTracker.Consume(-mSize)
 			return
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		e.memTracker.Consume(chk.MemoryUsage() - mSize)
 		input.giveBackCh <- chk
 	}
@@ -458,11 +458,11 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 		e.prepared = true
 	}
 
-	failpoint.Inject("parallelHashAggError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("parallelHashAggError")); _err_ == nil {
 		if val, _ := val.(bool); val {
-			failpoint.Return(errors.New("HashAggExec.parallelExec error"))
+			return errors.New("HashAggExec.parallelExec error")
 		}
-	})
+	}
 
 	if e.executed {
 		return nil
@@ -557,17 +557,17 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		if err := e.getNextChunk(ctx); err != nil {
 			return err
 		}
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 		if err != nil {
 			return err
 		}
 
-		failpoint.Inject("unparallelHashAggError", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("unparallelHashAggError")); _err_ == nil {
 			if val, _ := val.(bool); val {
-				failpoint.Return(errors.New("HashAggExec.unparallelExec error"))
+				return errors.New("HashAggExec.unparallelExec error")
 			}
-		})
+		}
 
 		// no more data.
 		if e.childResult.NumRows() == 0 {
@@ -611,7 +611,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 			}
 		}
 
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 		e.memTracker.Consume(allMemDelta)
 	}
 }
@@ -672,7 +672,7 @@ func (e *HashAggExec) getPartialResults(groupKey string) []aggfuncs.PartialResul
 		e.partialResultMap[groupKey] = partialResults
 		allMemDelta += int64(len(groupKey))
 	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	e.memTracker.Consume(allMemDelta)
 	return partialResults
 }

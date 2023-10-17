@@ -386,11 +386,11 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 				elemID := ea.allocForIndexID(tableID, indexID)
 				return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
 			}
-			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("checkDropGlobalIndex")); _err_ == nil {
 				if val.(bool) {
 					panic("drop global index must not delete partition index range")
 				}
-			})
+			}
 			for _, pid := range partitionIDs {
 				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)

@@ -428,12 +428,12 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
-		failpoint.Inject("mockScanRecordError", func(_ failpoint.Value) {
-			failpoint.Return(errors.New("mock scan record error"))
-		})
-		failpoint.Inject("scanRecordExec", func(_ failpoint.Value) {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockScanRecordError")); _err_ == nil {
+			return errors.New("mock scan record error")
+		}
+		if _, _err_ := failpoint.Eval(_curpkg_("scanRecordExec")); _err_ == nil {
 			OperatorCallBackForTest()
-		})
+		}
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
@@ -646,12 +646,12 @@ func (w *indexIngestWorker) Close() {
 
 // WriteLocal will write index records to lightning engine.
 func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
-	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
-		failpoint.Return(0, nil, errors.New("mock write local error"))
-	})
-	failpoint.Inject("writeLocalExec", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("mockWriteLocalError")); _err_ == nil {
+		return 0, nil, errors.New("mock write local error")
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("writeLocalExec")); _err_ == nil {
 		OperatorCallBackForTest()
-	})
+	}
 
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
@@ -730,9 +730,9 @@ func (s *indexWriteResultSink) flush() error {
 	if s.backendCtx == nil {
 		return nil
 	}
-	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("mock flush error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockFlushError")); _err_ == nil {
+		return errors.New("mock flush error")
+	}
 	flushMode := ingest.FlushModeForceLocalAndCheckDiskQuota
 	if s.tbl.GetPartitionedTable() != nil {
 		flushMode = ingest.FlushModeForceGlobal

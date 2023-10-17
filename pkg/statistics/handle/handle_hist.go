@@ -61,14 +61,14 @@ type NeededItemTask struct {
 func (h *Handle) SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error {
 	remainedItems := h.removeHistLoadedColumns(neededHistItems)
 
-	failpoint.Inject("assertSyncLoadItems", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertSyncLoadItems")); _err_ == nil {
 		if sc.OptimizeTracer != nil {
 			count := val.(int)
 			if len(remainedItems) != count {
 				panic("remained items count wrong")
 			}
 		}
-	})
+	}
 
 	if len(remainedItems) <= 0 {
 		return nil
@@ -277,12 +277,12 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 
 // readStatsForOneItem reads hist for one column/index, TODO load data via kv-get asynchronously
 func (*Handle) readStatsForOneItem(sctx sessionctx.Context, item model.TableItemID, w *statsWrapper) (*statsWrapper, error) {
-	failpoint.Inject("mockReadStatsForOnePanic", nil)
-	failpoint.Inject("mockReadStatsForOneFail", func(val failpoint.Value) {
+	failpoint.Eval(_curpkg_("mockReadStatsForOnePanic"))
+	if val, _err_ := failpoint.Eval(_curpkg_("mockReadStatsForOneFail")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("gofail ReadStatsForOne error"))
+			return nil, errors.New("gofail ReadStatsForOne error")
 		}
-	})
+	}
 	c := w.col
 	index := w.idx
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch

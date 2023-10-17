@@ -115,12 +115,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		return err
 	}
 
-	failpoint.Inject("cancellableCtx", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("cancellableCtx")); _err_ == nil {
 		// KILL is not implemented in testkit, so we use a fail-point to simulate it.
 		newCtx, cancel := context.WithCancel(ctx)
 		ctx = newCtx
 		TestCancelFunc = cancel
-	})
+	}
 	// todo: we don't need Job now, remove it later.
 	parentCtx := ctx
 	if e.controller.Detached {
@@ -158,9 +158,9 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
 			_ = e.doImport(ctx, se, distImporter, task)
-			failpoint.Inject("testDetachedTaskFinished", func() {
+			if _, _err_ := failpoint.Eval(_curpkg_("testDetachedTaskFinished")); _err_ == nil {
 				TestDetachedTaskFinished.Store(true)
-			})
+			}
 		}()
 		return e.fillJobInfo(ctx, jobID, req)
 	}

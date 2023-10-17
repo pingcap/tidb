@@ -284,12 +284,12 @@ func generateImportSpecs(ctx context.Context, p *LogicalPlan) ([]planner.Pipelin
 }
 
 func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
-	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("forceMergeSort")); _err_ == nil {
 		in := val.(string)
 		if in == kvGroup || in == "*" {
-			failpoint.Return(false)
+			return false
 		}
-	})
+	}
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
@@ -340,8 +340,8 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if err != nil {
 		return nil, err
 	}
-	failpoint.Inject("mockWriteIngestSpecs", func() {
-		failpoint.Return([]planner.PipelineSpec{
+	if _, _err_ := failpoint.Eval(_curpkg_("mockWriteIngestSpecs")); _err_ == nil {
+		return []planner.PipelineSpec{
 			&WriteIngestSpec{
 				WriteIngestStepMeta: &WriteIngestStepMeta{
 					KVGroup: dataKVGroup,
@@ -352,8 +352,8 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 					KVGroup: "1",
 				},
 			},
-		}, nil)
-	})
+		}, nil
+	}
 	specs := make([]planner.PipelineSpec, 0, 16)
 	for kvGroup, kvMeta := range kvMetas {
 		splitter, err1 := getRangeSplitter(ctx, controller.GlobalSortStore, kvMeta)
