@@ -13,6 +13,10 @@ func FormatDate(ts time.Time) string {
 	return ts.Format(DATE_FORMAT)
 }
 
+func ParseDate(date string) (time.Time, error) {
+	return time.Parse(DATE_FORMAT, date)
+}
+
 func IsMetaDBKey(key []byte) bool {
 	return strings.HasPrefix(string(key), "mDB")
 }

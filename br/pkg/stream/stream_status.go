@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -419,6 +421,21 @@ func (ctl *StatusController) PrintStatusOfTask(ctx context.Context, name string)
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("only-checkpoint-ts-with-check", func(val failpoint.Value) {
+		if nowTs, ok := val.(string); ok && len(tasks) > 0 && len(nowTs) > 0 {
+			checkpointTime := oracle.GetTimeFromTS(tasks[0].globalCheckpoint)
+			nowTime, err := ParseDate(nowTs)
+			if err != nil {
+				failpoint.Return(err)
+			}
+			if checkpointTime.After(nowTime) {
+				os.Exit(50)
+			} else {
+				os.Exit(51)
+			}
+			failpoint.Return(nil)
+		}
+	})
 	ctl.printToView(tasks)
 	return nil
 }
