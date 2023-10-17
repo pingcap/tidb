@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -1222,7 +1221,7 @@ func getColsNDVLowerBoundFromHistColl(colUIDs []int64, histColl *statistics.Hist
 		if colStats == nil || !colStats.IsStatsInitialized() {
 			continue
 		}
-		maxNDV = mathutil.Max(maxNDV, colStats.NDV)
+		maxNDV = max(maxNDV, colStats.NDV)
 	}
 	return maxNDV
 }
