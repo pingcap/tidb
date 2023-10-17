@@ -54,7 +54,7 @@ go_library(
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle",
-        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/store/helper",
         "//pkg/telemetry",
         "//pkg/ttl/cache",
