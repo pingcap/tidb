@@ -446,7 +446,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		failpoint.Inject("scanRecordExec", func(_ failpoint.Value) {
 			OperatorCallBackForTest()
 		})
-		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
+		rs, err := buildTableScan(w.seq, w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
 		}

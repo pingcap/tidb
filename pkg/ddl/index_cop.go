@@ -139,9 +139,9 @@ func (c *copReqSender) run() {
 func scanRecords(seq int, p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
-
+	defer util2.InjectSpan(p.copCtx.GetBase().JobID, fmt.Sprintf("op-scan-records-%d", seq))()
 	return wrapInBeginRollback(se, func(startTS uint64) error {
-		rs, err := buildTableScan(p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
+		rs, err := buildTableScan(seq, p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
 		if err != nil {
 			return err
 		}
@@ -273,7 +273,8 @@ func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
 	c.srcChkPool <- chk
 }
 
-func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
+func buildTableScan(seq int, ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
+	defer util2.InjectSpan(c.JobID, fmt.Sprintf("op-scan-records-build-%d", seq))()
 	dagPB, err := buildDAGPB(c.SessionContext, c.TableInfo, c.ColumnInfos)
 	if err != nil {
 		return nil, err
@@ -305,7 +306,7 @@ func fetchTableScanResult(
 	result distsql.SelectResult,
 	chk *chunk.Chunk,
 ) (bool, error) {
-	defer util2.InjectSpan(copCtx.JobID, fmt.Sprintf("op-read-into-chunk-%d", seq))()
+	defer util2.InjectSpan(copCtx.JobID, fmt.Sprintf("op-scan-records-next-%d", seq))()
 	err := result.Next(ctx, chk)
 	if err != nil {
 		return false, errors.Trace(err)
