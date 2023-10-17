@@ -16,7 +16,6 @@ package util
 
 import (
 	"context"
-	"github.com/pingcap/tipb/go-tipb"
 	"strconv"
 	"time"
 
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
