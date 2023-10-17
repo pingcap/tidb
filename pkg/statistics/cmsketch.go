@@ -440,30 +440,21 @@ func DecodeCMSketchAndTopN(data []byte, topNRows []chunk.Row) (*CMSketch, *TopN,
 	if data == nil && len(topNRows) == 0 {
 		return nil, nil, nil
 	}
-	pbTopN := make([]*tipb.CMSketchTopN, 0, len(topNRows))
-	for _, row := range topNRows {
-		data := make([]byte, len(row.GetBytes(0)))
-		copy(data, row.GetBytes(0))
-		pbTopN = append(pbTopN, &tipb.CMSketchTopN{
-			Data:  data,
-			Count: row.GetUint64(1),
-		})
-	}
 	if len(data) == 0 {
-		return nil, TopNFromProto(pbTopN), nil
+		return nil, DecodeTopN(topNRows), nil
 	}
-	p := &tipb.CMSketch{}
-	err := p.Unmarshal(data)
+	cm, err := DecodeCMSketch(data)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	p.TopN = pbTopN
-	cm, topN := CMSketchAndTopNFromProto(p)
-	return cm, topN, nil
+	return cm, DecodeTopN(topNRows), nil
 }
 
 // DecodeTopN decodes a TopN from the given byte slice.
 func DecodeTopN(topNRows []chunk.Row) *TopN {
+	if len(topNRows) == 0 {
+		return nil
+	}
 	topN := NewTopN(len(topNRows))
 	for _, row := range topNRows {
 		data := make([]byte, len(row.GetBytes(0)))
