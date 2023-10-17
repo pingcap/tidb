@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -18,7 +19,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	handle "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -187,7 +187,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			}
 			mockTblList = append(mockTblList, mockTbl)
 
-			mockStats := handle.JSONTable{
+			mockStats := util.JSONTable{
 				DatabaseName: dbName.String(),
 				TableName:    tblName.String(),
 			}

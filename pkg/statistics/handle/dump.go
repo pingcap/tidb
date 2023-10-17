@@ -39,7 +39,7 @@ type TestLoadStatsErr struct{}
 
 // DumpStatsToJSON dumps statistic to json.
 func (h *Handle) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
-	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*storage.JSONTable, error) {
+	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*utilstats.JSONTable, error) {
 	var snapshot uint64
 	if historyStatsExec != nil {
 		sctx := historyStatsExec.(sessionctx.Context)
@@ -56,7 +56,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 	tableInfo *model.TableInfo,
 	snapshot uint64,
 ) (
-	jt *storage.JSONTable,
+	jt *utilstats.JSONTable,
 	fallbackTbls []string,
 	err error,
 ) {
@@ -83,10 +83,10 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 		}
 		return jt, fallbackTbls, err
 	}
-	jsonTbl := &storage.JSONTable{
+	jsonTbl := &utilstats.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Partitions:   make(map[string]*storage.JSONTable, len(pi.Definitions)),
+		Partitions:   make(map[string]*utilstats.JSONTable, len(pi.Definitions)),
 	}
 	for _, def := range pi.Definitions {
 		tbl, fallback, err := h.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
@@ -113,7 +113,7 @@ func (h *Handle) DumpHistoricalStatsBySnapshot(
 }
 
 // DumpStatsToJSONBySnapshot dumps statistic to json.
-func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*storage.JSONTable, error) {
+func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*utilstats.JSONTable, error) {
 	pruneMode, err := h.GetCurrentPruneMode()
 	if err != nil {
 		return nil, err
@@ -123,10 +123,10 @@ func (h *Handle) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.Table
 	if pi == nil {
 		return h.tableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
 	}
-	jsonTbl := &storage.JSONTable{
+	jsonTbl := &utilstats.JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Partitions:   make(map[string]*storage.JSONTable, len(pi.Definitions)),
+		Partitions:   make(map[string]*utilstats.JSONTable, len(pi.Definitions)),
 	}
 	// dump partition stats only if in static mode or enable dumpPartitionStats flag in dynamic mode
 	if !isDynamicMode || dumpPartitionStats {
@@ -160,7 +160,7 @@ func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
 	physicalID int64,
 	snapshot uint64,
 ) (
-	*storage.JSONTable,
+	*utilstats.JSONTable,
 	bool,
 	error,
 ) {
@@ -179,7 +179,7 @@ func (h *Handle) getTableHistoricalStatsToJSONWithFallback(
 	return jt, false, nil
 }
 
-func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *storage.JSONTable, exist bool, err error) {
+func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *utilstats.JSONTable, exist bool, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
 		jt, exist, err = storage.TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
 		return err
@@ -187,7 +187,7 @@ func (h *Handle) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (
 	return
 }
 
-func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error) {
+func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*utilstats.JSONTable, error) {
 	tbl, err := h.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
 	if err != nil || tbl == nil {
 		return nil, err
@@ -209,7 +209,7 @@ func (h *Handle) tableStatsToJSON(dbName string, tableInfo *model.TableInfo, phy
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 // In final, it will also udpate the stats cache.
 func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *storage.JSONTable, concurrencyForPartition uint8) error {
+	jsonTbl *utilstats.JSONTable, concurrencyForPartition uint8) error {
 	if err := h.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
 		return errors.Trace(err)
 	}
@@ -218,7 +218,7 @@ func (h *Handle) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema
 
 // LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *storage.JSONTable, concurrencyForPartition uint8) error {
+	jsonTbl *utilstats.JSONTable, concurrencyForPartition uint8) error {
 	nCPU := uint8(runtime.GOMAXPROCS(0))
 	if concurrencyForPartition == 0 {
 		concurrencyForPartition = nCPU / 2 // default
@@ -266,7 +266,7 @@ func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.In
 
 					loadFunc := h.loadStatsFromJSON
 					if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
-						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *storage.JSONTable) error)
+						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *utilstats.JSONTable) error)
 					}
 
 					err := loadFunc(tableInfo, def.ID, tbl)
@@ -295,7 +295,7 @@ func (h *Handle) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.In
 	return nil
 }
 
-func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+func (h *Handle) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *utilstats.JSONTable) error {
 	tbl, err := storage.TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
 	if err != nil {
 		return errors.Trace(err)

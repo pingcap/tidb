@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"sync"
 	"time"
 
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	handle "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
@@ -153,7 +153,7 @@ type Table struct {
 	TotalBytes      uint64
 	Files           []*backuppb.File
 	TiFlashReplicas int
-	Stats           *handle.JSONTable
+	Stats           *util.JSONTable
 }
 
 // NoChecksum checks whether the table has a calculated checksum.
@@ -344,9 +344,9 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					return errors.Trace(err)
 				}
 			}
-			var stats *handle.JSONTable
+			var stats *util.JSONTable
 			if s.Stats != nil {
-				stats = &handle.JSONTable{}
+				stats = &util.JSONTable{}
 				if err := json.Unmarshal(s.Stats, stats); err != nil {
 					return errors.Trace(err)
 				}
