@@ -284,7 +284,7 @@ func TestFDSet_AddEquivalence(t *testing.T) {
 	require.Equal(t, 0, len(fd.EquivalenceCols()))
 
 	fd.AddEquivalence(intset.NewFastIntSet(1), intset.NewFastIntSet(2)) // {a} == {b}
-	require.Equal(t, 1, len(fd.fdEdges))                  // res: {a} == {b}
+	require.Equal(t, 1, len(fd.fdEdges))                                // res: {a} == {b}
 	require.Equal(t, 1, len(fd.EquivalenceCols()))
 	require.True(t, fd.fdEdges[0].strict)
 	require.True(t, fd.fdEdges[0].equiv)
@@ -293,7 +293,7 @@ func TestFDSet_AddEquivalence(t *testing.T) {
 	require.Equal(t, "(1,2)", fd.EquivalenceCols()[0].String())
 
 	fd.AddEquivalence(intset.NewFastIntSet(3), intset.NewFastIntSet(4)) // {c} == {d}
-	require.Equal(t, 2, len(fd.fdEdges))                  // res: {a,b} == {a,b}, {c,d} == {c,d}
+	require.Equal(t, 2, len(fd.fdEdges))                                // res: {a,b} == {a,b}, {c,d} == {c,d}
 	require.Equal(t, 2, len(fd.EquivalenceCols()))
 	require.True(t, fd.fdEdges[0].strict)
 	require.True(t, fd.fdEdges[0].equiv)
@@ -306,9 +306,9 @@ func TestFDSet_AddEquivalence(t *testing.T) {
 	require.Equal(t, "(3,4)", fd.fdEdges[1].to.String())
 	require.Equal(t, "(3,4)", fd.EquivalenceCols()[1].String())
 
-	fd.AddConstants(intset.NewFastIntSet(4, 5))  // {} --> {d,e}
-	require.Equal(t, 3, len(fd.fdEdges))  // res: {a,b} == {a,b}, {c,d} == {c,d},{} --> {c,d,e}
-	require.True(t, fd.fdEdges[2].strict) // explain: constant closure is extended by equivalence {c,d} == {c,d}
+	fd.AddConstants(intset.NewFastIntSet(4, 5)) // {} --> {d,e}
+	require.Equal(t, 3, len(fd.fdEdges))        // res: {a,b} == {a,b}, {c,d} == {c,d},{} --> {c,d,e}
+	require.True(t, fd.fdEdges[2].strict)       // explain: constant closure is extended by equivalence {c,d} == {c,d}
 	require.False(t, fd.fdEdges[2].equiv)
 	require.Equal(t, "()", fd.fdEdges[2].from.String())
 	require.Equal(t, "(3-5)", fd.fdEdges[2].to.String())
