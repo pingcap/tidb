@@ -17,8 +17,12 @@ package sessiontest
 import (
 	"context"
 	"fmt"
+	"github.com/tikv/client-go/v2/tikv"
+	"math/rand"
 	"strconv"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -316,4 +320,45 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: (3|4|5).*", explain)
+}
+
+func TestBatchClientSendLoopPanic(t *testing.T) {
+	if !*realtikvtest.WithRealTiKV {
+		t.Skip("skip test since it's only work for tikv")
+	}
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TiKVClient.MaxBatchSize = 128
+	})
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table if not exists t (a int primary key, b int)")
+
+	var wg sync.WaitGroup
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tk := testkit.NewTestKit(t, store)
+			tk.MustExec("use test")
+			for j := 0; j < 100; j++ {
+				ctx, cancel := context.WithCancel(context.Background())
+				go func() {
+					// mock for kill query execution or timeout.
+					time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)+1))
+					cancel()
+				}()
+				rs, err := tk.ExecWithContext(ctx, "select * from t where a = 1")
+				if err == nil {
+					require.NotNil(t, rs)
+					session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+				} else {
+					require.Equal(t, context.Canceled, err)
+				}
+			}
+
+		}()
+	}
+	wg.Wait()
+	require.Equal(t, int64(0), tikv.GetBatchSendLoopPanicCounter())
 }
