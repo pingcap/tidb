@@ -1258,10 +1258,6 @@ commit;
 select a from t where id=1;
 a
 2
-change pump to node_state ='paused' for node_id 'pump1';
-Error 1105 (HY000): URL scheme must be http, https, unix, or unixs: 
-change drainer to node_state ='paused' for node_id 'drainer1';
-Error 1105 (HY000): URL scheme must be http, https, unix, or unixs: 
 drop table if exists select_limit;
 create table select_limit(id int not null default 1, name varchar(255), PRIMARY KEY(id));
 insert INTO select_limit VALUES (1, "hello");
