@@ -1365,6 +1365,10 @@ func (local *Backend) startWorker(
 			}
 
 			if err != nil {
+				log.FromContext(ctx).Error("execute job failed",
+					log.ShortError(err),
+					zap.Bool("lance test", ctx.Err() == nil),
+				)
 				return err
 			}
 		}
