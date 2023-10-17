@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"math"
 	"sort"
 	"sync/atomic"
@@ -707,9 +708,22 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 }
 
 func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
+	var (
+		collator collate.Collator
+		isIndex  bool
+	)
+	workingID := int64(-1)
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze worker panicked", zap.Any("recover", r), zap.Stack("stack"))
+			if workingID != -1 {
+				logutil.BgLogger().Error("additional info for investigating",
+					zap.Int64("table id", e.tableInfo.ID),
+					zap.Bool("is index", isIndex),
+					zap.Int64("working item id", workingID),
+					zap.String("possible collator", fmt.Sprintf("%T", collator)),
+				)
+			}
 			metrics.PanicCounter.WithLabelValues(metrics.LabelAnalyze).Inc()
 			resultCh <- getAnalyzePanicErr(r)
 		}
@@ -731,6 +745,8 @@ workLoop:
 			if !ok {
 				break workLoop
 			}
+			// We define the collator outside the loop for debugging the panic. Thus, we need to reset it each loop.
+			collator = nil
 			var collector *statistics.SampleCollector
 			if task.isColumn {
 				if e.colsInfo[task.slicePos].IsGenerated() && !e.colsInfo[task.slicePos].GeneratedStored {
@@ -738,12 +754,13 @@ workLoop:
 					topns[task.slicePos] = nil
 					continue
 				}
+				isIndex = false
+				workingID = e.colsInfo[task.slicePos].ID
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
 				e.memTracker.Consume(collectorMemSize)
-				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
 				// When it's new collation data, we need to use its collate key instead of original value because only
 				// the collate key can ensure the correct ordering.
@@ -787,6 +804,8 @@ workLoop:
 				var tmpDatum types.Datum
 				var err error
 				idx := e.indexes[task.slicePos-colLen]
+				isIndex = true
+				workingID = idx.ID
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
