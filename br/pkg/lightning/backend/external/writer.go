@@ -24,7 +24,6 @@ import (
 	"strconv"
 	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
@@ -269,9 +268,9 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 }
 
 type kvPos struct {
-	bufIdx int
-	offset int
-	length int
+	bufIdx int32
+	offset int32
+	length int32
 }
 
 // Writer is used to write data into external storage.
@@ -296,8 +295,7 @@ type Writer struct {
 	closed  bool
 
 	// Statistic information per batch.
-	batchSize  uint64
-	memorySize uint64
+	batchSize uint64
 
 	// Statistic information per 500 batches.
 	multiFileStats []MultipleFilesStat
@@ -337,10 +335,9 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	if len(w.byteBufs) == 0 || &(w.byteBufs[len(w.byteBufs)-1]) != &base {
 		w.byteBufs = append(w.byteBufs, base)
 	}
-	w.kvPoss = append(w.kvPoss, kvPos{bufIdx: len(w.byteBufs) - 1, offset: off, length: length})
+	w.kvPoss = append(w.kvPoss, kvPos{bufIdx: int32(len(w.byteBufs) - 1), offset: int32(off), length: int32(length)})
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
 	w.batchSize += uint64(length)
-	w.memorySize += uint64(length) + uint64(unsafe.Sizeof(kvPos{}))
 	return nil
 }
 
@@ -367,6 +364,7 @@ func (w *Writer) Close(ctx context.Context) error {
 
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
+		zap.Int("kv-cnt-cap", cap(w.kvPoss)),
 		zap.String("minKey", hex.EncodeToString(w.minKey)),
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
@@ -532,7 +530,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.kvBuffer.reset()
 	w.rc.reset()
 	w.batchSize = 0
-	w.memorySize = 0
 	return nil
 }
 
