@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "context",
+    srcs = ["context.go"],
+    importpath = "github.com/pingcap/tidb/pkg/types/context",
+    visibility = ["//visibility:public"],
+    deps = ["//pkg/util/intest"],
+)
+
+go_test(
+    name = "context_test",
+    timeout = "short",
+    srcs = ["context_test.go"],
+    embed = [":context"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

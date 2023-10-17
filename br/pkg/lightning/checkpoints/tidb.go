@@ -15,7 +15,7 @@
 package checkpoints
 
 import (
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
 // TidbDBInfo is the database info in TiDB.

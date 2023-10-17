@@ -31,10 +31,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/util/logutil"
-	"github.com/pingcap/tidb/util/size"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
 
@@ -385,7 +386,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	ts := time.Now()
-	var savedBytes uint64
+	savedBytes := w.batchSize
+
+	startTs := time.Now()
+	var startTsForWrite time.Time
 
 	defer func() {
 		w.currentSeq++
@@ -407,6 +411,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			zap.Duration("time", time.Since(ts)),
 			zap.Uint64("bytes", savedBytes),
 			zap.Any("rate", float64(savedBytes)/1024.0/1024.0/time.Since(ts).Seconds()))
+		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(time.Since(startTsForWrite).Seconds())
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / time.Since(startTsForWrite).Seconds())
+		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(time.Since(startTs).Seconds())
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / time.Since(startTs).Seconds())
 	}()
 
 	sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
@@ -419,6 +427,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		}
 		return false
 	})
+
+	startTsForWrite = time.Now()
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(time.Since(startTs).Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / time.Since(startTs).Seconds())
 
 	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
@@ -488,9 +500,6 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 
 // EngineWriter implements backend.EngineWriter interface.
 type EngineWriter struct {
-	// Only 1 writer is used for some kv group(data or some index), no matter
-	// how many routines are encoding data, so need to sync write to it.
-	sync.Mutex
 	w *Writer
 }
 
@@ -501,8 +510,6 @@ func NewEngineWriter(w *Writer) *EngineWriter {
 
 // AppendRows implements backend.EngineWriter interface.
 func (e *EngineWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
-	e.Lock()
-	defer e.Unlock()
 	kvs := kv.Rows2KvPairs(rows)
 	if len(kvs) == 0 {
 		return nil
@@ -524,7 +531,5 @@ func (e *EngineWriter) IsSynced() bool {
 
 // Close implements backend.EngineWriter interface.
 func (e *EngineWriter) Close(ctx context.Context) (backend.ChunkFlushStatus, error) {
-	e.Lock()
-	defer e.Unlock()
 	return nil, e.w.Close(ctx)
 }

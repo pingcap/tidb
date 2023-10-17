@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/pingcap/tidb/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"

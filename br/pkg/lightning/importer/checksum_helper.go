@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	"go.uber.org/zap"
 )
 
