@@ -2367,21 +2367,6 @@ func TestIssue45253(t *testing.T) {
 	tk.MustQuery(`SELECT c1 FROM t1 WHERE TO_BASE64('')`).Check(testkit.Rows())
 }
 
-<<<<<<< HEAD
-=======
-func TestIssue45378(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
-	tk.MustExec(`CREATE TABLE t1(c1 INT)`)
-	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
-
-	tk.MustQuery(`SELECT c1 FROM t1 WHERE UNHEX(2038330881)`).Check(testkit.Rows("1"))
-	tk.MustQuery(`SELECT c1 FROM t1 WHERE UNHEX(2038330881)`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-}
-
 func TestIssue46159(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2394,34 +2379,6 @@ func TestIssue46159(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip plan-cache: plan rebuild failed, rebuild to get an unsafe range"))
 }
 
-func TestBuiltinFuncFlen(t *testing.T) {
-	// same as TestIssue45378 and TestIssue45253
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`CREATE TABLE t1(c1 INT)`)
-	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
-
-	funcs := []string{ast.Abs, ast.Acos, ast.Asin, ast.Atan, ast.Ceil, ast.Ceiling, ast.Cos,
-		ast.CRC32, ast.Degrees, ast.Floor, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Unhex,
-		ast.Radians, ast.Rand, ast.Round, ast.Sign, ast.Sin, ast.Sqrt, ast.Tan, ast.SM3,
-		ast.Quote, ast.RTrim, ast.ToBase64, ast.Trim, ast.Upper, ast.Ucase, ast.Hex,
-		ast.BitLength, ast.CharLength, ast.Compress, ast.MD5, ast.SHA1, ast.SHA}
-	args := []string{"2038330881", "'2038330881'", "'牵'", "-1", "''", "0"}
-
-	for _, f := range funcs {
-		for _, a := range args {
-			q := fmt.Sprintf("SELECT c1 from t1 where %s(%s)", f, a)
-			tk.MustExec(`set tidb_enable_non_prepared_plan_cache=1`)
-			r1 := tk.MustQuery(q)
-			tk.MustExec(`set tidb_enable_non_prepared_plan_cache=0`)
-			r2 := tk.MustQuery(q)
-			r1.Sort().Check(r2.Sort().Rows())
-		}
-	}
-}
-
->>>>>>> 94cfa8b0713 (planner: output a warning if plan rebuilding fails when reusing a cached plan (#46278))
 func TestNonPreparedPlanCacheBuiltinFuncs(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
