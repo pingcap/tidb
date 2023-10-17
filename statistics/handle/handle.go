@@ -1202,9 +1202,7 @@ func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID in
 	if !ok {
 		statsTbl = nil
 	}
-	h.mu.Lock()
 	statsTbl, err = statistics.TableStatsFromStorage(h.mu.ctx, reader, tableInfo, physicalID, loadAll, h.Lease(), statsTbl)
-	h.mu.Unlock()
 	if err != nil {
 		return nil, err
 	}
