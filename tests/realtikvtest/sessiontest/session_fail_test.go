@@ -17,7 +17,6 @@ package sessiontest
 import (
 	"context"
 	"fmt"
-	"github.com/tikv/client-go/v2/tikv"
 	"math/rand"
 	"strconv"
 	"sync"
@@ -322,7 +321,8 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: (3|4|5).*", explain)
 }
 
-func TestBatchClientSendLoopPanic(t *testing.T) {
+func TestBatchClientDataRace(t *testing.T) {
+	// This test uses to detect data race, so it should run by `go test -race`.
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("skip test since it's only work for tikv")
 	}
@@ -348,17 +348,13 @@ func TestBatchClientSendLoopPanic(t *testing.T) {
 					time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)+1))
 					cancel()
 				}()
-				rs, err := tk.ExecWithContext(ctx, "select * from t where a = 1")
-				if err == nil {
-					require.NotNil(t, rs)
+				rs, _ := tk.ExecWithContext(ctx, "select * from t where a = 1")
+				if rs != nil {
 					session.ResultSetToStringSlice(ctx, tk.Session(), rs)
-				} else {
-					require.Equal(t, context.Canceled, err)
 				}
 			}
 
 		}()
 	}
 	wg.Wait()
-	require.Equal(t, int64(0), tikv.GetBatchSendLoopPanicCounter())
 }
