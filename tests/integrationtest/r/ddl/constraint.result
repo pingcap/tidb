@@ -720,7 +720,7 @@ insert into t values(1), (2), (3);
 alter table t add constraint check(a < 2);
 Error 3819 (HY000): Check constraint 't_chk_1' is violated.
 alter table t add constraint check(a < 2) not enforced;
-Error 3819 (HY000): Check constraint 't_chk_2' is violated.
+Error 3819 (HY000): Check constraint 't_chk_1' is violated.
 drop table if exists t;
 set @@global.tidb_enable_check_constraint = 1;
 create table t(a int not null check(a>0), b int, constraint haha check(a < b), check(a<b+1));

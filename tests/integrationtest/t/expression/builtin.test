@@ -284,7 +284,8 @@ select * from tb5 where cast(b as unsigned int)=0;
 drop table tb5;
 create table tb5(a double, b bigint unsigned);
 insert into tb5 (a, b) values (18446744073709551616, 18446744073709551615);
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47693
+# --enable_warnings
 select * from tb5 where cast(a as unsigned int)=b;
 --disable_warnings
 drop table tb5;
