@@ -237,7 +237,7 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
-		if ok {
+		if index != nil {
 			wrapper.idxInfo = index.Info
 		} else {
 			wrapper.idxInfo = tbl.ColAndIdxExistenceMap.GetIndex(item.ID)
@@ -248,7 +248,7 @@ func (h *Handle) handleOneItemTask(sctx sessionctx.Context, task *NeededItemTask
 			h.writeToResultChan(task.ResultCh, result)
 			return nil, nil
 		}
-		if ok {
+		if col != nil {
 			wrapper.colInfo = col.Info
 		} else {
 			wrapper.colInfo = tbl.ColAndIdxExistenceMap.GetCol(item.ID)

@@ -530,7 +530,7 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache util.StatsCa
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
-	if ok {
+	if c != nil {
 		hgMeta = &c.Histogram
 		colInfo = c.Info
 	} else {
@@ -616,7 +616,7 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache util.StatsCac
 		statistics.HistogramNeededItems.Delete(idx)
 		return nil
 	}
-	if ok {
+	if index != nil {
 		hgMeta = &index.Histogram
 		idxInfo = index.Info
 		flag = index.Flag

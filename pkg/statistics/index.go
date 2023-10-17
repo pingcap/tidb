@@ -145,9 +145,13 @@ func IndexStatsIsInvalid(idxStats *Index, sctx sessionctx.Context, coll *HistCol
 	// Also, we need to check that this HistColl has its physical ID and it is permitted to trigger the stats loading.
 	if (idxStats == nil || !idxStats.IsFullLoad()) && coll.PhysicalID > 0 && !coll.CanNotTriggerLoad {
 		HistogramNeededItems.insert(model.TableItemID{TableID: coll.PhysicalID, ID: cid, IsIndex: true})
+		// TODO: we can return true here. But need to fix some tests first.
+	}
+	if idxStats == nil {
 		return true
 	}
-	return idxStats == nil || coll.Pseudo || idxStats.TotalRowCount() == 0
+	totalCount = idxStats.TotalRowCount()
+	return coll.Pseudo || totalCount == 0
 }
 
 // EvictAllStats evicts all stats
