@@ -1,0 +1,60 @@
+[
+  {
+    "Name": "TestAdditionOtherConditionsRemained4OuterJoin",
+    "Cases": [
+      {
+        "SQL": "SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC",
+        "Output": [
+          "13 i1"
+        ]
+      },
+      {
+        "SQL": "SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` RIGHT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC",
+        "Output": [
+          "13 i1"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' SELECT `queries_identifier`.`id`, `queries_identifier`.`name` FROM `queries_identifier` LEFT OUTER JOIN `queries_channel` ON (`queries_identifier`.`id` = `queries_channel`.`identifier_id`) INNER JOIN `queries_program` ON (`queries_identifier`.`id` = `queries_program`.`identifier_id`) WHERE ((`queries_channel`.`id` = 5 AND `queries_program`.`id` = 9) OR `queries_program`.`id` = 8) ORDER BY `queries_identifier`.`id` ASC;",
+        "Output": [
+          "Sort 2.50 root  test.queries_identifier.id",
+          "└─Projection 2.50 root  test.queries_identifier.id, test.queries_identifier.name",
+          "  └─Selection 2.50 root  or(and(eq(test.queries_channel.id, 5), eq(test.queries_program.id, 9)), eq(test.queries_program.id, 8))",
+          "    └─IndexJoin 3.12 root  left outer join, inner:IndexReader, outer key:test.queries_identifier.id, inner key:test.queries_channel.identifier_id, equal cond:eq(test.queries_identifier.id, test.queries_channel.identifier_id)",
+          "      ├─IndexHashJoin(Build) 2.50 root  inner join, inner:TableReader, outer key:test.queries_program.identifier_id, inner key:test.queries_identifier.id, equal cond:eq(test.queries_program.identifier_id, test.queries_identifier.id)",
+          "      │ ├─Batch_Point_Get(Build) 2.00 root table:queries_program handle:[8 9], keep order:false, desc:false",
+          "      │ └─TableReader(Probe) 2.00 root  data:TableRangeScan",
+          "      │   └─TableRangeScan 2.00 cop[tikv] table:queries_identifier range: decided by [test.queries_program.identifier_id], keep order:false, stats:pseudo",
+          "      └─IndexReader(Probe) 2.50 root  index:IndexRangeScan",
+          "        └─IndexRangeScan 2.50 cop[tikv] table:queries_channel, index:identifier_id(identifier_id) range: decided by [eq(test.queries_channel.identifier_id, test.queries_identifier.id)], keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format='brief' select * from t left join t1 on t.a=t1.a inner join t2 on t.a=t2.a and t2.c = 100 left join t3 on t2.a=t3.a and t3.b > 1 left join t4 on t2.a = t4.a where (t2.b > 100 or t.a > 10 or t1.b < 10)",
+        "Output": [
+          "Projection 19.51 root  test.t.a, test.t1.a, test.t1.b, test.t2.a, test.t2.b, test.t2.c, test.t3.a, test.t3.b, test.t4.a, test.t4.b",
+          "└─Selection 19.51 root  or(gt(test.t2.b, 100), or(gt(test.t.a, 10), lt(test.t1.b, 10))), or(gt(test.t2.b, 100), or(gt(test.t2.a, 10), lt(test.t1.b, 10)))",
+          "  └─HashJoin 24.39 root  left outer join, equal:[eq(test.t2.a, test.t4.a)]",
+          "    ├─HashJoin(Build) 19.51 root  left outer join, equal:[eq(test.t.a, test.t1.a)]",
+          "    │ ├─HashJoin(Build) 15.61 root  inner join, equal:[eq(test.t2.a, test.t.a)]",
+          "    │ │ ├─HashJoin(Build) 12.49 root  left outer join, equal:[eq(test.t2.a, test.t3.a)]",
+          "    │ │ │ ├─TableReader(Build) 9.99 root  data:Selection",
+          "    │ │ │ │ └─Selection 9.99 cop[tikv]  eq(test.t2.c, 100), not(isnull(test.t2.a))",
+          "    │ │ │ │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    │ │ │ └─TableReader(Probe) 3330.00 root  data:Selection",
+          "    │ │ │   └─Selection 3330.00 cop[tikv]  gt(test.t3.b, 1), not(isnull(test.t3.a))",
+          "    │ │ │     └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    │ │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    │ │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t.a))",
+          "    │ │     └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+          "    │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "    │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo"
+        ]
+      }
+    ]
+  }
+]

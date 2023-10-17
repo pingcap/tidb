@@ -576,7 +576,8 @@ func extractTableAlias(p Plan, parentOffset int) *hintTableInfo {
 	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
-			if name.TblName.L != firstName.TblName.L || name.DBName.L != firstName.DBName.L {
+			if name.TblName.L != firstName.TblName.L ||
+				(name.DBName.L != "" && firstName.DBName.L != "" && name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
 				return nil
 			}
 		}
@@ -4186,6 +4187,10 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		for _, tName := range l.Tables {
+			// CTE has no *model.TableInfo, we need to skip it.
+			if tName.TableInfo == nil {
+				continue
+			}
 			b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tName.TableInfo.ID] = struct{}{}
 		}
 		p, err = b.buildSelectLock(p, l)

@@ -3310,6 +3310,55 @@ func TestTiFlashFineGrainedShuffle(t *testing.T) {
 	}
 }
 
+func TestDowncastPointGetOrRangeScan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a bigint key)")
+	tk.MustExec("create table t2 (a int key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v1 as (select a from t1) union (select a from t2)")
+	// select * from v where a = 1 will lead a condition: EQ(cast(t2.a as bigint), 1),
+	// we should downcast it, utilizing t2.a =1 to walking through the pk point-get. Because cast doesn't contain any precision loss.
+
+	tk.MustExec("create table t3 (a varchar(100) key)")
+	tk.MustExec("create table t4 (a varchar(10) key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v2 as (select a from t3) union (select a from t4)")
+	// select * from v2 where a = 'test' will lead a condition: EQ(cast(t2.a as varchar(100) same collation), 1),
+	// we should downcast it, utilizing t2.a = 'test' to walking through the pk point-get. Because cast doesn't contain any precision loss.
+
+	tk.MustExec("create table t5 (a char(100) key)")
+	tk.MustExec("create table t6 (a char(10) key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v3 as (select a from t5) union (select a from t6)")
+	// select * from v3 where a = 'test' will lead a condition: EQ(cast(t2.a as char(100) same collation), 1),
+	// for char type, it depends, with binary collate, the appended '0' after cast column a from char(10) to char(100) will make some difference
+	// on comparison on where a = 'test' before and after the UNION operator; so we didn't allow this kind of type downcast currently (precision diff).
+
+	tk.MustExec("create table t7 (a varchar(100) key)")
+	tk.MustExec("create table t8 (a int key)")
+	tk.MustExec("create definer=`root`@`127.0.0.1` view v4 as (select a from t7) union (select a from t8)")
+	// since UNION OP will unify the a(int) and a(varchar100) as varchar(100)
+	// select * from v4 where a = "test" will lead a condition: EQ(cast(t2.a as varchar(100)), "test"), and since
+	// cast int to varchar(100) may have some precision loss, we couldn't utilize a="test" to get the range directly.
+
+	var input []string
+	var output []struct {
+		SQL    string
+		Plan   []string
+		Result []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief' " + tt).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Sort().Rows())
+		})
+		tk.MustQuery("explain format='brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func TestNullConditionForPrefixIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -3538,4 +3587,12 @@ func TestFixControl44262(t *testing.T) {
 	tk.MustExec(`set @@tidb_opt_fix_control = "44262:ON"`)
 	testJoin(`select /*+ TIDB_INLJ(t2_part@sel_2) */ * from t1 where t1.b<10 and not exists (select 1 from t2_part where t1.a=t2_part.a and t2_part.b<20)`, "IndexJoin")
 	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows()) // no warning
+}
+
+func TestIssue41957(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("CREATE TABLE `github_events` (\n  `id` bigint(20) NOT NULL DEFAULT '0',\n  `type` varchar(29) NOT NULL DEFAULT 'Event',\n  `created_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',\n  `repo_id` bigint(20) NOT NULL DEFAULT '0',\n  `repo_name` varchar(140) NOT NULL DEFAULT '',\n  `actor_id` bigint(20) NOT NULL DEFAULT '0',\n  `actor_login` varchar(40) NOT NULL DEFAULT '',\n  `language` varchar(26) NOT NULL DEFAULT '',\n  `additions` bigint(20) NOT NULL DEFAULT '0',\n  `deletions` bigint(20) NOT NULL DEFAULT '0',\n  `action` varchar(11) NOT NULL DEFAULT '',\n  `number` int(11) NOT NULL DEFAULT '0',\n  `commit_id` varchar(40) NOT NULL DEFAULT '',\n  `comment_id` bigint(20) NOT NULL DEFAULT '0',\n  `org_login` varchar(40) NOT NULL DEFAULT '',\n  `org_id` bigint(20) NOT NULL DEFAULT '0',\n  `state` varchar(6) NOT NULL DEFAULT '',\n  `closed_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',\n  `comments` int(11) NOT NULL DEFAULT '0',\n  `pr_merged_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',\n  `pr_merged` tinyint(1) NOT NULL DEFAULT '0',\n  `pr_changed_files` int(11) NOT NULL DEFAULT '0',\n  `pr_review_comments` int(11) NOT NULL DEFAULT '0',\n  `pr_or_issue_id` bigint(20) NOT NULL DEFAULT '0',\n  `event_day` date NOT NULL,\n  `event_month` date NOT NULL,\n  `event_year` int(11) NOT NULL,\n  `push_size` int(11) NOT NULL DEFAULT '0',\n  `push_distinct_size` int(11) NOT NULL DEFAULT '0',\n  `creator_user_login` varchar(40) NOT NULL DEFAULT '',\n  `creator_user_id` bigint(20) NOT NULL DEFAULT '0',\n  `pr_or_issue_created_at` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',\n  KEY `index_github_events_on_id` (`id`),\n  KEY `index_github_events_on_created_at` (`created_at`),\n  KEY `index_github_events_on_repo_id_type_action_month_actor_login` (`repo_id`,`type`,`action`,`event_month`,`actor_login`),\n  KEY `index_ge_on_repo_id_type_action_pr_merged_created_at_add_del` (`repo_id`,`type`,`action`,`pr_merged`,`created_at`,`additions`,`deletions`),\n  KEY `index_ge_on_creator_id_type_action_merged_created_at_add_del` (`creator_user_id`,`type`,`action`,`pr_merged`,`created_at`,`additions`,`deletions`),\n  KEY `index_ge_on_actor_id_type_action_created_at_repo_id_commits` (`actor_id`,`type`,`action`,`created_at`,`repo_id`,`push_distinct_size`),\n  KEY `index_ge_on_repo_id_type_action_created_at_number_pdsize_psize` (`repo_id`,`type`,`action`,`created_at`,`number`,`push_distinct_size`,`push_size`),\n  KEY `index_ge_on_repo_id_type_action_created_at_actor_login` (`repo_id`,`type`,`action`,`created_at`,`actor_login`),\n  KEY `index_ge_on_repo_name_type` (`repo_name`,`type`),\n  KEY `index_ge_on_actor_login_type` (`actor_login`,`type`),\n  KEY `index_ge_on_org_login_type` (`org_login`,`type`),\n  KEY `index_ge_on_language` (`language`),\n  KEY `index_ge_on_org_id_type` (`org_id`,`type`),\n  KEY `index_ge_on_actor_login_lower` ((lower(`actor_login`))),\n  KEY `index_ge_on_repo_name_lower` ((lower(`repo_name`))),\n  KEY `index_ge_on_language_lower` ((lower(`language`))),\n  KEY `index_ge_on_type_action` (`type`,`action`) /*!80000 INVISIBLE */,\n  KEY `index_ge_on_repo_id_type_created_at` (`repo_id`,`type`,`created_at`),\n  KEY `index_ge_on_repo_id_created_at` (`repo_id`,`created_at`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin\nPARTITION BY LIST COLUMNS(`type`)\n(PARTITION `push_event` VALUES IN ('PushEvent'),\n PARTITION `create_event` VALUES IN ('CreateEvent'),\n PARTITION `pull_request_event` VALUES IN ('PullRequestEvent'),\n PARTITION `watch_event` VALUES IN ('WatchEvent'),\n PARTITION `issue_comment_event` VALUES IN ('IssueCommentEvent'),\n PARTITION `issues_event` VALUES IN ('IssuesEvent'),\n PARTITION `delete_event` VALUES IN ('DeleteEvent'),\n PARTITION `fork_event` VALUES IN ('ForkEvent'),\n PARTITION `pull_request_review_comment_event` VALUES IN ('PullRequestReviewCommentEvent'),\n PARTITION `pull_request_review_event` VALUES IN ('PullRequestReviewEvent'),\n PARTITION `gollum_event` VALUES IN ('GollumEvent'),\n PARTITION `release_event` VALUES IN ('ReleaseEvent'),\n PARTITION `member_event` VALUES IN ('MemberEvent'),\n PARTITION `commit_comment_event` VALUES IN ('CommitCommentEvent'),\n PARTITION `public_event` VALUES IN ('PublicEvent'),\n PARTITION `gist_event` VALUES IN ('GistEvent'),\n PARTITION `follow_event` VALUES IN ('FollowEvent'),\n PARTITION `event` VALUES IN ('Event'),\n PARTITION `download_event` VALUES IN ('DownloadEvent'),\n PARTITION `team_add_event` VALUES IN ('TeamAddEvent'),\n PARTITION `fork_apply_event` VALUES IN ('ForkApplyEvent'))\n")
+	tk.MustQuery("SELECT\n    repo_id, GROUP_CONCAT(\n      DISTINCT actor_login\n      ORDER BY cnt DESC\n      SEPARATOR ','\n    ) AS actor_logins\nFROM (\n    SELECT\n        ge.repo_id AS repo_id,\n        ge.actor_login AS actor_login,\n        COUNT(*) AS cnt\n    FROM github_events ge\n    WHERE\n        type = 'PullRequestEvent' AND action = 'opened'\n        AND (ge.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY) AND ge.created_at <= NOW())\n    GROUP BY ge.repo_id, ge.actor_login\n    ORDER BY cnt DESC\n) sub\nGROUP BY repo_id").Check(testkit.Rows())
 }
