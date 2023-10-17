@@ -132,7 +132,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		return nil, err
 	}
 	handle.StatsCache = statsCache
-	handle.StatsHistory = history.NewStatsHistory(handle, handle.tableStatsToJSON, handle.DumpStatsToJSON)
+	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
