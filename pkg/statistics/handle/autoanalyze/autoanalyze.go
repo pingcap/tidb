@@ -331,8 +331,12 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
+		if needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
+			logutil.BgLogger().Info("need to auto analyze", zap.String("category", "stats"),
+				zap.String("table", tblInfo.Name.String()),
+				zap.String("partition", def.Name.O),
+				zap.String("reason", reason))
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
 	}
