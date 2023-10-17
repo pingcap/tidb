@@ -234,11 +234,11 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		lookup:        e,
 		memTracker:    memory.NewTracker(memory.LabelForIndexJoinInnerWorker, -1),
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("inlNewInnerPanic")); _err_ == nil {
+	failpoint.Inject("inlNewInnerPanic", func(val failpoint.Value) {
 		if val.(bool) {
 			panic("test inlNewInnerPanic")
 		}
-	}
+	})
 	iw.memTracker.AttachTo(e.memTracker)
 	if len(copiedRanges) != 0 {
 		// We should not consume this memory usage in `iw.memTracker`. The
@@ -380,8 +380,8 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		wg.Done()
 	}()
 	for {
-		failpoint.Eval(_curpkg_("TestIssue30211"))
-		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+		failpoint.Inject("TestIssue30211", nil)
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		task, err := ow.buildTask(ctx)
 		if err != nil {
 			task.doneCh <- err
@@ -422,7 +422,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	task.memTracker = memory.NewTracker(-1, -1)
 	task.outerResult.GetMemTracker().AttachTo(task.memTracker)
 	task.memTracker.AttachTo(ow.parentMemTracker)
-	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+	failpoint.Inject("ConsumeRandomPanic", nil)
 
 	ow.increaseBatchSize()
 	requiredRows := ow.batchSize
@@ -566,7 +566,7 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				}
 				return nil, err
 			}
-			failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+			failpoint.Inject("ConsumeRandomPanic", nil)
 			if rowIdx == 0 {
 				iw.memTracker.Consume(types.EstimatedMemUsage(dLookUpKey, numRows))
 			}
@@ -712,7 +712,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 		default:
 		}
 		err := exec.Next(ctx, innerExec, iw.executorChk)
-		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
+		failpoint.Inject("ConsumeRandomPanic", nil)
 		if err != nil {
 			return err
 		}

@@ -66,16 +66,16 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.String("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
-	if _, _err_ := failpoint.Eval(_curpkg_("waitBeforeSortChunk")); _err_ == nil {
+	failpoint.Inject("waitBeforeSortChunk", func() {
 		time.Sleep(3 * time.Second)
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("errorWhenSortChunk")); _err_ == nil {
-		return errors.New("occur an error when sort chunk")
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("syncBeforeSortChunk")); _err_ == nil {
+	})
+	failpoint.Inject("errorWhenSortChunk", func() {
+		failpoint.Return(errors.New("occur an error when sort chunk"))
+	})
+	failpoint.Inject("syncBeforeSortChunk", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	}
+	})
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
 	if sharedVars.TableImporter.IsLocalSort() {
@@ -96,10 +96,10 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 
 // postProcess does the post-processing for the task.
 func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("syncBeforePostProcess")); _err_ == nil {
+	failpoint.Inject("syncBeforePostProcess", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	}
+	})
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {
@@ -127,9 +127,9 @@ func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostPr
 	localChecksum := verify.MakeKVChecksum(subtaskMeta.Checksum.Size, subtaskMeta.Checksum.KVs, subtaskMeta.Checksum.Sum)
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
-	if _, _err_ := failpoint.Eval(_curpkg_("waitCtxDone")); _err_ == nil {
+	failpoint.Inject("waitCtxDone", func() {
 		<-ctx.Done()
-	}
+	})
 
 	globalTaskManager, err := storage.GetTaskManager()
 	if err != nil {
@@ -194,11 +194,11 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 				return errors.New("empty checksum result")
 			}
 
-			if _, _err_ := failpoint.Eval(_curpkg_("errWhenChecksum")); _err_ == nil {
+			failpoint.Inject("errWhenChecksum", func() {
 				if i == 0 {
-					return errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline")
+					failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
 				}
-			}
+			})
 
 			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
 			// 	mysql> admin checksum table test.t;

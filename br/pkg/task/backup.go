@@ -644,7 +644,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		if unit == callBackUnit {
 			updateCh.Inc()
 			atomic.AddUint64(&progressCount, 1)
-			if v, _err_ := failpoint.Eval(_curpkg_("progress-call-back")); _err_ == nil {
+			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 				log.Info("failpoint progress-call-back injected")
 				if fileName, ok := v.(string); ok {
 					f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
@@ -657,7 +657,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 						log.Warn("failed to write data to file", zap.Error(err))
 					}
 				}
-			}
+			})
 		}
 	}
 
@@ -681,7 +681,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}()
 	}
 
-	if v, _err_ := failpoint.Eval(_curpkg_("s3-outage-during-writing-file")); _err_ == nil {
+	failpoint.Inject("s3-outage-during-writing-file", func(v failpoint.Value) {
 		log.Info("failpoint s3-outage-during-writing-file injected, " +
 			"process will sleep for 5s and notify the shell to kill s3 service.")
 		if sigFile, ok := v.(string); ok {
@@ -694,7 +694,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 		}
 		time.Sleep(5 * time.Second)
-	}
+	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
 	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)

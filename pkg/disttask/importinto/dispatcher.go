@@ -253,9 +253,9 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		}
 		previousSubtaskMetas[StepEncodeAndSort] = sortAndEncodeMeta
 	case StepWriteAndIngest:
-		if _, _err_ := failpoint.Eval(_curpkg_("failWhenDispatchWriteIngestSubtask")); _err_ == nil {
-			return nil, errors.New("injected error")
-		}
+		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
+			failpoint.Return(nil, errors.New("injected error"))
+		})
 		// merge sort might be skipped for some kv groups, so we need to get all
 		// subtask metas of StepEncodeAndSort step too.
 		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(gTask.ID, StepEncodeAndSort)
@@ -273,15 +273,15 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 		}
 	case StepPostProcess:
 		dsp.switchTiKV2NormalMode(ctx, gTask, logger)
-		if _, _err_ := failpoint.Eval(_curpkg_("clearLastSwitchTime")); _err_ == nil {
+		failpoint.Inject("clearLastSwitchTime", func() {
 			dsp.lastSwitchTime.Store(time.Time{})
-		}
+		})
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepValidating); err != nil {
 			return nil, err
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("failWhenDispatchPostProcessSubtask")); _err_ == nil {
-			return nil, errors.New("injected error after StepImport")
-		}
+		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
+			failpoint.Return(nil, errors.New("injected error after StepImport"))
+		})
 		// we need get metas where checksum is stored.
 		if err := updateResult(taskHandle, gTask, taskMeta, dsp.GlobalSort); err != nil {
 			return nil, err
@@ -618,10 +618,10 @@ func getLoadedRowCountOnGlobalSort(handle dispatcher.TaskHandle, gTask *proto.Ta
 }
 
 func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
-	if _, _err_ := failpoint.Eval(_curpkg_("syncBeforeJobStarted")); _err_ == nil {
+	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	}
+	})
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	// we consider all errors as retryable errors, except context done.
 	// the errors include errors happened when communicate with PD and TiKV.
@@ -635,9 +635,9 @@ func startJob(ctx context.Context, logger *zap.Logger, taskHandle dispatcher.Tas
 			})
 		},
 	)
-	if _, _err_ := failpoint.Eval(_curpkg_("syncAfterJobStarted")); _err_ == nil {
+	failpoint.Inject("syncAfterJobStarted", func() {
 		TestSyncChan <- struct{}{}
-	}
+	})
 	return err
 }
 

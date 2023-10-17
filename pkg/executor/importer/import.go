@@ -493,9 +493,9 @@ func (e *LoadDataController) checkFieldParams() error {
 
 func (p *Plan) initDefaultOptions() {
 	threadCnt := runtime.GOMAXPROCS(0)
-	if val, _err_ := failpoint.Eval(_curpkg_("mockNumCpu")); _err_ == nil {
+	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
 		threadCnt = val.(int)
-	}
+	})
 	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
 
 	p.Checksum = config.OpLevelRequired

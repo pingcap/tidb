@@ -158,12 +158,12 @@ func (*readIndexExecutor) Cleanup(ctx context.Context) error {
 var MockDMLExecutionAddIndexSubTaskFinish func()
 
 func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
-	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionAddIndexSubTaskFinish")); _err_ == nil {
+	failpoint.Inject("mockDMLExecutionAddIndexSubTaskFinish", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
-	}
+	})
 	if len(r.cloudStorageURI) == 0 {
 		return nil
 	}

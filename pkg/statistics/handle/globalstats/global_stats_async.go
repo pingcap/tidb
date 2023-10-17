@@ -354,7 +354,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Context, isIndex bool) error {
-	failpoint.Eval(_curpkg_("PanicInIOWorker"))
+	failpoint.Inject("PanicInIOWorker", nil)
 	for i := 0; i < a.globalStats.Num; i++ {
 		for _, partitionID := range a.partitionIDs {
 			_, ok := a.skipPartition[skipItem{
@@ -418,7 +418,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
-	failpoint.Eval(_curpkg_("PanicInCPUWorker"))
+	failpoint.Inject("PanicInCPUWorker", nil)
 	for {
 		select {
 		case fms, ok := <-a.fmsketch:

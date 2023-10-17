@@ -212,9 +212,7 @@ func (stm *TaskManager) AddGlobalTaskWithSession(se sessionctx.Context, key, tp 
 	}
 
 	taskID = int64(rs[0].GetUint64(0))
-	if _, _err_ := failpoint.Eval(_curpkg_("testSetLastTaskID")); _err_ == nil {
-		TestLastTaskID.Store(taskID)
-	}
+	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
 
 	return taskID, nil
 }
@@ -723,11 +721,11 @@ func (stm *TaskManager) UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtas
 			}
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("MockUpdateTaskErr")); _err_ == nil {
+		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.New("updateTaskErr")
+				failpoint.Return(errors.New("updateTaskErr"))
 			}
-		}
+		})
 		if len(subtasks) > 0 {
 			subtaskState := proto.TaskStatePending
 			if gTask.State == proto.TaskStateReverting {
@@ -914,11 +912,11 @@ func (stm *TaskManager) TransferSubTasks2History(taskID int64) error {
 // GCSubtasks deletes the history subtask which is older than the given days.
 func (stm *TaskManager) GCSubtasks() error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
-	if val, _err_ := failpoint.Eval(_curpkg_("subtaskHistoryKeepSeconds")); _err_ == nil {
+	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
 		if val, ok := val.(int); ok {
 			subtaskHistoryKeepSeconds = val
 		}
-	}
+	})
 	_, err := stm.executeSQLWithNewSession(
 		stm.ctx,
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
