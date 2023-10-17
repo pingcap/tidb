@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -392,6 +393,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		sortDuration, writeDuration time.Duration
 		writeStartTime              time.Time
 	)
+	savedBytes = w.batchSize
+	startTs := time.Now()
 
 	getSpeed := func(n uint64, dur float64, isBytes bool) string {
 		if dur == 0 {
@@ -430,6 +433,10 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 			zap.String("write-speed(bytes/s)", getSpeed(savedBytes, writeDuration.Seconds(), true)),
 			zap.String("writer-id", w.writerID),
 		)
+		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(writeDuration.Seconds())
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / writeDuration.Seconds())
+		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(time.Since(startTs).Seconds())
+		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / time.Since(startTs).Seconds())
 	}()
 
 	sortStart := time.Now()
@@ -452,6 +459,8 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	sortDuration = time.Since(sortStart)
 
 	writeStartTime = time.Now()
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
 	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return err
@@ -496,7 +505,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.writeBatch = w.writeBatch[:0]
 	w.rc.reset()
 	w.kvBuffer.Reset()
-	savedBytes = w.batchSize
 	w.batchSize = 0
 	return nil
 }
