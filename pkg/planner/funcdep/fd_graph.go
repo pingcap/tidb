@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
@@ -25,8 +26,8 @@ type fdEdge struct {
 	// functional dependency = determinants -> dependencies
 	// determinants = from
 	// dependencies = to
-	from FastIntSet
-	to   FastIntSet
+	from intset.FastIntSet
+	to   intset.FastIntSet
 	// The value of the strict and eq bool forms the four kind of edges:
 	// functional dependency, lax functional dependency, strict equivalence constraint, lax equivalence constraint.
 	// And if there's a functional dependency `const` -> `column` exists. We would let the from side be empty.
@@ -36,7 +37,7 @@ type fdEdge struct {
 	// FD with non-nil conditionNC is hidden in FDSet, it will be visible again when at least one null-reject column in conditionNC.
 	// conditionNC should be satisfied before some FD make vision again, it's quite like lax FD to be strengthened as strict
 	// one. But the constraints should take effect on specified columns from conditionNC rather than just determinant columns.
-	conditionNC *FastIntSet
+	conditionNC *intset.FastIntSet
 }
 
 // FDSet is the main portal of functional dependency, it stores the relationship between (extended table / physical table)'s
@@ -53,13 +54,13 @@ type FDSet struct {
 	// eg: {1} ~~> {2,3}, when {2,3} not null is applied, it actually does nothing.
 	// but we should record {2,3} as not-null down for the convenience of transferring
 	// Lax FD: {1} ~~> {2,3} to strict FD: {1} --> {2,3} with {1} as not-null next time.
-	NotNullCols FastIntSet
+	NotNullCols intset.FastIntSet
 	// HashCodeToUniqueID map the expression's hashcode to a statement allocated unique
 	// ID quite like the unique ID bounded with column. It's mainly used to add the expr
 	// to the fdSet as an extended column. <NOT CONCURRENT SAFE FOR NOW>
 	HashCodeToUniqueID map[string]int
 	// GroupByCols is used to record columns / expressions that under the group by phrase.
-	GroupByCols FastIntSet
+	GroupByCols intset.FastIntSet
 	HasAggBuilt bool
 
 	// todo: when multi join and across select block, this may need to be maintained more precisely.
@@ -67,7 +68,7 @@ type FDSet struct {
 }
 
 // ClosureOfStrict is exported for outer usage.
-func (s *FDSet) ClosureOfStrict(colSet FastIntSet) FastIntSet {
+func (s *FDSet) ClosureOfStrict(colSet intset.FastIntSet) intset.FastIntSet {
 	return s.closureOfStrict(colSet)
 }
 
@@ -76,8 +77,8 @@ func (s *FDSet) ClosureOfStrict(colSet FastIntSet) FastIntSet {
 // eg: considering closure F: {A-> CD, B -> E}, and input is {AB}
 // res: AB -> {CDE} (AB is included in trivial FD)
 // The time complexity is O(n^2).
-func (s *FDSet) closureOfStrict(colSet FastIntSet) FastIntSet {
-	resultSet := NewFastIntSet()
+func (s *FDSet) closureOfStrict(colSet intset.FastIntSet) intset.FastIntSet {
+	resultSet := intset.NewFastIntSet()
 	// self included.
 	resultSet.UnionWith(colSet)
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -100,16 +101,16 @@ func (s *FDSet) closureOfStrict(colSet FastIntSet) FastIntSet {
 }
 
 // ClosureOfLax is exported for outer usage.
-func (s *FDSet) ClosureOfLax(colSet FastIntSet) FastIntSet {
+func (s *FDSet) ClosureOfLax(colSet intset.FastIntSet) intset.FastIntSet {
 	return s.closureOfLax(colSet)
 }
 
 // ClosureOfLax is used to find lax fd closure of X with respect to F.
-func (s *FDSet) closureOfLax(colSet FastIntSet) FastIntSet {
+func (s *FDSet) closureOfLax(colSet intset.FastIntSet) intset.FastIntSet {
 	// Lax dependencies are not transitive (see figure 2.1 in the paper for
 	// properties that hold for lax dependencies), so only include them if they
 	// are reachable in a single lax dependency step from the input set.
-	laxOneStepReached := NewFastIntSet()
+	laxOneStepReached := intset.NewFastIntSet()
 	// self included.
 	laxOneStepReached.UnionWith(colSet)
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -135,8 +136,8 @@ func (s *FDSet) closureOfLax(colSet FastIntSet) FastIntSet {
 }
 
 // closureOfEquivalence is to find strict equivalence closure of X with respect to F.
-func (s *FDSet) closureOfEquivalence(colSet FastIntSet) FastIntSet {
-	resultSet := NewFastIntSet()
+func (s *FDSet) closureOfEquivalence(colSet intset.FastIntSet) intset.FastIntSet {
+	resultSet := intset.NewFastIntSet()
 	// self included.
 	resultSet.UnionWith(colSet)
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -154,11 +155,11 @@ func (s *FDSet) closureOfEquivalence(colSet FastIntSet) FastIntSet {
 
 // InClosure is used to judge whether fd: setA -> setB can be inferred from closure s.
 // It's a short-circuit version of the `closureOf`.
-func (s *FDSet) InClosure(setA, setB FastIntSet) bool {
+func (s *FDSet) InClosure(setA, setB intset.FastIntSet) bool {
 	if setB.SubsetOf(setA) {
 		return true
 	}
-	currentClosure := NewFastIntSet()
+	currentClosure := intset.NewFastIntSet()
 	// self included.
 	currentClosure.UnionWith(setA)
 	for i := 0; i < len(s.fdEdges); i++ {
@@ -191,9 +192,9 @@ func (s *FDSet) InClosure(setA, setB FastIntSet) bool {
 // ReduceCols is used to minimize the determinants in one fd input.
 // function dependency = determinants -> dependencies
 // given: AB -> XY, once B can be inferred from current closure when inserting, take A -> XY instead.
-func (s *FDSet) ReduceCols(colSet FastIntSet) FastIntSet {
+func (s *FDSet) ReduceCols(colSet intset.FastIntSet) intset.FastIntSet {
 	// Suppose the colSet is A and B, we have A --> B. Then we only need A since B' value is always determined by A.
-	var removed, result = NewFastIntSet(), NewFastIntSet()
+	var removed, result = intset.NewFastIntSet(), intset.NewFastIntSet()
 	result.CopyFrom(colSet)
 	for k, ok := colSet.Next(0); ok; k, ok = colSet.Next(k + 1) {
 		removed.Insert(k)
@@ -208,17 +209,17 @@ func (s *FDSet) ReduceCols(colSet FastIntSet) FastIntSet {
 }
 
 // AddStrictFunctionalDependency is to add `STRICT` functional dependency to the fdGraph.
-func (s *FDSet) AddStrictFunctionalDependency(from, to FastIntSet) {
+func (s *FDSet) AddStrictFunctionalDependency(from, to intset.FastIntSet) {
 	s.addFunctionalDependency(from, to, true, false)
 }
 
 // AddLaxFunctionalDependency is to add `LAX` functional dependency to the fdGraph.
-func (s *FDSet) AddLaxFunctionalDependency(from, to FastIntSet) {
+func (s *FDSet) AddLaxFunctionalDependency(from, to intset.FastIntSet) {
 	s.addFunctionalDependency(from, to, false, false)
 }
 
 // AddNCFunctionalDependency is to add conditional functional dependency to the fdGraph.
-func (s *FDSet) AddNCFunctionalDependency(from, to, nc FastIntSet, strict, equiv bool) {
+func (s *FDSet) AddNCFunctionalDependency(from, to, nc intset.FastIntSet, strict, equiv bool) {
 	// Since nc edge is invisible by now, just collecting them together simply, once the
 	// null-reject on nc cols is satisfied, let's pick them out and insert into the fdEdge
 	// normally.
@@ -239,7 +240,7 @@ func (s *FDSet) AddNCFunctionalDependency(from, to, nc FastIntSet, strict, equiv
 //
 // To reduce the edge number, we limit the functional dependency when we insert into the
 // set. The key code of insert is like the following codes.
-func (s *FDSet) addFunctionalDependency(from, to FastIntSet, strict, equiv bool) {
+func (s *FDSet) addFunctionalDependency(from, to intset.FastIntSet, strict, equiv bool) {
 	// trivial FD, refused.
 	if to.SubsetOf(from) {
 		return
@@ -341,7 +342,7 @@ func (e *fdEdge) implies(otherEdge *fdEdge) bool {
 // 1: they may be integrated into the origin equivalence superset if this two enclosure have some id in common.
 // 2: they can be used to extend the existed constant closure, consequently leading some reduce work: see addConstant.
 // 3: they self can be used to eliminate existed strict/lax FDs, see comments below.
-func (s *FDSet) addEquivalence(eqs FastIntSet) {
+func (s *FDSet) addEquivalence(eqs intset.FastIntSet) {
 	var addConst bool
 	// get equivalence closure.
 	eqClosure := s.closureOfEquivalence(eqs)
@@ -393,7 +394,7 @@ func (s *FDSet) addEquivalence(eqs FastIntSet) {
 // in our fdSet, the equivalence will be stored like: {a, b, c, e} == {a, b, c,e}
 // According and characteristic and reflexivity, each element in the equivalence enclosure
 // can derive whatever in the same enclosure.
-func (s *FDSet) AddEquivalence(from, to FastIntSet) {
+func (s *FDSet) AddEquivalence(from, to intset.FastIntSet) {
 	// trivial equivalence, refused.
 	if to.SubsetOf(from) {
 		return
@@ -414,7 +415,7 @@ func (s *FDSet) AddEquivalence(from, to FastIntSet) {
 // 1: constant can be propagated in the equivalence/strict closure, turning strict FD as a constant one.
 // 2: constant can simplify the strict FD both in determinants side and dependencies side.
 // 3: constant can simplify the lax FD in the dependencies side.
-func (s *FDSet) AddConstants(cons FastIntSet) {
+func (s *FDSet) AddConstants(cons intset.FastIntSet) {
 	if cons.IsEmpty() {
 		return
 	}
@@ -467,7 +468,7 @@ func (s *FDSet) AddConstants(cons FastIntSet) {
 // would be. So let B be null value, once two row like: <1, null> and <1, null> (false interpreted),
 // their dependencies may would be <3>, <4>, once we eliminate B here, FDs looks like: <1>,<1> lax
 // determinate <3>,<4>.
-func (e *fdEdge) removeColumnsFromSide(cons FastIntSet) bool {
+func (e *fdEdge) removeColumnsFromSide(cons intset.FastIntSet) bool {
 	if e.from.Intersects(cons) {
 		e.from = e.from.Difference(cons)
 	}
@@ -490,7 +491,7 @@ func (e *fdEdge) isEquivalence() bool {
 //
 // once B is a constant, only the C's value can be determined by A, this kind of irrelevant coefficient
 // can be removed in the to side both for strict and lax FDs.
-func (e *fdEdge) removeColumnsToSide(cons FastIntSet) bool {
+func (e *fdEdge) removeColumnsToSide(cons intset.FastIntSet) bool {
 	if e.to.Intersects(cons) {
 		e.to = e.to.Difference(cons)
 	}
@@ -498,17 +499,17 @@ func (e *fdEdge) removeColumnsToSide(cons FastIntSet) bool {
 }
 
 // ConstantCols returns the set of columns that will always have the same value for all rows in table.
-func (s *FDSet) ConstantCols() FastIntSet {
+func (s *FDSet) ConstantCols() intset.FastIntSet {
 	for i := 0; i < len(s.fdEdges); i++ {
 		if s.fdEdges[i].isConstant() {
 			return s.fdEdges[i].to
 		}
 	}
-	return FastIntSet{}
+	return intset.FastIntSet{}
 }
 
 // EquivalenceCols returns the set of columns that are constrained to equal to each other.
-func (s *FDSet) EquivalenceCols() (eqs []*FastIntSet) {
+func (s *FDSet) EquivalenceCols() (eqs []*intset.FastIntSet) {
 	for i := 0; i < len(s.fdEdges); i++ {
 		if s.fdEdges[i].isEquivalence() {
 			// return either side is the same.
@@ -521,7 +522,7 @@ func (s *FDSet) EquivalenceCols() (eqs []*FastIntSet) {
 // MakeNotNull modify the FD set based the listed column with NOT NULL flags.
 // Most of the case is used in the derived process after predicate evaluation,
 // which can upgrade lax FDs to strict ones.
-func (s *FDSet) MakeNotNull(notNullCols FastIntSet) {
+func (s *FDSet) MakeNotNull(notNullCols intset.FastIntSet) {
 	notNullCols.UnionWith(s.NotNullCols)
 	notNullColsSet := s.closureOfEquivalence(notNullCols)
 	// make nc FD visible.
@@ -565,7 +566,7 @@ func (s *FDSet) MakeNotNull(notNullCols FastIntSet) {
 }
 
 // MakeNullable make the fd's NotNullCols to be cleaned, after the both side fds are handled it can be nullable.
-func (s *FDSet) MakeNullable(nullableCols FastIntSet) {
+func (s *FDSet) MakeNullable(nullableCols intset.FastIntSet) {
 	s.NotNullCols.DifferenceWith(nullableCols)
 }
 
@@ -728,7 +729,7 @@ func (s *FDSet) MakeCartesianProduct(rhs *FDSet) {
 //      - If the right side has no row, we will supply null-extended rows, then the value of any column is NULL, and the equivalence class exists.
 //      - If the right side has rows, no row is filtered out after the filters since no row of the outer side is filtered out. Hence, the equivalence class remains.
 //
-func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols FastIntSet, opt *ArgOpts) {
+func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols intset.FastIntSet, opt *ArgOpts) {
 	//  copy down the left PK and right PK before the s has changed for later usage.
 	leftPK, ok1 := s.FindPrimaryKey()
 	rightPK, ok2 := innerFDs.FindPrimaryKey()
@@ -767,8 +768,8 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 		}
 	}
 	s.ncEdges = append(s.ncEdges, innerFDs.ncEdges...)
-	leftCombinedFDFrom := NewFastIntSet()
-	leftCombinedFDTo := NewFastIntSet()
+	leftCombinedFDFrom := intset.NewFastIntSet()
+	leftCombinedFDTo := intset.NewFastIntSet()
 	for _, edge := range filterFDs.fdEdges {
 		// Rule #3.2, constant FD are removed from right side of left join.
 		if edge.isConstant() {
@@ -804,7 +805,7 @@ func (s *FDSet) MakeOuterJoin(innerFDs, filterFDs *FDSet, outerCols, innerCols F
 			laxFDTo := equivColsLeft
 			for i, ok := laxFDFrom.Next(0); ok; i, ok = laxFDFrom.Next(i + 1) {
 				for j, ok := laxFDTo.Next(0); ok; j, ok = laxFDTo.Next(j + 1) {
-					s.addFunctionalDependency(NewFastIntSet(i), NewFastIntSet(j), false, false)
+					s.addFunctionalDependency(intset.NewFastIntSet(i), intset.NewFastIntSet(j), false, false)
 				}
 			}
 			s.AddNCFunctionalDependency(equivColsLeft, equivColsRight, innerCols, true, true)
@@ -867,7 +868,7 @@ type ArgOpts struct {
 }
 
 // FindPrimaryKey checks whether there's a key in the current set which implies key -> all cols.
-func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
+func (s FDSet) FindPrimaryKey() (*intset.FastIntSet, bool) {
 	allCols := s.AllCols()
 	for i := 0; i < len(s.fdEdges); i++ {
 		fd := s.fdEdges[i]
@@ -875,7 +876,7 @@ func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
 		if fd.strict && !fd.equiv {
 			closure := s.closureOfStrict(fd.from)
 			if allCols.SubsetOf(closure) {
-				pk := NewFastIntSet()
+				pk := intset.NewFastIntSet()
 				pk.CopyFrom(fd.from)
 				return &pk, true
 			}
@@ -885,8 +886,8 @@ func (s FDSet) FindPrimaryKey() (*FastIntSet, bool) {
 }
 
 // AllCols returns all columns in the current set.
-func (s FDSet) AllCols() FastIntSet {
-	allCols := NewFastIntSet()
+func (s FDSet) AllCols() intset.FastIntSet {
+	allCols := intset.NewFastIntSet()
 	for i := 0; i < len(s.fdEdges); i++ {
 		allCols.UnionWith(s.fdEdges[i].from)
 		if !s.fdEdges[i].equiv {
@@ -937,7 +938,7 @@ func (s *FDSet) AddFrom(fds *FDSet) {
 //	f:      {a}--> {b,c}, {abc} == {abc}
 //	cols:   {a,c}
 //	result: {} --> {a,c}, {a,c} == {a,c}
-func (s *FDSet) MaxOneRow(cols FastIntSet) {
+func (s *FDSet) MaxOneRow(cols intset.FastIntSet) {
 	cnt := 0
 	for i := 0; i < len(s.fdEdges); i++ {
 		fd := s.fdEdges[i]
@@ -970,7 +971,7 @@ func (s *FDSet) MaxOneRow(cols FastIntSet) {
 // Formula:
 // Strict decomposition FD4A: If X −→ Y Z then X −→ Y and X −→ Z.
 // Lax decomposition FD4B: If X ~→ Y Z and I(R) is Y-definite then X ~→ Z.
-func (s *FDSet) ProjectCols(cols FastIntSet) {
+func (s *FDSet) ProjectCols(cols intset.FastIntSet) {
 	// **************************************** START LOOP 1 ********************************************
 	// Ensure the transitive relationship between remaining columns won't be lost.
 	// 1: record all the constant columns
@@ -982,7 +983,7 @@ func (s *FDSet) ProjectCols(cols FastIntSet) {
 	//		fd1: {a} --> {c}
 	//      fd2: {a,b} == {a,b}
 	//      if only a is un-projected, the fd1 can actually be kept as {b} --> {c}.
-	var constCols, detCols, equivCols FastIntSet
+	var constCols, detCols, equivCols intset.FastIntSet
 	for i := 0; i < len(s.fdEdges); i++ {
 		fd := s.fdEdges[i]
 
@@ -1077,7 +1078,7 @@ func (s *FDSet) ProjectCols(cols FastIntSet) {
 		if !fd.from.SubsetOf(cols) {
 			// equivalence and constant FD couldn't be here.
 			deletedCols := fd.from.Difference(cols)
-			substitutedCols := NewFastIntSet()
+			substitutedCols := intset.NewFastIntSet()
 			foundAll := true
 			for c, ok := deletedCols.Next(0); ok; c, ok = deletedCols.Next(c + 1) {
 				// For every un-projected column, try to found their substituted column in projection list.
@@ -1150,10 +1151,10 @@ func (s *FDSet) ProjectCols(cols FastIntSet) {
 }
 
 // makeEquivMap try to find the equivalence column of every deleted column in the project list.
-func (s *FDSet) makeEquivMap(detCols, projectedCols FastIntSet) map[int]int {
+func (s *FDSet) makeEquivMap(detCols, projectedCols intset.FastIntSet) map[int]int {
 	var equivMap map[int]int
 	for i, ok := detCols.Next(0); ok; i, ok = detCols.Next(i + 1) {
-		var oneCol FastIntSet
+		var oneCol intset.FastIntSet
 		oneCol.Insert(i)
 		closure := s.closureOfEquivalence(oneCol)
 		closure.IntersectionWith(projectedCols)
