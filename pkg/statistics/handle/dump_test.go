@@ -115,7 +115,7 @@ func TestConversion(t *testing.T) {
 	requireTableEqual(t, loadTblInStorage, tbl)
 }
 
-func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *storage.JSONTable {
+func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handleutil.JSONTable {
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.Nil(t, h.Update(is))
@@ -246,12 +246,12 @@ func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	jsonTbl, err := dom.StatsHandle().DumpStatsToJSON("test", tableInfo, nil, true)
 	require.NoError(t, err)
 
-	ctx := context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+	ctx := context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *handleutil.JSONTable) error {
 		return errors.New("ERROR")
 	})
 	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)
 	require.ErrorContains(t, err, "ERROR")
-	ctx = context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *storage.JSONTable) error {
+	ctx = context.WithValue(context.Background(), handle.TestLoadStatsErr{}, func(tableInfo *model.TableInfo, physicalID int64, jsonTbl *handleutil.JSONTable) error {
 		panic("PANIC")
 	})
 	err = dom.StatsHandle().LoadStatsFromJSON(ctx, dom.InfoSchema(), jsonTbl, 0)
@@ -443,7 +443,7 @@ func TestDumpVer2Stats(t *testing.T) {
 	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
 	require.NoError(t, err)
 
-	loadJSONTable := &storage.JSONTable{}
+	loadJSONTable := &handleutil.JSONTable{}
 	err = json.Unmarshal(jsonBytes, loadJSONTable)
 	require.NoError(t, err)
 
@@ -495,7 +495,7 @@ func TestLoadStatsForNewCollation(t *testing.T) {
 	jsonBytes, err := json.MarshalIndent(dumpJSONTable, "", " ")
 	require.NoError(t, err)
 
-	loadJSONTable := &storage.JSONTable{}
+	loadJSONTable := &handleutil.JSONTable{}
 	err = json.Unmarshal(jsonBytes, loadJSONTable)
 	require.NoError(t, err)
 
@@ -605,7 +605,7 @@ func TestLoadStatsFromOldVersion(t *testing.T) {
  "modify_count": 256,
  "partitions": null
 }`
-	jsonTbl := &storage.JSONTable{}
+	jsonTbl := &handleutil.JSONTable{}
 	require.NoError(t, json.Unmarshal([]byte(statsJSONFromOldVersion), jsonTbl))
 	require.NoError(t, h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))

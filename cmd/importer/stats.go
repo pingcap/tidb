@@ -16,6 +16,7 @@ package main
 
 import (
 	"encoding/json"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"math/rand"
 	"os"
 	"time"
@@ -34,7 +35,7 @@ func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jsTable := &storage.JSONTable{}
+	jsTable := &util.JSONTable{}
 	err = json.Unmarshal(data, jsTable)
 	if err != nil {
 		return nil, errors.Trace(err)

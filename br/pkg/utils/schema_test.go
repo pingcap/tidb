@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"testing"
 
 	"github.com/golang/protobuf/proto"
@@ -14,7 +15,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	handle "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 )
@@ -38,7 +38,7 @@ func TestLoadBackupMeta(t *testing.T) {
 		ID:   tblID,
 		Name: tblName,
 	}
-	mockStats := handle.JSONTable{
+	mockStats := util.JSONTable{
 		DatabaseName: dbName.String(),
 		TableName:    tblName.String(),
 	}
@@ -122,7 +122,7 @@ func TestLoadBackupMetaPartionTable(t *testing.T) {
 			},
 		},
 	}
-	mockStats := handle.JSONTable{
+	mockStats := util.JSONTable{
 		DatabaseName: dbName.String(),
 		TableName:    tblName.String(),
 	}

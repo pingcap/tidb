@@ -16,6 +16,7 @@ package util
 
 import (
 	"context"
+	"github.com/pingcap/tipb/go-tipb"
 	"strconv"
 	"time"
 
@@ -239,4 +240,40 @@ func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string
 		}
 	}
 	return strconv.FormatInt(tblInfo.ID, 10)
+}
+
+// JSONTable is used for dumping statistics.
+type JSONTable struct {
+	Columns           map[string]*JsonColumn `json:"columns"`
+	Indices           map[string]*JsonColumn `json:"indices"`
+	Partitions        map[string]*JSONTable  `json:"partitions"`
+	DatabaseName      string                 `json:"database_name"`
+	TableName         string                 `json:"table_name"`
+	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
+	Count             int64                  `json:"count"`
+	ModifyCount       int64                  `json:"modify_count"`
+	Version           uint64                 `json:"version"`
+	IsHistoricalStats bool                   `json:"is_historical_stats"`
+}
+
+// JSONExtendedStats is used for dumping extended statistics.
+type JSONExtendedStats struct {
+	StatsName  string  `json:"stats_name"`
+	StringVals string  `json:"string_vals"`
+	ColIDs     []int64 `json:"cols"`
+	ScalarVals float64 `json:"scalar_vals"`
+	Tp         uint8   `json:"type"`
+}
+
+// JsonColumn is used for dumping statistics.
+type JsonColumn struct {
+	Histogram *tipb.Histogram `json:"histogram"`
+	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
+	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
+	// StatsVer is a pointer here since the old version json file would not contain version information.
+	StatsVer          *int64  `json:"stats_ver"`
+	NullCount         int64   `json:"null_count"`
+	TotColSize        int64   `json:"tot_col_size"`
+	LastUpdateVersion uint64  `json:"last_update_version"`
+	Correlation       float64 `json:"correlation"`
 }

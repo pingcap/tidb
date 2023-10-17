@@ -128,7 +128,7 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 
 // SaveStatsFromJSON saves stats from JSON to the storage.
 func (s *statsReadWriter) SaveStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTblI interface{}) error {
-	jsonTbl := jsonTblI.(*JSONTable)
+	jsonTbl := jsonTblI.(*util.JSONTable)
 	tbl, err := TableStatsFromJSON(tableInfo, physicalID, jsonTbl)
 	if err != nil {
 		return errors.Trace(err)
