@@ -155,7 +155,7 @@ func scanRecords(seq int, p *copReqSenderPool, task *reorgBackfillTask, se *sess
 		var done bool
 		for !done {
 			srcChk := p.getChunk()
-			done, err = fetchTableScanResult(0, p.ctx, p.copCtx.GetBase(), rs, srcChk)
+			done, err = fetchTableScanResult(seq, p.ctx, p.copCtx.GetBase(), rs, srcChk)
 			if err != nil {
 				p.recycleChunk(srcChk)
 				terror.Call(rs.Close)
