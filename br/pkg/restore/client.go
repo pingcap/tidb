@@ -1031,7 +1031,7 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := mathutil.Min(lastSent+int(rc.batchDdlSize), len(tables))
+		end := min(lastSent+int(rc.batchDdlSize), len(tables))
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
@@ -3003,7 +3003,7 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 			batchSize = f.Length
 		} else {
 			if f.MinTs <= rangeMax && batchSize+f.Length <= MetaKVBatchSize {
-				rangeMin = mathutil.Min(rangeMin, f.MinTs)
+				rangeMin = min(rangeMin, f.MinTs)
 				rangeMax = mathutil.Max(rangeMax, f.MaxTs)
 				batchSize += f.Length
 			} else {

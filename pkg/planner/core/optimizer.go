@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -825,7 +824,7 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx s
 		if row[4].GetString() == "cpu-logical-cores" {
 			logicalCpus, err := strconv.Atoi(row[5].GetString())
 			if err == nil && logicalCpus > 0 {
-				minLogicalCores = mathutil.Min(minLogicalCores, uint64(logicalCpus))
+				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
 			}
 		}
 	}

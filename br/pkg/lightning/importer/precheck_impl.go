@@ -1350,7 +1350,7 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 
 	var lock sync.Mutex
 	tableNames := make([]string, 0)
-	concurrency := mathutil.Min(tableCount, ci.cfg.App.RegionConcurrency)
+	concurrency := min(tableCount, ci.cfg.App.RegionConcurrency)
 	type tableNameComponents struct {
 		DBName    string
 		TableName string

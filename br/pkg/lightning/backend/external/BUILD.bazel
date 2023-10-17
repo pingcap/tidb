@@ -31,7 +31,6 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/util/hack",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/size",
         "@com_github_cockroachdb_pebble//:pebble",
         "@com_github_jfcg_sorty_v2//:sorty",

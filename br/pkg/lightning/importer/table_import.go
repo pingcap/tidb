@@ -1226,7 +1226,7 @@ func (tr *TableImporter) importKV(
 		regionSplitSize = int64(config.SplitRegionSize)
 		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
-				regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
+				regionSplitSize = int64(config.SplitRegionSize) * int64(min(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
 		}); err != nil {

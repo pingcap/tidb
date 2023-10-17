@@ -844,7 +844,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
 	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all schema")
-	concurrency := mathutil.Min(rc.cfg.App.RegionConcurrency, 8)
+	concurrency := min(rc.cfg.App.RegionConcurrency, 8)
 	childCtx, cancel := context.WithCancel(ctx)
 	p := parser.New()
 	p.SetSQLMode(rc.cfg.TiDB.SQLMode)
