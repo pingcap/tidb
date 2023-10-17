@@ -1,0 +1,51 @@
+drop table if exists t;
+set @@session.tidb_analyze_version = 2;
+create table t(a longtext);
+insert into t value(repeat("a",65536));
+insert into t value(repeat("b",65536));
+analyze table t with 0 topn;
+set @@session.tidb_analyze_version = default;
+drop table if exists t1;
+drop table if exists t2;
+create table t1(a int);
+create table t2(a int);
+insert into t1 values(null), (null), (null), (null);
+insert into t2 values(null), (null);
+analyze table t1;
+analyze table t2;
+explain format = 'brief' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a;
+id	estRows	task	access object	operator info
+Sort	4.00	root		statistics__integration.t1.a, statistics__integration.t2.a
+└─HashJoin	4.00	root		left outer join, equal:[eq(statistics__integration.t1.a, statistics__integration.t2.a)]
+  ├─TableReader(Build)	0.00	root		data:Selection
+  │ └─Selection	0.00	cop[tikv]		not(isnull(statistics__integration.t2.a))
+  │   └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a;
+id	estRows	task	access object	operator info
+Sort	2.00	root		statistics__integration.t1.a, statistics__integration.t2.a
+└─HashJoin	2.00	root		left outer join, equal:[eq(statistics__integration.t2.a, statistics__integration.t1.a)]
+  ├─TableReader(Build)	0.00	root		data:Selection
+  │ └─Selection	0.00	cop[tikv]		not(isnull(statistics__integration.t1.a))
+  │   └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+  └─TableReader(Probe)	2.00	root		data:TableFullScan
+    └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a;
+id	estRows	task	access object	operator info
+Sort	2.00	root		statistics__integration.t1.a, statistics__integration.t2.a
+└─HashJoin	2.00	root		right outer join, equal:[eq(statistics__integration.t1.a, statistics__integration.t2.a)]
+  ├─TableReader(Build)	0.00	root		data:Selection
+  │ └─Selection	0.00	cop[tikv]		not(isnull(statistics__integration.t1.a))
+  │   └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false
+  └─TableReader(Probe)	2.00	root		data:TableFullScan
+    └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
+explain format = 'brief' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a;
+id	estRows	task	access object	operator info
+Sort	4.00	root		statistics__integration.t1.a, statistics__integration.t2.a
+└─HashJoin	4.00	root		right outer join, equal:[eq(statistics__integration.t2.a, statistics__integration.t1.a)]
+  ├─TableReader(Build)	0.00	root		data:Selection
+  │ └─Selection	0.00	cop[tikv]		not(isnull(statistics__integration.t2.a))
+  │   └─TableFullScan	2.00	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	4.00	root		data:TableFullScan
+    └─TableFullScan	4.00	cop[tikv]	table:t1	keep order:false

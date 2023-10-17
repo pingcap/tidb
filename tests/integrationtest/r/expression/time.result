@@ -147,7 +147,7 @@ insert into t values('2022-10-30 00:30:00');
 insert into t values('2022-10-30 01:30:00');
 set time_zone = 'Europe/Amsterdam';
 insert into t values('2022-03-27 02:30:00');
-Error 1292: Incorrect timestamp value: '2022-03-27 02:30:00' for column 'ts' at row 1
+Error 1292 (22007): Incorrect timestamp value: '2022-03-27 02:30:00' for column 'ts' at row 1
 select date_add(ts, interval 1 hour) from t order by ts;
 date_add(ts, interval 1 hour)
 2022-03-27 02:30:00
@@ -509,13 +509,13 @@ drop table if exists t1;
 create table t1 (d date);
 set sql_mode='traditional';
 insert into t1 (d) select date_add('2000-01-01',interval 8000 year);
-Error 1441: Datetime function: datetime field overflow
+Error 1441 (22008): Datetime function: datetime field overflow
 insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR);
-Error 1441: Datetime function: datetime field overflow
+Error 1441 (22008): Datetime function: datetime field overflow
 insert into t1 (d) select date_add('9999-12-31',interval 1 year);
-Error 1441: Datetime function: datetime field overflow
+Error 1441 (22008): Datetime function: datetime field overflow
 insert into t1 (d) select date_add('9999-12-31',interval 1 day);
-Error 1441: Datetime function: datetime field overflow
+Error 1441 (22008): Datetime function: datetime field overflow
 set sql_mode='';
 insert into t1 (d) select date_add('2000-01-01',interval 8000 year);
 insert into t1 (d) select date_sub('2000-01-01', INTERVAL 2001 YEAR);

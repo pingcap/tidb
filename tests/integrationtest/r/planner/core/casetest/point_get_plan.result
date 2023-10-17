@@ -1,0 +1,153 @@
+drop table if exists t;
+set session tidb_enable_clustered_index = 'INT_ONLY';
+create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c));
+insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4);
+explain format = 'brief' select * from t where t.a in ('1','2','4') and t.a+1=2 order by t.a desc;
+id	estRows	task	access object	operator info
+Selection	2.40	root		eq(plus(cast(planner__core__casetest__point_get_plan.t.a, double BINARY), 1), 2)
+└─Batch_Point_Get	3.00	root	table:t, index:PRIMARY(a)	keep order:true, desc:true
+select * from t where t.a in ('1','2','4') and t.a+1=2 order by t.a desc;
+a	b	c	d
+1	4	4	1
+explain format = 'brief' select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3;
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t, index:b(b, c)	
+select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3;
+b	c
+2	2
+explain format = 'brief' select * from t where t.a = '1' and t.b = 4;
+id	estRows	task	access object	operator info
+Selection	0.00	root		eq(planner__core__casetest__point_get_plan.t.b, 4)
+└─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t where t.a = '1' and t.b = 4;
+a	b	c	d
+1	4	4	1
+explain format = 'brief' select * from t where t.a in ('1','3') and t.d = 3;
+id	estRows	task	access object	operator info
+Selection	0.00	root		eq(planner__core__casetest__point_get_plan.t.d, 3)
+└─Batch_Point_Get	2.00	root	table:t, index:PRIMARY(a)	keep order:false, desc:false
+select * from t where t.a in ('1','3') and t.d = 3;
+a	b	c	d
+3	2	2	3
+explain format = 'brief' select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
+id	estRows	task	access object	operator info
+Projection	0.00	root		planner__core__casetest__point_get_plan.t.a, planner__core__casetest__point_get_plan.t.b, planner__core__casetest__point_get_plan.t.c, planner__core__casetest__point_get_plan.t.d, planner__core__casetest__point_get_plan.t.a, planner__core__casetest__point_get_plan.t.b, planner__core__casetest__point_get_plan.t.c, planner__core__casetest__point_get_plan.t.d
+└─MergeJoin	0.00	root		inner join, left key:planner__core__casetest__point_get_plan.t.a, right key:planner__core__casetest__point_get_plan.t.a
+  ├─Point_Get(Build)	1.00	root	table:t, index:PRIMARY(a)	
+  └─Selection(Probe)	0.00	root		or(and(eq(planner__core__casetest__point_get_plan.t.b, 1), eq(planner__core__casetest__point_get_plan.t.c, 1)), and(eq(planner__core__casetest__point_get_plan.t.b, 2), eq(planner__core__casetest__point_get_plan.t.c, 2)))
+    └─Point_Get	1.00	root	table:t, index:PRIMARY(a)	
+select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
+a	b	c	d	a	b	c	d
+4	1	1	4	4	1	1	4
+explain format = 'brief' select * from t where (t.b, t.c) in ((2,2), (3,3), (4,4)) order by t.b, t.c;
+id	estRows	task	access object	operator info
+Batch_Point_Get	3.00	root	table:t, index:b(b, c)	keep order:true, desc:false
+select * from t where (t.b, t.c) in ((2,2), (3,3), (4,4)) order by t.b, t.c;
+a	b	c	d
+3	2	2	3
+2	3	3	2
+1	4	4	1
+drop tables if exists t1, t2, t3, t4, t5;
+set session tidb_enable_clustered_index = 'INT_ONLY';
+create table t1(id varchar(20) primary key);
+create table t2(id varchar(20), unique(id));
+create table t3(id varchar(20), d varchar(20), unique(id, d));
+create table t4(id int, d varchar(20), c varchar(20), unique(id, d));
+create table t5(id bit(64) primary key);
+insert into t1 values('asdf'), ('1asdf');
+insert into t2 values('asdf'), ('1asdf');
+insert into t3 values('asdf', 't'), ('1asdf', 't');
+insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl');
+insert into t5 values(48);
+explain format = 'brief' select * from t1 where id = 0;
+id	estRows	task	access object	operator info
+IndexReader	8000.00	root		index:Selection
+└─Selection	8000.00	cop[tikv]		eq(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 0)
+  └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(id)	keep order:false, stats:pseudo
+select * from t1 where id = 0;
+id
+asdf
+explain format = 'brief' select * from t1 where id = x'00';
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t1, index:PRIMARY(id)	
+select * from t1 where id = x'00';
+id
+explain format = 'brief' select * from t1 where id = b'00';
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t1, index:PRIMARY(id)	
+select * from t1 where id = b'00';
+id
+explain format = 'brief' select * from t1 where id = 0.0;
+id	estRows	task	access object	operator info
+IndexReader	8000.00	root		index:Selection
+└─Selection	8000.00	cop[tikv]		eq(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 0)
+  └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(id)	keep order:false, stats:pseudo
+select * from t1 where id = 0.0;
+id
+asdf
+explain format = 'brief' select * from t1 where id = 1.0;
+id	estRows	task	access object	operator info
+IndexReader	8000.00	root		index:Selection
+└─Selection	8000.00	cop[tikv]		eq(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 1)
+  └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(id)	keep order:false, stats:pseudo
+select * from t1 where id = 1.0;
+id
+1asdf
+explain format = 'brief' select * from t1 where id in (0, 1);
+id	estRows	task	access object	operator info
+IndexReader	9600.00	root		index:Selection
+└─Selection	9600.00	cop[tikv]		or(eq(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 0), eq(cast(planner__core__casetest__point_get_plan.t1.id, double BINARY), 1))
+  └─IndexFullScan	10000.00	cop[tikv]	table:t1, index:PRIMARY(id)	keep order:false, stats:pseudo
+select * from t1 where id in (0, 1);
+id
+1asdf
+asdf
+explain format = 'brief' select * from t2 where id = 0;
+id	estRows	task	access object	operator info
+IndexReader	8000.00	root		index:Selection
+└─Selection	8000.00	cop[tikv]		eq(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 0)
+  └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:id(id)	keep order:false, stats:pseudo
+select * from t2 where id = 0;
+id
+asdf
+explain format = 'brief' select * from t2 where id in (0, 1);
+id	estRows	task	access object	operator info
+IndexReader	9600.00	root		index:Selection
+└─Selection	9600.00	cop[tikv]		or(eq(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 0), eq(cast(planner__core__casetest__point_get_plan.t2.id, double BINARY), 1))
+  └─IndexFullScan	10000.00	cop[tikv]	table:t2, index:id(id)	keep order:false, stats:pseudo
+select * from t2 where id in (0, 1);
+id
+1asdf
+asdf
+explain format = 'brief' select * from t3 where (id, d) in ((0, 't'), (1, 't'));
+id	estRows	task	access object	operator info
+IndexReader	15.99	root		index:Selection
+└─Selection	15.99	cop[tikv]		or(and(eq(cast(planner__core__casetest__point_get_plan.t3.id, double BINARY), 0), eq(planner__core__casetest__point_get_plan.t3.d, "t")), and(eq(cast(planner__core__casetest__point_get_plan.t3.id, double BINARY), 1), eq(planner__core__casetest__point_get_plan.t3.d, "t")))
+  └─IndexFullScan	10000.00	cop[tikv]	table:t3, index:id(id, d)	keep order:false, stats:pseudo
+select * from t3 where (id, d) in ((0, 't'), (1, 't'));
+id	d
+1asdf	t
+asdf	t
+explain format = 'brief' select * from t4 where (id, d, c) in ((1, 'b', 0));
+id	estRows	task	access object	operator info
+Selection	0.80	root		eq(cast(planner__core__casetest__point_get_plan.t4.c, double BINARY), 0)
+└─Point_Get	1.00	root	table:t4, index:id(id, d)	
+select * from t4 where (id, d, c) in ((1, 'b', 0));
+id	d	c
+1	b	asdf
+explain format = 'brief' select * from t4 where (id, d, c) in ((1, 0, 0));
+id	estRows	task	access object	operator info
+IndexLookUp	8.00	root		
+├─Selection(Build)	8.00	cop[tikv]		eq(cast(planner__core__casetest__point_get_plan.t4.d, double BINARY), 0)
+│ └─IndexRangeScan	10.00	cop[tikv]	table:t4, index:id(id, d)	range:[1,1], keep order:false, stats:pseudo
+└─Selection(Probe)	8.00	cop[tikv]		eq(cast(planner__core__casetest__point_get_plan.t4.c, double BINARY), 0)
+  └─TableRowIDScan	8.00	cop[tikv]	table:t4	keep order:false, stats:pseudo
+select * from t4 where (id, d, c) in ((1, 0, 0));
+id	d	c
+1	b	asdf
+1	c	jkl
+explain format = 'brief' select * from t5 where id in ('0');
+id	estRows	task	access object	operator info
+Point_Get	1.00	root	table:t5, index:PRIMARY(id)	
+select * from t5 where id in ('0');
+id

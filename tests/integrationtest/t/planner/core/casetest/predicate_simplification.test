@@ -1,0 +1,33 @@
+# TestRemoveRedundantPredicates
+drop table if exists t;
+create table t(a int, f int);
+explain format = 'brief' select f from t use index() where f = 1 and f = 1 -- simple redundancy of exact condition;
+explain format = 'brief' select f from t use index() where f = 1 and f = 2 -- unsatisfiable condition;
+explain format = 'brief' select f from t use index() where f = 1 and f in (1,2,3)  -- intersection of in and =;
+explain format = 'brief' select f from t use index() where f = 1 and f <> 1  -- intersection of = and <>;
+explain format = 'brief' select f from t use index() where f not in (1,2,3) and f = 3 -- intersection of not in list and =;
+explain format = 'brief' select f from t use index() where f <> 3 and f <> 3 -- intersection of two not in values.;
+explain format = 'brief' select t1.f /* merge_join(t1, t2) */ from t t1, t t2 where t1.a=t2.a and t1.a=t2.a -- exact redundancy in joins;
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f in (3,4,5) -- intersection of two in. Not done yet;
+explain format = 'brief' select f from t use index() where f not in (1,2,3) and f not in (3,4,5) -- intersection of two not in. Not done yet;
+explain format = 'brief' select f from t use index() where f not in (1,2,3) and f in (1,2,3) -- intersection of in and not in. Not done yet;
+
+# TestInListAndNotEqualSimplification
+drop table if exists t;
+create table t(a int, f int);
+drop table if exists ts;
+create table ts(a char(10), f char(10));
+explain format = 'brief' select f from t use index() where f <> 1 and f in (1,2,3) -- Simple case;
+explain format = 'brief' select f from t use index() where f <> 4 and f in (1,2,3) -- No intersection but <> is redundant;
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 2 -- Simple case with different order. Test case for issue 39676;
+explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 2 -- Multiple <> values. All are in inlist;
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 2 and f <> 99 -- Multiple <> values. Some are in inlist;
+explain format = 'brief' select f from t use index() where f in (1,2,3) and f <> 5 and f <> 33  -- Multiple <> values. None are in inlist;
+explain format = 'brief' select f from t use index() where f <> 3 and f in (1,2,3) and f <> 1 and f <> 2 -- Multiple <> values and cover whole inlist. We keep at least one in inlist;
+explain format = 'brief' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
+explain format = 'brief' select 1 from t A, t B where B.f <> 2 and A.f <> 3 and B.f in (1,2,3) and A.f in (3,1,4) and A.f <> 1 and A.f <> 2 -- simplification for two columns.;
+explain format = 'brief' select f from ts use index() where f <> '1' and f in ('1','2','3') -- Simple case with string type;
+explain format = 'brief' select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ;
+explain format = 'brief' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
+explain format = 'brief' select f from t where f != NULL  and f in (NULL,2,3) -- Special case of NULL with no simplification.;
+
