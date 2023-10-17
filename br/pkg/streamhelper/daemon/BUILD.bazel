@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
-        "//owner",
+        "//pkg/owner",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
@@ -23,7 +23,7 @@ go_test(
     flaky = True,
     deps = [
         ":daemon",
-        "//owner",
+        "//pkg/owner",
         "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//require",
     ],

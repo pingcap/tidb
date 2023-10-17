@@ -53,13 +53,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -1322,6 +1323,7 @@ func (local *Backend) startWorker(
 	jobInCh, jobOutCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
 	for {
 		select {
 		case <-ctx.Done():
@@ -1333,7 +1335,9 @@ func (local *Backend) startWorker(
 				return nil
 			}
 
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := local.executeJob(ctx, job)
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 			switch job.stage {
 			case regionScanned, wrote, ingested:
 				jobOutCh <- job
