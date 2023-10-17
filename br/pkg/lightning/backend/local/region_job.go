@@ -191,7 +191,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	if err == nil {
 		return nil
 	}
-	if common.IsContextCanceledError(err) || !common.IsRetryableError(err) {
+	if !common.IsRetryableError(err) {
 		return err
 	}
 	// currently only one case will restart write
