@@ -225,6 +225,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		staleQuarantineRecord: staleQuarantineChan,
 		activeGroup:           make(map[string]int64),
+		metricsMap:            make(map[string]prometheus.Counter),
 	}
 	m.insertionCancel = watchList.OnInsertion(func(ctx context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
