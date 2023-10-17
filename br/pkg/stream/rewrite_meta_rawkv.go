@@ -25,10 +25,10 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"go.uber.org/zap"
 )
 
@@ -649,7 +649,7 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 				return nil, nil
 			}
 
-			return nil, sr.restoreFromHistory(job)
+			return nil, sr.restoreFromHistory(job, false)
 		}
 		return nil, nil
 	}
@@ -678,23 +678,24 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 	return nil, nil
 }
 
-func (sr *SchemasReplace) restoreFromHistory(job *model.Job) error {
+func (sr *SchemasReplace) restoreFromHistory(job *model.Job, isSubJob bool) error {
 	if !job.IsCancelled() {
 		switch job.Type {
 		case model.ActionAddIndex, model.ActionAddPrimaryKey:
 			if job.State == model.JobStateRollbackDone {
 				return sr.deleteRange(job)
 			}
-			err := sr.ingestRecorder.AddJob(job)
+			err := sr.ingestRecorder.AddJob(job, isSubJob)
 			return errors.Trace(err)
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
 			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn,
 			model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
 			return sr.deleteRange(job)
 		case model.ActionMultiSchemaChange:
-			for _, sub := range job.MultiSchemaInfo.SubJobs {
-				proxyJob := sub.ToProxyJob(job)
-				if err := sr.restoreFromHistory(&proxyJob); err != nil {
+			for i, sub := range job.MultiSchemaInfo.SubJobs {
+				proxyJob := sub.ToProxyJob(job, i)
+				// ASSERT: the proxyJob can not be MultiSchemaInfo anymore
+				if err := sr.restoreFromHistory(&proxyJob, true); err != nil {
 					return err
 				}
 			}
@@ -840,15 +841,16 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				zap.Int64("oldTableID", job.TableID))
 			return nil
 		}
-		var indexID int64
-		var ifExists bool
+		indexIDs := make([]int64, 1)
+		ifExists := make([]bool, 1)
 		var partitionIDs []int64
-		if err := job.DecodeArgs(&indexID, &ifExists, &partitionIDs); err != nil {
-			return errors.Trace(err)
+		if err := job.DecodeArgs(&indexIDs[0], &ifExists[0], &partitionIDs); err != nil {
+			if err = job.DecodeArgs(&indexIDs, &ifExists, &partitionIDs); err != nil {
+				return errors.Trace(err)
+			}
 		}
 
 		var elementID int64 = 1
-		indexIDs := []int64{indexID}
 
 		if len(partitionIDs) > 0 {
 			for _, oldPid := range partitionIDs {

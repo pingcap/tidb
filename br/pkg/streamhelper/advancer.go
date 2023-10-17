@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper/config"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/metrics"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -443,7 +443,7 @@ func (c *CheckpointAdvancer) stopSubscriber() {
 	c.subscriber = nil
 }
 
-func (c *CheckpointAdvancer) spawnSubscriptionHandler(ctx context.Context) {
+func (c *CheckpointAdvancer) SpawnSubscriptionHandler(ctx context.Context) {
 	c.subscriberMu.Lock()
 	defer c.subscriberMu.Unlock()
 	c.subscriber = NewSubscriber(c.env, c.env, WithMasterContext(ctx))
@@ -470,9 +470,12 @@ func (c *CheckpointAdvancer) spawnSubscriptionHandler(ctx context.Context) {
 }
 
 func (c *CheckpointAdvancer) subscribeTick(ctx context.Context) error {
+	c.subscriberMu.Lock()
+	defer c.subscriberMu.Unlock()
 	if c.subscriber == nil {
 		return nil
 	}
+	failpoint.Inject("get_subscriber", nil)
 	if err := c.subscriber.UpdateStoreTopology(ctx); err != nil {
 		log.Warn("Error when updating store topology.",
 			zap.String("category", "log backup advancer"), logutil.ShortError(err))

@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	handle "github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
 )
 
