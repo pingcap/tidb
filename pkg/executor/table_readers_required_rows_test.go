@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -64,7 +63,7 @@ func (r *requiredRowsSelectResult) Next(ctx context.Context, chk *chunk.Chunk) e
 	if r.count > r.totalRows {
 		return nil
 	}
-	required := mathutil.Min(chk.RequiredRows(), r.totalRows-r.count)
+	required := min(chk.RequiredRows(), r.totalRows-r.count)
 	for i := 0; i < required; i++ {
 		chk.AppendRow(r.genOneRow())
 	}

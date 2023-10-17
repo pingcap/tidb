@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // pushDownTopNOptimizer pushes down the topN or limit. In the future we will remove the limit from `requiredProperty` in CBO phase.
@@ -61,7 +60,7 @@ func (lt *LogicalTopN) setChild(p LogicalPlan, opt *logicalOptimizeOp) LogicalPl
 			dual.RowCount = 0
 			return dual
 		}
-		dual.RowCount = int(mathutil.Min(numDualRows-lt.Offset, lt.Count))
+		dual.RowCount = int(min(numDualRows-lt.Offset, lt.Count))
 		return dual
 	}
 

@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/sem"
@@ -637,7 +636,7 @@ func (hch *handleColHelper) pushMap(m map[int64][]HandleCols) {
 }
 
 func (hch *handleColHelper) mergeAndPush(m1, m2 map[int64][]HandleCols) {
-	newMap := make(map[int64][]HandleCols, mathutil.Max(len(m1), len(m2)))
+	newMap := make(map[int64][]HandleCols, max(len(m1), len(m2)))
 	for k, v := range m1 {
 		newMap[k] = make([]HandleCols, len(v))
 		copy(newMap[k], v)

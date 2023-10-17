@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 )
@@ -485,10 +484,10 @@ func getMinSelectivityFromPaths(paths []*util.AccessPath, totalRowCount float64)
 		// For table path and index merge path, AccessPath.CountAfterIndex is not set and meaningless,
 		// but we still consider their AccessPath.CountAfterAccess.
 		if path.IsTablePath() || path.PartialIndexPaths != nil {
-			minSelectivity = mathutil.Min(minSelectivity, path.CountAfterAccess/totalRowCount)
+			minSelectivity = min(minSelectivity, path.CountAfterAccess/totalRowCount)
 			continue
 		}
-		minSelectivity = mathutil.Min(minSelectivity, path.CountAfterIndex/totalRowCount)
+		minSelectivity = min(minSelectivity, path.CountAfterIndex/totalRowCount)
 	}
 	return minSelectivity
 }

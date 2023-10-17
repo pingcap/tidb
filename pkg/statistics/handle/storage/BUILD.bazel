@@ -30,7 +30,6 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/compress",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/sqlexec",
         "@com_github_klauspost_compress//gzip",

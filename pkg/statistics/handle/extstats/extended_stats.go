@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -88,7 +87,7 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *statistics.ExtendedStat
 	samplesX := collectors[colOffsets[0]].Samples
 	// We would modify Ordinal of samplesY, so we make a deep copy.
 	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
-	sampleNum := mathutil.Min(len(samplesX), len(samplesY))
+	sampleNum := min(len(samplesX), len(samplesY))
 	if sampleNum == 1 {
 		item.ScalarVals = 1
 		return item
