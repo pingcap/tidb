@@ -16,6 +16,8 @@
 
 set -eux
 
+# test
+
 # Check that error summary are written at the bottom of import.
 run_sql 'DROP DATABASE IF EXISTS tidb_lightning_checkpoint_error_summary;'
 
