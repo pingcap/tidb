@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/skip"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,7 @@ func TestCartesianJoinPanic(t *testing.T) {
 		tk.MustExec("insert into t select * from t")
 	}
 	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
-	require.ErrorContains(t, err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestGlobalMemoryControl(t *testing.T) {
@@ -89,7 +90,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker3.Consume(1)
 		}, func(r interface{}) {
-			require.ErrorContains(t, r.(error), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance)
+			require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(r.(error)))
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
@@ -108,7 +109,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		func() {
 			tracker2.Consume(1)
 		}, func(r interface{}) {
-			require.ErrorContains(t, r.(error), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForInstance)
+			require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(r.(error)))
 		})
 	require.Equal(t, test[0], 0) // Keep 1GB HeapInUse
 }

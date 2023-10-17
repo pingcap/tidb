@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -1481,7 +1480,7 @@ func TestMPPMemoryTracker(t *testing.T) {
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestTiFlashComputeDispatchPolicy(t *testing.T) {

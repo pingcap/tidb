@@ -182,12 +182,3 @@ func (*PanicOnExceed) GetPriority() int64 {
 var (
 	errMemExceedThreshold = dbterror.ClassUtil.NewStd(errno.ErrMemExceedThreshold)
 )
-
-const (
-	// PanicMemoryExceedWarnMsg represents the panic message when out of memory quota.
-	PanicMemoryExceedWarnMsg string = "Your query has been cancelled due to exceeding the allowed memory limit"
-	// WarnMsgSuffixForSingleQuery represents the suffix of the warning message when out of memory quota for a single query.
-	WarnMsgSuffixForSingleQuery string = " for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again."
-	// WarnMsgSuffixForInstance represents the suffix of the warning message when out of memory quota for the tidb-server instance.
-	WarnMsgSuffixForInstance string = " for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."
-)

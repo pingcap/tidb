@@ -1079,7 +1079,8 @@ const (
 	ErrLoadDataLocalUnsupportedOption      = 8172
 	ErrLoadDataPreCheckFailed              = 8173
 	ErrBRJobNotFound                       = 8174
-	ErrMemoryExceed                        = 8175
+	ErrMemoryExceedForQuery                = 8175
+	ErrMemoryExceedForInstance             = 8176
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

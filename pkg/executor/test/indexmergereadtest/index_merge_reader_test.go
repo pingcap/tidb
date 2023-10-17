@@ -33,7 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -800,7 +800,7 @@ func TestIntersectionMemQuota(t *testing.T) {
 	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
 	tk.MustExec("set @@tidb_mem_quota_query = 4000")
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024")
-	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func setupPartitionTableHelper(tk *testkit.TestKit) {

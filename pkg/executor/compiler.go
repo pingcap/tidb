@@ -49,7 +49,7 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 		if r == nil {
 			return
 		}
-		if err, ok := r.(error); !ok || !exeerrors.ErrMemoryExceed.Equal(err) {
+		if err, ok := r.(error); !ok || !exeerrors.ErrMemoryExceedForQuery.Equal(err) || !exeerrors.ErrMemoryExceedForInstance.Equal(err) {
 			panic(r)
 		}
 		err = errors.Errorf("%v", r)

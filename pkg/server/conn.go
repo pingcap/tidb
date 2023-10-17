@@ -2148,7 +2148,7 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 		if r == nil {
 			return
 		}
-		if err, ok := r.(error); !ok || !exeerrors.ErrMemoryExceed.Equal(err) {
+		if err, ok := r.(error); !ok || !exeerrors.ErrMemoryExceedForQuery.Equal(err) || !exeerrors.ErrMemoryExceedForInstance.Equal(err) {
 			panic(r)
 		}
 		// TODO(jianzhang.zj: add metrics here)

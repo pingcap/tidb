@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/atomic"
 )
 
@@ -60,15 +58,12 @@ func getAnalyzePanicErr(r interface{}) error {
 		if msg == globalPanicAnalyzeMemoryExceed {
 			return errAnalyzeOOM
 		}
-		if strings.Contains(msg, memory.PanicMemoryExceedWarnMsg) {
-			return errors.Errorf("%s, %s", msg, errAnalyzeOOM)
-		}
 	}
 	if err, ok := r.(error); ok {
 		if err.Error() == globalPanicAnalyzeMemoryExceed {
 			return errAnalyzeOOM
 		}
-		if exeerrors.ErrMemoryExceed.Equal(err) {
+		if exeerrors.ErrMemoryExceedForQuery.Equal(err) || exeerrors.ErrMemoryExceedForInstance.Equal(err) {
 			return errors.Errorf("%s, %s", err.Error(), errAnalyzeOOM)
 		}
 		return err
