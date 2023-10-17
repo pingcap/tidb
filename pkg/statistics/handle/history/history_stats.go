@@ -30,8 +30,7 @@ import (
 
 // statsHistoryImpl implements util.StatsHistory.
 type statsHistoryImpl struct {
-	pool       util.SessionPool
-	statsCache util.StatsCache
+	statsHandle util.StatsHandle
 
 	// TODO: use interfaces instead of raw function pointers
 	tableStatsToJSON func(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error)
@@ -39,13 +38,12 @@ type statsHistoryImpl struct {
 }
 
 // NewStatsHistory creates a new StatsHistory.
-func NewStatsHistory(pool util.SessionPool, statsCache util.StatsCache,
+func NewStatsHistory(statsHandle util.StatsHandle,
 	tableStatsToJSON func(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error),
 	dumpStatsToJSON func(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*storage.JSONTable, error),
 ) util.StatsHistory {
 	return &statsHistoryImpl{
-		pool:             pool,
-		statsCache:       statsCache,
+		statsHandle:      statsHandle,
 		tableStatsToJSON: tableStatsToJSON,
 		dumpStatsToJSON:  dumpStatsToJSON,
 	}
@@ -65,7 +63,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 	}
 
 	var version uint64
-	err = util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		version, err = RecordHistoricalStatsToStorage(sctx, physicalID, js)
 		return err
 	}, util.FlagWrapTxn)
@@ -77,14 +75,14 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uin
 	if version == 0 {
 		return
 	}
-	tbl, ok := sh.statsCache.Get(tableID)
+	tbl, ok := sh.statsHandle.Get(tableID)
 	if !ok {
 		return
 	}
 	if !tbl.IsInitialized() {
 		return
 	}
-	err := util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+	err := util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return RecordHistoricalStatsMeta(sctx, tableID, version, source)
 	})
 	if err != nil { // just log the error, hide the error from the outside caller.
@@ -98,7 +96,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uin
 
 // CheckHistoricalStatsEnable checks whether historical stats is enabled.
 func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error) {
-	err = util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		enable = sctx.GetSessionVars().EnableHistoricalStats
 		return nil
 	})

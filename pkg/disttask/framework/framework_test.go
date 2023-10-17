@@ -135,7 +135,7 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 		scheduler.ClearSchedulers()
 	})
 	dispatcher.RegisterDispatcherFactory(taskType,
-		func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
 			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
 			baseDispatcher.Extension = dispatcherHandle
 			return baseDispatcher

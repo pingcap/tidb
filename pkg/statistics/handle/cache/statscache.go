@@ -16,15 +16,14 @@ package cache
 
 import (
 	"sync/atomic"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
+	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -33,27 +32,19 @@ import (
 
 // StatsCacheImpl implements util.StatsCache.
 type StatsCacheImpl struct {
-	pool    util.SessionPool
-	tblInfo util.TableInfoGetter
 	atomic.Pointer[StatsCache]
 
-	tableStatsFromStorage func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
-	statsLease            time.Duration
+	statsHandle util.StatsHandle
 }
 
 // NewStatsCacheImpl creates a new StatsCache.
-func NewStatsCacheImpl(pool util.SessionPool, tblInfo util.TableInfoGetter, statsLease time.Duration,
-	tableStatsFromStorage func(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error),
-) (util.StatsCache, error) {
+func NewStatsCacheImpl(statsHandle util.StatsHandle) (util.StatsCache, error) {
 	newCache, err := NewStatsCache()
 	if err != nil {
 		return nil, err
 	}
 	result := &StatsCacheImpl{
-		pool:                  pool,
-		tblInfo:               tblInfo,
-		statsLease:            statsLease,
-		tableStatsFromStorage: tableStatsFromStorage,
+		statsHandle: statsHandle,
 	}
 	result.Store(newCache)
 	return result, nil
@@ -61,7 +52,7 @@ func NewStatsCacheImpl(pool util.SessionPool, tblInfo util.TableInfoGetter, stat
 
 // NewStatsCacheImplForTest creates a new StatsCache for test.
 func NewStatsCacheImplForTest() (util.StatsCache, error) {
-	return NewStatsCacheImpl(nil, nil, 0, nil)
+	return NewStatsCacheImpl(nil)
 }
 
 // Update reads stats meta from store and updates the stats map.
@@ -72,7 +63,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 	// and A0 < B0 < B1 < A1. We will first read the stats of B, and update the lastVersion to B0, but we cannot read
 	// the table stats of A0 if we read stats that greater than lastVersion which is B0.
 	// We can read the stats if the diff between commit time and version is less than three lease.
-	offset := util.DurationToTS(3 * s.statsLease)
+	offset := util.DurationToTS(3 * s.statsHandle.Lease())
 	if s.MaxTableStatsVersion() >= offset {
 		lastVersion = lastVersion - offset
 	} else {
@@ -81,7 +72,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 
 	var rows []chunk.Row
 	var err error
-	err = util.CallWithSCtx(s.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(s.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		rows, _, err = util.ExecRows(sctx, "SELECT version, table_id, modify_count, count from mysql.stats_meta where version > %? order by version", lastVersion)
 		return err
 	})
@@ -95,7 +86,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		physicalID := row.GetInt64(1)
 		modifyCount := row.GetInt64(2)
 		count := row.GetInt64(3)
-		table, ok := s.tblInfo.TableInfoByID(is, physicalID)
+		table, ok := s.statsHandle.TableInfoByID(is, physicalID)
 		if !ok {
 			logutil.BgLogger().Debug("unknown physical ID in stats meta table, maybe it has been dropped", zap.Int64("ID", physicalID))
 			deletedTableIDs = append(deletedTableIDs, physicalID)
@@ -105,7 +96,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		if oldTbl, ok := s.Get(physicalID); ok && oldTbl.Version >= version && tableInfo.UpdateTS == oldTbl.TblInfoUpdateTS {
 			continue
 		}
-		tbl, err := s.tableStatsFromStorage(tableInfo, physicalID, false, 0)
+		tbl, err := s.statsHandle.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
 			logutil.BgLogger().Error("error occurred when read table stats", zap.String("category", "stats"), zap.String("table", tableInfo.Name.O), zap.Error(err))
@@ -200,4 +191,28 @@ func (s *StatsCacheImpl) Len() int {
 // SetStatsCacheCapacity sets the cache's capacity.
 func (s *StatsCacheImpl) SetStatsCacheCapacity(c int64) {
 	s.Load().SetCapacity(c)
+}
+
+// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+func (s *StatsCacheImpl) UpdateStatsHealthyMetrics() {
+	distribution := make([]int64, 5)
+	for _, tbl := range s.Values() {
+		healthy, ok := tbl.GetStatsHealthy()
+		if !ok {
+			continue
+		}
+		if healthy < 50 {
+			distribution[0]++
+		} else if healthy < 80 {
+			distribution[1]++
+		} else if healthy < 100 {
+			distribution[2]++
+		} else {
+			distribution[3]++
+		}
+		distribution[4]++
+	}
+	for i, val := range distribution {
+		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
+	}
 }
