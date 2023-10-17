@@ -25,7 +25,6 @@ go_test(
         "//pkg/testkit",
         "//pkg/types",
         "//pkg/util/dbterror/exeerrors",
-        "//pkg/util/memory",
         "//pkg/util/sqlexec",
         "//tests/realtikvtest",
         "@com_github_stretchr_testify//require",

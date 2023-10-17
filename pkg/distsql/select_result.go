@@ -390,7 +390,7 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		}
 		sessVars := r.ctx.GetSessionVars()
 		if err = sessVars.SQLKiller.HandleSignal(); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {

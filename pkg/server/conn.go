@@ -2148,11 +2148,12 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 		if r == nil {
 			return
 		}
-		if err, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(err) || exeerrors.ErrMemoryExceedForInstance.Equal(err)) {
+		if recoverdErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) || exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr)) {
 			panic(r)
+		} else {
+			runErr = recoverdErr
 		}
 		// TODO(jianzhang.zj: add metrics here)
-		runErr = errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 	cc.initResultEncoder(ctx)

@@ -49,9 +49,9 @@ func (killer *SQLKiller) HandleSignal() error {
 	status := atomic.LoadUint32(&killer.Signal)
 	switch status {
 	case QueryInterrupted:
-		return exeerrors.ErrQueryInterrupted
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
 	case MaxExecTimeExceeded:
-		return exeerrors.ErrMaxExecTimeExceeded
+		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	case QueryMemoryExceeded:
 		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(killer.ConnID)
 	case ServerMemoryExceeded:

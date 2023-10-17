@@ -827,7 +827,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	datumMap := NewDatumMapCache()
 	for i, topN := range topNs {
 		if err := killer.HandleSignal(); err != nil {
-			return nil, nil, nil, errors.Trace(err)
+			return nil, nil, nil, err
 		}
 		if topN.TotalCount() == 0 {
 			continue
@@ -845,7 +845,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
 				if err := killer.HandleSignal(); err != nil {
-					return nil, nil, nil, errors.Trace(err)
+					return nil, nil, nil, err
 				}
 				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
 					continue

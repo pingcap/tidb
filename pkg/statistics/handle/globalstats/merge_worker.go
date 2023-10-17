@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
@@ -109,7 +108,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 
 		for i, topN := range checkTopNs {
 			if err := worker.killer.HandleSignal(); err != nil {
-				resp.Err = errors.Trace(err)
+				resp.Err = err
 				worker.respCh <- resp
 				return
 			}
@@ -129,7 +128,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 				// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 				for j := 0; j < partNum; j++ {
 					if err := worker.killer.HandleSignal(); err != nil {
-						resp.Err = errors.Trace(err)
+						resp.Err = err
 						worker.respCh <- resp
 						return
 					}

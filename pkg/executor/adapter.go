@@ -461,10 +461,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if err, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(err) || exeerrors.ErrMemoryExceedForInstance.Equal(err)) {
+		if recoverdErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) || exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr)) {
 			panic(r)
+		} else {
+			err = recoverdErr
 		}
-		err = errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 

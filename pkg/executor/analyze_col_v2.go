@@ -888,7 +888,7 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 		})
 		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
-			return errors.Trace(err)
+			return err
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
 			time.Sleep(1000 * time.Second)

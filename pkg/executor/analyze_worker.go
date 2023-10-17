@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -57,7 +56,7 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 	}()
 	for results := range worker.resultsCh {
 		if err := worker.killer.HandleSignal(); err != nil {
-			worker.errCh <- errors.Trace(err)
+			worker.errCh <- err
 			return
 		}
 		err := handle.SaveTableStatsToStorage(worker.sctx, results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
