@@ -37,8 +37,8 @@ import (
 
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
-	Columns           map[string]*jsonColumn `json:"columns"`
-	Indices           map[string]*jsonColumn `json:"indices"`
+	Columns           map[string]*JsonColumn `json:"columns"`
+	Indices           map[string]*JsonColumn `json:"indices"`
 	Partitions        map[string]*JSONTable  `json:"partitions"`
 	DatabaseName      string                 `json:"database_name"`
 	TableName         string                 `json:"table_name"`
@@ -93,7 +93,8 @@ func extendedStatsFromJSON(statsColl []*JSONExtendedStats) *statistics.ExtendedS
 	return stats
 }
 
-type jsonColumn struct {
+// JsonColumn is used for dumping statistics.
+type JsonColumn struct {
 	Histogram *tipb.Histogram `json:"histogram"`
 	CMSketch  *tipb.CMSketch  `json:"cm_sketch"`
 	FMSketch  *tipb.FMSketch  `json:"fm_sketch"`
@@ -105,8 +106,8 @@ type jsonColumn struct {
 	Correlation       float64 `json:"correlation"`
 }
 
-func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *jsonColumn {
-	jsonCol := &jsonColumn{
+func dumpJSONCol(hist *statistics.Histogram, cmsketch *statistics.CMSketch, topn *statistics.TopN, fmsketch *statistics.FMSketch, statsVer *int64) *JsonColumn {
+	jsonCol := &JsonColumn{
 		Histogram:         statistics.HistogramToProto(hist),
 		NullCount:         hist.NullCount,
 		TotColSize:        hist.TotColSize,
@@ -128,8 +129,8 @@ func GenJSONTableFromStats(dbName string, tableInfo *model.TableInfo, tbl *stati
 	jsonTbl := &JSONTable{
 		DatabaseName: dbName,
 		TableName:    tableInfo.Name.L,
-		Columns:      make(map[string]*jsonColumn, len(tbl.Columns)),
-		Indices:      make(map[string]*jsonColumn, len(tbl.Indices)),
+		Columns:      make(map[string]*JsonColumn, len(tbl.Columns)),
+		Indices:      make(map[string]*JsonColumn, len(tbl.Indices)),
 		Count:        tbl.RealtimeCount,
 		ModifyCount:  tbl.ModifyCount,
 		Version:      tbl.Version,
