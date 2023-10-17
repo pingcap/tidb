@@ -111,6 +111,9 @@ type StatsAnalyze interface {
 
 	// HandleAutoAnalyze analyzes the newly created table or index.
 	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
+
+	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
+	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
 }
 
 // StatsCache is used to manage all table statistics in memory.
@@ -151,6 +154,9 @@ type StatsCache interface {
 
 	// Replace replaces this cache.
 	Replace(cache StatsCache)
+
+	// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
+	UpdateStatsHealthyMetrics()
 }
 
 // StatsLockTable is the table info of which will be locked.
@@ -204,6 +210,46 @@ type StatsLock interface {
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
 }
 
+// StatsReadWriter is used to read and write stats to the storage.
+type StatsReadWriter interface {
+	// TableStatsFromStorage loads table stats info from storage.
+	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
+
+	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
+	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
+
+	// LoadNeededHistograms will load histograms for those needed columns/indices and put them into the cache.
+	LoadNeededHistograms() (err error)
+
+	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
+	ReloadExtendedStatistics() error
+
+	//// SaveTableStatsToStorage saves the stats of a table to storage.
+	//SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
+
+	// SaveStatsToStorage save the stats data to the storage.
+	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
+		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
+
+	// SaveMetaToStorage saves stats meta to the storage.
+	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+
+	// SaveStatsFromJSON saves stats from JSON to the storage.
+	// TODO: use *storage.JSONTable instead of interface{} (which is used to avoid cycle import).
+	SaveStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl interface{}) error
+
+	// Methods for extended stast.
+
+	// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
+	InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error)
+
+	// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
+	MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error)
+
+	// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
+	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
+}
+
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// GPool returns the goroutine pool.
@@ -247,4 +293,7 @@ type StatsHandle interface {
 
 	// StatsLock is used to manage locked stats.
 	StatsLock
+
+	// StatsReadWriter is used to read and write stats to the storage.
+	StatsReadWriter
 }
