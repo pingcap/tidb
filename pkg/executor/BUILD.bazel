@@ -337,7 +337,6 @@ go_test(
         "recover_test.go",
         "resource_tag_test.go",
         "revoke_test.go",
-        "rowid_test.go",
         "sample_test.go",
         "select_into_test.go",
         "set_test.go",
