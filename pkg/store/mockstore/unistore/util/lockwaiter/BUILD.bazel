@@ -1,0 +1,33 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lockwaiter",
+    srcs = ["lockwaiter.go"],
+    importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/util/lockwaiter",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/store/mockstore/unistore/config",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "lockwaiter_test",
+    timeout = "short",
+    srcs = [
+        "lockwaiter_test.go",
+        "main_test.go",
+    ],
+    embed = [":lockwaiter"],
+    flaky = True,
+    deps = [
+        "//pkg/store/mockstore/unistore/config",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_kvproto//pkg/deadlock",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

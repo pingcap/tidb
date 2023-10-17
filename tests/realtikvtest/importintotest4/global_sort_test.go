@@ -25,11 +25,11 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/disttask/framework/dispatcher"
-	"github.com/pingcap/tidb/disttask/framework/storage"
-	"github.com/pingcap/tidb/disttask/importinto"
-	"github.com/pingcap/tidb/executor/importer"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,8 +57,8 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	s.prepareAndUseDB("gsort_basic")
 	s.tk.MustExec(`create table t (a bigint primary key, b varchar(100), c varchar(100), d int,
 		key(a), key(c,d), key(d));`)
-	s.enableFailpoint("github.com/pingcap/tidb/parser/ast/forceRedactURL", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/framework/dispatcher/WaitCleanUpFinished", "return()")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()")
 
 	sortStorageURI := fmt.Sprintf("gs://sorted/import?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
@@ -94,7 +94,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	urlEqual(s.T(), redactedSortStorageURI, taskMeta.Plan.CloudStorageURI)
 
 	// merge-sort data kv
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/forceMergeSort", `return("data")`)
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`)
 	s.tk.MustExec("truncate table t")
 	result = s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
@@ -105,7 +105,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	<-dispatcher.WaitCleanUpFinished
 
 	// failed task, should clean up all sorted data too.
-	s.enableFailpoint("github.com/pingcap/tidb/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
 	s.tk.MustExec("truncate table t")
 	result = s.tk.MustQuery(importSQL + ", detached").Rows()
 	s.Len(result, 1)

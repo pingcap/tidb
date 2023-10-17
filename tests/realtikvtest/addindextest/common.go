@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -505,13 +505,13 @@ type failpointsPath struct {
 }
 
 var failpoints = []failpointsPath{
-	{"github.com/pingcap/tidb/ddl/mockHighLoadForAddIndex", "return"},
-	{"github.com/pingcap/tidb/ddl/mockBackfillRunErr", "1*return"},
-	{"github.com/pingcap/tidb/ddl/mockBackfillSlow", "return"},
-	{"github.com/pingcap/tidb/ddl/MockCaseWhenParseFailure", "return(true)"},
-	{"github.com/pingcap/tidb/ddl/mockHighLoadForMergeIndex", "return"},
-	{"github.com/pingcap/tidb/ddl/mockMergeRunErr", "1*return"},
-	{"github.com/pingcap/tidb/ddl/mockMergeSlow", "return"},
+	{"github.com/pingcap/tidb/pkg/ddl/mockHighLoadForAddIndex", "return"},
+	{"github.com/pingcap/tidb/pkg/ddl/mockBackfillRunErr", "1*return"},
+	{"github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"},
+	{"github.com/pingcap/tidb/pkg/ddl/MockCaseWhenParseFailure", "return(true)"},
+	{"github.com/pingcap/tidb/pkg/ddl/mockHighLoadForMergeIndex", "return"},
+	{"github.com/pingcap/tidb/pkg/ddl/mockMergeRunErr", "1*return"},
+	{"github.com/pingcap/tidb/pkg/ddl/mockMergeSlow", "return"},
 }
 
 func useFailpoints(ctx *suiteContext, failpos int) {

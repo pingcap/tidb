@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "extstats",
+    srcs = ["extended_stats.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/extstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/util",
+        "//pkg/util/logutil",
+        "//pkg/util/mathutil",
+        "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
+    ],
+)
