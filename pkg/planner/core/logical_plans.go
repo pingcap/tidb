@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -298,7 +299,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	outerFD, innerFD := p.children[0].ExtractFD(), p.children[1].ExtractFD()
 	innerCondition := p.RightConditions
 	outerCondition := p.LeftConditions
-	outerCols, innerCols := fd.NewFastIntSet(), fd.NewFastIntSet()
+	outerCols, innerCols := intset.NewFastIntSet(), intset.NewFastIntSet()
 	for _, col := range p.children[0].Schema().Columns {
 		outerCols.Insert(int(col.UniqueID))
 	}
@@ -326,7 +327,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 	equivUniqueIDs := extractEquivalenceCols(allConds, p.SCtx(), filterFD)
 
 	filterFD.AddConstants(constUniqueIDs)
-	equivOuterUniqueIDs := fd.NewFastIntSet()
+	equivOuterUniqueIDs := intset.NewFastIntSet()
 	equivAcrossNum := 0
 	for _, equiv := range equivUniqueIDs {
 		filterFD.AddEquivalence(equiv[0], equiv[1])
@@ -354,7 +355,7 @@ func (p *LogicalJoin) extractFDForOuterJoin(filtersFromApply []expression.Expres
 			// other condition may contain right side cols, it doesn't affect the judgement of intersection of non-left-equiv cols.
 			outConditionCols = append(outConditionCols, expression.ExtractColumnsFromExpressions(nil, p.OtherConditions, nil)...)
 		}
-		outerConditionUniqueIDs := fd.NewFastIntSet()
+		outerConditionUniqueIDs := intset.NewFastIntSet()
 		for _, col := range outConditionCols {
 			outerConditionUniqueIDs.Insert(int(col.UniqueID))
 		}
@@ -857,8 +858,8 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
 	fds := p.logicalSchemaProducer.ExtractFD()
 	// collect the output columns' unique ID.
-	outputColsUniqueIDs := fd.NewFastIntSet()
-	notnullColsUniqueIDs := fd.NewFastIntSet()
+	outputColsUniqueIDs := intset.NewFastIntSet()
+	notnullColsUniqueIDs := intset.NewFastIntSet()
 	outputColsUniqueIDsArray := make([]int, 0, len(p.Schema().Columns))
 	// here schema extended columns may contain expr, const and column allocated with uniqueID.
 	for _, one := range p.Schema().Columns {
@@ -885,7 +886,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 				constantUniqueID = outputColsUniqueIDsArray[idx]
 				fds.RegisterUniqueID(string(x.HashCode(p.SCtx().GetSessionVars().StmtCtx)), constantUniqueID)
 			}
-			fds.AddConstants(fd.NewFastIntSet(constantUniqueID))
+			fds.AddConstants(intset.NewFastIntSet(constantUniqueID))
 		case *expression.ScalarFunction:
 			// t1(a,b,c), t2(m,n)
 			// select a, (select c+n from t2 where m=b) from t1;
@@ -908,9 +909,9 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 			} else {
 				// since the scalar's hash code has been registered before, the equivalence exists between the unique ID
 				// allocated by phase of building-projection-for-scalar and that of previous registered unique ID.
-				fds.AddEquivalence(fd.NewFastIntSet(scalarUniqueID), fd.NewFastIntSet(outputColsUniqueIDsArray[idx]))
+				fds.AddEquivalence(intset.NewFastIntSet(scalarUniqueID), intset.NewFastIntSet(outputColsUniqueIDsArray[idx]))
 			}
-			determinants := fd.NewFastIntSet()
+			determinants := intset.NewFastIntSet()
 			extractedColumns := expression.ExtractColumns(x)
 			extractedCorColumns := expression.ExtractCorColumns(x)
 			for _, one := range extractedColumns {
@@ -927,7 +928,7 @@ func (p *LogicalProjection) ExtractFD() *fd.FDSet {
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
-			fds.AddStrictFunctionalDependency(determinants, fd.NewFastIntSet(scalarUniqueID))
+			fds.AddStrictFunctionalDependency(determinants, intset.NewFastIntSet(scalarUniqueID))
 		}
 	}
 
@@ -1013,10 +1014,10 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
 	fds := la.logicalSchemaProducer.ExtractFD()
 	// collect the output columns' unique ID.
-	outputColsUniqueIDs := fd.NewFastIntSet()
-	notnullColsUniqueIDs := fd.NewFastIntSet()
-	groupByColsUniqueIDs := fd.NewFastIntSet()
-	groupByColsOutputCols := fd.NewFastIntSet()
+	outputColsUniqueIDs := intset.NewFastIntSet()
+	notnullColsUniqueIDs := intset.NewFastIntSet()
+	groupByColsUniqueIDs := intset.NewFastIntSet()
+	groupByColsOutputCols := intset.NewFastIntSet()
 	// Since the aggregation is build ahead of projection, the latter one will reuse the column with UniqueID allocated in aggregation
 	// via aggMapper, so we don't need unnecessarily maintain the <aggDes, UniqueID> mapping in the FDSet like expr did, just treating
 	// it as normal column.
@@ -1051,7 +1052,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 				fds.RegisterUniqueID(hashCode, scalarUniqueID)
 				groupByColsUniqueIDs.Insert(scalarUniqueID)
 			}
-			determinants := fd.NewFastIntSet()
+			determinants := intset.NewFastIntSet()
 			extractedColumns := expression.ExtractColumns(x)
 			extractedCorColumns := expression.ExtractCorColumns(x)
 			for _, one := range extractedColumns {
@@ -1066,7 +1067,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 			if notnull || determinants.SubsetOf(fds.NotNullCols) {
 				notnullColsUniqueIDs.Insert(scalarUniqueID)
 			}
-			fds.AddStrictFunctionalDependency(determinants, fd.NewFastIntSet(scalarUniqueID))
+			fds.AddStrictFunctionalDependency(determinants, intset.NewFastIntSet(scalarUniqueID))
 		}
 	}
 
@@ -1078,7 +1079,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 	//
 	// and since any_value will NOT be pushed down to agg schema, which means every firstRow aggDes in the agg logical operator
 	// is meaningless to build the FD with. Let's only store the non-firstRow FD down: {group by items} ~~> {real aggDes}
-	realAggFuncUniqueID := fd.NewFastIntSet()
+	realAggFuncUniqueID := intset.NewFastIntSet()
 	for i, aggDes := range la.AggFuncs {
 		if aggDes.Name != "firstrow" {
 			realAggFuncUniqueID.Insert(int(la.schema.Columns[i].UniqueID))
@@ -1095,7 +1096,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 		// 0 unique id is only used for here.
 		groupByColsUniqueIDs.Insert(0)
 		for i, ok := realAggFuncUniqueID.Next(0); ok; i, ok = realAggFuncUniqueID.Next(i + 1) {
-			fds.AddStrictFunctionalDependency(groupByColsUniqueIDs, fd.NewFastIntSet(i))
+			fds.AddStrictFunctionalDependency(groupByColsUniqueIDs, intset.NewFastIntSet(i))
 		}
 	} else {
 		// eliminating input columns that are un-projected.
@@ -1107,7 +1108,7 @@ func (la *LogicalAggregation) ExtractFD() *fd.FDSet {
 			// 1: it can always distinguish and group the all-null/part-null group column rows.
 			// 2: the rows with all/part null group column are unique row after group operation.
 			// 3: there won't be two same group key with different agg values, so strict FD secured.
-			fds.AddStrictFunctionalDependency(groupByColsUniqueIDs, fd.NewFastIntSet(i))
+			fds.AddStrictFunctionalDependency(groupByColsUniqueIDs, intset.NewFastIntSet(i))
 		}
 
 		// agg funcDes has been tag not null flag when building aggregation.
@@ -1211,7 +1212,7 @@ type LogicalSelection struct {
 	Conditions []expression.Expression
 }
 
-func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) fd.FastIntSet {
+func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) intset.FastIntSet {
 	// extract the column NOT NULL rejection characteristic from selection condition.
 	// CNF considered only, DNF doesn't have its meanings (cause that condition's eval may don't take effect)
 	//
@@ -1224,7 +1225,7 @@ func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) 
 	// 2: `b` must be null since only `NULL is NULL` is evaluated as true.
 	//
 	// As a result,	`a` will be extracted as not-null column to abound the FDSet.
-	notnullColsUniqueIDs := fd.NewFastIntSet()
+	notnullColsUniqueIDs := intset.NewFastIntSet()
 	for _, condition := range conditions {
 		var cols []*expression.Column
 		cols = expression.ExtractColumnsFromExpressions(cols, []expression.Expression{condition}, nil)
@@ -1237,13 +1238,13 @@ func extractNotNullFromConds(conditions []expression.Expression, p LogicalPlan) 
 	return notnullColsUniqueIDs
 }
 
-func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) fd.FastIntSet {
+func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) intset.FastIntSet {
 	// extract constant cols
 	// eg: where a=1 and b is null and (1+c)=5.
 	// TODO: Some columns can only be determined to be constant from multiple constraints (e.g. x <= 1 AND x >= 1)
 	var (
 		constObjs      []expression.Expression
-		constUniqueIDs = fd.NewFastIntSet()
+		constUniqueIDs = intset.NewFastIntSet()
 	)
 	constObjs = expression.ExtractConstantEqColumnsOrScalar(sctx, constObjs, conditions)
 	for _, constObj := range constObjs {
@@ -1264,10 +1265,10 @@ func extractConstantCols(conditions []expression.Expression, sctx sessionctx.Con
 	return constUniqueIDs
 }
 
-func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]fd.FastIntSet {
+func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.Context, fds *fd.FDSet) [][]intset.FastIntSet {
 	var equivObjsPair [][]expression.Expression
 	equivObjsPair = expression.ExtractEquivalenceColumns(equivObjsPair, conditions)
-	equivUniqueIDs := make([][]fd.FastIntSet, 0, len(equivObjsPair))
+	equivUniqueIDs := make([][]intset.FastIntSet, 0, len(equivObjsPair))
 	for _, equivObjPair := range equivObjsPair {
 		// lhs of equivalence.
 		var (
@@ -1301,7 +1302,7 @@ func extractEquivalenceCols(conditions []expression.Expression, sctx sessionctx.
 				rhsUniqueID = scalarUniqueID
 			}
 		}
-		equivUniqueIDs = append(equivUniqueIDs, []fd.FastIntSet{fd.NewFastIntSet(lhsUniqueID), fd.NewFastIntSet(rhsUniqueID)})
+		equivUniqueIDs = append(equivUniqueIDs, []intset.FastIntSet{intset.NewFastIntSet(lhsUniqueID), intset.NewFastIntSet(rhsUniqueID)})
 	}
 	return equivUniqueIDs
 }
@@ -1311,8 +1312,8 @@ func (p *LogicalSelection) ExtractFD() *fd.FDSet {
 	// basically extract the children's fdSet.
 	fds := p.baseLogicalPlan.ExtractFD()
 	// collect the output columns' unique ID.
-	outputColsUniqueIDs := fd.NewFastIntSet()
-	notnullColsUniqueIDs := fd.NewFastIntSet()
+	outputColsUniqueIDs := intset.NewFastIntSet()
+	notnullColsUniqueIDs := intset.NewFastIntSet()
 	// eg: select t2.a, count(t2.b) from t1 join t2 using (a) where t1.a = 1
 	// join's schema will miss t2.a while join.full schema has. since selection
 	// itself doesn't contain schema, extracting schema should tell them apart.
