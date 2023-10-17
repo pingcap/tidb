@@ -24,7 +24,6 @@ import (
 
 type killSignal = uint32
 
-// Kill reasons.
 const (
 	UnspecifiedKillSignal killSignal = iota
 	QueryInterrupted
@@ -35,18 +34,18 @@ const (
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
-	Status killSignal
+	Signal killSignal
 	ConnID uint64
 }
 
 // SendKillSignal sends a kill signal to the query.
 func (killer *SQLKiller) SendKillSignal(reason killSignal) {
-	atomic.CompareAndSwapUint32(&killer.Status, 0, reason)
+	atomic.CompareAndSwapUint32(&killer.Signal, 0, reason)
 }
 
 // HandleSignal handles the kill signal and return the error.
 func (killer *SQLKiller) HandleSignal() error {
-	status := atomic.LoadUint32(&killer.Status)
+	status := atomic.LoadUint32(&killer.Signal)
 	switch status {
 	case QueryInterrupted:
 		return exeerrors.ErrQueryInterrupted
@@ -64,5 +63,5 @@ func (killer *SQLKiller) HandleSignal() error {
 
 // Reset resets the SqlKiller.
 func (killer *SQLKiller) Reset() {
-	atomic.StoreUint32(&killer.Status, 0)
+	atomic.StoreUint32(&killer.Signal, 0)
 }

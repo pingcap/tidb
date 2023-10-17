@@ -246,14 +246,14 @@ func TestKillTableReader(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1),(2),(3)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=1")
-	atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Status, 0)
+	atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Signal, 0)
 	require.NoError(t, failpoint.Enable(retry, `return(true)`))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		time.Sleep(300 * time.Millisecond)
-		atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Status, 1)
+		atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Signal, 1)
 	}()
 	err := tk.QueryToErr("select * from t")
 	require.Error(t, err)

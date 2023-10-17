@@ -81,9 +81,9 @@ func TestGlobalMemoryControl(t *testing.T) {
 	time.Sleep(500 * time.Millisecond) // The check goroutine checks the memory usage every 100ms. The Sleep() make sure that Top1Tracker can be Canceled.
 
 	// Kill Top1
-	require.False(t, atomic.LoadUint32(&tracker1.Killer.Status) > 0)
-	require.False(t, atomic.LoadUint32(&tracker2.Killer.Status) > 0)
-	require.True(t, atomic.LoadUint32(&tracker3.Killer.Status) > 0)
+	require.False(t, atomic.LoadUint32(&tracker1.Killer.Signal) > 0)
+	require.False(t, atomic.LoadUint32(&tracker2.Killer.Signal) > 0)
+	require.True(t, atomic.LoadUint32(&tracker3.Killer.Signal) > 0)
 	require.Equal(t, memory.MemUsageTop1Tracker.Load(), tracker3)
 	util.WithRecovery( // Next Consume() will panic and cancel the SQL
 		func() {
@@ -93,7 +93,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 		})
 	tracker2.Consume(300 << 20) // Sum 500MB, Not Panic, Waiting t3 cancel finish.
 	time.Sleep(500 * time.Millisecond)
-	require.False(t, atomic.LoadUint32(&tracker2.Killer.Status) > 0)
+	require.False(t, atomic.LoadUint32(&tracker2.Killer.Signal) > 0)
 	// Kill Finished
 	tracker3.Consume(-(300 << 20))
 	// Simulated SQL is Canceled and the time is updated

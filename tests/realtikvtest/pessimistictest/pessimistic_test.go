@@ -728,7 +728,7 @@ func TestWaitLockKill(t *testing.T) {
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		sessVars := tk2.Session().GetSessionVars()
-		succ := atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Status, 0, 1)
+		succ := atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Signal, 0, 1)
 		require.True(t, succ)
 		wg.Wait()
 	}()
@@ -756,12 +756,12 @@ func TestKillStopTTLManager(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from test_kill where id = 1 for update")
 	sessVars := tk.Session().GetSessionVars()
-	succ := atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Status, 0, 1)
+	succ := atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Signal, 0, 1)
 	require.True(t, succ)
 
 	// This query should success rather than returning a ResolveLock error.
 	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
-	succ = atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Status, 1, 0)
+	succ = atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Signal, 1, 0)
 	require.True(t, succ)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
@@ -1716,13 +1716,13 @@ func TestKillWaitLockTxn(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	sessVars := tk.Session().GetSessionVars()
 	// lock query in tk is killed, the ttl manager will stop
-	succ := atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Status, 0, 1)
+	succ := atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Signal, 0, 1)
 	require.True(t, succ)
 	err := <-errCh
 	require.NoError(t, err)
 	_, _ = tk.Exec("rollback")
 	// reset kill
-	atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Status, 1, 0)
+	atomic.CompareAndSwapUint32(&sessVars.SQLKiller.Signal, 1, 0)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }

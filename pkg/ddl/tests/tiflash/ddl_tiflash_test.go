@@ -920,7 +920,7 @@ func TestTiFlashBatchKill(t *testing.T) {
 	wg.Run(func() {
 		time.Sleep(time.Millisecond * 100)
 		sessVars := tk.Session().GetSessionVars()
-		atomic.StoreUint32(&sessVars.SQLKiller.Status, 1)
+		atomic.StoreUint32(&sessVars.SQLKiller.Signal, 1)
 	})
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/FastFailCheckTiFlashPendingTables", `return(2)`))

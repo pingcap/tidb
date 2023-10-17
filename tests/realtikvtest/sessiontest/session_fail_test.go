@@ -116,7 +116,7 @@ func TestKillFlagInBackoff(t *testing.T) {
 	// Set kill flag and check its passed to backoffer.
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Status, 1)
+		atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Signal, 1)
 	}()
 	rs, err := tk.Exec("select * from kill_backoff")
 	require.NoError(t, err)

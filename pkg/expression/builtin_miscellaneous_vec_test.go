@@ -215,7 +215,7 @@ func TestSleepVectorized(t *testing.T) {
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
-		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().SQLKiller.Status, 0, 1)
+		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().SQLKiller.Signal, 0, 1)
 	}()
 	err = f.vecEvalInt(input, result)
 	sub = time.Since(start)
