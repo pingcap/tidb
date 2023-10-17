@@ -17,7 +17,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/rangetask"
@@ -513,9 +512,9 @@ func (recovery *Recovery) MakeRecoveryPlan() error {
 				regions[m.RegionId] = make([]*RecoverRegion, 0, len(recovery.allStores))
 			}
 			regions[m.RegionId] = append(regions[m.RegionId], &RecoverRegion{m, storeId})
-			maxId = mathutil.Max(maxId, mathutil.Max(m.RegionId, m.PeerId))
+			maxId = max(maxId, max(m.RegionId, m.PeerId))
 		}
-		recovery.MaxAllocID = mathutil.Max(recovery.MaxAllocID, maxId)
+		recovery.MaxAllocID = max(recovery.MaxAllocID, maxId)
 	}
 
 	regionInfos := SortRecoverRegions(regions)
