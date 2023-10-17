@@ -483,7 +483,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 			continue
 		}
 		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 {
+		if len(path) == 2 && strings.Compare(path[0], "schema") == 0 && zipFile.Mode().IsRegular() {
 			err = createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
 				return err
@@ -500,7 +500,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	// build view next
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "view") == 0 {
+		if len(path) == 2 && strings.Compare(path[0], "view") == 0 && zipFile.Mode().IsRegular() {
 			err = createSchemaAndItems(e.Ctx, zipFile)
 			if err != nil {
 				return err
@@ -511,7 +511,7 @@ func (e *PlanReplayerLoadInfo) Update(data []byte) error {
 	// load stats
 	for _, zipFile := range z.File {
 		path := strings.Split(zipFile.Name, "/")
-		if len(path) == 2 && strings.Compare(path[0], "stats") == 0 {
+		if len(path) == 2 && strings.Compare(path[0], "stats") == 0 && zipFile.Mode().IsRegular() {
 			err = loadStats(e.Ctx, zipFile)
 			if err != nil {
 				return err
