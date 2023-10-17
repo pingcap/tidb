@@ -31,7 +31,6 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/hack",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/set",
         "@com_github_pingcap_errors//:errors",

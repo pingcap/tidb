@@ -76,6 +76,22 @@ func (sa *statsAnalyze) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bo
 	return
 }
 
+// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
+func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
+	// We simply choose one physical id to get its stats.
+	var tbl *statistics.Table
+	for _, pid := range physicalIDs {
+		tbl = sa.statsHandle.GetPartitionStats(tblInfo, pid)
+		if !tbl.Pseudo {
+			break
+		}
+	}
+	if tbl == nil || tbl.Pseudo {
+		return true
+	}
+	return statistics.CheckAnalyzeVerOnTable(tbl, version)
+}
+
 func parseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
@@ -318,8 +334,13 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
+		if needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
+			logutil.BgLogger().Info("need to auto analyze", zap.String("category", "stats"),
+				zap.String("database", db),
+				zap.String("table", tblInfo.Name.String()),
+				zap.String("partition", def.Name.O),
+				zap.String("reason", reason))
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
 	}
@@ -337,6 +358,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 	}
 	if len(partitionNames) > 0 {
 		logutil.BgLogger().Info("start to auto analyze", zap.String("category", "stats"),
+			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", partitionNames),
 			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
@@ -351,6 +373,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
+				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
 			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
@@ -381,6 +404,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 				params = append(params, idx.Name.O)
 				logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"),
+					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", partitionNames[start:end]))

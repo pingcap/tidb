@@ -15,7 +15,6 @@
 package handle
 
 import (
-	"fmt"
 	"math"
 	"time"
 
@@ -33,12 +32,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
-	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tiancaiamao/gp"
 	atomic2 "go.uber.org/atomic"
@@ -77,6 +73,9 @@ type Handle struct {
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	util.StatsAnalyze
 
+	// StatsReadWriter is used to read/write stats from/to storage.
+	util.StatsReadWriter
+
 	// StatsLock is used to manage locked stats.
 	util.StatsLock
 
@@ -101,14 +100,6 @@ type Handle struct {
 	lease atomic2.Duration
 }
 
-func (h *Handle) execRows(sql string, args ...interface{}) (rows []chunk.Row, fields []*ast.ResultField, rerr error) {
-	_ = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		rows, fields, rerr = util.ExecRows(sctx, sql, args...)
-		return nil
-	})
-	return
-}
-
 // Clear the statsCache, only for test.
 func (h *Handle) Clear() {
 	h.StatsCache.Clear()
@@ -131,11 +122,12 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 		TableInfoGetter:         util.NewTableInfoGetter(),
 		StatsLock:               lockstats.NewStatsLock(pool),
 	}
-	handle.StatsGC = storage.NewStatsGC(handle, handle.MarkExtendedStatsDeleted)
+	handle.StatsGC = storage.NewStatsGC(handle)
+	handle.StatsReadWriter = storage.NewStatsReadWriter(handle)
 
 	handle.initStatsCtx = initStatsCtx
 	handle.lease.Store(lease)
-	statsCache, err := cache.NewStatsCacheImpl(handle, handle.TableStatsFromStorage)
+	statsCache, err := cache.NewStatsCacheImpl(handle)
 	if err != nil {
 		return nil, err
 	}
@@ -160,30 +152,6 @@ func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
 }
 
-// UpdateStatsHealthyMetrics updates stats healthy distribution metrics according to stats cache.
-func (h *Handle) UpdateStatsHealthyMetrics() {
-	distribution := make([]int64, 5)
-	for _, tbl := range h.Values() {
-		healthy, ok := tbl.GetStatsHealthy()
-		if !ok {
-			continue
-		}
-		if healthy < 50 {
-			distribution[0]++
-		} else if healthy < 80 {
-			distribution[1]++
-		} else if healthy < 100 {
-			distribution[2]++
-		} else {
-			distribution[3]++
-		}
-		distribution[4]++
-	}
-	for i, val := range distribution {
-		handle_metrics.StatsHealthyGauges[i].Set(float64(val))
-	}
-}
-
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
 func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
@@ -193,21 +161,6 @@ func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
 	_ map[int64]*statistics.Table,
 ) (globalStats *globalstats.GlobalStats, err error) {
 	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, h.TableInfoByID, h.callWithSCtx)
-}
-
-func (h *Handle) loadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
-	var partitionStats *statistics.Table
-	partitionStats, err := h.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
-	if err != nil {
-		return nil, err
-	}
-	// if the err == nil && partitionStats == nil, it means we lack the partition-level stats which the physicalID is equal to partitionID.
-	if partitionStats == nil {
-		errMsg := fmt.Sprintf("table `%s` partition `%s`", tableInfo.Name.L, partitionDef.Name.L)
-		err = types.ErrPartitionStatsMissing.GenWithStackByArgs(errMsg)
-		return nil, err
-	}
-	return partitionStats, nil
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
@@ -254,15 +207,6 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	return tbl
 }
 
-// LoadNeededHistograms will load histograms for those needed columns/indices.
-func (h *Handle) LoadNeededHistograms() (err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
-		return storage.LoadNeededHistograms(sctx, h.StatsCache, loadFMSketch)
-	}, util.FlagWrapTxn)
-	return err
-}
-
 // FlushStats flushes the cached stats update into store.
 func (h *Handle) FlushStats() {
 	for len(h.ddlEventCh) > 0 {
@@ -274,29 +218,6 @@ func (h *Handle) FlushStats() {
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
 		logutil.BgLogger().Error("dump stats delta fail", zap.String("category", "stats"), zap.Error(err))
 	}
-}
-
-// TableStatsFromStorage loads table stats info from storage.
-func (h *Handle) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		var ok bool
-		statsTbl, ok = h.Get(physicalID)
-		if !ok {
-			statsTbl = nil
-		}
-		statsTbl, err = storage.TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, h.Lease(), statsTbl)
-		return err
-	}, util.FlagWrapTxn)
-	return
-}
-
-// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
-func (h *Handle) StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		count, modifyCount, _, err = storage.StatsMetaCountAndModifyCount(sctx, tableID)
-		return err
-	}, util.FlagWrapTxn)
-	return
 }
 
 // SaveTableStatsToStorage saves the stats of a table to storage.
@@ -322,80 +243,6 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 	return err
 }
 
-// SaveStatsToStorage saves the stats to storage.
-// If count is negative, both count and modify count would not be used and not be written to the table. Unless, corresponding
-// fields in the stats_meta table will be updated.
-// TODO: refactor to reduce the number of parameters
-func (h *Handle) SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
-	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error) {
-	var statsVer uint64
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = storage.SaveStatsToStorage(sctx, tableID,
-			count, modifyCount, isIndex, hg, cms, topN, statsVersion, isAnalyzed, updateAnalyzeTime)
-		return err
-	})
-	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, source)
-	}
-	return
-}
-
-// SaveMetaToStorage will save stats_meta to storage.
-func (h *Handle) SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error) {
-	var statsVer uint64
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = storage.SaveMetaToStorage(sctx, tableID, count, modifyCount)
-		return err
-	})
-	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, source)
-	}
-	return
-}
-
-// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
-func (h *Handle) InsertExtendedStats(statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (err error) {
-	var statsVer uint64
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = storage.InsertExtendedStats(sctx, h.StatsCache, statsName, colIDs, tp, tableID, ifNotExists)
-		return err
-	})
-	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
-	}
-	return
-}
-
-// MarkExtendedStatsDeleted update the status of mysql.stats_extended to be `deleted` and the version of mysql.stats_meta.
-func (h *Handle) MarkExtendedStatsDeleted(statsName string, tableID int64, ifExists bool) (err error) {
-	var statsVer uint64
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = storage.MarkExtendedStatsDeleted(sctx, h.StatsCache, statsName, tableID, ifExists)
-		return err
-	})
-	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
-	}
-	return
-}
-
-// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
-// TODO: move this method to the `extstats` package.
-func (h *Handle) ReloadExtendedStatistics() error {
-	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		tables := make([]*statistics.Table, 0, h.Len())
-		for _, tbl := range h.Values() {
-			t, err := storage.ExtendedStatsFromStorage(sctx, tbl.Copy(), tbl.PhysicalID, true)
-			if err != nil {
-				return err
-			}
-			tables = append(tables, t)
-		}
-		h.UpdateStatsCache(tables, nil)
-		return nil
-	}, util.FlagWrapTxn)
-}
-
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
 func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (es *statistics.ExtendedStatsColl, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
@@ -403,35 +250,6 @@ func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, col
 		return err
 	})
 	return es, err
-}
-
-// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
-func (h *Handle) SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error) {
-	var statsVer uint64
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		statsVer, err = storage.SaveExtendedStatsToStorage(sctx, tableID, extStats, isLoad)
-		return err
-	})
-	if err == nil && statsVer != 0 {
-		h.RecordHistoricalStatsMeta(tableID, statsVer, util.StatsMetaHistorySourceExtendedStats)
-	}
-	return
-}
-
-// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
-func (h *Handle) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
-	// We simply choose one physical id to get its stats.
-	var tbl *statistics.Table
-	for _, pid := range physicalIDs {
-		tbl = h.GetPartitionStats(tblInfo, pid)
-		if !tbl.Pseudo {
-			break
-		}
-	}
-	if tbl == nil || tbl.Pseudo {
-		return true
-	}
-	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
 // Close stops the background

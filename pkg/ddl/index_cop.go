@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -146,6 +147,7 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 			p.checkpointMgr.Register(task.id, task.endKey)
 		}
 		var done bool
+		startTime := time.Now()
 		for !done {
 			srcChk := p.getChunk()
 			done, err = fetchTableScanResult(p.ctx, p.copCtx.GetBase(), rs, srcChk)
@@ -158,10 +160,13 @@ func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session)
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
+			rate := float64(srcChk.MemoryUsage()) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
+			metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
 			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.Err = errors.New("mock cop error")
 			})
 			p.chunkSender.AddTask(idxRs)
+			startTime = time.Now()
 		}
 		terror.Call(rs.Close)
 		return nil
