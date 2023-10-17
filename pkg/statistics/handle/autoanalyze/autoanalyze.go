@@ -334,6 +334,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 		if needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
 			logutil.BgLogger().Info("need to auto analyze", zap.String("category", "stats"),
+				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
 				zap.String("partition", def.Name.O),
 				zap.String("reason", reason))
@@ -354,6 +355,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 	}
 	if len(partitionNames) > 0 {
 		logutil.BgLogger().Info("start to auto analyze", zap.String("category", "stats"),
+			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", partitionNames),
 			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
@@ -368,6 +370,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
+				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
 			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
@@ -398,6 +401,7 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 				params = append(params, idx.Name.O)
 				logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"),
+					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", partitionNames[start:end]))
