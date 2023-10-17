@@ -207,7 +207,7 @@ func (s *mockGCWorkerSuite) mustGetNone(t *testing.T, key string, ts uint64) {
 	if err != nil {
 		// unistore gc is based on compaction filter.
 		// So skip the error check if err == nil.
-		require.True(t, kv.ErrNotExist.Equal(err))
+		require.True(t, kv.ErrNotExist.Equal(err), "unexpected error: %+q", err)
 	}
 }
 
