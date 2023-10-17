@@ -35,6 +35,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/size",
         "@com_github_cockroachdb_pebble//:pebble",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_jfcg_sorty_v2//:sorty",
         "@com_github_pingcap_errors//:errors",
         "@org_golang_x_sync//errgroup",

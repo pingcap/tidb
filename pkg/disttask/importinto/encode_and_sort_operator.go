@@ -158,7 +158,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemoryS
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
-				}).SetMemorySizeLimit(indexMemorySizeLimit).SetMutex(&op.sharedVars.ShareMu)
+				}).SetMemorySizeLimit(indexMemorySizeLimit)
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -168,7 +168,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemoryS
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(op.sharedVars.mergeDataSummary).SetMutex(&op.sharedVars.ShareMu)
+			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
