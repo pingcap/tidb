@@ -15,12 +15,16 @@
 package storage
 
 import (
+	"fmt"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // statsReadWriter implements the util.StatsReadWriter interface.
@@ -182,4 +186,174 @@ func (s *statsReadWriter) ReloadExtendedStatistics() error {
 		s.statsHandler.UpdateStatsCache(tables, nil)
 		return nil
 	}, util.FlagWrapTxn)
+}
+
+// DumpStatsToJSON dumps statistic to json.
+func (s *statsReadWriter) DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
+	historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*util.JSONTable, error) {
+	var snapshot uint64
+	if historyStatsExec != nil {
+		sctx := historyStatsExec.(sessionctx.Context)
+		snapshot = sctx.GetSessionVars().SnapshotTS
+	}
+	return s.DumpStatsToJSONBySnapshot(dbName, tableInfo, snapshot, dumpPartitionStats)
+}
+
+// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
+// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
+// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
+func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
+	dbName string,
+	tableInfo *model.TableInfo,
+	snapshot uint64,
+) (
+	jt *util.JSONTable,
+	fallbackTbls []string,
+	err error,
+) {
+	historicalStatsEnabled, err := s.statsHandler.CheckHistoricalStatsEnable()
+	if err != nil {
+		return nil, nil, errors.Errorf("check %v failed: %v", variable.TiDBEnableHistoricalStats, err)
+	}
+	if !historicalStatsEnabled {
+		return nil, nil, errors.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats)
+	}
+
+	defer func() {
+		if err == nil {
+			handle_metrics.DumpHistoricalStatsSuccessCounter.Inc()
+		} else {
+			handle_metrics.DumpHistoricalStatsFailedCounter.Inc()
+		}
+	}()
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		jt, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
+		if fallback {
+			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s", dbName, tableInfo.Name.O))
+		}
+		return jt, fallbackTbls, err
+	}
+	jsonTbl := &util.JSONTable{
+		DatabaseName: dbName,
+		TableName:    tableInfo.Name.L,
+		Partitions:   make(map[string]*util.JSONTable, len(pi.Definitions)),
+	}
+	for _, def := range pi.Definitions {
+		tbl, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, def.ID, snapshot)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+		if fallback {
+			fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s %s", dbName, tableInfo.Name.O, def.Name.O))
+		}
+		jsonTbl.Partitions[def.Name.L] = tbl
+	}
+	tbl, fallback, err := s.getTableHistoricalStatsToJSONWithFallback(dbName, tableInfo, tableInfo.ID, snapshot)
+	if err != nil {
+		return nil, nil, err
+	}
+	if fallback {
+		fallbackTbls = append(fallbackTbls, fmt.Sprintf("%s.%s global", dbName, tableInfo.Name.O))
+	}
+	// dump its global-stats if existed
+	if tbl != nil {
+		jsonTbl.Partitions[util.TiDBGlobalStats] = tbl
+	}
+	return jsonTbl, fallbackTbls, nil
+}
+
+// DumpStatsToJSONBySnapshot dumps statistic to json.
+func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*util.JSONTable, error) {
+	pruneMode, err := s.statsHandler.GetCurrentPruneMode()
+	if err != nil {
+		return nil, err
+	}
+	isDynamicMode := variable.PartitionPruneMode(pruneMode) == variable.Dynamic
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		return s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+	}
+	jsonTbl := &util.JSONTable{
+		DatabaseName: dbName,
+		TableName:    tableInfo.Name.L,
+		Partitions:   make(map[string]*util.JSONTable, len(pi.Definitions)),
+	}
+	// dump partition stats only if in static mode or enable dumpPartitionStats flag in dynamic mode
+	if !isDynamicMode || dumpPartitionStats {
+		for _, def := range pi.Definitions {
+			tbl, err := s.TableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if tbl == nil {
+				continue
+			}
+			jsonTbl.Partitions[def.Name.L] = tbl
+		}
+	}
+	// dump its global-stats if existed
+	tbl, err := s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if tbl != nil {
+		jsonTbl.Partitions[util.TiDBGlobalStats] = tbl
+	}
+	return jsonTbl, nil
+}
+
+// getTableHistoricalStatsToJSONWithFallback try to get table historical stats, if not exist, directly fallback to the
+// latest stats, and the second return value would be true.
+func (s *statsReadWriter) getTableHistoricalStatsToJSONWithFallback(
+	dbName string,
+	tableInfo *model.TableInfo,
+	physicalID int64,
+	snapshot uint64,
+) (
+	*util.JSONTable,
+	bool,
+	error,
+) {
+	jt, exist, err := s.tableHistoricalStatsToJSON(physicalID, snapshot)
+	if err != nil {
+		return nil, false, err
+	}
+	if !exist {
+		jt, err = s.TableStatsToJSON(dbName, tableInfo, physicalID, 0)
+		fallback := true
+		if snapshot == 0 {
+			fallback = false
+		}
+		return jt, fallback, err
+	}
+	return jt, false, nil
+}
+
+func (s *statsReadWriter) tableHistoricalStatsToJSON(physicalID int64, snapshot uint64) (jt *util.JSONTable, exist bool, err error) {
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		jt, exist, err = TableHistoricalStatsToJSON(sctx, physicalID, snapshot)
+		return err
+	}, util.FlagWrapTxn)
+	return
+}
+
+// TableStatsToJSON dumps statistic to json.
+func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*util.JSONTable, error) {
+	tbl, err := s.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
+	if err != nil || tbl == nil {
+		return nil, err
+	}
+	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
+		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	jsonTbl, err := GenJSONTableFromStats(dbName, tableInfo, tbl)
+	if err != nil {
+		return nil, err
+	}
+	return jsonTbl, nil
 }

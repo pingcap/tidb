@@ -17,6 +17,7 @@ package executor_test
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"strconv"
 	"testing"
 	"time"
@@ -24,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -344,7 +344,7 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NotNil(t, jsTable)
 	// only has p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
-	require.Nil(t, jsTable.Partitions[globalstats.TiDBGlobalStats])
+	require.Nil(t, jsTable.Partitions[util.TiDBGlobalStats])
 
 	// change static to dynamic then assert
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
@@ -366,7 +366,7 @@ PARTITION p0 VALUES LESS THAN (6)
 	require.NotNil(t, jsTable)
 	// has both global and p0 stats
 	require.NotNil(t, jsTable.Partitions["p0"])
-	require.NotNil(t, jsTable.Partitions[globalstats.TiDBGlobalStats])
+	require.NotNil(t, jsTable.Partitions[util.TiDBGlobalStats])
 }
 
 func TestDumpHistoricalStatsFallback(t *testing.T) {
