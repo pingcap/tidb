@@ -76,6 +76,22 @@ func (sa *statsAnalyze) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bo
 	return
 }
 
+// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
+func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
+	// We simply choose one physical id to get its stats.
+	var tbl *statistics.Table
+	for _, pid := range physicalIDs {
+		tbl = sa.statsHandle.GetPartitionStats(tblInfo, pid)
+		if !tbl.Pseudo {
+			break
+		}
+	}
+	if tbl == nil || tbl.Pseudo {
+		return true
+	}
+	return statistics.CheckAnalyzeVerOnTable(tbl, version)
+}
+
 func parseAutoAnalyzeRatio(ratio string) float64 {
 	autoAnalyzeRatio, err := strconv.ParseFloat(ratio, 64)
 	if err != nil {
