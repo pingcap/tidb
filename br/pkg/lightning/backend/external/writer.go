@@ -330,8 +330,8 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 		base, buf, off, _ = w.kvBuffer.Alloc(length)
 	}
 	binary.BigEndian.AppendUint64(buf[:0], uint64(encodedKeyLen))
-	keyAdapter.Encode(buf[8:], idxKey, rowID)
-	binary.BigEndian.AppendUint64(buf[8+encodedKeyLen:], uint64(len(idxVal)))
+	keyAdapter.Encode(buf[8:8:8+encodedKeyLen], idxKey, rowID)
+	binary.BigEndian.AppendUint64(buf[8+encodedKeyLen:8+encodedKeyLen], uint64(len(idxVal)))
 	copy(buf[8*2+encodedKeyLen:], idxVal)
 
 	if len(w.byteBufs) == 0 || &(w.byteBufs[len(w.byteBufs)-1]) != &base {
