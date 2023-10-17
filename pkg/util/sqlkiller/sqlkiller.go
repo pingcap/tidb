@@ -53,11 +53,11 @@ func (killer *SQLKiller) HandleSignal() error {
 	case MaxExecTimeExceeded:
 		return exeerrors.ErrMaxExecTimeExceeded
 	case QueryMemoryExceeded:
-		return exeerrors.ErrMemoryExceed.GenWithStackByArgs("a single SQL query", "tidb_mem_quota_query", killer.ConnID)
+		return exeerrors.ErrMemoryExceed.GenWithStackByArgs("a single SQL query", "tidb_mem_quota_query limit", killer.ConnID)
 	case ServerMemoryExceeded:
 		logutil.BgLogger().Warn("global memory controller, NeedKill signal is received successfully",
 			zap.Uint64("conn", killer.ConnID))
-		return exeerrors.ErrMemoryExceed.GenWithStackByArgs("the tidb-server instance and this query is currently using the most memory", "tidb_mem_quota_query", killer.ConnID)
+		return exeerrors.ErrMemoryExceed.GenWithStackByArgs("the tidb-server instance and this query is currently using the most memory", "tidb_server_memory_limit", killer.ConnID)
 	}
 	return nil
 }
