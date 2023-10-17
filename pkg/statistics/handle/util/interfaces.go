@@ -15,6 +15,7 @@
 package util
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -261,6 +262,13 @@ type StatsReadWriter interface {
 
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
 	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error)
+
+	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
+	// In final, it will also udpate the stats cache.
+	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
+
+	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
+	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
 
 	// Methods for extended stast.
 
