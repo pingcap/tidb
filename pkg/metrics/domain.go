@@ -59,7 +59,7 @@ func InitDomainMetrics() {
 			Namespace: "tidb",
 			Subsystem: "domain",
 			Name:      "lease_expire_time",
-			Help:      "When the last time the lease is expired",
+			Help:      "When the last time the lease is expired, it is in microseconds",
 		})
 
 	LoadSchemaCounter = NewCounterVec(
