@@ -16,7 +16,6 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"math/rand"
 	"os"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	stats "github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )

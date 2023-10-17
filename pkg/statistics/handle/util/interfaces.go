@@ -15,7 +15,6 @@
 package util
 
 import (
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tiancaiamao/gp"
 )
 

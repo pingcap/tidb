@@ -5,7 +5,6 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -22,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"

@@ -17,7 +17,6 @@ package executor_test
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"strconv"
 	"testing"
 	"time"
@@ -26,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
