@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -105,7 +106,7 @@ func TestToPhysicalPlan(t *testing.T) {
 	physicalPlan, err = logicalPlan.ToPhysicalPlan(planCtx)
 	require.NoError(t, err)
 	subtaskMetas2, err := physicalPlan.ToSubtaskMetas(planner.PlanCtx{
-		PreviousSubtaskMetas: map[int64][][]byte{
+		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			StepImport: {bs},
 		},
 	}, StepPostProcess)
@@ -178,7 +179,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 	planCtx := planner.PlanCtx{
 		Ctx:    context.Background(),
 		TaskID: 1,
-		PreviousSubtaskMetas: map[int64][][]byte{
+		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			StepEncodeAndSort: encodeStepMetaBytes,
 		},
 	}
@@ -248,7 +249,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
 	})
 	allKVMetas, err := getSortedKVMetasForIngest(planner.PlanCtx{
-		PreviousSubtaskMetas: map[int64][][]byte{
+		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			StepEncodeAndSort: encodeStepMetaBytes,
 			StepMergeSort:     mergeStepMetas,
 		},

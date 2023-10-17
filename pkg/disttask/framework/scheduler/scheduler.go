@@ -219,6 +219,7 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
 			}
+			time.Sleep(checkTime)
 			continue
 		}
 
@@ -513,7 +514,7 @@ func (s *BaseScheduler) startSubtaskAndUpdateState(ctx context.Context, subtask 
 	metrics.StartDistTaskSubTask(subtask)
 }
 
-func (s *BaseScheduler) updateSubtaskStateAndErrorImpl(subtaskID int64, state string, subTaskErr error) {
+func (s *BaseScheduler) updateSubtaskStateAndErrorImpl(subtaskID int64, state proto.TaskState, subTaskErr error) {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
@@ -555,7 +556,7 @@ func (s *BaseScheduler) finishSubtask(ctx context.Context, subtask *proto.Subtas
 	}
 }
 
-func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state string, subTaskErr error) {
+func (s *BaseScheduler) updateSubtaskStateAndError(subtask *proto.Subtask, state proto.TaskState, subTaskErr error) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	s.updateSubtaskStateAndErrorImpl(subtask.ID, state, subTaskErr)
