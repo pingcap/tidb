@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -180,12 +181,29 @@ func (j *regionJob) done(wg *sync.WaitGroup) {
 }
 
 // writeToTiKV writes the data to TiKV and mark this job as wrote stage.
-// if any write logic has error, writeToTiKV will set job to a proper stage and return nil. TODO: <-check this
+// if any write logic has error, writeToTiKV will set job to a proper stage and return nil.
 // if any underlying logic has error, writeToTiKV will return an error.
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will take the responsibility to do so.
 // TODO: let client-go provide a high-level write interface.
 func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
+	err := local.doWrite(ctx, j)
+	if err == nil {
+		return nil
+	}
+	if common.IsContextCanceledError(err) || !common.IsRetryableError(err) {
+		return err
+	}
+	// currently only one case will restart write
+	if strings.Contains(err.Error(), "please retry write later") {
+		j.convertStageTo(regionScanned)
+		return err
+	}
+	j.convertStageTo(needRescan)
+	return err
+}
+
+func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 	if j.stage != regionScanned {
 		return nil
 	}
@@ -238,6 +256,17 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		},
 		ApiVersion: apiVersion,
 	}
+
+	failpoint.Inject("changeEpochVersion", func(val failpoint.Value) {
+		cloned := *meta.RegionEpoch
+		meta.RegionEpoch = &cloned
+		i := val.(int)
+		if i >= 0 {
+			meta.RegionEpoch.Version += uint64(i)
+		} else {
+			meta.RegionEpoch.ConfVer -= uint64(-i)
+		}
+	})
 
 	annotateErr := func(in error, peer *metapb.Peer, msg string) error {
 		// annotate the error with peer/store/region info to help debug.
@@ -315,7 +344,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				return errors.Trace(err)
 			}
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
-				// TODO(lance6716): if it's EOF, need RecvMsg to get the error
+				if err == io.EOF {
+					// if it's EOF, need RecvMsg to get the error
+					var dummy any
+					err = clients[i].RecvMsg(dummy)
+				}
 				return annotateErr(err, allPeers[i], "when send data")
 			}
 		}
