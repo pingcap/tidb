@@ -257,8 +257,7 @@ col1
 471841432147994.4981
 492790234219503.0846
 729024465529090.5423
-create database test_40296;
-use test_40296;
+drop table if exists IDT_MULTI15880STROBJSTROBJ;
 CREATE TABLE IDT_MULTI15880STROBJSTROBJ (
 COL1 enum('aa','bb','cc','dd','ff','gg','kk','ll','mm','ee') DEFAULT NULL,
 COL2 decimal(20,0) DEFAULT NULL,
@@ -275,7 +274,7 @@ ee	-9605492323393070105	0850-03-15
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
-use planner__core__plan_cache
+set session tidb_enable_non_prepared_plan_cache=default;
 CREATE TABLE UK_SIGNED_19385 (
 COL1 decimal(37,4) unsigned DEFAULT '101.0000' COMMENT 'WITH DEFAULT',
 COL2 varchar(20) DEFAULT NULL,

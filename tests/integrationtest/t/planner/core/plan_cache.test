@@ -158,8 +158,7 @@ execute stmt using @a,@b,@c,@d;
 
 
 # TestIssue40296
-create database test_40296;
-use test_40296;
+drop table if exists IDT_MULTI15880STROBJSTROBJ;
 CREATE TABLE IDT_MULTI15880STROBJSTROBJ (
   COL1 enum('aa','bb','cc','dd','ff','gg','kk','ll','mm','ee') DEFAULT NULL,
   COL2 decimal(20,0) DEFAULT NULL,
@@ -171,7 +170,7 @@ set session tidb_enable_non_prepared_plan_cache=on;
 select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("dd", "dd") or col2 = 9923875910817805958 or col3 = "9994-11-11";
 select * from IDT_MULTI15880STROBJSTROBJ where col1 in ("aa", "aa") or col2 = -9605492323393070105 or col3 = "0005-06-22";
 select @@last_plan_from_cache;
-use planner__core__plan_cache
+set session tidb_enable_non_prepared_plan_cache=default;
 
 
 # TestIssue43522
