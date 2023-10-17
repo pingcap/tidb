@@ -15,37 +15,39 @@
 # limitations under the License.
 
 set -eu
+. run_services
 CUR=$(cd `dirname $0`; pwd)
-DB="$TEST_NAME"
 
 # const value
 WAIT_DONE_CODE=50
 WAIT_NOT_DONE_CODE=51
+PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 
 # prepare the data
 echo "prepare the data"
+run_sql_file $CUR/prepare_data/delete_range.sql
 # ...
 
 # start the log backup task
 echo "start log task"
-run_br --pd $PD_ADDR log start --task integration_test -s "local://$TEST_DIR/$TEST_NAME/log"
+run_br --pd $PD_ADDR log start --task-name integration_test -s "local://$TEST_DIR/$PREFIX/log"
 
 # run snapshot backup
 echo "run snapshot backup"
-run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$TEST_NAME/full"
+run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$PREFIX/full"
 
 # load the incremental data
 echo "load the incremental data"
-run_sql_file $CUR/data/delete_range.sql
+run_sql_file $CUR/incremental_data/delete_range.sql
 # ...
 
 # wait checkpoint advance
 echo "wait checkpoint advance"
-OLD_GO_FAILPOINTS=$GO_FAILPOINTS
 sleep 10
 now_time=$(date "+%Y-%m-%d %H:%M:%S %z")
 echo "get the current time: $now_time"
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/stream/only-checkpoint-ts-with-check=return(\"$now_time\")"
+set +e # we need to get the exit code of br
 while true; do
     # run br with failpoint to compare the current checkpoint ts with the current time
     run_br --pd $PD_ADDR log status --task-name integration_test
@@ -54,11 +56,13 @@ while true; do
     
     # the checkpoint has advanced
     if [ $exit_code -eq $WAIT_DONE_CODE ]; then
+        echo "the checkpoint has advanced"
         break
     fi
 
     # the checkpoint hasn't advanced
     if [ $exit_code -eq $WAIT_NOT_DONE_CODE ]; then
+        echo "the checkpoint hasn't advanced"
         sleep 10
         continue
     fi
@@ -67,21 +71,17 @@ while true; do
     echo "TEST: [$TEST_NAME] failed to wait checkpoint advance!"
     exit 1
 done
-export GO_FAILPOINTS=$OLD_GO_FAILPOINTS
+set -e
 
 # dump some info from upstream cluster
 # ...
 
 # start a new cluster
-echo "stop services"
-stop_services
-echo "clean up data"
-rm -rf $TEST_DIR && mkdir -p $TEST_DIR
-echo "start services"
-start_services
+echo "restart a services"
+restart_services
 
 # PITR restore
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$TEST_NAME/log" --full-backup-storage "local://$TEST_DIR/$TEST_NAME/full"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full"
 
 # check something in downstream cluster
-# ...
+run_sql "select * from mysql.delete_range"

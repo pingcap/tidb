@@ -424,6 +424,7 @@ func (ctl *StatusController) PrintStatusOfTask(ctx context.Context, name string)
 	failpoint.Inject("only-checkpoint-ts-with-check", func(val failpoint.Value) {
 		if nowTs, ok := val.(string); ok && len(tasks) > 0 && len(nowTs) > 0 {
 			checkpointTime := oracle.GetTimeFromTS(tasks[0].globalCheckpoint)
+			log.Info("get checkpoint time", zap.Time("checkpoint ts", checkpointTime))
 			nowTime, err := ParseDate(nowTs)
 			if err != nil {
 				failpoint.Return(err)
