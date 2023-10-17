@@ -650,6 +650,9 @@ func (rs *KS3Storage) createUploader(_ context.Context, name string) (ExternalFi
 	}, nil
 }
 
+// WriteBufferSize is the size of the buffer used for writing. (64K may be a better choice)
+var Ks3WriteBufferSize = 64 * 1024 * 1024
+
 // Create creates multi upload request.
 func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOption) (ExternalFileWriter, error) {
 	var uploader ExternalFileWriter
@@ -682,7 +685,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
+	uploaderWriter := newBufferedWriter(uploader, Ks3WriteBufferSize, NoCompression)
 	return uploaderWriter, nil
 }
 

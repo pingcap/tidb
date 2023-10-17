@@ -209,6 +209,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		return nil, err
 	}
 	memSize := (memTotal / 2) / uint64(len(indexes))
+	logutil.BgLogger().Info("memory quota for writer", zap.Any("memSize", memSize))
 
 	srcOp := NewTableScanTaskSource(ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
