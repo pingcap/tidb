@@ -454,7 +454,7 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		for !done {
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(w.seq, w.ctx, w.copCtx.GetBase(), rs, srcChk)
-			if err != nil {
+			if err != nil || util2.IsContextDone(w.ctx) {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err

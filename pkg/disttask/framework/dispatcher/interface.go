@@ -18,10 +18,35 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
+
+// TaskManager defines the interface to access task table.
+type TaskManager interface {
+	GetGlobalTasksInStates(states ...interface{}) (task []*proto.Task, err error)
+	GetGlobalTaskByID(taskID int64) (task *proto.Task, err error)
+	UpdateGlobalTaskAndAddSubTasks(gTask *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
+	GCSubtasks() error
+	GetAllNodes() ([]string, error)
+	CleanUpMeta(nodes []string) error
+	TransferTasks2History(tasks []*proto.Task) error
+	CancelGlobalTask(taskID int64) error
+	PauseTask(taskKey string) (bool, error)
+	GetSubtaskInStatesCnt(taskID int64, states ...interface{}) (int64, error)
+	ResumeSubtasks(taskID int64) error
+	CollectSubTaskError(taskID int64) ([]error, error)
+	TransferSubTasks2History(taskID int64) error
+	UpdateFailedSchedulerIDs(taskID int64, replaceNodes map[string]string) error
+	GetNodesByRole(role string) (map[string]bool, error)
+	GetSchedulerIDsByTaskID(taskID int64) ([]string, error)
+	GetSucceedSubtasksByStep(taskID int64, step proto.Step) ([]*proto.Subtask, error)
+	GetSchedulerIDsByTaskIDAndStep(taskID int64, step proto.Step) ([]string, error)
+
+	WithNewSession(fn func(se sessionctx.Context) error) error
+	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
+}
 
 // Extension is used to control the process operations for each task.
 // it's used to extend functions of BaseDispatcher.
@@ -60,7 +85,7 @@ type Extension interface {
 }
 
 // dispatcherFactoryFn is used to create a dispatcher.
-type dispatcherFactoryFn func(ctx context.Context, taskMgr *storage.TaskManager, serverID string, task *proto.Task) Dispatcher
+type dispatcherFactoryFn func(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) Dispatcher
 
 var dispatcherFactoryMap = struct {
 	syncutil.RWMutex

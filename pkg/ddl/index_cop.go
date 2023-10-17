@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -153,6 +154,7 @@ func scanRecords(seq int, p *copReqSenderPool, task *reorgBackfillTask, se *sess
 			p.checkpointMgr.Register(task.id, task.endKey)
 		}
 		var done bool
+		startTime := time.Now()
 		for !done {
 			srcChk := p.getChunk()
 			done, err = fetchTableScanResult(seq, p.ctx, p.copCtx.GetBase(), rs, srcChk)
@@ -165,12 +167,15 @@ func scanRecords(seq int, p *copReqSenderPool, task *reorgBackfillTask, se *sess
 				p.checkpointMgr.UpdateTotal(task.id, srcChk.NumRows(), done)
 			}
 			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
+			rate := float64(srcChk.MemoryUsage()) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
+			metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
 			failpoint.Inject("mockCopSenderError", func() {
 				idxRs.Err = errors.New("mock cop error")
 			})
 			finish := util2.InjectSpan(p.copCtx.GetBase().JobID, fmt.Sprintf("send-chunk-%d", seq))
 			p.chunkSender.AddTask(idxRs)
 			finish()
+			startTime = time.Now()
 		}
 		terror.Call(rs.Close)
 		return nil

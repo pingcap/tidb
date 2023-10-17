@@ -67,7 +67,7 @@ LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBGitBranch=$(shel
 LDFLAGS += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEdition=$(TIDB_EDITION)"
 
 EXTENSION_FLAG =
-ifeq ($(shell if [ -d .git/modules/extension/enterprise ]; then echo "true"; fi),true)
+ifeq ($(shell if [ -f pkg/extension/enterprise/.git ]; then echo "true"; fi),true)
 	EXTENSION_FLAG += -X "github.com/pingcap/tidb/pkg/util/versioninfo.TiDBEnterpriseExtensionGitHash=$(shell cd pkg/extension/enterprise && git rev-parse HEAD)"
 endif
 
