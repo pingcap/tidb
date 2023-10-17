@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/sessionctx/variable"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"github.com/spf13/cobra"
@@ -101,6 +102,12 @@ const (
 	crypterAES256KeyLen = 32
 
 	flagFullBackupType = "type"
+)
+
+const (
+	// Once TableInfoVersion updated. BR need to check compatibility with
+	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
+	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
 )
 
 // FullBackupType type when doing full backup or restore

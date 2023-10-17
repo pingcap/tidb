@@ -362,6 +362,7 @@ func newMultiQueriesChunk(queries []string, colLength int) *multiQueriesChunk {
 func (td *multiQueriesChunk) Start(tctx *tcontext.Context, conn *sql.Conn) error {
 	td.tctx = tctx
 	td.conn = conn
+	td.SQLRowIter = nil
 	return nil
 }
 

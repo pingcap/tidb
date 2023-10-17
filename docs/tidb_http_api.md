@@ -564,7 +564,6 @@ timezone.*
     # reset the size of the ballast object (2GB in this example)
     curl -v -X POST -d "2147483648" http://{TiDBIP}:10080/debug/ballast-object-sz
     ```
-
     
 1. Set deadlock history table capacity
 
@@ -591,3 +590,14 @@ timezone.*
     ```shell
     curl -X POST -d "transaction_summary_capacity={number}" http://{TiDBIP}:10080/settings
     ```
+
+1. Send upgrade operations to the cluster. The operations here include `start` and `finish`.
+
+   ```shell
+   curl -X POST http://{TiDBIP}:10080/upgrade/{op}
+   ```
+
+   ```shell
+   $curl -X POST http://127.0.0.1:10080/upgrade/start
+   "success!"
+   ```
