@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -851,7 +850,7 @@ func (c *chunkRowRecordSet) Fields() []*ast.ResultField {
 func (c *chunkRowRecordSet) Next(_ context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	if !chk.IsFull() && c.idx < len(c.rows) {
-		numToAppend := mathutil.Min(len(c.rows)-c.idx, chk.RequiredRows()-chk.NumRows())
+		numToAppend := min(len(c.rows)-c.idx, chk.RequiredRows()-chk.NumRows())
 		chk.AppendRows(c.rows[c.idx : c.idx+numToAppend])
 		c.idx += numToAppend
 	}

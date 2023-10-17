@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -446,7 +445,7 @@ func (e *TopNExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	if !req.IsFull() {
-		numToAppend := mathutil.Min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
+		numToAppend := min(len(e.rowPtrs)-e.Idx, req.RequiredRows()-req.NumRows())
 		rows := make([]chunk.Row, numToAppend)
 		for index := 0; index < numToAppend; index++ {
 			rows[index] = e.rowChunks.GetRow(e.rowPtrs[e.Idx])

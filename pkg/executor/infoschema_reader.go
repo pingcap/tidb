@@ -69,7 +69,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/keydecoder"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -1280,7 +1279,7 @@ func (e *DDLJobsReaderExec) Next(_ context.Context, req *chunk.Chunk) error {
 
 	// Append running DDL jobs.
 	if e.cursor < len(e.runningJobs) {
-		num := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
+		num := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+num; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], checker)
 			req.AppendString(12, e.runningJobs[i].Query)
@@ -2657,9 +2656,9 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 		// and resolving (optimistic lock "waiting") info
 		// first we'll return the lockWaits, and then resolving, so we need to
 		// do some index calculation here
-		lockWaitsStart := mathutil.Min(start, len(r.lockWaits))
+		lockWaitsStart := min(start, len(r.lockWaits))
 		resolvingStart := start - lockWaitsStart
-		lockWaitsEnd := mathutil.Min(end, len(r.lockWaits))
+		lockWaitsEnd := min(end, len(r.lockWaits))
 		resolvingEnd := end - lockWaitsEnd
 		for rowIdx, lockWait := range r.lockWaits[lockWaitsStart:lockWaitsEnd] {
 			row := make([]types.Datum, 0, len(r.columns))

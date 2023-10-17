@@ -72,7 +72,6 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/engine",
         "//pkg/util/extsort",
-        "//pkg/util/mathutil",
         "//pkg/util/mock",
         "//pkg/util/regexpr-router",
         "//pkg/util/set",

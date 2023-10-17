@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -247,7 +246,7 @@ func (r *byteReader) cloneSlices() {
 }
 
 func (r *byteReader) next(n int) []byte {
-	end := mathutil.Min(r.curBufOffset+n, len(r.curBuf))
+	end := min(r.curBufOffset+n, len(r.curBuf))
 	ret := r.curBuf[r.curBufOffset:end]
 	r.curBufOffset += len(ret)
 	return ret

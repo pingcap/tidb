@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -77,7 +76,7 @@ func getGroupKeyMemUsage(groupKey [][]byte) int64 {
 // GetGroupKey evaluates the group items and args of aggregate functions.
 func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, groupByItems []expression.Expression) ([][]byte, error) {
 	numRows := input.NumRows()
-	avlGroupKeyLen := mathutil.Min(len(groupKey), numRows)
+	avlGroupKeyLen := min(len(groupKey), numRows)
 	for i := 0; i < avlGroupKeyLen; i++ {
 		groupKey[i] = groupKey[i][:0]
 	}

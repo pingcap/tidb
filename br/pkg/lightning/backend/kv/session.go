@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -110,7 +109,7 @@ func (mb *MemBuf) Recycle(buf *BytesBuf) {
 // AllocateBuf allocates a byte buffer.
 func (mb *MemBuf) AllocateBuf(size int) {
 	mb.Lock()
-	size = mathutil.Max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
+	size = max(units.MiB, int(utils.NextPowerOfTwo(int64(size)))*2)
 	var (
 		existingBuf    *BytesBuf
 		existingBufIdx int

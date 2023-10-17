@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	resourceControlClient "github.com/tikv/pd/client/resource_group/controller"
@@ -334,11 +333,11 @@ func (e *Executor) getTiDBQuota(ctx context.Context, exec sqlexec.RestrictedSQLE
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
 		// And if both are greater than the `lowUsageThreshold`, we can also accept it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
-			quotas = append(quotas, rus.getValue()/mathutil.Max(tikvQuota, tidbQuota))
+			quotas = append(quotas, rus.getValue()/max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold || tidbQuota < lowUsageThreshold {
 			lowCount++
 		} else {
-			quotas = append(quotas, rus.getValue()/mathutil.Max(tikvQuota, tidbQuota))
+			quotas = append(quotas, rus.getValue()/max(tikvQuota, tidbQuota))
 		}
 		rus.next()
 		tidbCPUs.next()

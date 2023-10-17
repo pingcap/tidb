@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -90,7 +89,7 @@ func (r *requiredRowsDataSource) Next(ctx context.Context, req *chunk.Chunk) err
 	if r.count > r.totalRows {
 		return nil
 	}
-	required := mathutil.Min(req.RequiredRows(), r.totalRows-r.count)
+	required := min(req.RequiredRows(), r.totalRows-r.count)
 	for i := 0; i < required; i++ {
 		req.AppendRow(r.genOneRow())
 	}
@@ -195,7 +194,7 @@ func TestLimitRequiredRows(t *testing.T) {
 }
 
 func buildLimitExec(ctx sessionctx.Context, src exec.Executor, offset, count int) exec.Executor {
-	n := mathutil.Min(count, ctx.GetSessionVars().MaxChunkSize)
+	n := min(count, ctx.GetSessionVars().MaxChunkSize)
 	base := exec.NewBaseExecutor(ctx, src.Schema(), 0, src)
 	base.SetInitCap(n)
 	limitExec := &LimitExec{

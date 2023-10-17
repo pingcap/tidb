@@ -46,7 +46,6 @@ go_library(
         "//pkg/util/collate",
         "//pkg/util/hack",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/selection",
         "//pkg/util/set",
         "//pkg/util/stringutil",

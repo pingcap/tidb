@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -377,7 +376,7 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 			cDec = lType.GetDecimal()
 		}
 		lLen, rLen := lType.GetFlen()+lExtend, rType.GetFlen()+rExtend
-		cLen := mathutil.Max(lLen, rLen)
+		cLen := max(lLen, rLen)
 		commonType.SetDecimalUnderLimit(cDec)
 		commonType.SetFlenUnderLimit(cLen)
 	} else if needConvert(lType, commonType) || needConvert(rType, commonType) {

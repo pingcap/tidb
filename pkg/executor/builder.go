@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cteutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -790,7 +789,7 @@ func (b *executorBuilder) buildLimit(v *plannercore.PhysicalLimit) exec.Executor
 	if b.err != nil {
 		return nil
 	}
-	n := int(mathutil.Min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
+	n := int(min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.SetInitCap(n)
 	e := &LimitExec{
@@ -1224,7 +1223,7 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 		if b.Ti.PartitionTelemetry == nil {
 			b.Ti.PartitionTelemetry = &PartitionTelemetryInfo{}
 		}
-		b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = mathutil.Max(p.Num, uint64(len(p.Definitions)))
+		b.Ti.PartitionTelemetry.TablePartitionMaxPartitionsNum = max(p.Num, uint64(len(p.Definitions)))
 		b.Ti.PartitionTelemetry.UseTablePartition = true
 
 		switch p.Tp {

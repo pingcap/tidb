@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // calcFraction is used to calculate the fraction of the interval [lower, upper] that lies within the [lower, value]
@@ -253,7 +252,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		return values
 	case types.KindMysqlDuration:
 		lowDur, highDur := low.GetMysqlDuration(), high.GetMysqlDuration()
-		fsp := mathutil.Max(lowDur.Fsp, highDur.Fsp)
+		fsp := max(lowDur.Fsp, highDur.Fsp)
 		stepSize := int64(math.Pow10(types.MaxFsp-fsp)) * int64(time.Microsecond)
 		lowDur.Duration = lowDur.Duration.Round(time.Duration(stepSize))
 		remaining := int64(highDur.Duration-lowDur.Duration)/stepSize + 1 - int64(exclude)
@@ -274,7 +273,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		if lowTime.Type() != highTime.Type() {
 			return nil
 		}
-		fsp := mathutil.Max(lowTime.Fsp(), highTime.Fsp())
+		fsp := max(lowTime.Fsp(), highTime.Fsp())
 		var stepSize int64
 		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 		if lowTime.Type() == mysql.TypeDate {

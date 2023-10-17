@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
@@ -147,7 +146,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, int(ndv))
+	concurrency = min(concurrency, int(ndv))
 
 	byItems := make([]expression.Expression, 0, len(pp.PartitionBy))
 	for _, item := range pp.PartitionBy {
@@ -188,7 +187,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 	if ndv <= 1 {
 		return nil
 	}
-	concurrency = mathutil.Min(concurrency, int(ndv))
+	concurrency = min(concurrency, int(ndv))
 
 	reqProp := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64}
 	shuffle := PhysicalShuffle{

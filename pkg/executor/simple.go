@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	pwdValidator "github.com/pingcap/tidb/pkg/util/password-validation"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -873,22 +872,22 @@ func (info *passwordOrLockOptionsInfo) loadOptions(plOption []*ast.PasswordOrLoc
 		case ast.Unlock:
 			info.lockAccount = "N"
 		case ast.FailedLoginAttempts:
-			info.failedLoginAttempts = mathutil.Min(option.Count, math.MaxInt16)
+			info.failedLoginAttempts = min(option.Count, math.MaxInt16)
 			info.failedLoginAttemptsChange = true
 		case ast.PasswordLockTime:
-			info.passwordLockTime = mathutil.Min(option.Count, math.MaxInt16)
+			info.passwordLockTime = min(option.Count, math.MaxInt16)
 			info.passwordLockTimeChange = true
 		case ast.PasswordLockTimeUnbounded:
 			info.passwordLockTime = -1
 			info.passwordLockTimeChange = true
 		case ast.PasswordHistory:
-			info.passwordHistory = mathutil.Min(option.Count, math.MaxUint16)
+			info.passwordHistory = min(option.Count, math.MaxUint16)
 			info.passwordHistoryChange = true
 		case ast.PasswordHistoryDefault:
 			info.passwordHistory = notSpecified
 			info.passwordHistoryChange = true
 		case ast.PasswordReuseInterval:
-			info.passwordReuseInterval = mathutil.Min(option.Count, math.MaxUint16)
+			info.passwordReuseInterval = min(option.Count, math.MaxUint16)
 			info.passwordReuseIntervalChange = true
 		case ast.PasswordReuseDefault:
 			info.passwordReuseInterval = notSpecified
@@ -963,8 +962,8 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 		if err != nil {
 			return nil, err
 		}
-		alterUserInfo.failedLoginAttempts = mathutil.Max(alterUserInfo.failedLoginAttempts, 0)
-		alterUserInfo.failedLoginAttempts = mathutil.Min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
+		alterUserInfo.failedLoginAttempts = max(alterUserInfo.failedLoginAttempts, 0)
+		alterUserInfo.failedLoginAttempts = min(alterUserInfo.failedLoginAttempts, math.MaxInt16)
 	} else {
 		alterUserInfo.failedLoginAttemptsNotFound = true
 	}
@@ -977,8 +976,8 @@ func readPasswordLockingInfo(ctx context.Context, sqlExecutor sqlexec.SQLExecuto
 		if err != nil {
 			return nil, err
 		}
-		alterUserInfo.passwordLockTime = mathutil.Max(alterUserInfo.passwordLockTime, -1)
-		alterUserInfo.passwordLockTime = mathutil.Min(alterUserInfo.passwordLockTime, math.MaxInt16)
+		alterUserInfo.passwordLockTime = max(alterUserInfo.passwordLockTime, -1)
+		alterUserInfo.passwordLockTime = min(alterUserInfo.passwordLockTime, math.MaxInt16)
 	} else {
 		alterUserInfo.passwordLockTimeChangeNotFound = true
 	}
