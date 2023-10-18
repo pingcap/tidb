@@ -878,6 +878,32 @@ func (h *topnHeap) Pop() any {
 	return x
 }
 
+type topNMeataHeap []TopNMeta
+
+func (h topNMeataHeap) Len() int {
+	return len(h)
+}
+
+func (h topNMeataHeap) Less(i, j int) bool {
+	return bytes.Compare(h[i].Encoded, h[j].Encoded) < 0
+}
+
+func (h topNMeataHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *topNMeataHeap) Push(x any) {
+	*h = append(*h, x.(TopNMeta))
+}
+
+func (h *topNMeataHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
 // The input parameters:
 //  1. `topNs` are the partition-level topNs to be merged.
@@ -903,6 +929,14 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			nextPosInTopN: 1,
 		})
 	}
+	maxPossibleAdded := make([]int64, len(hists))
+	for i, hist := range hists {
+		curMax := int64(hist.NotNullCount() / float64(hist.NDV))
+		for _, bkt := range hist.Buckets {
+			curMax = max(curMax, bkt.Repeat)
+		}
+		maxPossibleAdded[i] = curMax
+	}
 	logutil.BgLogger().Warn("merging topn", zap.Int("total topn num", sumTopN))
 	if mergingHeap.Len() == 0 {
 		return nil, nil, hists, nil
@@ -923,6 +957,9 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	mergedTopNs := make([]TopNMeta, 0, n)
 	step := int64(0)
 	histRemoveCnt := int64(0)
+	var finalTopNs topNMeataHeap = make([]TopNMeta, 0, n+1)
+	remainedTopNs := make([]TopNMeta, 0, n)
+	skipCount := 0
 	for {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -951,12 +988,28 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 		}
 		cmp := bytes.Compare(cur.item.Encoded, headTopN.Encoded)
 		cnt := headTopN.Count
+		metaHeapInit := false
 		// The heap's head move forward.
 		if cmp < 0 {
 			// Initializing the datum.
 			d, err := topNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
 			if err != nil {
 				return nil, nil, hists, err
+			}
+			maxPossible := int64(0)
+			// Hacking skip.
+			if uint32(len(finalTopNs)) >= n {
+				for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+					maxPossible += maxPossibleAdded[histPos]
+				}
+				// The maximum possible added value still cannot make it replace the smallest topn.
+				if maxPossible+int64(cur.item.Count) < int64(finalTopNs[0].Count) {
+					skipCount++
+					remainedTopNs = append(remainedTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+					cur.cleared = true
+					cur.affectedTopNs.ClearAll()
+					continue
+				}
 			}
 			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
 				histRemoveCnt++
@@ -970,7 +1023,17 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				}
 			}
 			cur.item.Count += cnt
-			mergedTopNs = append(mergedTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+			if metaHeapInit {
+				if finalTopNs[0].Count < cur.item.Count {
+					finalTopNs[0].Encoded = cur.item.Encoded
+					finalTopNs[0].Count = cur.item.Count
+					heap.Fix(&finalTopNs, 0)
+				}
+			} else if finalTopNs.Len() < int(n) {
+				finalTopNs = append(finalTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+			} else {
+				heap.Init(&finalTopNs)
+			}
 			cur.cleared = true
 			cur.affectedTopNs.ClearAll()
 			continue
@@ -981,6 +1044,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			cur.affectedTopNs.Set(uint(head.idx))
 		}
 	}
+	logutil.BgLogger().Warn("merging topn", zap.Int("the num of tops which skipped checking with hist", skipCount))
 	if !cur.cleared {
 		// There's uncleared item. Clear it.
 		// Initializing the datum.
@@ -998,8 +1062,11 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	for _, iter := range histIters {
 		iter.finish()
 	}
-	globalTopN, leftTopN := GetMergedTopNFromSortedSlice(mergedTopNs, n)
-	return globalTopN, leftTopN, hists, nil
+	SortTopnMeta(finalTopNs)
+	SortTopnMeta(remainedTopNs)
+	var globalTopN TopN
+	globalTopN.TopN = finalTopNs
+	return &globalTopN, remainedTopNs, hists, nil
 }
 
 // MergeTopN is used to merge more TopN structures to generate a new TopN struct by the given size.
