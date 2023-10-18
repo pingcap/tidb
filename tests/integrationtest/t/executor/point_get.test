@@ -334,3 +334,4 @@ update t1 set v=v+1;
 connection default;
 disconnect conn1;
 execute s;
+set @@tidb_enable_plan_replayer_capture=default;

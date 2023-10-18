@@ -616,3 +616,4 @@ update t1 set v=v+1;
 execute s;
 id	v
 1	11
+set @@tidb_enable_plan_replayer_capture=default;

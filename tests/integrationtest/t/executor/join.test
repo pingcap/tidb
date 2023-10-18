@@ -496,6 +496,7 @@ CREATE VIEW v0(c0) AS SELECT NULL;
 SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
 SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
 --disable_warnings
+
 # TestTiDBNAAJ
 drop table if exists t;
 set @@session.tidb_enable_null_aware_anti_join=0;
