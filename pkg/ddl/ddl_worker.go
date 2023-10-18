@@ -117,6 +117,7 @@ type JobContext struct {
 	tp                 string
 
 	resourceGroupName string
+	cloudStorageURI   string
 }
 
 // NewJobContext returns a new ddl job context.

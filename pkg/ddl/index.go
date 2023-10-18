@@ -644,6 +644,7 @@ SwitchIndexState:
 			}
 			return ver, err
 		}
+		loadCloudStorageURI(w, job)
 		if reorgTp.NeedMergeProcess() {
 			// Increase telemetryAddIndexIngestUsage
 			telemetryAddIndexIngestUsage.Inc()
@@ -789,6 +790,12 @@ func pickBackfillType(ctx context.Context, job *model.Job, unique bool, d *ddlCt
 		zap.Bool("lightning env initialized", ingest.LitInitialized))
 	job.ReorgMeta.ReorgTp = model.ReorgTypeTxnMerge
 	return model.ReorgTypeTxnMerge, nil
+}
+
+func loadCloudStorageURI(w *worker, job *model.Job) {
+	jc := w.jobContext(job.ID, job.ReorgMeta)
+	jc.cloudStorageURI = variable.CloudStorageURI.Load()
+	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0
 }
 
 // cleanupSortPath is used to clean up the temp data of the previous jobs.
@@ -2098,11 +2105,12 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			elemIDs = append(elemIDs, elem.ID)
 		}
 
+		job := reorgInfo.Job
 		taskMeta := &BackfillGlobalMeta{
 			Job:             *reorgInfo.Job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
-			CloudStorageURI: variable.CloudStorageURI.Load(),
+			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 		}
 
 		metaData, err := json.Marshal(taskMeta)
