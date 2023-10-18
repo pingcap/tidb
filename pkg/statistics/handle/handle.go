@@ -15,7 +15,6 @@
 package handle
 
 import (
-	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"math"
 	"time"
 
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
