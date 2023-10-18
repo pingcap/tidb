@@ -47,15 +47,17 @@ go_test(
     timeout = "short",
     srcs = [
         "dump_test.go",
+        "gc_test.go",
         "read_test.go",
     ],
     flaky = True,
-    shard_count = 16,
+    shard_count = 21,
     deps = [
         ":storage",
         "//pkg/domain",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/internal",
         "//pkg/statistics/handle/util",

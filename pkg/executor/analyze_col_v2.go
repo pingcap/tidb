@@ -465,8 +465,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 
 	count = rootRowCollector.Base().Count
 	if needExtStats {
-		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
+		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}

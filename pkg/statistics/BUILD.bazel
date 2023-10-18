@@ -6,6 +6,7 @@ go_library(
         "analyze.go",
         "analyze_jobs.go",
         "builder.go",
+        "builder_ext_stats.go",
         "cmsketch.go",
         "cmsketch_util.go",
         "column.go",

@@ -17,9 +17,7 @@ package handle
 import (
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -67,7 +65,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			return err
 		}
 		if variable.PartitionPruneMode(pruneMode) == variable.Dynamic && t.PartInfo != nil {
-			if err := h.updateGlobalStats(t.TableInfo); err != nil {
+			if err := h.UpdateGlobalStats(t.TableInfo); err != nil {
 				return err
 			}
 		}
@@ -103,14 +101,6 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 		return h.UpdateStatsVersion()
 	}
 	return nil
-}
-
-// updateGlobalStats will trigger the merge of global-stats when we drop table partition
-func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
-	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
-	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return globalstats.UpdateGlobalStats(sctx, tblInfo, h.gpool, h.TableStatsFromStorage, h.TableInfoByID, h.callWithSCtx, h.SaveStatsToStorage)
-	})
 }
 
 func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {
