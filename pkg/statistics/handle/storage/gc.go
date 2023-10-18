@@ -39,22 +39,13 @@ import (
 
 // statsGCImpl implements StatsGC interface.
 type statsGCImpl struct {
-	pool          util.SessionPool // used to recycle sessionctx.
-	tblInfoGetter util.TableInfoGetter
-
-	// TODO: it's ugly to use a raw function, solve it later on.
-	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)
-	statsLease               time.Duration // statistics lease
+	statsHandle util.StatsHandle
 }
 
 // NewStatsGC creates a new StatsGC.
-func NewStatsGC(pool util.SessionPool, statsLease time.Duration, tblInfo util.TableInfoGetter,
-	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error)) util.StatsGC {
+func NewStatsGC(statsHandle util.StatsHandle) util.StatsGC {
 	return &statsGCImpl{
-		pool:                     pool,
-		statsLease:               statsLease,
-		tblInfoGetter:            tblInfo,
-		markExtendedStatsDeleted: markExtendedStatsDeleted,
+		statsHandle: statsHandle,
 	}
 }
 
@@ -62,21 +53,21 @@ func NewStatsGC(pool util.SessionPool, statsLease time.Duration, tblInfo util.Ta
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func (gc *statsGCImpl) GCStats(is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
-	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
-		return GCStats(sctx, gc.tblInfoGetter, gc.markExtendedStatsDeleted, is, gc.statsLease, ddlLease)
+	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		return GCStats(sctx, gc.statsHandle, is, ddlLease)
 	})
 }
 
 // ClearOutdatedHistoryStats clear outdated historical stats.
 // Only for test.
 func (gc *statsGCImpl) ClearOutdatedHistoryStats() error {
-	return util.CallWithSCtx(gc.pool, ClearOutdatedHistoryStats)
+	return util.CallWithSCtx(gc.statsHandle.SPool(), ClearOutdatedHistoryStats)
 }
 
 // DeleteTableStatsFromKV deletes table statistics from kv.
 // A statsID refers to statistic of a table or a partition.
 func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
-	return util.CallWithSCtx(gc.pool, func(sctx sessionctx.Context) error {
+	return util.CallWithSCtx(gc.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return DeleteTableStatsFromKV(sctx, statsIDs)
 	}, util.FlagWrapTxn)
 }
@@ -85,12 +76,11 @@ func (gc *statsGCImpl) DeleteTableStatsFromKV(statsIDs []int64) (err error) {
 // For dropped tables, we will first update their version
 // so that other tidb could know that table is deleted.
 func GCStats(sctx sessionctx.Context,
-	tableInfoGetter util.TableInfoGetter,
-	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
-	is infoschema.InfoSchema, statsLease, ddlLease time.Duration) (err error) {
+	statsHandle util.StatsHandle,
+	is infoschema.InfoSchema, ddlLease time.Duration) (err error) {
 	// To make sure that all the deleted tables' schema and stats info have been acknowledged to all tidb,
 	// we only garbage collect version before 10 lease.
-	lease := max(statsLease, ddlLease)
+	lease := max(statsHandle.Lease(), ddlLease)
 	offset := util.DurationToTS(10 * lease)
 	now := oracle.GoTimeToTS(time.Now())
 	if now < offset {
@@ -115,7 +105,7 @@ func GCStats(sctx sessionctx.Context,
 		return errors.Trace(err)
 	}
 	for _, row := range rows {
-		if err := gcTableStats(sctx, tableInfoGetter, markExtendedStatsDeleted, is, row.GetInt64(0)); err != nil {
+		if err := gcTableStats(sctx, statsHandle, is, row.GetInt64(0)); err != nil {
 			return errors.Trace(err)
 		}
 		_, existed := is.TableByID(row.GetInt64(0))
@@ -261,8 +251,7 @@ func removeDeletedExtendedStats(sctx sessionctx.Context, version uint64) (err er
 
 // gcTableStats GC this table's stats.
 func gcTableStats(sctx sessionctx.Context,
-	tableInfoGetter util.TableInfoGetter,
-	markExtendedStatsDeleted func(statsName string, tableID int64, ifExists bool) (err error),
+	statsHandler util.StatsHandle,
 	is infoschema.InfoSchema, physicalID int64) error {
 	rows, _, err := util.ExecRows(sctx, "select is_index, hist_id from mysql.stats_histograms where table_id = %?", physicalID)
 	if err != nil {
@@ -277,7 +266,7 @@ func gcTableStats(sctx sessionctx.Context,
 		}
 		cache.TableRowStatsCache.Invalidate(physicalID)
 	}
-	tbl, ok := tableInfoGetter.TableInfoByID(is, physicalID)
+	tbl, ok := statsHandler.TableInfoByID(is, physicalID)
 	if !ok {
 		logutil.BgLogger().Info("remove stats in GC due to dropped table", zap.Int64("table_id", physicalID))
 		return util.WrapTxn(sctx, func(sctx sessionctx.Context) error {
@@ -339,7 +328,7 @@ func gcTableStats(sctx sessionctx.Context,
 			}
 			if !found {
 				logutil.BgLogger().Info("mark mysql.stats_extended record as 'deleted' in GC due to dropped columns", zap.String("table_name", tblInfo.Name.L), zap.Int64("table_id", physicalID), zap.String("stats_name", statsName), zap.Int64("dropped_column_id", colID))
-				err = markExtendedStatsDeleted(statsName, physicalID, true)
+				err = statsHandler.MarkExtendedStatsDeleted(statsName, physicalID, true)
 				if err != nil {
 					logutil.BgLogger().Debug("update stats_extended status failed", zap.String("stats_name", statsName), zap.Error(err))
 					return errors.Trace(err)

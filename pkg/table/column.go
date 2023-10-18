@@ -322,7 +322,7 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 			zap.Uint64("conn", ctx.GetSessionVars().ConnectionID), zap.Error(err))
 	}
 
-	err = sc.HandleTruncate(err)
+	err = sc.TypeCtx.HandleTruncate(err)
 	err = sc.HandleOverflow(err, err)
 
 	if forceIgnoreTruncate {

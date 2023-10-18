@@ -29,7 +29,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/nocopy"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
@@ -153,6 +153,8 @@ type StatementContext struct {
 	// copying this object will make the copied TypeCtx field to refer a wrong `AppendWarnings` func.
 	_ nocopy.NoCopy
 
+	_ constructor.Constructor `ctor:"NewStmtCtx,NewStmtCtxWithTimeZone,Reset"`
+
 	// TypeCtx is used to indicate how make the type conversation.
 	TypeCtx typectx.Context
 
@@ -174,13 +176,11 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
-	IgnoreTruncate                atomic2.Bool
 	IgnoreZeroInDate              bool
 	NoZeroDate                    bool
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
-	TruncateAsWarning             bool
 	OverflowAsWarning             bool
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
@@ -1010,39 +1010,6 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 	}
 }
 
-// HandleTruncate ignores or returns the error based on the StatementContext state.
-func (sc *StatementContext) HandleTruncate(err error) error {
-	// TODO: At present we have not checked whether the error can be ignored or treated as warning.
-	// We will do that later, and then append WarnDataTruncated instead of the error itself.
-	if err == nil {
-		return nil
-	}
-
-	err = errors.Cause(err)
-	if e, ok := err.(*errors.Error); !ok ||
-		(e.Code() != errno.ErrTruncatedWrongValue &&
-			e.Code() != errno.ErrDataTooLong &&
-			e.Code() != errno.ErrTruncatedWrongValueForField &&
-			e.Code() != errno.ErrWarnDataOutOfRange &&
-			e.Code() != errno.ErrDataOutOfRange &&
-			e.Code() != errno.ErrBadNumber &&
-			e.Code() != errno.ErrWrongValueForType &&
-			e.Code() != errno.ErrDatetimeFunctionOverflow &&
-			e.Code() != errno.WarnDataTruncated &&
-			e.Code() != errno.ErrIncorrectDatetimeValue) {
-		return err
-	}
-
-	if sc.IgnoreTruncate.Load() {
-		return nil
-	}
-	if sc.TruncateAsWarning {
-		sc.AppendWarning(err)
-		return nil
-	}
-	return err
-}
-
 // HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
 func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
 	if err == nil {
@@ -1153,7 +1120,8 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
 // so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
 func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
-	if (sc.InInsertStmt && sc.TruncateAsWarning) || sc.InLoadDataStmt {
+	// TODO: move this function into `/types` pkg
+	if (sc.InInsertStmt && sc.TypeCtx.Flags().TruncateAsWarning()) || sc.InLoadDataStmt {
 		return true
 	}
 	return false
@@ -1169,9 +1137,9 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
 	}
-	if sc.IgnoreTruncate.Load() {
+	if sc.TypeCtx.Flags().IgnoreTruncateErr() {
 		flags |= model.FlagIgnoreTruncate
-	} else if sc.TruncateAsWarning {
+	} else if sc.TypeCtx.Flags().TruncateAsWarning() {
 		flags |= model.FlagTruncateAsWarning
 	}
 	if sc.OverflowAsWarning {
@@ -1236,17 +1204,18 @@ func (sc *StatementContext) CopTasksDetails() *CopTasksDetails {
 	return d
 }
 
-// SetFlagsFromPBFlag set the flag of StatementContext from a `tipb.SelectRequest.Flags`.
-func (sc *StatementContext) SetFlagsFromPBFlag(flags uint64) {
-	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
-	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
+// InitFromPBFlagAndTz set the flag and timezone of StatementContext from a `tipb.SelectRequest.Flags` and `*time.Location`.
+func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location) {
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
 	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(typectx.StrictFlags.
+		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
+		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
 		WithClipNegativeToZero(sc.InInsertStmt),
 	)
 }
@@ -1385,6 +1354,18 @@ func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
 		cnt += status.recordedColIdxCount()
 	}
 	return
+}
+
+// TypeCtxOrDefault returns the reference to the `TypeCtx` inside the statement context.
+// If the statement context is nil, it'll return a newly created default type context.
+// **don't** use this function if you can make sure the `sc` is not nil. We should limit the usage of this function as
+// little as possible.
+func (sc *StatementContext) TypeCtxOrDefault() typectx.Context {
+	if sc != nil {
+		return sc.TypeCtx
+	}
+
+	return typectx.DefaultNoWarningContext
 }
 
 // UsedStatsInfoForTable records stats that are used during query and their information.

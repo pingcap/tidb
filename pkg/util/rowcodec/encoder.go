@@ -194,7 +194,7 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
 		var val uint64
-		val, err = d.GetBinaryLiteral().ToInt(sc)
+		val, err = d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
 		if err != nil {
 			return
 		}
@@ -205,7 +205,7 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 		buffer, err = codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil && sc != nil {
 			if terror.ErrorEqual(err, types.ErrTruncated) {
-				err = sc.HandleTruncate(err)
+				err = sc.TypeCtx.HandleTruncate(err)
 			} else if terror.ErrorEqual(err, types.ErrOverflow) {
 				err = sc.HandleOverflow(err, err)
 			}

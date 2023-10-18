@@ -61,8 +61,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1810,7 +1810,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				if fields[offset].AuxiliaryColInAgg {
 					continue
 				}
-				item := fd.NewFastIntSet()
+				item := intset.NewFastIntSet()
 				switch x := expr.(type) {
 				case *expression.Column:
 					item.Insert(int(x.UniqueID))
@@ -1852,7 +1852,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 				baseCols := expression.ExtractColumns(expr)
 				errShowCol := baseCols[0]
 				for _, col := range baseCols {
-					colSet := fd.NewFastIntSet(int(col.UniqueID))
+					colSet := intset.NewFastIntSet(int(col.UniqueID))
 					if !colSet.SubsetOf(strictClosure) {
 						errShowCol = col
 						break
@@ -1877,7 +1877,7 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p LogicalPlan, fields
 			}
 			if fds.GroupByCols.Only1Zero() {
 				// maxOneRow is delayed from agg's ExtractFD logic since some details listed in it.
-				projectionUniqueIDs := fd.NewFastIntSet()
+				projectionUniqueIDs := intset.NewFastIntSet()
 				for _, expr := range proj.Exprs {
 					switch x := expr.(type) {
 					case *expression.Column:
@@ -1948,12 +1948,12 @@ func unionJoinFieldType(a, b *types.FieldType) *types.FieldType {
 		// ref2: https://github.com/pingcap/tidb/issues/24953
 		resultTp.AddFlag((a.GetFlag() & mysql.UnsignedFlag) & (b.GetFlag() & mysql.UnsignedFlag))
 	}
-	resultTp.SetDecimalUnderLimit(mathutil.Max(a.GetDecimal(), b.GetDecimal()))
+	resultTp.SetDecimalUnderLimit(max(a.GetDecimal(), b.GetDecimal()))
 	// `flen - decimal` is the fraction before '.'
 	if a.GetFlen() == -1 || b.GetFlen() == -1 {
 		resultTp.SetFlenUnderLimit(-1)
 	} else {
-		resultTp.SetFlenUnderLimit(mathutil.Max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
+		resultTp.SetFlenUnderLimit(max(a.GetFlen()-a.GetDecimal(), b.GetFlen()-b.GetDecimal()) + resultTp.GetDecimal())
 	}
 	types.TryToFixFlenOfDatetime(resultTp)
 	if resultTp.EvalType() != types.ETInt && (a.EvalType() == types.ETInt || b.EvalType() == types.ETInt) && resultTp.GetFlen() < mysql.MaxIntWidth {
@@ -1977,7 +1977,7 @@ func (*PlanBuilder) setUnionFlen(resultTp *types.FieldType, cols []expression.Ex
 				childTpCharLen = charsetInfo.Maxlen
 			}
 		}
-		resultTp.SetFlen(mathutil.Max(resultTp.GetFlen(), childTpCharLen*childTp.GetFlen()))
+		resultTp.SetFlen(max(resultTp.GetFlen(), childTpCharLen*childTp.GetFlen()))
 	}
 }
 
@@ -2444,8 +2444,8 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			return uint64(v), false, true
 		}
 	case string:
-		sc := ctx.GetSessionVars().StmtCtx
-		uVal, err := types.StrToUint(sc, v, false)
+		ctx := ctx.GetSessionVars().StmtCtx.TypeCtx
+		uVal, err := types.StrToUint(ctx, v, false)
 		if err != nil {
 			return 0, false, false
 		}
@@ -5318,7 +5318,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 	// Once the all conditions are not equal to nil, built it again.
 	if ds.fdSet == nil || ds.allConds != nil {
 		fds := &fd.FDSet{HashCodeToUniqueID: make(map[string]int)}
-		allCols := fd.NewFastIntSet()
+		allCols := intset.NewFastIntSet()
 		// should use the column's unique ID avoiding fdSet conflict.
 		for _, col := range ds.TblCols {
 			// todo: change it to int64
@@ -5326,7 +5326,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		}
 		// int pk doesn't store its index column in indexInfo.
 		if ds.tableInfo.PKIsHandle {
-			keyCols := fd.NewFastIntSet()
+			keyCols := intset.NewFastIntSet()
 			for _, col := range ds.TblCols {
 				if mysql.HasPriKeyFlag(col.RetType.GetFlag()) {
 					keyCols.Insert(int(col.UniqueID))
@@ -5352,7 +5352,7 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		}
 		// other indices including common handle.
 		for _, idx := range ds.tableInfo.Indices {
-			keyCols := fd.NewFastIntSet()
+			keyCols := intset.NewFastIntSet()
 			allColIsNotNull := true
 			if ds.isForUpdateRead && changed {
 				latestIndex, ok := latestIndexes[idx.ID]
@@ -5411,14 +5411,14 @@ func (ds *DataSource) ExtractFD() *fd.FDSet {
 		// the generated column is sequentially dependent on the forward column.
 		// a int, b int as (a+1), c int as (b+1), here we can build the strict FD down:
 		// {a} -> {b}, {b} -> {c}, put the maintenance of the dependencies between generated columns to the FD graph.
-		notNullCols := fd.NewFastIntSet()
+		notNullCols := intset.NewFastIntSet()
 		for _, col := range ds.TblCols {
 			if col.VirtualExpr != nil {
-				dependencies := fd.NewFastIntSet()
+				dependencies := intset.NewFastIntSet()
 				dependencies.Insert(int(col.UniqueID))
 				// dig out just for 1 level.
 				directBaseCol := expression.ExtractColumns(col.VirtualExpr)
-				determinant := fd.NewFastIntSet()
+				determinant := intset.NewFastIntSet()
 				for _, col := range directBaseCol {
 					determinant.Insert(int(col.UniqueID))
 				}
@@ -6780,10 +6780,12 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	// If it has paramMarker and is in prepare stmt. We don't need to eval it since its value is not decided yet.
 	if !checker.InPrepareStmt {
 		// Do not raise warnings for truncate.
-		oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
-		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
+		sc := b.ctx.GetSessionVars().StmtCtx
+		oldTypeFlags := sc.TypeFlags()
+		newTypeFlags := oldTypeFlags.WithIgnoreTruncateErr(true)
+		sc.SetTypeFlags(newTypeFlags)
 		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(oriIgnoreTruncate)
+		sc.SetTypeFlags(oldTypeFlags)
 		if uVal < 0 || isNull || err != nil {
 			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}
@@ -6896,7 +6898,7 @@ func restoreByItemText(item *ast.ByItem) string {
 }
 
 func compareItems(lItems []*ast.ByItem, rItems []*ast.ByItem) bool {
-	minLen := mathutil.Min(len(lItems), len(rItems))
+	minLen := min(len(lItems), len(rItems))
 	for i := 0; i < minLen; i++ {
 		res := strings.Compare(restoreByItemText(lItems[i]), restoreByItemText(rItems[i]))
 		if res != 0 {

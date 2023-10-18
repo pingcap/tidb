@@ -274,7 +274,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx)
+		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx)
 		if err != nil {
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
@@ -494,14 +494,14 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc)
+						iVal, err := bl.ToInt(sc.TypeCtx)
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc, sVal, false)
+					fVal, err = types.StrToFloat(sc.TypeCtx, sVal, false)
 					if err != nil {
 						return err
 					}
@@ -963,6 +963,8 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 }
 
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
+// This function is **unsafe** to be called concurrently, unless the `IgnoreTruncate` has been set to `true`. The only
+// known case which will call this function concurrently is `CheckTableExec`. Ref #18408 and #42341.
 func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
@@ -987,11 +989,14 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 	// Resolve virtual generated column.
 	mockSchema := NewSchema(columns...)
 	// Ignore redundant warning here.
-	save := ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
-	defer func() {
-		ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(save)
-	}()
-	ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
+	flags := ctx.GetSessionVars().StmtCtx.TypeFlags()
+	if !flags.IgnoreTruncateErr() {
+		defer func() {
+			ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags)
+		}()
+		ctx.GetSessionVars().StmtCtx.SetTypeFlags(flags.WithIgnoreTruncateErr(true))
+	}
+
 	for i, col := range colInfos {
 		if col.IsVirtualGenerated() {
 			expr, err := generatedexpr.ParseExpression(col.GeneratedExprString)

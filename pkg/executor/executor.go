@@ -72,7 +72,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -246,7 +245,7 @@ func (e *CommandDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if e.cursor >= len(e.jobIDs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobIDs)-e.cursor)
+	numCurBatch := min(req.Capacity(), len(e.jobIDs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		req.AppendString(0, strconv.FormatInt(e.jobIDs[i], 10))
 		if e.errs != nil && e.errs[i] != nil {
@@ -621,7 +620,7 @@ func (e *ShowDDLJobQueriesExec) Next(_ context.Context, req *chunk.Chunk) error 
 	if len(e.jobIDs) >= len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	numCurBatch := min(req.Capacity(), len(e.jobs)-e.cursor)
 	for _, id := range e.jobIDs {
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			if id == e.jobs[i].ID {
@@ -713,7 +712,7 @@ func (e *ShowDDLJobQueriesWithRangeExec) Next(_ context.Context, req *chunk.Chun
 	if int(e.offset) > len(e.jobs) {
 		return nil
 	}
-	numCurBatch := mathutil.Min(req.Capacity(), len(e.jobs)-e.cursor)
+	numCurBatch := min(req.Capacity(), len(e.jobs)-e.cursor)
 	for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 		// i is make true to be >= int(e.offset)
 		if i >= int(e.offset+e.limit) {
@@ -763,7 +762,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 
 	// Append running ddl jobs.
 	if e.cursor < len(e.runningJobs) {
-		numCurBatch := mathutil.Min(req.Capacity(), len(e.runningJobs)-e.cursor)
+		numCurBatch := min(req.Capacity(), len(e.runningJobs)-e.cursor)
 		for i := e.cursor; i < e.cursor+numCurBatch; i++ {
 			e.appendJobToChunk(req, e.runningJobs[i], nil)
 		}
@@ -776,7 +775,7 @@ func (e *ShowDDLJobsExec) Next(_ context.Context, req *chunk.Chunk) error {
 	if count < req.Capacity() {
 		num := req.Capacity() - count
 		remainNum := e.jobNumber - (e.cursor - len(e.runningJobs))
-		num = mathutil.Min(num, remainNum)
+		num = min(num, remainNum)
 		e.cacheJobs, err = e.historyJobIter.GetLastJobs(num, e.cacheJobs)
 		if err != nil {
 			return err
@@ -908,6 +907,13 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	defer func() { e.done = true }()
 
+	// See the comment of `ColumnInfos2ColumnsAndNames`. It's fixing #42341
+	originalTypeFlags := e.Ctx().GetSessionVars().StmtCtx.TypeFlags()
+	defer func() {
+		e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags)
+	}()
+	e.Ctx().GetSessionVars().StmtCtx.SetTypeFlags(originalTypeFlags.WithIgnoreTruncateErr(true))
+
 	idxNames := make([]string, 0, len(e.indexInfos))
 	for _, idx := range e.indexInfos {
 		if idx.MVIndex {
@@ -942,7 +948,7 @@ func (e *CheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	}
 	taskCh := make(chan *IndexLookUpExecutor, len(e.srcs))
 	failure := atomicutil.NewBool(false)
-	concurrency := mathutil.Min(3, len(e.srcs))
+	concurrency := min(3, len(e.srcs))
 	var wg util.WaitGroupWrapper
 	for _, src := range e.srcs {
 		taskCh <- src
@@ -1422,7 +1428,7 @@ func (e *LimitExec) adjustRequiredRows(chk *chunk.Chunk) *chunk.Chunk {
 		limitRequired = chk.RequiredRows()
 	}
 
-	return chk.SetRequiredRows(mathutil.Min(limitTotal, limitRequired), e.MaxChunkSize())
+	return chk.SetRequiredRows(min(limitTotal, limitRequired), e.MaxChunkSize())
 }
 
 func init() {
@@ -2063,6 +2069,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	sc.InRestrictedSQL = vars.InRestrictedSQL
 	switch stmt := s.(type) {
+	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
 	case *ast.DeleteStmt:
@@ -2076,17 +2083,17 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
-		sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
 		sc.NoZeroDate = vars.SQLMode.HasNoZeroDateMode()
-		sc.TruncateAsWarning = !vars.StrictSQLMode
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode))
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
@@ -2101,7 +2108,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.OverflowAsWarning = true
 
 		// Return warning for truncate error in selection.
-		sc.TruncateAsWarning = true
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if opts := stmt.SelectStmtOpts; opts != nil {
@@ -2112,11 +2119,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
-		sc.TruncateAsWarning = true
+		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.ShowStmt:
-		sc.IgnoreTruncate.Store(true)
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
@@ -2124,16 +2131,16 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
-		sc.IgnoreTruncate.Store(false)
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.SetSessionStatesStmt:
 		sc.InSetSessionStatesStmt = true
-		sc.IgnoreTruncate.Store(true)
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	default:
-		sc.IgnoreTruncate.Store(true)
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	}
@@ -2196,12 +2203,12 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.InUpdateStmt = true
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr))
 }
 
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.
@@ -2209,11 +2216,11 @@ func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars
 	sc.InDeleteStmt = true
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.TruncateAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr))
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
