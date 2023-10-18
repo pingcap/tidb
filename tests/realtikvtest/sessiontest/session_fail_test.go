@@ -353,7 +353,6 @@ func TestBatchClientDataRace(t *testing.T) {
 					session.ResultSetToStringSlice(ctx, tk.Session(), rs)
 				}
 			}
-
 		}()
 	}
 	wg.Wait()
