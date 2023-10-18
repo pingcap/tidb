@@ -28,7 +28,7 @@ ticdc_sha1=$(curl "$ticdc_sha1_url")
 
 # download pd / tikv / tiflash binary build from tibuid multibranch pipeline
 pd_download_url="${file_server_url}/download/builds/pingcap/pd/${pd_sha1}/centos7/pd-server.tar.gz"
-tikv_download_url="${file_server_url}/download/builds/pingcap/tikv/pr/2b973925b302ba94062ad0f07d0fef852e45247d/centos7/tikv-server.tar.gz"
+tikv_download_url="${file_server_url}/download/builds/pingcap/tikv/pr/bc2c8f2d408c23143e387b0bce9b977a05e53395/centos7/tikv-server.tar.gz"
 tiflash_download_url="${file_server_url}/download/builds/pingcap/tiflash/${branch}/${tiflash_sha1}/centos7/tiflash.tar.gz"
 tikv_importer_download_url="${file_server_url}/download/builds/pingcap/importer/${tikv_importer_sha1}/centos7/importer.tar.gz"
 ticdc_download_url="${file_server_url}/download/builds/pingcap/ticdc/${ticdc_sha1}/centos7/ticdc-linux-amd64.tar.gz"
