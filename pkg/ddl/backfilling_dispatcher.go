@@ -127,6 +127,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 			if err := updateMeta(gTask, &gTaskMeta); err != nil {
 				return nil, err
 			}
+			logutil.BgLogger().Info("ywq test task", zap.Any("task", gTask))
 			return res, nil
 		}
 		if tblInfo.Partition != nil {
@@ -273,7 +274,7 @@ func (h *backfillingDispatcherExt) generateGlobalSortIngestPlan(
 
 			h.startKey = h.endKey
 			cnt++
-			// TODO: deside the batch cnt.
+			// TODO: decide the batch cnt.
 			if cnt == 16 {
 				// update StartKey and EndKey in meta
 				meta.StartKey = h.startKey
