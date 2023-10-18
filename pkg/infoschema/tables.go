@@ -1752,7 +1752,7 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
 	//nolint: prealloc
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo} {
+	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, GetStoreServerInfo, GetTiProxyServerInfo} {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -2007,6 +2007,26 @@ func GetTiFlashStoreCount(ctx sessionctx.Context) (cnt uint64, err error) {
 		}
 	}
 	return cnt, nil
+}
+
+// GetTiProxyServerInfo gets server info of TiProxy from PD.
+func GetTiProxyServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	tiproxyNodes, err := infosync.GetTiProxyServerInfo(context.Background())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var servers = make([]ServerInfo, 0, len(tiproxyNodes))
+	for _, node := range tiproxyNodes {
+		servers = append(servers, ServerInfo{
+			ServerType:     "tiproxy",
+			Address:        net.JoinHostPort(node.IP, node.Port),
+			StatusAddr:     net.JoinHostPort(node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
+		})
+	}
+	return servers, nil
 }
 
 // SysVarHiddenForSem checks if a given sysvar is hidden according to SEM and privileges.
