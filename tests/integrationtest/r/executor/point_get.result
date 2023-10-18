@@ -593,10 +593,10 @@ a	b
 set tidb_enable_clustered_index = DEFAULT;
 drop table if exists t;
 create table t (a int primary key);
+set @a=(select current_timestamp(3));
 select sleep(0.05);
 sleep(0.05)
 0
-set @a=(select current_timestamp(3));
 insert into t values (1);
 select * from t as of timestamp @a where a = 1;
 a

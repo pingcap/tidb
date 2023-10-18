@@ -314,8 +314,8 @@ set tidb_enable_clustered_index = DEFAULT;
 # TestPointGetIssue25167
 drop table if exists t;
 create table t (a int primary key);
-select sleep(0.05);
 set @a=(select current_timestamp(3));
+select sleep(0.05);
 insert into t values (1);
 select * from t as of timestamp @a where a = 1;
 drop table if exists t;
