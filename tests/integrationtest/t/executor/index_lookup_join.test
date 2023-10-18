@@ -232,6 +232,7 @@ insert into t2 values (1);
 begin;
 insert into t1 values (2);
 insert into t2 values (2);
+--sorted_result
 select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int;
 commit;
 # Issue23653
@@ -247,5 +248,6 @@ create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)));
 create table t2 like t1;
 insert into t1 values (1, 'clever jang'), (2, 'blissful aryabhata');
 insert into t2 select * from t1;
+--sorted_result
 select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;
 
