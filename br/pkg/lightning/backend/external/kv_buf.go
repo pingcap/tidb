@@ -38,7 +38,7 @@ func newKVBuf(memLimit uint64) *kvBuf {
 	return b
 }
 
-func (b *kvBuf) Alloc(s int) (base, buf []byte, offset int, allocated bool) {
+func (b *kvBuf) Alloc(s int) (bufIdx int32, res []byte, offset int, allocated bool) {
 	if b.cap-b.curIdx < s {
 		if b.curBufIdx+1 >= len(b.bufs) {
 			return
@@ -48,8 +48,8 @@ func (b *kvBuf) Alloc(s int) (base, buf []byte, offset int, allocated bool) {
 		b.curIdx = 0
 		b.cap = blockSize
 	}
-	base = b.curBuf
-	buf = base[b.curIdx : b.curIdx+s]
+	bufIdx = int32(b.curBufIdx)
+	res = b.curBuf[b.curIdx : b.curIdx+s]
 	offset = b.curIdx
 	allocated = true
 
