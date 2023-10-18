@@ -56,9 +56,8 @@ func TestDatum(t *testing.T) {
 func testDatumToBool(t *testing.T, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
-	b, err := datum.ToBool(sc)
+	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(true))
+	b, err := datum.ToBool(ctx)
 	require.NoError(t, err)
 	require.Equal(t, res64, b)
 }
@@ -108,16 +107,17 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, v, 1)
 	d := NewDatum(&invalidMockType{})
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
-	_, err = d.ToBool(sc)
+	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(true))
+	_, err = d.ToBool(ctx)
 	require.Error(t, err)
 }
 
 func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
 	d := NewDatum(val)
+
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
+
 	b, err := d.ToInt64(sc)
 	require.NoError(t, err)
 	require.Equal(t, expect, b)
@@ -153,7 +153,7 @@ func TestToInt64(t *testing.T) {
 func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
 	d := NewDatum(val)
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 
 	ft := NewFieldType(mysql.TypeLong)
 	ft.AddFlag(mysql.UnsignedFlag)
@@ -205,7 +205,7 @@ func TestConvertToFloat(t *testing.T) {
 	}
 
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	for _, testCase := range testCases {
 		converted, err := testCase.d.ConvertTo(sc, NewFieldType(testCase.tp))
 		if testCase.errMsg == "" {
@@ -310,7 +310,7 @@ func TestToBytes(t *testing.T) {
 		{Datum{}, []byte{}},
 	}
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	for _, tt := range tests {
 		bin, err := tt.a.ToBytes()
 		require.NoError(t, err)
@@ -359,7 +359,7 @@ func TestCloneDatum(t *testing.T) {
 	}
 
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	for _, tt := range tests {
 		tt1 := *tt.Clone()
 		res, err := tt.Compare(sc, &tt1, collate.GetBinaryCollator())
@@ -413,7 +413,7 @@ func TestEstimatedMemUsage(t *testing.T) {
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	sc.OverflowAsWarning = true
 	// TODO: add more reserve convert tests for each pair of convert type.
 	testData := []struct {
@@ -538,7 +538,7 @@ func TestStringToMysqlBit(t *testing.T) {
 		{NewStringDatum("b'0'"), []byte{0}},
 	}
 	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	tp := NewFieldType(mysql.TypeBit)
 	tp.SetFlen(1)
 	for _, tt := range tests {

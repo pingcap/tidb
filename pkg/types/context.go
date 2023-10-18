@@ -14,7 +14,9 @@
 
 package types
 
-import "github.com/pingcap/tidb/pkg/types/context"
+import (
+	"github.com/pingcap/tidb/pkg/types/context"
+)
 
 // TODO: move a contents in `types/context/context.go` to this file after refactor finished.
 // Because package `types` has a dependency on `sessionctx/stmtctx`, we need a separate package `type/context` to define
@@ -31,3 +33,6 @@ const StrictFlags = context.StrictFlags
 
 // NewContext creates a new `Context`
 var NewContext = context.NewContext
+
+// DefaultNoWarningContext is an alias of `DefaultNoWarningContext`
+var DefaultNoWarningContext = context.DefaultNoWarningContext

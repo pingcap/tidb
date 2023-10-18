@@ -706,7 +706,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
-		if e.Ctx().GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
+		if e.Ctx().GetSessionVars().StmtCtx.TypeCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.Ctx(), val, gCol.ToInfo(), false, false)
@@ -791,7 +791,7 @@ func setDatumAutoIDAndCast(ctx sessionctx.Context, d *types.Datum, id int64, col
 		// Auto ID is out of range.
 		sc := ctx.GetSessionVars().StmtCtx
 		insertPlan, ok := sc.GetPlan().(*core.Insert)
-		if ok && sc.TruncateAsWarning && len(insertPlan.OnDuplicate) > 0 {
+		if ok && sc.TypeFlags().TruncateAsWarning() && len(insertPlan.OnDuplicate) > 0 {
 			// Fix issue #38950: AUTO_INCREMENT is incompatible with mysql
 			// An auto id out of range error occurs in `insert ignore into ... on duplicate ...`.
 			// We should allow the SQL to be executed successfully.

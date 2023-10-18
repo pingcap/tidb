@@ -294,19 +294,19 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	sc := flagsToStatementContext(dagReq.Flags)
+	var tz *time.Location
 	switch dagReq.TimeZoneName {
 	case "":
-		sc.SetTimeZone(time.FixedZone("UTC", int(dagReq.TimeZoneOffset)))
+		tz = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
 	case "System":
-		sc.SetTimeZone(time.Local)
+		tz = time.Local
 	default:
-		tz, err := time.LoadLocation(dagReq.TimeZoneName)
+		tz, err = time.LoadLocation(dagReq.TimeZoneName)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		sc.SetTimeZone(tz)
 	}
+	sc := flagsAndTzToStatementContext(dagReq.Flags, tz)
 	ctx := &dagContext{
 		evalContext:   &evalContext{sc: sc},
 		dbReader:      reader,
@@ -421,17 +421,10 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 	return rowcodec.NewChunkDecoder(cols, pkCols, def, timeZone), nil
 }
 
-// flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
-func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
-	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
-	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
-	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
-	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
-	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+// flagsAndTzToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
+func flagsAndTzToStatementContext(flags uint64, tz *time.Location) *stmtctx.StatementContext {
+	sc := new(stmtctx.StatementContext)
+	sc.InitFromPBFlagAndTz(flags, tz)
 	return sc
 }
 
