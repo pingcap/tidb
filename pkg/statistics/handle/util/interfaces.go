@@ -16,16 +16,16 @@ package util
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/util"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tiancaiamao/gp"
 )
@@ -329,8 +329,9 @@ type StatsSyncLoad interface {
 	// HandleOneTask will handle one task.
 	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
 
-	// SubCtxs returns the sub contexts.
-	SubCtxs() []sessionctx.Context
+	// SetSubCtxs sets the sessionctx which is used to run queries background.
+	// TODO: use SessionPool instead.
+	SetSubCtxs(idx int, sctx sessionctx.Context)
 }
 
 // StatsHandle is used to manage TiDB Statistics.

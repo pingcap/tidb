@@ -56,9 +56,10 @@ type statsWrapper struct {
 	idx *statistics.Index
 }
 
-// SubCtxs returns the sub contexts of the statsSyncLoad.
-func (s *statsSyncLoad) SubCtxs() []sessionctx.Context {
-	return s.StatsLoad.SubCtxs
+// SetSubCtxs sets the sessionctx which is used to run queries background.
+// TODO: use SessionPool instead.
+func (s *statsSyncLoad) SetSubCtxs(idx int, sctx sessionctx.Context) {
+	s.StatsLoad.SubCtxs[idx] = sctx
 }
 
 // SendLoadRequests send neededColumns requests
