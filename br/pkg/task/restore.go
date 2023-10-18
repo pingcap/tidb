@@ -129,6 +129,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
 		"batch size for ddl to create a batch of tables once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
+	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
