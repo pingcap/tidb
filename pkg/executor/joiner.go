@@ -106,6 +106,11 @@ type joiner interface {
 	// parameter passed to `onMissMatch`.
 	onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.Chunk)
 
+	// isSemiJoinWithoutCondition returns if it's a semi join and has no condition.
+	// If true, at most one matched row is needed to match inners, which can optimize a lot when
+	// there are a lot of matched rows.
+	isSemiJoinWithoutCondition() bool
+
 	// Clone deep copies a joiner.
 	Clone() joiner
 }
@@ -426,6 +431,10 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 
 func (*semiJoiner) onMissMatch(bool, chunk.Row, *chunk.Chunk) {}
 
+func (*semiJoiner) isSemiJoinWithoutCondition() bool {
+	return true
+}
+
 // Clone implements joiner interface.
 func (j *semiJoiner) Clone() joiner {
 	return &semiJoiner{baseJoiner: j.baseJoiner.Clone()}
@@ -488,6 +497,10 @@ func (*nullAwareAntiSemiJoiner) tryToMatchOuters(_ chunk.Iterator, _ chunk.Row, 
 
 func (naaj *nullAwareAntiSemiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
 	chk.AppendRowByColIdxs(outer, naaj.lUsed)
+}
+
+func (*nullAwareAntiSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return true
 }
 
 func (naaj *nullAwareAntiSemiJoiner) Clone() joiner {
@@ -557,6 +570,10 @@ func (j *antiSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.C
 	if !hasNull {
 		chk.AppendRowByColIdxs(outer, j.lUsed)
 	}
+}
+
+func (*antiSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return true
 }
 
 func (j *antiSemiJoiner) Clone() joiner {
@@ -641,6 +658,10 @@ func (j *leftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *ch
 	}
 }
 
+func (*leftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return true
+}
+
 func (j *leftOuterSemiJoiner) Clone() joiner {
 	return &leftOuterSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
@@ -713,8 +734,12 @@ func (*nullAwareAntiLeftOuterSemiJoiner) tryToMatchOuters(chunk.Iterator, chunk.
 	return nil, err
 }
 
+func (*nullAwareAntiLeftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return true
+}
+
 func (naal *nullAwareAntiLeftOuterSemiJoiner) Clone() joiner {
-	return &antiLeftOuterSemiJoiner{baseJoiner: naal.baseJoiner.Clone()}
+	return &nullAwareAntiLeftOuterSemiJoiner{baseJoiner: naal.baseJoiner.Clone()}
 }
 
 type antiLeftOuterSemiJoiner struct {
@@ -798,6 +823,10 @@ func (j *antiLeftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk
 	}
 }
 
+func (*antiLeftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return true
+}
+
 func (j *antiLeftOuterSemiJoiner) Clone() joiner {
 	return &antiLeftOuterSemiJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
@@ -877,6 +906,10 @@ func (j *leftOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk)
 	chk.AppendPartialRowByColIdxs(lWide, j.defaultInner, j.rUsed)
 }
 
+func (*leftOuterJoiner) isSemiJoinWithoutCondition() bool {
+	return false
+}
+
 func (j *leftOuterJoiner) Clone() joiner {
 	return &leftOuterJoiner{baseJoiner: j.baseJoiner.Clone()}
 }
@@ -950,6 +983,10 @@ func (j *rightOuterJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.R
 func (j *rightOuterJoiner) onMissMatch(_ bool, outer chunk.Row, chk *chunk.Chunk) {
 	lWide := chk.AppendRowByColIdxs(j.defaultInner, j.lUsed)
 	chk.AppendPartialRowByColIdxs(lWide, outer, j.rUsed)
+}
+
+func (*rightOuterJoiner) isSemiJoinWithoutCondition() bool {
+	return false
 }
 
 func (j *rightOuterJoiner) Clone() joiner {
@@ -1034,6 +1071,10 @@ func (j *innerJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, c
 }
 
 func (*innerJoiner) onMissMatch(bool, chunk.Row, *chunk.Chunk) {}
+
+func (*innerJoiner) isSemiJoinWithoutCondition() bool {
+	return false
+}
 
 func (j *innerJoiner) Clone() joiner {
 	return &innerJoiner{baseJoiner: j.baseJoiner.Clone()}
