@@ -68,7 +68,7 @@ func TestInspectionTables(t *testing.T) {
 		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
 	))
 	require.NoError(t, inspectionTableCache["cluster_info"].Err)
-	require.Len(t, inspectionTableCache["cluster_info"].Rows, 3)
+	require.Len(t, inspectionTableCache["cluster_info"].Rows, 4)
 
 	// check whether is obtain data from cache at the next time
 	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName)
