@@ -388,6 +388,12 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 				zap.Bool("ctx.Err() == nil", ctx.Err() == nil),
 				zap.Bool("wstream.Context().Err() == nil", wStream.Context().Err() == nil),
 			)
+			resp2 := new(sst.WriteResponse)
+			recvErr := wStream.RecvMsg(resp2)
+			log.FromContext(ctx).Warn("lance test",
+				log.ShortError(recvErr),
+				zap.Any("resp2", resp2),
+			)
 			return annotateErr(closeErr, allPeers[i])
 		}
 		if resp.Error != nil {
