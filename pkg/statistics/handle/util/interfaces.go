@@ -15,6 +15,7 @@
 package util
 
 import (
+	"context"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tiancaiamao/gp"
 )
 
@@ -238,6 +240,36 @@ type StatsReadWriter interface {
 	// TODO: use *storage.JSONTable instead of interface{} (which is used to avoid cycle import).
 	SaveStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl interface{}) error
 
+	// TableStatsToJSON dumps table stats to JSON.
+	TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error)
+
+	// DumpStatsToJSON dumps statistic to json.
+	DumpStatsToJSON(dbName string, tableInfo *model.TableInfo,
+		historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*JSONTable, error)
+
+	// DumpHistoricalStatsBySnapshot dumped json tables from mysql.stats_meta_history and mysql.stats_history.
+	// As implemented in getTableHistoricalStatsToJSONWithFallback, if historical stats are nonexistent, it will fall back
+	// to the latest stats, and these table names (and partition names) will be returned in fallbackTbls.
+	DumpHistoricalStatsBySnapshot(
+		dbName string,
+		tableInfo *model.TableInfo,
+		snapshot uint64,
+	) (
+		jt *JSONTable,
+		fallbackTbls []string,
+		err error,
+	)
+
+	// DumpStatsToJSONBySnapshot dumps statistic to json.
+	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*JSONTable, error)
+
+	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
+	// In final, it will also udpate the stats cache.
+	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
+
+	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
+	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *JSONTable, concurrencyForPartition uint8) error
+
 	// Methods for extended stast.
 
 	// InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
@@ -272,6 +304,9 @@ type StatsHandle interface {
 
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
+
+	// GetCurrentPruneMode returns the current latest partitioning table prune mode.
+	GetCurrentPruneMode() (mode string, err error)
 
 	// TableInfoGetter is used to get table meta info.
 	TableInfoGetter
