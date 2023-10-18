@@ -199,13 +199,9 @@ func (h *Handle) Close() {
 	h.StatsCache.Close()
 }
 
-func (h *Handle) callWithSCtx(f func(sctx sessionctx.Context) error, flags ...int) (err error) {
-	return util.CallWithSCtx(h.pool, f, flags...)
-}
-
 // GetCurrentPruneMode returns the current latest partitioning table prune mode.
 func (h *Handle) GetCurrentPruneMode() (mode string, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(h.pool, func(sctx sessionctx.Context) error {
 		mode = sctx.GetSessionVars().PartitionPruneMode.Load()
 		return nil
 	})
