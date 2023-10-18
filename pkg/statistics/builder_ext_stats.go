@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,7 +37,7 @@ func BuildExtendedStats(sctx sessionctx.Context,
 	if !ok {
 		return nil, errors.Errorf("invalid sql executor")
 	}
-	rows, _, err := sqlExec.ExecRestrictedSQL(context.Background(), nil, sql, tableID, ExtendedStatsAnalyzed, ExtendedStatsInited)
+	rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats), nil, sql, tableID, ExtendedStatsAnalyzed, ExtendedStatsInited)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
