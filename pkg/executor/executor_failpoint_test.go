@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -246,14 +247,14 @@ func TestKillTableReader(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1),(2),(3)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=1")
-	atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Signal, 0)
+	tk.Session().GetSessionVars().SQLKiller.Reset()
 	require.NoError(t, failpoint.Enable(retry, `return(true)`))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		time.Sleep(300 * time.Millisecond)
-		atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Signal, 1)
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
 	err := tk.QueryToErr("select * from t")
 	require.Error(t, err)

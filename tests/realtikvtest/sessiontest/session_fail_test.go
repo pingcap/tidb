@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -116,7 +116,7 @@ func TestKillFlagInBackoff(t *testing.T) {
 	// Set kill flag and check its passed to backoffer.
 	go func() {
 		time.Sleep(300 * time.Millisecond)
-		atomic.StoreUint32(&tk.Session().GetSessionVars().SQLKiller.Signal, 1)
+		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
 	rs, err := tk.Exec("select * from kill_backoff")
 	require.NoError(t, err)

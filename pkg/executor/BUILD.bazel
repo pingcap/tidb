@@ -447,6 +447,7 @@ go_test(
         "//pkg/util/ranger",
         "//pkg/util/sem",
         "//pkg/util/set",
+        "//pkg/util/sqlkiller",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",
