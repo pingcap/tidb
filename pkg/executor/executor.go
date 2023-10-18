@@ -519,10 +519,17 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 func showAddIdxReorgTp(job *model.Job) string {
 	if job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey {
 		if job.ReorgMeta != nil {
+			sb := strings.Builder{}
 			tp := job.ReorgMeta.ReorgTp.String()
 			if len(tp) > 0 {
-				return " /* " + tp + " */"
+				sb.WriteString(" /* ")
+				sb.WriteString(tp)
+				if job.ReorgMeta.UseCloudStorage {
+					sb.WriteString(" cloud")
+				}
+				sb.WriteString(" */")
 			}
+			return sb.String()
 		}
 	}
 	return ""
@@ -530,10 +537,17 @@ func showAddIdxReorgTp(job *model.Job) string {
 
 func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
 	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
+		sb := strings.Builder{}
 		tp := subJob.ReorgTp.String()
 		if len(tp) > 0 {
-			return " /* " + tp + " */"
+			sb.WriteString(" /* ")
+			sb.WriteString(tp)
+			if subJob.UseCloud {
+				sb.WriteString(" cloud")
+			}
+			sb.WriteString(" */")
 		}
+		return sb.String()
 	}
 	return ""
 }
