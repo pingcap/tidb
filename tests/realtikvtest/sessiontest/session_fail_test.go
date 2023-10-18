@@ -349,7 +349,12 @@ func TestBatchClientDataRace(t *testing.T) {
 					time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)+1))
 					cancel()
 				}()
-				rs, _ := tk.ExecWithContext(ctx, "select * from t where a = 1")
+				sqls := []string{
+					"select * from t where a = 1",
+					"select * from t where a in ( 1, 2, 3)",
+					"select * from t",
+				}
+				rs, _ := tk.ExecWithContext(ctx, sqls[j%len(sqls)])
 				if rs != nil {
 					session.ResultSetToStringSlice(ctx, tk.Session(), rs)
 				}
