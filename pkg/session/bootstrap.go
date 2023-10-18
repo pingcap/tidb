@@ -2827,6 +2827,7 @@ func upgradeToVer176(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTaskHistory)
+	mustExecute(s, CreateDistFrameworkMeta)
 }
 
 func writeOOMAction(s Session) {
