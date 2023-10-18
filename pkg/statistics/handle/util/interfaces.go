@@ -16,6 +16,9 @@ package util
 
 import (
 	"context"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/util"
+	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -291,6 +294,43 @@ type StatsReadWriter interface {
 
 	// SaveExtendedStatsToStorage writes extended stats of a table into mysql.stats_extended.
 	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
+}
+
+// NeededItemTask represents one needed column/indices with expire time.
+type NeededItemTask struct {
+	ToTimeout   time.Time
+	ResultCh    chan stmtctx.StatsLoadResult
+	TableItemID model.TableItemID
+}
+
+// StatsLoad is used to load stats concurrently
+type StatsLoad struct {
+	NeededItemsCh  chan *NeededItemTask
+	TimeoutItemsCh chan *NeededItemTask
+	WorkingColMap  map[model.TableItemID][]chan stmtctx.StatsLoadResult
+	SubCtxs        []sessionctx.Context
+	sync.Mutex
+}
+
+// StatsSyncLoad implement the sync-load feature.
+type StatsSyncLoad interface {
+	// SendLoadRequests sends load requests to the channel.
+	SendLoadRequests(sc *stmtctx.StatementContext, neededHistItems []model.TableItemID, timeout time.Duration) error
+
+	// SyncWaitStatsLoad will wait for the load requests to finish.
+	SyncWaitStatsLoad(sc *stmtctx.StatementContext) error
+
+	// AppendNeededItem appends a needed item to the channel.
+	AppendNeededItem(task *NeededItemTask, timeout time.Duration) error
+
+	// SubLoadWorker will start a goroutine to handle the load requests.
+	SubLoadWorker(sctx sessionctx.Context, exit chan struct{}, exitWg *util.WaitGroupEnhancedWrapper)
+
+	// HandleOneTask will handle one task.
+	HandleOneTask(sctx sessionctx.Context, lastTask *NeededItemTask, exit chan struct{}) (task *NeededItemTask, err error)
+
+	// SubCtxs returns the sub contexts.
+	SubCtxs() []sessionctx.Context
 }
 
 // StatsHandle is used to manage TiDB Statistics.
