@@ -17,6 +17,7 @@ package statistics
 import (
 	"bytes"
 	"cmp"
+	"container/heap"
 	"fmt"
 	"math"
 	"reflect"
@@ -26,6 +27,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -37,8 +39,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // topNThreshold is the minimum ratio of the number of topN elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -795,6 +799,85 @@ func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}
 }
 
+type histIter struct {
+	hist             *Histogram
+	totalSubstracted int64
+	curBucketPos     int
+}
+
+// remove removes the value from the histogram. The removed value is always bigger than the previous one.
+func (hi *histIter) remove(v *types.Datum) int64 {
+	for {
+		if hi.curBucketPos >= len(hi.hist.Buckets) {
+			return 0
+		}
+		// The value is smaller than the lower bound. We skip it since the histogram doesn't contain this value.
+		// This situation is not very reasonable :(
+		cmp := chunk.Compare(hi.hist.Bounds.GetRow(hi.curBucketPos*2), 0, v)
+		if cmp > 0 {
+			return 0
+		}
+		cmp = chunk.Compare(hi.hist.Bounds.GetRow(hi.curBucketPos*2+1), 0, v)
+		if cmp < 0 {
+			// This value is bigger than current bucket's upper bound, goto next bucket.
+			hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
+			hi.curBucketPos++
+			continue
+		}
+		if cmp == 0 {
+			// This value is just the upper bound of the bucket. Remove it.
+			ret := hi.hist.Buckets[hi.curBucketPos].Repeat
+			hi.totalSubstracted += ret
+			hi.hist.Buckets[hi.curBucketPos].Repeat = 0
+			hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
+			hi.curBucketPos++
+			return ret
+		}
+		ret := int64(hi.hist.NotNullCount() / float64(hi.hist.NDV))
+		hi.totalSubstracted += ret
+		return ret
+	}
+}
+
+// finish cleans the unfinished substraction.
+func (hi *histIter) finish() {
+	for i := hi.curBucketPos; i < len(hi.hist.Buckets); i++ {
+		hi.hist.Buckets[i].Count -= hi.totalSubstracted
+	}
+}
+
+type heapItem struct {
+	item          *TopNMeta
+	idx           int
+	nextPosInTopN int
+}
+
+type topnHeap []*heapItem
+
+func (h topnHeap) Len() int {
+	return len(h)
+}
+
+func (h topnHeap) Less(i, j int) bool {
+	return bytes.Compare(h[i].item.Encoded, h[j].item.Encoded) < 0
+}
+
+func (h topnHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *topnHeap) Push(x any) {
+	*h = append(*h, x.(*heapItem))
+}
+
+func (h *topnHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
 // MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
 // The input parameters:
 //  1. `topNs` are the partition-level topNs to be merged.
@@ -807,69 +890,115 @@ func NewTopN(n int) *TopN {
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
 func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram,
 	isIndex bool, killed *uint32) (*TopN, []TopNMeta, []*Histogram, error) {
-	if CheckEmptyTopNs(topNs) {
+	var mergingHeap topnHeap = make([]*heapItem, 0, len(topNs))
+	sumTopN := 0
+	for i, topN := range topNs {
+		if topN.Num() == 0 {
+			continue
+		}
+		sumTopN += topN.Num()
+		heap.Push(&mergingHeap, &heapItem{
+			item:          &topN.TopN[0],
+			idx:           i,
+			nextPosInTopN: 1,
+		})
+	}
+	logutil.BgLogger().Warn("merging topn", zap.Int("total topn num", sumTopN))
+	if mergingHeap.Len() == 0 {
 		return nil, nil, hists, nil
 	}
-	partNum := len(topNs)
-	// Different TopN structures may hold the same value, we have to merge them.
-	counter := make(map[hack.MutableString]float64)
-	// datumMap is used to store the mapping from the string type to datum type.
-	// The datum is used to find the value in the histogram.
-	datumMap := NewDatumMapCache()
-	for i, topN := range topNs {
+	histIters := make([]histIter, len(hists))
+	for i, hist := range hists {
+		histIters[i].hist = hist
+	}
+	type maintaining struct {
+		item          TopNMeta
+		affectedTopNs *bitset.BitSet
+		cleared       bool
+	}
+	cur := maintaining{
+		affectedTopNs: bitset.New(uint(len(hists))),
+		cleared:       true,
+	}
+	mergedTopNs := make([]TopNMeta, 0, n)
+	step := int64(0)
+	histRemoveCnt := int64(0)
+	for {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
 		}
-		if topN.TotalCount() == 0 {
+		if mergingHeap.Len() == 0 {
+			break
+		}
+		step++
+		head := heap.Pop(&mergingHeap).(*heapItem)
+		headTopN := head.item
+		if head.nextPosInTopN < topNs[head.idx].Num() {
+			head.item = &topNs[head.idx].TopN[head.nextPosInTopN]
+			if step%10000 == 1 {
+				logutil.BgLogger().Warn("merging topn", zap.String("current head of the heap each 1w step", fmt.Sprintf("topn is from partition %d, position: %d", head.idx, head.nextPosInTopN-1)))
+			}
+			head.nextPosInTopN++
+			heap.Push(&mergingHeap, head)
+		}
+		// The maintained one is cleared before. Set it and goto next round.
+		if cur.cleared {
+			cur.item.Encoded = headTopN.Encoded
+			cur.item.Count = headTopN.Count
+			cur.affectedTopNs.Set(uint(head.idx))
+			cur.cleared = false
 			continue
 		}
-		for _, val := range topN.TopN {
-			encodedVal := hack.String(val.Encoded)
-			_, exists := counter[encodedVal]
-			counter[encodedVal] += float64(val.Count)
-			if exists {
-				// We have already calculated the encodedVal from the histogram, so just continue to next topN value.
-				continue
+		cmp := bytes.Compare(cur.item.Encoded, headTopN.Encoded)
+		cnt := headTopN.Count
+		// The heap's head move forward.
+		if cmp < 0 {
+			// Initializing the datum.
+			d, err := topNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
+			if err != nil {
+				return nil, nil, hists, err
 			}
-			// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
-			// 1. Check the topN first.
-			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
-			for j := 0; j < partNum; j++ {
-				if atomic.LoadUint32(killed) == 1 {
-					return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
+			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+				histRemoveCnt++
+				if histRemoveCnt%10000 == 1 {
+					logutil.BgLogger().Warn("merging topn", zap.String("current hist pos for removing each 1w step", fmt.Sprintf("hist is from partition %d, bucket position %d", histPos, histIters[histPos].curBucketPos)))
 				}
-				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
-					continue
-				}
-				// Get the encodedVal from the hists[j]
-				datum, exists := datumMap.Get(encodedVal)
-				if !exists {
-					d, err := datumMap.Put(val, encodedVal, hists[0].Tp.GetType(), isIndex, loc)
-					if err != nil {
-						return nil, nil, nil, err
-					}
-					datum = d
-				}
-				// Get the row count which the value is equal to the encodedVal from histogram.
-				count, _ := hists[j].EqualRowCount(nil, datum, isIndex)
-				if count != 0 {
-					counter[encodedVal] += count
-					// Remove the value corresponding to encodedVal from the histogram.
-					hists[j].BinarySearchRemoveVal(TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+				// Remove the value from the hist and add it into the current maintained value.
+				cur.item.Count += uint64(histIters[histPos].remove(&d))
+				if histRemoveCnt%10000 == 1 {
+					logutil.BgLogger().Warn("merging topn", zap.String("current hist pos for removing each 1w step", fmt.Sprintf("hist bucket position %d after removing", histIters[histPos].curBucketPos)))
 				}
 			}
+			cur.item.Count += cnt
+			mergedTopNs = append(mergedTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+			cur.cleared = true
+			cur.affectedTopNs.ClearAll()
+			continue
+		} else {
+			// The cmp result cannot be 1 because the value is strictly increasing.
+			// Here is cmp == 0.
+			cur.item.Count += cnt
+			cur.affectedTopNs.Set(uint(head.idx))
 		}
 	}
-	numTop := len(counter)
-	if numTop == 0 {
-		return nil, nil, hists, nil
+	if !cur.cleared {
+		// There's uncleared item. Clear it.
+		// Initializing the datum.
+		d, err := topNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
+		if err != nil {
+			return nil, nil, hists, err
+		}
+		for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+			// Remove the value from the hist and add it into the current maintained value.
+			cur.item.Count += uint64(histIters[histPos].remove(&d))
+		}
+		mergedTopNs = append(mergedTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+		cur.cleared = true
 	}
-	sorted := make([]TopNMeta, 0, numTop)
-	for value, cnt := range counter {
-		data := hack.Slice(string(value))
-		sorted = append(sorted, TopNMeta{Encoded: data, Count: uint64(cnt)})
+	for _, iter := range histIters {
+		iter.finish()
 	}
-	globalTopN, leftTopN := GetMergedTopNFromSortedSlice(sorted, n)
+	globalTopN, leftTopN := GetMergedTopNFromSortedSlice(mergedTopNs, n)
 	return globalTopN, leftTopN, hists, nil
 }
 

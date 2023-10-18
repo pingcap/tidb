@@ -143,6 +143,7 @@ require (
 )
 
 require (
+	github.com/bits-and-blooms/bitset v1.10.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect

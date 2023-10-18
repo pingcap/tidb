@@ -72,3 +72,23 @@ func topNMetaToDatum(val TopNMeta,
 	}
 	return dat, err
 }
+
+func topNMetaValToDatum(val []byte, tp byte, isIndex bool, loc *time.Location) (d types.Datum, err error) {
+	if isIndex {
+		d.SetBytes(val)
+	} else {
+		var err error
+		if types.IsTypeTime(tp) {
+			// Handle date time values specially since they are encoded to int and we'll get int values if using DecodeOne.
+			_, d, err = codec.DecodeAsDateTime(val, tp, loc)
+		} else if types.IsTypeFloat(tp) {
+			_, d, err = codec.DecodeAsFloat32(val, tp)
+		} else {
+			_, d, err = codec.DecodeOne(val)
+		}
+		if err != nil {
+			return d, err
+		}
+	}
+	return d, err
+}
