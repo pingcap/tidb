@@ -48,6 +48,7 @@ now_time=$(date "+%Y-%m-%d %H:%M:%S %z")
 echo "get the current time: $now_time"
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/stream/only-checkpoint-ts-with-check=return(\"$now_time\")"
 set +e # we need to get the exit code of br
+i=0
 while true; do
     # run br with failpoint to compare the current checkpoint ts with the current time
     run_br --pd $PD_ADDR log status --task-name integration_test
@@ -63,6 +64,11 @@ while true; do
     # the checkpoint hasn't advanced
     if [ $exit_code -eq $WAIT_NOT_DONE_CODE ]; then
         echo "the checkpoint hasn't advanced"
+        i=$((i+1))
+        if [ "$i" -gt 50 ]; then
+            echo 'the checkpoint lag is too large'
+            exit 1
+        fi
         sleep 10
         continue
     fi
@@ -81,7 +87,10 @@ echo "restart a services"
 restart_services
 
 # PITR restore
+echo "run pitr"
 run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full"
 
 # check something in downstream cluster
-run_sql "select * from mysql.delete_range"
+echo "check something"
+run_sql "select count(*) DELETE_RANGE_CNT from mysql.gc_delete_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
+check_contains "DELETE_RANGE_CNT: 44"
