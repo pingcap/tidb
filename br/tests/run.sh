@@ -17,6 +17,7 @@
 set -eu
 export PATH="tests/_utils:bin:$PATH"
 export TEST_DIR=/tmp/backup_restore_test
+export COV_DIR="/tmp/group_cover"
 
 # Create COV_DIR if not exists
 if [ -d "$COV_DIR" ]; then
