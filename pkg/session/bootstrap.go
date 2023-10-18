@@ -1013,7 +1013,6 @@ const (
 
 	// version 177
 	//   add `mysql.dist_framework_meta`
-	//   make sure upgrading from v7.4 to higher version, `mysql.dist_framework_meta` exists.
 	version177 = 177
 )
 
@@ -2835,7 +2834,6 @@ func upgradeToVer176(s Session, ver int64) {
 	mustExecute(s, CreateGlobalTaskHistory)
 }
 
-// for users upgrade from v7.4 to higher version, make sure dist_framework_meta exists.
 func upgradeToVer177(s Session, ver int64) {
 	if ver >= version177 {
 		return
