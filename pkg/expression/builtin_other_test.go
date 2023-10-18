@@ -32,11 +32,11 @@ import (
 func TestBitCount(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	fc := funcs[ast.BitCount]
 	var bitCountCases = []struct {
 		origin interface{}
@@ -67,8 +67,8 @@ func TestBitCount(t *testing.T) {
 			require.Nil(t, test.count)
 			continue
 		}
-		sc := stmtctx.NewStmtCtx()
-		sc.IgnoreTruncate.Store(true)
+		sc := stmtctx.NewStmtCtxWithTimeZone(stmtCtx.TimeZone())
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 		res, err := count.ToInt64(sc)
 		require.NoError(t, err)
 		require.Equal(t, test.count, res)

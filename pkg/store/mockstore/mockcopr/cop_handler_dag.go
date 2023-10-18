@@ -103,12 +103,11 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 
-	sc := flagsToStatementContext(dagReq.Flags)
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
 	}
-	sc.SetTimeZone(tz)
+	sc := flagsAndTzToStatementContext(dagReq.Flags, tz)
 
 	ctx := &dagContext{
 		dagReq:    dagReq,
@@ -126,13 +125,6 @@ func (h coprHandler) buildDAGExecutor(req *coprocessor.Request) (*dagContext, ex
 		return nil, nil, nil, errors.Trace(err)
 	}
 	return ctx, e, dagReq, err
-}
-
-// constructTimeZone constructs timezone by name first. When the timezone name
-// is set, the daylight saving problem must be considered. Otherwise the
-// timezone offset in seconds east of UTC is used to constructed the timezone.
-func constructTimeZone(name string, offset int) (*time.Location, error) {
-	return timeutil.ConstructTimeZone(name, offset)
 }
 
 func (h coprHandler) buildExec(ctx *dagContext, curr *tipb.Executor) (executor, *tipb.Executor, error) {
@@ -466,18 +458,10 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 	return nil
 }
 
-// flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
-func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
-	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
-	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
-	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
-	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
-	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
-	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
-	// TODO set FlagInSetOprStmt,
+// flagsAndTzToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
+func flagsAndTzToStatementContext(flags uint64, tz *time.Location) *stmtctx.StatementContext {
+	sc := new(stmtctx.StatementContext)
+	sc.InitFromPBFlagAndTz(flags, tz)
 	return sc
 }
 
