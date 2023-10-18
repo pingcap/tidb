@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/model"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -29,6 +30,9 @@ import (
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+=======
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+>>>>>>> ac1f0d92a6e (planner: move more methods from StatsHandle to its sub-packages (#47749))
 )
 
 // HandleDDLEvent begins to process a ddl task.
@@ -76,7 +80,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			return err
 		}
 		if variable.PartitionPruneMode(pruneMode) == variable.Dynamic && t.PartInfo != nil {
-			if err := h.updateGlobalStats(t.TableInfo); err != nil {
+			if err := h.UpdateGlobalStats(t.TableInfo); err != nil {
 				return err
 			}
 		}
@@ -114,6 +118,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 	return nil
 }
 
+<<<<<<< HEAD
 // updateStatsVersion will set statistics version to the newest TS,
 // then tidb-server will reload automatic.
 func (h *Handle) updateStatsVersion() error {
@@ -142,6 +147,8 @@ func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {
 	}, statsutil.FlagWrapTxn)
 }
 
+=======
+>>>>>>> ac1f0d92a6e (planner: move more methods from StatsHandle to its sub-packages (#47749))
 func (h *Handle) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
