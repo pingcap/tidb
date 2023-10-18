@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	stats "github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 )
@@ -34,7 +35,7 @@ func loadStats(tblInfo *model.TableInfo, path string) (*stats.Table, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	jsTable := &storage.JSONTable{}
+	jsTable := &util.JSONTable{}
 	err = json.Unmarshal(data, jsTable)
 	if err != nil {
 		return nil, errors.Trace(err)

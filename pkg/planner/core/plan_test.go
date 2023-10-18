@@ -755,6 +755,22 @@ func TestIssue40535(t *testing.T) {
 	require.Empty(t, tk.Session().LastMessage())
 }
 
+func TestIssue47445(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE golang1 ( `fcbpdt` CHAR (8) COLLATE utf8_general_ci NOT NULL, `fcbpsq` VARCHAR (20) COLLATE utf8_general_ci NOT NULL, `procst` char (4) COLLATE utf8_general_ci DEFAULT NULL,`cipstx` VARCHAR (105) COLLATE utf8_general_ci DEFAULT NULL, `cipsst` CHAR (4) COLLATE utf8_general_ci DEFAULT NULL, `dyngtg` VARCHAR(4) COLLATE utf8_general_ci DEFAULT NULL, `blncdt` VARCHAR (8) COLLATE utf8_general_ci DEFAULT NULL, PRIMARY KEY ( fcbpdt, fcbpsq ))")
+	tk.MustExec("insert into golang1 values('20230925','12023092502158016','abc','','','','')")
+	tk.MustExec("create table golang2 (`sysgrp` varchar(20) NOT NULL,`procst` varchar(8) NOT NULL,`levlid` int(11) NOT NULL,PRIMARY key (procst));")
+	tk.MustExec("insert into golang2 VALUES('COMMON','ACSC',90)")
+	tk.MustExec("insert into golang2 VALUES('COMMON','abc',8)")
+	tk.MustExec("insert into golang2 VALUES('COMMON','CH02',6)")
+	tk.MustExec("UPDATE golang1 a SET procst =(CASE WHEN ( SELECT levlid FROM golang2 b WHERE b.sysgrp = 'COMMON' AND b.procst = 'ACSC' ) > ( SELECT levlid FROM golang2 c WHERE c.sysgrp = 'COMMON' AND c.procst = a.procst ) THEN 'ACSC' ELSE a.procst END ), cipstx = 'CI010000', cipsst = 'ACSC', dyngtg = 'EAYT', blncdt= '20230925' WHERE fcbpdt = '20230925' AND fcbpsq = '12023092502158016'")
+	tk.MustQuery("select * from golang1").Check(testkit.Rows("20230925 12023092502158016 ACSC CI010000 ACSC EAYT 20230925"))
+	tk.MustExec("UPDATE golang1 a SET procst= (SELECT 1 FROM golang2 c WHERE c.procst = a.procst) WHERE fcbpdt = '20230925' AND fcbpsq = '12023092502158016'")
+	tk.MustQuery("select * from golang1").Check(testkit.Rows("20230925 12023092502158016 1 CI010000 ACSC EAYT 20230925"))
+}
+
 func TestExplainValuesStatement(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
