@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -1117,7 +1118,7 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 			logutil.BgLogger().Error("copIteratorWork meet panic",
 				zap.Any("r", r),
 				zap.Stack("stack trace"))
-			resp := &copResponse{err: errors.Errorf("%v", r)}
+			resp := &copResponse{err: util2.GetRecoverError(r)}
 			// if panic has happened, set checkOOM to false to avoid another panic.
 			worker.sendToRespCh(resp, respCh, false)
 		}
