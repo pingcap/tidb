@@ -1581,6 +1581,7 @@ func (s *subQueryChecker) Leave(in ast.Node) (ast.Node, bool) {
 func isExprHasSubQuery(expr ast.Node) bool {
 	checker := subQueryCheckerPool.Get().(*subQueryChecker)
 	defer func() {
+		// Do not forget to reset the flag.
 		checker.hasSubQuery = false
 		subQueryCheckerPool.Put(checker)
 	}()
