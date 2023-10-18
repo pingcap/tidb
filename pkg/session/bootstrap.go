@@ -1008,13 +1008,17 @@ const (
 	version175 = 175
 
 	// version 176
-	// add `mysql.tidb_global_task_history`.
+	//   add `mysql.tidb_global_task_history`
 	version176 = 176
+
+	// version 177
+	//   add `mysql.dist_framework_meta`
+	version177 = 177
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version176
+var currentBootstrapVersion int64 = version177
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1166,6 +1170,7 @@ var (
 		upgradeToVer174,
 		upgradeToVer175,
 		upgradeToVer176,
+		upgradeToVer177,
 	}
 )
 
@@ -2827,6 +2832,14 @@ func upgradeToVer176(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTaskHistory)
+}
+
+func upgradeToVer177(s Session, ver int64) {
+	if ver >= version177 {
+		return
+	}
+	// ignore error when upgrading from v7.4 to higher version.
+	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
 }
 
 func writeOOMAction(s Session) {

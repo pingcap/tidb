@@ -19,9 +19,9 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -178,7 +178,7 @@ func (gss GroupingSets) TargetOne(normalAggArgs []Expression) int {
 		return 0
 	}
 	// for other normal agg args like: count(a), count(a+b), count(not(a is null)) and so on.
-	normalAggArgsIDSet := fd.NewFastIntSet()
+	normalAggArgsIDSet := intset.NewFastIntSet()
 	for _, one := range columnInNormalAggArgs {
 		normalAggArgsIDSet.Insert(int(one.UniqueID))
 	}
@@ -202,7 +202,7 @@ func (gss GroupingSets) TargetOne(normalAggArgs []Expression) int {
 func (gss GroupingSets) NeedCloneColumn() bool {
 	// for grouping sets like: {<a,c>},{<c>} / {<a,c>},{<b,c>}
 	// the column c should be copied one more time here, otherwise it will be filled with null values and not visible for the other grouping set again.
-	setIDs := make([]*fd.FastIntSet, 0, len(gss))
+	setIDs := make([]*intset.FastIntSet, 0, len(gss))
 	for _, groupingSet := range gss {
 		setIDs = append(setIDs, groupingSet.AllColIDs())
 	}
@@ -231,8 +231,8 @@ func (gs GroupingSet) IsEmpty() bool {
 }
 
 // AllColIDs collect all the grouping col's uniqueID. (here assuming that all the grouping expressions are single col)
-func (gs GroupingSet) AllColIDs() *fd.FastIntSet {
-	res := fd.NewFastIntSet()
+func (gs GroupingSet) AllColIDs() *intset.FastIntSet {
+	res := intset.NewFastIntSet()
 	for _, groupingExprs := range gs {
 		// on the condition that every grouping expression is single column.
 		// eg: group by a, b, c
@@ -313,8 +313,8 @@ func (gss GroupingSets) IsEmpty() bool {
 }
 
 // AllSetsColIDs is used to collect all the column id inside into a fast int set.
-func (gss GroupingSets) AllSetsColIDs() *fd.FastIntSet {
-	res := fd.NewFastIntSet()
+func (gss GroupingSets) AllSetsColIDs() *intset.FastIntSet {
+	res := intset.NewFastIntSet()
 	for _, groupingSet := range gss {
 		res.UnionWith(*groupingSet.AllColIDs())
 	}
@@ -361,8 +361,8 @@ func (g GroupingExprs) IsEmpty() bool {
 
 // SubSetOf is used to do the logical computation of subset between two grouping expressions.
 func (g GroupingExprs) SubSetOf(other GroupingExprs) bool {
-	oldOne := fd.NewFastIntSet()
-	newOne := fd.NewFastIntSet()
+	oldOne := intset.NewFastIntSet()
+	newOne := intset.NewFastIntSet()
 	for _, one := range g {
 		oldOne.Insert(int(one.(*Column).UniqueID))
 	}
@@ -373,8 +373,8 @@ func (g GroupingExprs) SubSetOf(other GroupingExprs) bool {
 }
 
 // IDSet is used to collect column ids inside grouping expressions into a fast int set.
-func (g GroupingExprs) IDSet() *fd.FastIntSet {
-	res := fd.NewFastIntSet()
+func (g GroupingExprs) IDSet() *intset.FastIntSet {
+	res := intset.NewFastIntSet()
 	for _, one := range g {
 		res.Insert(int(one.(*Column).UniqueID))
 	}
@@ -493,7 +493,7 @@ func AdjustNullabilityFromGroupingSets(gss GroupingSets, schema *Schema) {
 	// set, so it won't be filled with null value at any time, the nullable change is unnecessary.
 	groupingIDs := gss.AllSetsColIDs()
 	// cache the grouping ids set to avoid fetch them multi times below.
-	groupingIDsSlice := make([]*fd.FastIntSet, 0, len(gss))
+	groupingIDsSlice := make([]*intset.FastIntSet, 0, len(gss))
 	for _, oneGroupingSet := range gss {
 		groupingIDsSlice = append(groupingIDsSlice, oneGroupingSet.AllColIDs())
 	}
@@ -570,7 +570,7 @@ func (gss GroupingSets) DistinctSize() (int, []uint64, map[int]map[uint64]struct
 func (gss GroupingSets) DistinctSizeWithThreshold(N int) (int, []uint64, map[int]map[uint64]struct{}) {
 	// all the group by item are col, deduplicate from id-set.
 	distinctGroupingIDsPos := make([]int, 0, len(gss))
-	originGroupingIDsSlice := make([]*fd.FastIntSet, 0, len(gss))
+	originGroupingIDsSlice := make([]*intset.FastIntSet, 0, len(gss))
 
 	for _, oneGroupingSet := range gss {
 		curIDs := oneGroupingSet.AllColIDs()
