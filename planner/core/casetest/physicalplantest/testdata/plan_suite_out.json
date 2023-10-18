@@ -2321,7 +2321,7 @@
     ]
   },
   {
-    "Name": "TestApplyEliminator",
+    "Name": "TestIssue45822",
     "Cases": [
       {
         "SQL": "select count(*) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t t1) t;",

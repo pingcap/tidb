@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/planner/util"
+	"github.com/pingcap/tidb/planner/util/fixcontrol"
 )
 
 type columnPruner struct {
@@ -202,6 +203,55 @@ func (la *LogicalAggregation) PruneColumns(parentUsedCols []*expression.Column, 
 		if len(childProjection.Exprs) == 0 && childProjection.Schema().Len() == 0 {
 			childOfChild := childProjection.children[0]
 			la.SetChildren(childOfChild)
+		}
+	}
+	// Check for Apply elimination
+	if err := la.tryEliminateApply(opt); err != nil {
+		return err
+	}
+	return nil
+}
+
+// tryEliminateApply tries to eliminate apply operator.
+// For SQL like `select count(*) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t1) t;`, we could optimize it to `select count(*) from t1;`.
+// For SQL like `select count(a) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t1) t;`, we could optimize it to `select count(a) from t1;`.
+// For SQL like `select count(t) from (select a,(select t2.b from t t2,t t3 where t2.a=t3.a and t1.a=t2.a limit 1) t from t1) t;`, we couldn't optimize it.
+func (la *LogicalAggregation) tryEliminateApply(opt *logicalOptimizeOp) error {
+	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, false)
+	if !allowEliminateApply {
+		return nil
+	}
+	aggChild := la.Children()[0]
+	if proj, isProj := aggChild.(*LogicalProjection); isProj {
+		// If the child node is a LogicalProjection, we need to check whether the child node contains a LogicalApply.
+		projChild := proj.Children()[0]
+		if apply, isApply := projChild.(*LogicalApply); isApply {
+			usedlist := expression.GetUsedList(proj.Schema().Columns, apply.Children()[1].Schema())
+			used := false
+			for i := len(usedlist) - 1; i >= 0; i-- {
+				if usedlist[i] {
+					used = true
+					break
+				}
+			}
+			if !used {
+				applyEliminateTraceStep(projChild, opt)
+				proj.Children()[0] = apply.Children()[0]
+			}
+		}
+	} else if _, isApply := aggChild.(*LogicalApply); isApply {
+		// If the child node is a LogicalApply, we can check if the column is used by the parent node.
+		usedlist := expression.GetUsedList(la.Schema().Columns, aggChild.Children()[1].Schema())
+		used := false
+		for i := len(usedlist) - 1; i >= 0; i-- {
+			if usedlist[i] {
+				used = true
+				break
+			}
+		}
+		if !used {
+			applyEliminateTraceStep(la, opt)
+			la.Children()[0] = aggChild.Children()[0]
 		}
 	}
 	return nil
@@ -712,4 +762,16 @@ func (*LogicalCTE) PruneColumns(_ []*expression.Column, _ *logicalOptimizeOp) er
 // PruneColumns implements the interface of LogicalPlan.
 func (p *LogicalSequence) PruneColumns(parentUsedCols []*expression.Column, opt *logicalOptimizeOp) error {
 	return p.children[len(p.children)-1].PruneColumns(parentUsedCols, opt)
+}
+
+func applyEliminateTraceStep(lp LogicalPlan, opt *logicalOptimizeOp) {
+	action := func() string {
+		buffer := bytes.NewBufferString(
+			fmt.Sprintf("%v_%v is eliminated.", lp.TP(), lp.ID()))
+		return buffer.String()
+	}
+	reason := func() string {
+		return fmt.Sprintf("%v_%v can be eliminated because it hasn't been used by it's parent.", lp.TP(), lp.ID())
+	}
+	opt.appendStepToCurrent(lp.ID(), lp.TP(), reason, action)
 }
