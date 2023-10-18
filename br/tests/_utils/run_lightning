@@ -16,6 +16,9 @@
 
 set -eux
 
+export GRPC_GO_LOG_VERBOSITY_LEVEL=99
+export GRPC_GO_LOG_SEVERITY_LEVEL=debug
+
 cur_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 echo "[$(date)] <<<<<< RUNNING TEST FOR: $cur_dir/../$TEST_NAME $@ >>>>>>" >> "$TEST_DIR/lightning.log"
