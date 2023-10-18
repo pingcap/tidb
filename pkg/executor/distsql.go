@@ -1168,7 +1168,11 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			task.doneCh <- errors.Errorf("%v", r)
+			err := errors.Errorf("%v", r)
+			if recoverdErr, ok := r.(error); ok {
+				err = recoverdErr
+			}
+			task.doneCh <- err
 		}
 	}()
 	for {

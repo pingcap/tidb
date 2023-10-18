@@ -490,6 +490,9 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			iw.lookup.finished.Store(true)
 			logutil.Logger(ctx).Error("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err := errors.Errorf("%v", r)
+			if recoverdErr, ok := r.(error); ok {
+				err = recoverdErr
+			}
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- err
 		}
