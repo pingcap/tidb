@@ -7,7 +7,7 @@
     "fileMatch": [
       "\\.bzl$"
     ],
-    "ignorePaths": ["(^|/)WORKSPACE(|\\.bazel)$",]
+    "ignorePaths": ["(^|/)WORKSPACE(|\\.bazel)$"]
   },
   "git-submodules": {
     "enabled": true
