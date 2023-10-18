@@ -158,6 +158,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(JobsGauge)
 	prometheus.MustRegister(LoadPrivilegeCounter)
 	prometheus.MustRegister(InfoCacheCounters)
+	prometheus.MustRegister(LeaseExpireTime)
 	prometheus.MustRegister(LoadSchemaCounter)
 	prometheus.MustRegister(LoadSchemaDuration)
 	prometheus.MustRegister(MetaHistogram)
