@@ -1008,13 +1008,17 @@ const (
 	version175 = 175
 
 	// version 176
-	// add `mysql.tidb_global_task_history`.
+	// add `mysql.tidb_global_task_history`, `mysql.dist_framework_meta`
 	version176 = 176
+
+	// version 177
+	// add `mysql.dist_framework_meta`
+	version177 = 177
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version176
+var currentBootstrapVersion int64 = version177
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1166,6 +1170,7 @@ var (
 		upgradeToVer174,
 		upgradeToVer175,
 		upgradeToVer176,
+		upgradeToVer177,
 	}
 )
 
@@ -1403,21 +1408,6 @@ func upgradeToVer9(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Trigger_priv='Y'")
-}
-
-func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
-	_, err := s.ExecuteInternal(ctx, sql)
-	defer cancel()
-	for _, ignorableErr := range ignorableErrs {
-		if terror.ErrorEqual(err, ignorableErr) {
-			return
-		}
-	}
-	if err != nil {
-		logutil.BgLogger().Fatal("doReentrantDDL error", zap.Error(err))
-	}
 }
 
 func upgradeToVer10(s Session, ver int64) {
@@ -2830,6 +2820,13 @@ func upgradeToVer176(s Session, ver int64) {
 	mustExecute(s, CreateDistFrameworkMeta)
 }
 
+func upgradeToVer177(s Session, ver int64) {
+	if ver >= version177 {
+		return
+	}
+	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
+}
+
 func writeOOMAction(s Session) {
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
@@ -3103,7 +3100,20 @@ func doDMLWorks(s Session) {
 		logutil.BgLogger().Fatal("doDMLWorks failed", zap.Error(err))
 	}
 }
-
+func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
+	_, err := s.ExecuteInternal(ctx, sql)
+	defer cancel()
+	for _, ignorableErr := range ignorableErrs {
+		if terror.ErrorEqual(err, ignorableErr) {
+			return
+		}
+	}
+	if err != nil {
+		logutil.BgLogger().Fatal("doReentrantDDL error", zap.Error(err))
+	}
+}
 func mustExecute(s Session, sql string, args ...interface{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
