@@ -1823,7 +1823,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
-			result.err = errors.Errorf("%v", r)
+			result.err = util.GetRecoverError(r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
 		}

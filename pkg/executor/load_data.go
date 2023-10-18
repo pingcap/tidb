@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -347,7 +348,7 @@ func (w *encodeWorker) processOneStream(
 			logutil.Logger(ctx).Error("process routine panicked",
 				zap.Any("r", r),
 				zap.Stack("stack"))
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 	}()
 
@@ -528,7 +529,7 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 			logutil.Logger(ctx).Error("commitWork panicked",
 				zap.Any("r", r),
 				zap.Stack("stack"))
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 
 		if err != nil {

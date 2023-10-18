@@ -53,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/types"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/breakpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -146,7 +147,7 @@ func (a *recordSet) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 		if r == nil {
 			return
 		}
-		err = errors.Errorf("%v", r)
+		err = util2.GetRecoverError(r)
 		logutil.Logger(ctx).Error("execute sql panic", zap.String("sql", a.stmt.GetTextToLog(false)), zap.Stack("stack"))
 	}()
 
@@ -461,7 +462,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			}
 			return
 		}
-		if recoverdErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) || exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr)) {
+		if recoverdErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
+			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
+			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
+			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)
 		} else {
 			err = recoverdErr
@@ -1208,7 +1212,7 @@ func (a *ExecStmt) buildExecutor() (exec.Executor, error) {
 func (a *ExecStmt) openExecutor(ctx context.Context, e exec.Executor) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = errors.New(fmt.Sprint(r))
+			err = util2.GetRecoverError(r)
 		}
 	}()
 	start := time.Now()

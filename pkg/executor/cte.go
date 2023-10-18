@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/cteutil"
@@ -335,7 +336,7 @@ func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error)
 func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil && err == nil {
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 	}()
 	failpoint.Inject("testCTESeedPanic", nil)
@@ -374,7 +375,7 @@ func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil && err == nil {
-			err = errors.Errorf("%v", r)
+			err = util.GetRecoverError(r)
 		}
 	}()
 	failpoint.Inject("testCTERecursivePanic", nil)
