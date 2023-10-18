@@ -1342,8 +1342,9 @@ func GetTiProxyServerInfo(ctx context.Context) (map[string]*TiProxyServerInfo, e
 }
 
 func (is *InfoSyncer) getTiProxyServerInfo(ctx context.Context) (map[string]*TiProxyServerInfo, error) {
+	// In test.
 	if is.etcdCli == nil {
-		return nil, errors.Errorf("pd unavailable")
+		return nil, nil
 	}
 
 	var err error
