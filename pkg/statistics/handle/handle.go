@@ -15,21 +15,18 @@
 package handle
 
 import (
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"math"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	ddlUtil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
-	"github.com/pingcap/tidb/pkg/statistics/handle/extstats"
-	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
@@ -78,6 +75,9 @@ type Handle struct {
 
 	// StatsLock is used to manage locked stats.
 	util.StatsLock
+
+	// StatsGlobal is used to manage global stats.
+	util.StatsGlobal
 
 	// This gpool is used to reuse goroutine in the mergeGlobalStatsTopN.
 	gpool *gp.Pool
@@ -135,6 +135,7 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle)
+	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
 	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
 	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
 	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
@@ -150,34 +151,6 @@ func (h *Handle) Lease() time.Duration {
 // SetLease sets the stats lease.
 func (h *Handle) SetLease(lease time.Duration) {
 	h.lease.Store(lease)
-}
-
-// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
-func (h *Handle) MergePartitionStats2GlobalStatsByTableID(sc sessionctx.Context,
-	opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
-	physicalID int64,
-	isIndex bool,
-	histIDs []int64,
-	_ map[int64]*statistics.Table,
-) (globalStats *globalstats.GlobalStats, err error) {
-	return globalstats.MergePartitionStats2GlobalStatsByTableID(sc, h.gpool, opts, is, physicalID, isIndex, histIDs, h.TableInfoByID, h.callWithSCtx)
-}
-
-// MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableInfo.
-func (h *Handle) mergePartitionStats2GlobalStats(
-	opts map[ast.AnalyzeOptionType]uint64,
-	is infoschema.InfoSchema,
-	globalTableInfo *model.TableInfo,
-	isIndex bool,
-	histIDs []int64,
-	_ map[int64]*statistics.Table,
-) (gstats *globalstats.GlobalStats, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		gstats, err = globalstats.MergePartitionStats2GlobalStats(sctx, h.gpool, opts, is, globalTableInfo, isIndex,
-			histIDs, h.TableInfoByID, h.callWithSCtx)
-		return err
-	})
-	return
 }
 
 // GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
@@ -241,15 +214,6 @@ func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.Analyz
 		}
 	}
 	return err
-}
-
-// BuildExtendedStats build extended stats for column groups if needed based on the column samples.
-func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (es *statistics.ExtendedStatsColl, err error) {
-	err = h.callWithSCtx(func(sctx sessionctx.Context) error {
-		es, err = extstats.BuildExtendedStats(sctx, tableID, cols, collectors)
-		return err
-	})
-	return es, err
 }
 
 // Close stops the background

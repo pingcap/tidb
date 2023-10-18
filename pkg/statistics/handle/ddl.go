@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -76,7 +75,7 @@ func (h *Handle) HandleDDLEvent(t *util.Event) error {
 			return err
 		}
 		if variable.PartitionPruneMode(pruneMode) == variable.Dynamic && t.PartInfo != nil {
-			if err := h.updateGlobalStats(t.TableInfo); err != nil {
+			if err := h.UpdateGlobalStats(t.TableInfo); err != nil {
 				return err
 			}
 		}
@@ -120,14 +119,6 @@ func (h *Handle) updateStatsVersion() error {
 	return h.callWithSCtx(func(sctx sessionctx.Context) error {
 		return storage.UpdateStatsVersion(sctx)
 	}, statsutil.FlagWrapTxn)
-}
-
-// updateGlobalStats will trigger the merge of global-stats when we drop table partition
-func (h *Handle) updateGlobalStats(tblInfo *model.TableInfo) error {
-	// We need to merge the partition-level stats to global-stats when we drop table partition in dynamic mode.
-	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return globalstats.UpdateGlobalStats(sctx, tblInfo, h.gpool, h.TableStatsFromStorage, h.TableInfoByID, h.callWithSCtx, h.SaveStatsToStorage)
-	})
 }
 
 func (h *Handle) changeGlobalStatsID(from, to int64) (err error) {

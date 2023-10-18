@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -84,7 +85,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					cache = nil
 				}
 
-				globalStats, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
+				globalStatsI, err := statsHandle.MergePartitionStats2GlobalStatsByTableID(
 					e.Ctx(),
 					globalOpts, e.Ctx().GetInfoSchema().(infoschema.InfoSchema),
 					globalStatsID.tableID,
@@ -101,6 +102,7 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, globalStatsMap glob
 					}
 					return err
 				}
+				globalStats := globalStatsI.(*globalstats.GlobalStats)
 				// Dump global-level stats to kv.
 				for i := 0; i < globalStats.Num; i++ {
 					hg, cms, topN := globalStats.Hg[i], globalStats.Cms[i], globalStats.TopN[i]

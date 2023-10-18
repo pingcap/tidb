@@ -71,8 +71,8 @@ func toSQLIndex(isIndex bool) int {
 // └────────────────────────┘        └───────────────────────┘
 type AsyncMergePartitionStats2GlobalStats struct {
 	is                  infoschema.InfoSchema
+	statsHandle         util.StatsHandle
 	globalStats         *GlobalStats
-	pool                util.SessionPool
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
 	histogramAndTopn    chan mergeItem[*StatsWrapper]
@@ -82,8 +82,6 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	tableInfo           map[int64]*model.TableInfo
 	// key is partition id and histID
 	skipPartition             map[skipItem]struct{}
-	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
-	callWithSCtxFunc          callWithSCtxFunc
 	exitWhenErrChan           chan struct{}
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
@@ -95,30 +93,26 @@ type AsyncMergePartitionStats2GlobalStats struct {
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
 func NewAsyncMergePartitionStats2GlobalStats(
-	gpool *gp.Pool,
+	statsHandle util.StatsHandle,
 	globalTableInfo *model.TableInfo,
 	histIDs []int64,
-	is infoschema.InfoSchema,
-	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
-	callWithSCtxFunc callWithSCtxFunc) (*AsyncMergePartitionStats2GlobalStats, error) {
+	is infoschema.InfoSchema) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
-		callWithSCtxFunc:       callWithSCtxFunc,
-		cmsketch:               make(chan mergeItem[*statistics.CMSketch], 5),
-		fmsketch:               make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:       make(chan mergeItem[*StatsWrapper], 5),
-		PartitionDefinition:    make(map[int64]model.PartitionDefinition),
-		tableInfo:              make(map[int64]*model.TableInfo),
-		partitionIDs:           make([]int64, 0, partitionNum),
-		exitWhenErrChan:        make(chan struct{}),
-		skipPartition:          make(map[skipItem]struct{}),
-		gpool:                  gpool,
-		allPartitionStats:      make(map[int64]*statistics.Table),
-		globalTableInfo:        globalTableInfo,
-		getTableByPhysicalIDFn: getTableByPhysicalIDFn,
-		histIDs:                histIDs,
-		is:                     is,
-		partitionNum:           partitionNum,
+		statsHandle:         statsHandle,
+		cmsketch:            make(chan mergeItem[*statistics.CMSketch], 5),
+		fmsketch:            make(chan mergeItem[*statistics.FMSketch], 5),
+		histogramAndTopn:    make(chan mergeItem[*StatsWrapper], 5),
+		PartitionDefinition: make(map[int64]model.PartitionDefinition),
+		tableInfo:           make(map[int64]*model.TableInfo),
+		partitionIDs:        make([]int64, 0, partitionNum),
+		exitWhenErrChan:     make(chan struct{}),
+		skipPartition:       make(map[skipItem]struct{}),
+		allPartitionStats:   make(map[int64]*statistics.Table),
+		globalTableInfo:     globalTableInfo,
+		histIDs:             histIDs,
+		is:                  is,
+		partitionNum:        partitionNum,
 	}, nil
 }
 
@@ -140,7 +134,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		partitionID := def.ID
 		a.partitionIDs = append(a.partitionIDs, partitionID)
 		a.PartitionDefinition[partitionID] = def
-		partitionTable, ok := a.getTableByPhysicalIDFn(a.is, partitionID)
+		partitionTable, ok := a.statsHandle.TableInfoByID(a.is, partitionID)
 		if !ok {
 			return errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
 		}
@@ -299,7 +293,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	return a.callWithSCtxFunc(
+	return util.CallWithSCtx(a.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {
 			err := a.prepare(sctx, isIndex)
 			if err != nil {
