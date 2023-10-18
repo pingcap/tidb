@@ -99,8 +99,9 @@ func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
 	stmtCtx.DupKeyAsWarning = true
-	stmtCtx.TruncateAsWarning = true
 	stmtCtx.BadNullAsWarning = true
+
+	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))
 }
 
 // NewLoadDataWorker creates a new LoadDataWorker that is ready to work.

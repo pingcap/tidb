@@ -3028,7 +3028,7 @@ func handleAnalyzeOptionsV2(opts []ast.AnalyzeOpt) (map[ast.AnalyzeOptionType]ui
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
-			fVal, err := datumValue.ToFloat64(nil)
+			fVal, err := datumValue.ToFloat64(types.DefaultNoWarningContext)
 			if err != nil {
 				return nil, err
 			}
@@ -3091,7 +3091,7 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 			optMap[opt.Type] = v
 		case ast.AnalyzeOptSampleRate:
 			// Only Int/Float/decimal is accepted, so pass nil here is safe.
-			fVal, err := datumValue.ToFloat64(nil)
+			fVal, err := datumValue.ToFloat64(types.DefaultNoWarningContext)
 			if err != nil {
 				return nil, err
 			}

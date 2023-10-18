@@ -61,11 +61,11 @@ func TestCaseWhen(t *testing.T) {
 func TestIf(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	tbl := []struct {
 		Arg1 interface{}
 		Arg2 interface{}

@@ -398,7 +398,7 @@ func flatten(sc *stmtctx.StatementContext, data types.Datum, ret *types.Datum) e
 		return nil
 	case types.KindBinaryLiteral, types.KindMysqlBit:
 		// We don't need to handle errors here since the literal is ensured to be able to store in uint64 in convertToMysqlBit.
-		val, err := data.GetBinaryLiteral().ToInt(sc)
+		val, err := data.GetBinaryLiteral().ToInt(sc.TypeCtx)
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -26,7 +26,7 @@ type sumFunction struct {
 
 // Update implements Aggregation interface.
 func (sf *sumFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
-	return sf.updateSum(sc, evalCtx, row)
+	return sf.updateSum(sc.TypeCtx, evalCtx, row)
 }
 
 // GetResult implements Aggregation interface.

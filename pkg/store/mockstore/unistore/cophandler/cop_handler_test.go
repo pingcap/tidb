@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -177,8 +178,10 @@ func isPrefixNext(key []byte, expected []byte) bool {
 }
 
 // return a dag context according to dagReq and key ranges.
-func newDagContext(store *testStore, keyRanges []kv.KeyRange, dagReq *tipb.DAGRequest, startTs uint64) *dagContext {
-	sc := flagsToStatementContext(dagReq.Flags)
+func newDagContext(t require.TestingT, store *testStore, keyRanges []kv.KeyRange, dagReq *tipb.DAGRequest, startTs uint64) *dagContext {
+	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
+	require.NoError(t, err)
+	sc := flagsAndTzToStatementContext(dagReq.Flags, tz)
 	txn := store.db.NewTransaction(false)
 	dagCtx := &dagContext{
 		evalContext: &evalContext{sc: sc},
@@ -323,7 +326,7 @@ func TestPointGet(t *testing.T) {
 		addTableScan(data.colInfos, tableID).
 		setOutputOffsets([]uint32{0, 1}).
 		build()
-	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
+	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
 	require.Len(t, chunks, 0)
@@ -337,7 +340,7 @@ func TestPointGet(t *testing.T) {
 		addTableScan(data.colInfos, tableID).
 		setOutputOffsets([]uint32{0, 1}).
 		build()
-	dagCtx = newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
+	dagCtx = newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err = buildExecutorsAndExecute(dagCtx, dagRequest)
 	require.NoError(t, err)
@@ -378,7 +381,7 @@ func TestClosureExecutor(t *testing.T) {
 		setOutputOffsets([]uint32{0, 1}).
 		build()
 
-	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
+	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
 	_, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
 	require.NoError(t, err)
@@ -407,7 +410,7 @@ func TestMppExecutor(t *testing.T) {
 		setCollectRangeCounts(true).
 		build()
 
-	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
+	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
 	_, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
 	require.Equal(t, rowCount[0], int64(1))
@@ -576,6 +579,7 @@ func BenchmarkExecutors(b *testing.B) {
 			build()
 
 		dagCtx = newDagContext(
+			b,
 			store,
 			[]kv.KeyRange{
 				{

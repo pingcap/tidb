@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 )
@@ -573,10 +574,11 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 		startTS:   req.StartTs,
 		keyRanges: req.Ranges,
 	}
+	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	builder := mppExecBuilder{
 		dbReader: dbReader,
 		mppCtx:   mppCtx,
-		sc:       flagsToStatementContext(dagReq.Flags),
+		sc:       flagsAndTzToStatementContext(dagReq.Flags, tz),
 		dagReq:   dagReq,
 		dagCtx:   dagCtx,
 	}

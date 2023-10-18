@@ -76,7 +76,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 		return err
 	}
 	sc := ctx.GetSessionVars().StmtCtx
-	err = sc.HandleTruncate(err)
+	err = sc.TypeCtx.HandleTruncate(err)
 	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
@@ -104,7 +104,7 @@ func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxA
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// insert|update|delete ignore ...
-	if sc.TruncateAsWarning {
+	if sc.TypeFlags().TruncateAsWarning() {
 		sc.AppendWarning(err)
 		return nil
 	}

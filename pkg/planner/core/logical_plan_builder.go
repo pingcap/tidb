@@ -2444,8 +2444,8 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			return uint64(v), false, true
 		}
 	case string:
-		sc := ctx.GetSessionVars().StmtCtx
-		uVal, err := types.StrToUint(sc, v, false)
+		ctx := ctx.GetSessionVars().StmtCtx.TypeCtx
+		uVal, err := types.StrToUint(ctx, v, false)
 		if err != nil {
 			return 0, false, false
 		}
@@ -6780,10 +6780,12 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 	// If it has paramMarker and is in prepare stmt. We don't need to eval it since its value is not decided yet.
 	if !checker.InPrepareStmt {
 		// Do not raise warnings for truncate.
-		oriIgnoreTruncate := b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Load()
-		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(true)
+		sc := b.ctx.GetSessionVars().StmtCtx
+		oldTypeFlags := sc.TypeFlags()
+		newTypeFlags := oldTypeFlags.WithIgnoreTruncateErr(true)
+		sc.SetTypeFlags(newTypeFlags)
 		uVal, isNull, err := expr.EvalInt(b.ctx, chunk.Row{})
-		b.ctx.GetSessionVars().StmtCtx.IgnoreTruncate.Store(oriIgnoreTruncate)
+		sc.SetTypeFlags(oldTypeFlags)
 		if uVal < 0 || isNull || err != nil {
 			return nil, ErrWindowFrameIllegal.GenWithStackByArgs(getWindowName(spec.Name.O))
 		}

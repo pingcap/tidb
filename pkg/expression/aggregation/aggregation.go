@@ -140,7 +140,7 @@ func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 	evalCtx.Value.SetNull()
 }
 
-func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext, row chunk.Row) error {
+func (af *aggFunction) updateSum(ctx types.Context, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
 	value, err := a.Eval(row)
 	if err != nil {
@@ -158,7 +158,7 @@ func (af *aggFunction) updateSum(sc *stmtctx.StatementContext, evalCtx *AggEvalu
 			return nil
 		}
 	}
-	evalCtx.Value, err = calculateSum(sc, evalCtx.Value, value)
+	evalCtx.Value, err = calculateSum(ctx, evalCtx.Value, value)
 	if err != nil {
 		return err
 	}

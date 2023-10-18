@@ -34,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/atomic"
 )
 
 func TestCopTasksDetails(t *testing.T) {
@@ -95,19 +94,19 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InUpdateStmt = true }), 16},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InDeleteStmt = true }), 16},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InSelectStmt = true }), 32},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.IgnoreTruncate = *atomic.NewBool(true) }), 1},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.TruncateAsWarning = true }), 2},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 2},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.IgnoreZeroInDate = true }), 128},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InSelectStmt = true
-			sc.TruncateAsWarning = true
+			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 		}), 34},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.DividedByZeroAsWarning = true
-			sc.IgnoreTruncate = *atomic.NewBool(true)
+			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 		}), 257},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InUpdateStmt = true

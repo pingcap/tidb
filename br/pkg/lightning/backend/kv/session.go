@@ -286,11 +286,13 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
 	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	vars.StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.SQLMode = sqlMode
+
+	typeFlags := vars.StmtCtx.TypeFlags().WithTruncateAsWarning(!sqlMode.HasStrictMode())
+	vars.StmtCtx.SetTypeFlags(typeFlags)
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable

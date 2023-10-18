@@ -518,7 +518,7 @@ func newListPartitionPruner(ctx sessionctx.Context, tbl table.Table, partitionNa
 func (l *listPartitionPruner) locatePartition(cond expression.Expression) (tables.ListPartitionLocation, bool, error) {
 	switch sf := cond.(type) {
 	case *expression.Constant:
-		b, err := sf.Value.ToBool(l.ctx.GetSessionVars().StmtCtx)
+		b, err := sf.Value.ToBool(l.ctx.GetSessionVars().StmtCtx.TypeCtx)
 		if err == nil && b == 0 {
 			// A constant false expression.
 			return nil, false, nil
@@ -1297,7 +1297,7 @@ type rangePruner struct {
 
 func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expression.Expression) (start int, end int, ok bool) {
 	if constExpr, ok := expr.(*expression.Constant); ok {
-		if b, err := constExpr.Value.ToBool(sctx.GetSessionVars().StmtCtx); err == nil && b == 0 {
+		if b, err := constExpr.Value.ToBool(sctx.GetSessionVars().StmtCtx.TypeCtx); err == nil && b == 0 {
 			// A constant false expression.
 			return 0, 0, true
 		}

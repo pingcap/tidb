@@ -104,6 +104,32 @@ func (f Flags) WithSkipUTF8MB4Check(skip bool) Flags {
 	return f &^ FlagSkipUTF8MB4Check
 }
 
+// IgnoreTruncateErr indicates whether the flag `FlagIgnoreTruncateErr` is set
+func (f Flags) IgnoreTruncateErr() bool {
+	return f&FlagIgnoreTruncateErr != 0
+}
+
+// WithIgnoreTruncateErr returns a new flags with `FlagIgnoreTruncateErr` set/unset according to the skip parameter
+func (f Flags) WithIgnoreTruncateErr(ignore bool) Flags {
+	if ignore {
+		return f | FlagIgnoreTruncateErr
+	}
+	return f &^ FlagIgnoreTruncateErr
+}
+
+// TruncateAsWarning indicates whether the flag `FlagTruncateAsWarning` is set
+func (f Flags) TruncateAsWarning() bool {
+	return f&FlagTruncateAsWarning != 0
+}
+
+// WithTruncateAsWarning returns a new flags with `FlagTruncateAsWarning` set/unset according to the skip parameter
+func (f Flags) WithTruncateAsWarning(warn bool) Flags {
+	if warn {
+		return f | FlagTruncateAsWarning
+	}
+	return f &^ FlagTruncateAsWarning
+}
+
 // Context provides the information when converting between different types.
 type Context struct {
 	flags           Flags
@@ -164,3 +190,8 @@ func (c *Context) AppendWarning(err error) {
 func (c *Context) AppendWarningFunc() func(err error) {
 	return c.appendWarningFn
 }
+
+// DefaultNoWarningContext is the context without any special configuration
+var DefaultNoWarningContext = NewContext(StrictFlags, time.UTC, func(_ error) {
+	// the error is ignored
+})

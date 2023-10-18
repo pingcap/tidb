@@ -182,14 +182,14 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec
 	}
 
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
-	stmtCtx.SetFlagsFromPBFlag(dagReq.Flags)
+
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
-	stmtCtx.SetTimeZone(tz)
 	h.sctx.GetSessionVars().TimeZone = tz
+	stmtCtx.InitFromPBFlagAndTz(dagReq.Flags, tz)
+
 	h.dagReq = dagReq
 	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.

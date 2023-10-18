@@ -88,7 +88,9 @@ func handleAnalyzeIndexReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if analyzeReq.IdxReq.Version != nil {
 		statsVer = *analyzeReq.IdxReq.Version
 	}
-	sctx := flagsToStatementContext(analyzeReq.Flags)
+
+	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sctx := flagsAndTzToStatementContext(analyzeReq.Flags, tz)
 	processor := &analyzeIndexProcessor{
 		sctx:         sctx,
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
@@ -140,9 +142,11 @@ func handleAnalyzeCommonHandleReq(dbReader *dbreader.DBReader, rans []kv.KeyRang
 	if analyzeReq.IdxReq.Version != nil {
 		statsVer = int(*analyzeReq.IdxReq.Version)
 	}
+
+	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
 	processor := &analyzeCommonHandleProcessor{
 		colLen:       int(analyzeReq.IdxReq.NumColumns),
-		statsBuilder: statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statsVer),
+		statsBuilder: statistics.NewSortedBuilder(flagsAndTzToStatementContext(analyzeReq.Flags, tz), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statsVer),
 	}
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		processor.cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -266,8 +270,8 @@ type analyzeColumnsExec struct {
 }
 
 func buildBaseAnalyzeColumnsExec(dbReader *dbreader.DBReader, rans []kv.KeyRange, analyzeReq *tipb.AnalyzeReq, startTS uint64) (*analyzeColumnsExec, *statistics.SampleBuilder, int64, error) {
-	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.SetTimeZone(time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset)))
+	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sc := flagsAndTzToStatementContext(analyzeReq.Flags, tz)
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
@@ -372,8 +376,8 @@ func handleAnalyzeFullSamplingReq(
 	analyzeReq *tipb.AnalyzeReq,
 	startTS uint64,
 ) (*coprocessor.Response, error) {
-	sc := flagsToStatementContext(analyzeReq.Flags)
-	sc.SetTimeZone(time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset)))
+	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sc := flagsAndTzToStatementContext(analyzeReq.Flags, tz)
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo
 	evalCtx.setColumnInfo(columns)
@@ -527,7 +531,8 @@ func handleAnalyzeMixedReq(dbReader *dbreader.DBReader, rans []kv.KeyRange, anal
 	if err != nil {
 		return nil, err
 	}
-	sctx := flagsToStatementContext(analyzeReq.Flags)
+	tz := time.FixedZone("UTC", int(analyzeReq.TimeZoneOffset))
+	sctx := flagsAndTzToStatementContext(analyzeReq.Flags, tz)
 	e := &analyzeMixedExec{
 		sctx:               sctx,
 		analyzeColumnsExec: *colExec,

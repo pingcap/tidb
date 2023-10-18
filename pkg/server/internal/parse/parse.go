@@ -246,7 +246,7 @@ func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boun
 				args[i] = types.NewDecimalDatum(nil)
 			} else {
 				var dec types.MyDecimal
-				err = sc.HandleTruncate(dec.FromString(v))
+				err = sc.TypeCtx.HandleTruncate(dec.FromString(v))
 				if err != nil {
 					return err
 				}

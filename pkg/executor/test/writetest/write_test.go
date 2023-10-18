@@ -1317,11 +1317,11 @@ func TestIssue18681(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
 
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate.Load()
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(originIgnoreTruncate)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
-	sc.IgnoreTruncate.Store(false)
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	tests := []testCase{
 		{[]byte("true\tfalse\t0\t1\n"), []string{"1|0|0|1"}, "Records: 1  Deleted: 0  Skipped: 0  Warnings: 0"},
 	}

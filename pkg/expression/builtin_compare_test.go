@@ -233,11 +233,11 @@ func TestIntervalFunc(t *testing.T) {
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
-	origin := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(origin)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	for _, test := range []struct {
 		args   []types.Datum
@@ -289,13 +289,14 @@ func TestIntervalFunc(t *testing.T) {
 func TestGreatestLeastFunc(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
+	defer func() {
+		sc.SetTypeFlags(oldTypeFlags)
+	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
+
 	decG := &types.MyDecimal{}
 	decL := &types.MyDecimal{}
-	defer func() {
-		sc.IgnoreTruncate.Store(originIgnoreTruncate)
-	}()
 
 	for _, test := range []struct {
 		args             []interface{}

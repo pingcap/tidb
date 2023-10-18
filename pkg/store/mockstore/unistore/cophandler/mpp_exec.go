@@ -1133,7 +1133,7 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 				if d.IsNull() {
 					passCheck = false
 				} else {
-					isBool, err := d.ToBool(e.sc)
+					isBool, err := d.ToBool(e.sc.TypeCtx)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}

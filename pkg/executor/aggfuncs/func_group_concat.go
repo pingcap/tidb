@@ -72,7 +72,7 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ sessionctx.Context, p
 
 func (e *baseGroupConcat4String) handleTruncateError(sctx sessionctx.Context) (err error) {
 	if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
-		if !sctx.GetSessionVars().StmtCtx.TruncateAsWarning {
+		if !sctx.GetSessionVars().StmtCtx.TypeFlags().TruncateAsWarning() {
 			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
 		}
 		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))

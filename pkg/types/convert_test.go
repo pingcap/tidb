@@ -248,11 +248,11 @@ func TestConvertType(t *testing.T) {
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
-	_, err = d.ToDecimal(sc)
+	_, err = d.ToDecimal(sc.TypeCtxOrDefault())
 	require.Truef(t, terror.ErrorEqual(err, ErrTruncatedWrongVal), "err %v", err)
 
-	sc.IgnoreTruncate.Store(true)
-	v, err = d.ToDecimal(sc)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
+	v, err = d.ToDecimal(sc.TypeCtxOrDefault())
 	require.NoError(t, err)
 	require.Equal(t, "0", v.(*MyDecimal).String())
 
@@ -421,7 +421,7 @@ func TestConvertToStringWithCheck(t *testing.T) {
 		ft.SetCharset(tt.outputChs)
 		inputDatum := NewStringDatum(tt.input)
 		sc := stmtctx.NewStmtCtx()
-		flags := tt.newFlags(sc.TypeCtx.Flags())
+		flags := tt.newFlags(sc.TypeFlags())
 		sc.SetTypeFlags(flags)
 		outputDatum, err := inputDatum.ConvertTo(sc, ft)
 		if len(tt.output) == 0 {
@@ -472,9 +472,8 @@ func TestConvertToBinaryString(t *testing.T) {
 }
 
 func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, expectErr error) {
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(!truncateAsErr)
-	val, err := StrToInt(sc, str, false)
+	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(!truncateAsErr))
+	val, err := StrToInt(ctx, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
 	} else {
@@ -484,9 +483,8 @@ func testStrToInt(t *testing.T, str string, expect int64, truncateAsErr bool, ex
 }
 
 func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, expectErr error) {
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(!truncateAsErr)
-	val, err := StrToUint(sc, str, false)
+	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(!truncateAsErr))
+	val, err := StrToUint(ctx, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
 	} else {
@@ -496,9 +494,8 @@ func testStrToUint(t *testing.T, str string, expect uint64, truncateAsErr bool, 
 }
 
 func testStrToFloat(t *testing.T, str string, expect float64, truncateAsErr bool, expectErr error) {
-	sc := stmtctx.NewStmtCtx()
-	sc.IgnoreTruncate.Store(!truncateAsErr)
-	val, err := StrToFloat(sc, str, false)
+	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(!truncateAsErr))
+	val, err := StrToFloat(ctx, str, false)
 	if expectErr != nil {
 		require.Truef(t, terror.ErrorEqual(err, expectErr), "err %v", err)
 	} else {
@@ -566,7 +563,7 @@ func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 		{false, true},
 	}
 	sc := stmtctx.NewStmtCtx()
-	sc.TruncateAsWarning = true
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 	for _, tc := range testCases {
 		sc.InSelectStmt = tc.inSelect
 		sc.InDeleteStmt = tc.inDelete
@@ -574,15 +571,15 @@ func testSelectUpdateDeleteEmptyStringError(t *testing.T) {
 		str := ""
 		expect := 0
 
-		val, err := StrToInt(sc, str, false)
+		val, err := StrToInt(sc.TypeCtxOrDefault(), str, false)
 		require.NoError(t, err)
 		require.Equal(t, int64(expect), val)
 
-		val1, err := StrToUint(sc, str, false)
+		val1, err := StrToUint(sc.TypeCtxOrDefault(), str, false)
 		require.NoError(t, err)
 		require.Equal(t, uint64(expect), val1)
 
-		val2, err := StrToFloat(sc, str, false)
+		val2, err := StrToFloat(sc.TypeCtxOrDefault(), str, false)
 		require.NoError(t, err)
 		require.Equal(t, float64(expect), val2)
 	}
@@ -605,7 +602,7 @@ func accept(t *testing.T, tp byte, value interface{}, unsigned bool, expected st
 	d := NewDatum(value)
 	sc := stmtctx.NewStmtCtx()
 	sc.SetTimeZone(time.UTC)
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	casted, err := d.ConvertTo(sc, ft)
 	require.NoErrorf(t, err, "%v", ft)
 	if casted.IsNull() {
@@ -887,11 +884,11 @@ func TestGetValidInt(t *testing.T) {
 		{"123de", "123", true, true},
 	}
 	sc := stmtctx.NewStmtCtx()
-	sc.TruncateAsWarning = true
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 	sc.InSelectStmt = true
 	warningCount := 0
 	for i, tt := range tests {
-		prefix, err := getValidIntPrefix(sc, tt.origin, false)
+		prefix, err := getValidIntPrefix(sc.TypeCtxOrDefault(), tt.origin, false)
 		require.NoError(t, err)
 		require.Equal(t, tt.valid, prefix)
 		if tt.signed {
@@ -930,10 +927,10 @@ func TestGetValidInt(t *testing.T) {
 		{"123e+", "123", true},
 		{"123de", "123", true},
 	}
-	sc.TruncateAsWarning = false
+	sc.SetTypeFlags(StrictFlags)
 	sc.InSelectStmt = false
 	for _, tt := range tests2 {
-		prefix, err := getValidIntPrefix(sc, tt.origin, false)
+		prefix, err := getValidIntPrefix(sc.TypeCtxOrDefault(), tt.origin, false)
 		if tt.warning {
 			require.True(t, terror.ErrorEqual(err, ErrTruncatedWrongVal))
 		} else {
@@ -966,9 +963,9 @@ func TestGetValidFloat(t *testing.T) {
 		{"9-3", "9"},
 		{"1001001\\u0000\\u0000\\u0000", "1001001"},
 	}
-	sc := stmtctx.NewStmtCtx()
+	ctx := DefaultNoWarningContext
 	for _, tt := range tests {
-		prefix, _ := getValidFloatPrefix(sc, tt.origin, false)
+		prefix, _ := getValidFloatPrefix(ctx, tt.origin, false)
 		require.Equal(t, tt.valid, prefix)
 		_, err := strconv.ParseFloat(prefix, 64)
 		require.NoError(t, err)
@@ -994,7 +991,7 @@ func TestGetValidFloat(t *testing.T) {
 		{"+999.9999e2", "+100000"},
 	}
 	for _, tt := range tests2 {
-		str, err := floatStrToIntStr(sc, tt.origin, tt.origin)
+		str, err := floatStrToIntStr(ctx, tt.origin, tt.origin)
 		require.NoError(t, err)
 		require.Equalf(t, tt.expected, str, "%v, %v", tt.origin, tt.expected)
 	}
@@ -1108,10 +1105,11 @@ func TestConvertJSONToFloat(t *testing.T) {
 		{in: "123.456hello", out: 123.456, ty: JSONTypeCodeString, err: true},
 		{in: "1234", out: 1234, ty: JSONTypeCodeString},
 	}
+	ctx := DefaultNoWarningContext
 	for _, tt := range tests {
 		j := CreateBinaryJSON(tt.in)
 		require.Equal(t, tt.ty, j.TypeCode)
-		casted, err := ConvertJSONToFloat(stmtctx.NewStmtCtx(), j)
+		casted, err := ConvertJSONToFloat(ctx, j)
 		if tt.err {
 			require.Error(t, err, tt)
 		} else {
@@ -1136,10 +1134,11 @@ func TestConvertJSONToDecimal(t *testing.T) {
 		{in: `false`, out: NewDecFromStringForTest("0")},
 		{in: `null`, out: NewDecFromStringForTest("0"), err: true},
 	}
+	ctx := DefaultNoWarningContext
 	for _, tt := range tests {
 		j, err := ParseBinaryJSONFromString(tt.in)
 		require.NoError(t, err)
-		casted, err := ConvertJSONToDecimal(stmtctx.NewStmtCtx(), j)
+		casted, err := ConvertJSONToDecimal(ctx, j)
 		errMsg := fmt.Sprintf("input: %v, casted: %v, out: %v, json: %#v", tt.in, casted, tt.out, j)
 		if tt.err {
 			require.Error(t, err, errMsg)

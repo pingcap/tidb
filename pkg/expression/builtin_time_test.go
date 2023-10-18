@@ -1492,11 +1492,11 @@ func TestStrToDate(t *testing.T) {
 func TestFromDays(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	tests := []struct {
 		day    int64
 		expect string
@@ -1781,7 +1781,7 @@ func TestTimestampDiff(t *testing.T) {
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	sc.IgnoreZeroInDate = true
 	resetStmtContext(ctx)
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
@@ -2721,11 +2721,11 @@ func TestTimeToSec(t *testing.T) {
 func TestSecToTime(t *testing.T) {
 	ctx := createContext(t)
 	stmtCtx := ctx.GetSessionVars().StmtCtx
-	origin := stmtCtx.IgnoreTruncate.Load()
-	stmtCtx.IgnoreTruncate.Store(true)
+	oldTypeFlags := stmtCtx.TypeFlags()
 	defer func() {
-		stmtCtx.IgnoreTruncate.Store(origin)
+		stmtCtx.SetTypeFlags(oldTypeFlags)
 	}()
+	stmtCtx.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	fc := funcs[ast.SecToTime]
 
