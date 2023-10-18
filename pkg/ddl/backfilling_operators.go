@@ -426,6 +426,7 @@ var OperatorCallBackForTest func()
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.String("task", task.String()))
+	defer util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-scan-records-%d", w.seq))()
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {

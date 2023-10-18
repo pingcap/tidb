@@ -44,8 +44,7 @@ import (
 )
 
 type backfillingDispatcherExt struct {
-	d                    *ddl
-	previousSchedulerIDs []string
+	d *ddl
 }
 
 var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
@@ -112,7 +111,15 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return nil, nil
 		}
-		return generateIngestTaskPlan(ctx, h, taskHandle, gTask)
+		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
+		if err != nil {
+			return nil, err
+		}
+		gTaskMeta.PreviousSchedulerIDs = schedulerIDs
+		if err := updateMeta(gTask, &gTaskMeta); err != nil {
+			return nil, err
+		}
+		return generateIngestTaskPlan(ctx, taskHandle, len(schedulerIDs))
 	default:
 		return nil, nil
 	}
@@ -196,15 +203,19 @@ func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(h.previousSchedulerIDs) > 0 {
+	gTaskMeta := BackfillGlobalMeta{}
+	if err := json.Unmarshal(task.Meta, &gTaskMeta); err != nil {
+		return nil, err
+	}
+	if len(gTaskMeta.PreviousSchedulerIDs) > 0 {
 		// Only the nodes that executed step one can have step two.
 		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
-		for _, id := range h.previousSchedulerIDs {
+		for _, id := range gTaskMeta.PreviousSchedulerIDs {
 			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
 				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
 			}
@@ -319,35 +330,26 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 
 func generateIngestTaskPlan(
 	ctx context.Context,
-	h *backfillingDispatcherExt,
 	taskHandle dispatcher.TaskHandle,
-	gTask *proto.Task,
+	ingestInstanceCnt int,
 ) ([][]byte, error) {
 	// We dispatch dummy subtasks because the rest data in local engine will be imported
 	// in the initialization of subtask executor.
-	var ingestSubtaskCnt int
 	if intest.InTest && taskHandle == nil {
 		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
 		if err != nil {
 			return nil, err
 		}
-		ingestSubtaskCnt = len(serverNodes)
-	} else {
-		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
-		if err != nil {
-			return nil, err
-		}
-		h.previousSchedulerIDs = schedulerIDs
-		ingestSubtaskCnt = len(schedulerIDs)
+		ingestInstanceCnt = len(serverNodes)
 	}
 
-	subTaskMetas := make([][]byte, 0, ingestSubtaskCnt)
+	subTaskMetas := make([][]byte, 0, ingestInstanceCnt)
 	dummyMeta := &BackfillSubTaskMeta{}
 	metaBytes, err := json.Marshal(dummyMeta)
 	if err != nil {
 		return nil, err
 	}
-	for i := 0; i < ingestSubtaskCnt; i++ {
+	for i := 0; i < ingestInstanceCnt; i++ {
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil

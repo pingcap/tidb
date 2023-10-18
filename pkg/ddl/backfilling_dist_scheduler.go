@@ -43,6 +43,8 @@ type BackfillGlobalMeta struct {
 	// UseMergeSort indicate whether the backfilling task use merge sort step for global sort.
 	// Merge Sort step aims to support more data.
 	UseMergeSort bool `json:"use_merge_sort"`
+
+	PreviousSchedulerIDs []string `json:"previous_scheduler_ids"`
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
