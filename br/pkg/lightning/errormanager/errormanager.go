@@ -38,6 +38,7 @@ import (
 	tidbtbl "github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -622,10 +623,15 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
+			if !tbl.Meta().PKIsHandle {
+				// for nonclustered PK, need to append handle to decodedData for AddRecord
+				decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
+			}
 			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
 			if err != nil {
 				return errors.Trace(err)
 			}
+
 			// find out all the KV pairs that are contained in the data KV
 			kvPairs := encoder.SessionCtx.TakeKvPairs()
 			for _, kvPair := range kvPairs.Pairs {
