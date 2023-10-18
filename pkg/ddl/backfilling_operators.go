@@ -437,7 +437,7 @@ var OperatorCallBackForTest func()
 func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecordChunk)) {
 	logutil.Logger(w.ctx).Info("start a table scan task",
 		zap.Int("id", task.ID), zap.String("task", task.String()))
-
+	defer util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-scan-records-%d", w.seq))()
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
 		failpoint.Inject("mockScanRecordError", func(_ failpoint.Value) {
@@ -634,8 +634,9 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 		}
 		w.se = session.NewSession(sessCtx)
 	}
-	defer util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-write-local-%d", w.seq))()
+	finish := util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("op-write-local-%d", w.seq))
 	count, nextKey, err := w.WriteLocal(&rs)
+	finish()
 	if err != nil {
 		w.ctx.onError(err)
 		return
@@ -650,6 +651,7 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 	if ResultCounterForTest != nil {
 		ResultCounterForTest.Add(1)
 	}
+	defer util2.InjectSpan(w.copCtx.GetBase().JobID, fmt.Sprintf("send-write-result-%d", w.seq))()
 	send(result)
 }
 

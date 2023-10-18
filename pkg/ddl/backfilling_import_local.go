@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
+	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
@@ -48,6 +49,7 @@ func newImportFromLocalStepExecutor(
 
 func (i *localImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("local import executor init subtask exec env")
+	defer util.InjectSpan(i.jobID, "stage-import-local")()
 	for _, index := range i.indexes {
 		_, _, err := i.bc.Flush(index.ID, ingest.FlushModeForceGlobal)
 		if err != nil {

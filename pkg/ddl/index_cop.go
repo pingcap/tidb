@@ -139,7 +139,6 @@ func (c *copReqSender) run() {
 func scanRecords(seq int, p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
 	logutil.Logger(p.ctx).Info("start a cop-request task",
 		zap.Int("id", task.id), zap.String("task", task.String()))
-	defer util2.InjectSpan(p.copCtx.GetBase().JobID, fmt.Sprintf("op-scan-records-%d", seq))()
 	return wrapInBeginRollback(se, func(startTS uint64) error {
 		rs, err := buildTableScan(seq, p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
 		if err != nil {
