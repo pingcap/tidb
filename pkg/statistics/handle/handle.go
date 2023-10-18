@@ -220,29 +220,6 @@ func (h *Handle) FlushStats() {
 	}
 }
 
-// SaveTableStatsToStorage saves the stats of a table to storage.
-func (h *Handle) SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error) {
-	return h.callWithSCtx(func(sctx sessionctx.Context) error {
-		return SaveTableStatsToStorage(sctx, results, analyzeSnapshot, source)
-	})
-}
-
-// SaveTableStatsToStorage saves the stats of a table to storage.
-func SaveTableStatsToStorage(sctx sessionctx.Context, results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) error {
-	statsVer, err := storage.SaveTableStatsToStorage(sctx, results, analyzeSnapshot)
-	if err == nil && statsVer != 0 {
-		tableID := results.TableID.GetStatisticsID()
-		if err1 := history.RecordHistoricalStatsMeta(sctx, tableID, statsVer, source); err1 != nil {
-			logutil.BgLogger().Error("record historical stats meta failed",
-				zap.Int64("table-id", tableID),
-				zap.Uint64("version", statsVer),
-				zap.String("source", source),
-				zap.Error(err1))
-		}
-	}
-	return err
-}
-
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
 func (h *Handle) BuildExtendedStats(tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (es *statistics.ExtendedStatsColl, err error) {
 	err = h.callWithSCtx(func(sctx sessionctx.Context) error {

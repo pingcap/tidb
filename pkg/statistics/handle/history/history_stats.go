@@ -62,16 +62,18 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 }
 
 // RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history table.
-func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string) {
+func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool) {
 	if version == 0 {
 		return
 	}
-	tbl, ok := sh.statsHandle.Get(tableID)
-	if !ok {
-		return
-	}
-	if !tbl.IsInitialized() {
-		return
+	if !enforce {
+		tbl, ok := sh.statsHandle.Get(tableID)
+		if !ok {
+			return
+		}
+		if !tbl.IsInitialized() {
+			return
+		}
 	}
 	err := util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return RecordHistoricalStatsMeta(sctx, tableID, version, source)

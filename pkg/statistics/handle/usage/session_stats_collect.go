@@ -120,7 +120,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 	statsVersion := uint64(0)
 	defer func() {
 		if err == nil && statsVersion != 0 {
-			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats")
+			s.statsHandle.RecordHistoricalStatsMeta(physicalTableID, statsVersion, "flush stats", false)
 		}
 	}()
 	if delta.Count == 0 {
