@@ -94,7 +94,7 @@ type StatsUsage interface {
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
 	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string)
+	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
