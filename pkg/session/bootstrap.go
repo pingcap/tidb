@@ -2838,6 +2838,7 @@ func upgradeToVer177(s Session, ver int64) {
 	if ver >= version177 {
 		return
 	}
+	// ignore error when upgrading from v7.4 to higher version.
 	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
 }
 
