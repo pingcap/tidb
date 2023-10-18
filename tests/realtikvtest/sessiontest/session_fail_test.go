@@ -332,6 +332,7 @@ func TestBatchClientDataRace(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table if not exists t (a int primary key, b int)")
 
 	var wg sync.WaitGroup
