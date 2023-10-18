@@ -2085,5 +2085,7 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 	ver, err = getBootstrapVersion(seV175)
 	require.NoError(t, err)
 	require.Less(t, int64(ver175), ver)
+	MustExec(t, seV175, "SELECT * from mysql.tidb_global_task_history")
+	MustExec(t, seV175, "SELECT * from mysql.dist_framework_meta")
 	dom.Close()
 }
