@@ -383,6 +383,11 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 	for i, wStream := range clients {
 		resp, closeErr := wStream.CloseAndRecv()
 		if closeErr != nil {
+			log.FromContext(ctx).Warn("lance test, close write stream failed",
+				log.ShortError(closeErr),
+				zap.Bool("ctx.Err() == nil", ctx.Err() == nil),
+				zap.Bool("wstream.Context().Err() == nil", wStream.Context().Err() == nil),
+			)
 			return annotateErr(closeErr, allPeers[i])
 		}
 		if resp.Error != nil {
