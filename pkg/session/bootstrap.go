@@ -1008,7 +1008,7 @@ const (
 	version175 = 175
 
 	// version 176
-	//   add `mysql.tidb_global_task_history`, `mysql.dist_framework_meta`
+	//   add `mysql.tidb_global_task_history`
 	version176 = 176
 
 	// version 177
@@ -2833,7 +2833,6 @@ func upgradeToVer176(s Session, ver int64) {
 		return
 	}
 	mustExecute(s, CreateGlobalTaskHistory)
-	mustExecute(s, CreateDistFrameworkMeta)
 }
 
 // for users upgrade from v7.4 to higher version, make sure dist_framework_meta exists.
