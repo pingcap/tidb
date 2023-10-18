@@ -280,8 +280,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		fms = append(fms, collectors[i].FMSketch)
 	}
 	if needExtStats {
-		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, collectors)
+		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, collectors)
 		if err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
