@@ -268,8 +268,11 @@ func (h *backfillingDispatcherExt) generateGlobalSortIngestPlan(
 			}
 			metaArr = append(metaArr, metaBytes)
 			if len(endKeyOfGroup) == 0 {
+				logutil.BgLogger().Info("ywq test reach here")
 				meta.SubtaskDispatched = true
-				return nil, nil
+				meta.StartKey = h.startKey
+				meta.EndKey = h.endKey
+				return metaArr, nil
 			}
 
 			h.startKey = h.endKey
@@ -286,21 +289,24 @@ func (h *backfillingDispatcherExt) generateGlobalSortIngestPlan(
 }
 
 func (h *backfillingDispatcherExt) NextStepSubtaskDispatched(task *proto.Task) bool {
-	var meta BackfillGlobalMeta
-	if err := json.Unmarshal(task.Meta, &meta); err != nil {
-		logutil.BgLogger().Info(
-			"unmarshal task meta met error",
-			zap.String("category", "ddl"),
-			zap.Error(err))
-	}
-
-	if meta.SubtaskDispatched {
-		err := h.splitter.Close()
-		if err != nil {
-			logutil.BgLogger().Error("failed to close range splitter", zap.Error(err))
+	if task.Step == proto.StepThree {
+		var meta BackfillGlobalMeta
+		if err := json.Unmarshal(task.Meta, &meta); err != nil {
+			logutil.BgLogger().Info(
+				"unmarshal task meta met error",
+				zap.String("category", "ddl"),
+				zap.Error(err))
 		}
+
+		if meta.SubtaskDispatched {
+			err := h.splitter.Close()
+			if err != nil {
+				logutil.BgLogger().Error("failed to close range splitter", zap.Error(err))
+			}
+		}
+		return meta.SubtaskDispatched
 	}
-	return meta.SubtaskDispatched
+	return true
 }
 
 func skipMergeSort(stats []external.MultipleFilesStat) bool {
