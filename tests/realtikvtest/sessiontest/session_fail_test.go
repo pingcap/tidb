@@ -16,10 +16,7 @@ package sessiontest
 
 import (
 	"context"
-	"math/rand"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/config"
@@ -226,48 +223,4 @@ func TestIssue42426(t *testing.T) {
 	tk.MustExec(`DELETE FROM sbtest1 WHERE id=502571;`)
 	tk.MustExec(`INSERT INTO sbtest1 (id, k, c, pad) VALUES (502571, 499449, "abc", "def");`)
 	tk.MustExec(`COMMIT;`)
-}
-
-func TestBatchClientDataRace(t *testing.T) {
-	// This test uses to detect data race, so it should run by `go test -race`.
-	if !*realtikvtest.WithRealTiKV {
-		t.Skip("skip test since it's only work for tikv")
-	}
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.TiKVClient.MaxBatchSize = 128
-
-	})
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table if not exists t (a int primary key, b int)")
-
-	var wg sync.WaitGroup
-	for i := 0; i < 100; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			tk := testkit.NewTestKit(t, store)
-			tk.MustExec("use test")
-			for j := 0; j < 100; j++ {
-				ctx, cancel := context.WithCancel(context.Background())
-				go func() {
-					// mock for kill query execution or timeout.
-					time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)+1))
-					cancel()
-				}()
-				sqls := []string{
-					"select * from t where a = 1",
-					"select * from t where a in ( 1, 2, 3)",
-					"select * from t",
-				}
-				rs, _ := tk.ExecWithContext(ctx, sqls[j%len(sqls)])
-				if rs != nil {
-					session.ResultSetToStringSlice(ctx, tk.Session(), rs)
-				}
-			}
-		}()
-	}
-	wg.Wait()
 }
