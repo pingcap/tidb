@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/tiancaiamao/gp"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -76,7 +75,6 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
 	histogramAndTopn    chan mergeItem[*StatsWrapper]
-	gpool               *gp.Pool
 	allPartitionStats   map[int64]*statistics.Table
 	PartitionDefinition map[int64]model.PartitionDefinition
 	tableInfo           map[int64]*model.TableInfo
@@ -462,7 +460,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			var poppedTopN []statistics.TopNMeta
 			var allhg []*statistics.Histogram
 			wrapper := item.item
-			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.gpool, sctx, wrapper,
+			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.statsHandle.GPool(), sctx, wrapper,
 				tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
 			if err != nil {
 				return err
