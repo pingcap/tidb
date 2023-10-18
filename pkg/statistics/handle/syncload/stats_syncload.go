@@ -105,7 +105,7 @@ func (s *statsSyncLoad) SendLoadRequests(sc *stmtctx.StatementContext, neededHis
 }
 
 // SyncWaitStatsLoad sync waits loading of neededColumns and return false if timeout
-func (s *statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
+func (*statsSyncLoad) SyncWaitStatsLoad(sc *stmtctx.StatementContext) error {
 	if len(sc.StatsLoad.NeededItems) <= 0 {
 		return nil
 	}
@@ -407,7 +407,7 @@ func (s *statsSyncLoad) drainColTask(exit chan struct{}) (*utilstats.NeededItemT
 }
 
 // writeToTimeoutChan writes in a nonblocking way, and if the channel queue is full, it's ok to drop the task.
-func (s *statsSyncLoad) writeToTimeoutChan(taskCh chan *utilstats.NeededItemTask, task *utilstats.NeededItemTask) {
+func (*statsSyncLoad) writeToTimeoutChan(taskCh chan *utilstats.NeededItemTask, task *utilstats.NeededItemTask) {
 	select {
 	case taskCh <- task:
 	default:
@@ -415,7 +415,7 @@ func (s *statsSyncLoad) writeToTimeoutChan(taskCh chan *utilstats.NeededItemTask
 }
 
 // writeToChanWithTimeout writes a task to a channel and blocks until timeout.
-func (s *statsSyncLoad) writeToChanWithTimeout(taskCh chan *utilstats.NeededItemTask, task *utilstats.NeededItemTask, timeout time.Duration) error {
+func (*statsSyncLoad) writeToChanWithTimeout(taskCh chan *utilstats.NeededItemTask, task *utilstats.NeededItemTask, timeout time.Duration) error {
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
@@ -427,7 +427,7 @@ func (s *statsSyncLoad) writeToChanWithTimeout(taskCh chan *utilstats.NeededItem
 }
 
 // writeToResultChan safe-writes with panic-recover so one write-fail will not have big impact.
-func (s *statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtctx.StatsLoadResult) {
+func (*statsSyncLoad) writeToResultChan(resultCh chan stmtctx.StatsLoadResult, rs stmtctx.StatsLoadResult) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("writeToResultChan panicked", zap.Any("error", r), zap.Stack("stack"))
