@@ -24,6 +24,10 @@ WAIT_NOT_DONE_CODE=51
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
+# start a new cluster
+echo "restart a services"
+restart_services
+
 # prepare the data
 echo "prepare the data"
 run_sql_file $CUR/prepare_data/delete_range.sql
