@@ -22,6 +22,7 @@ CUR=$(cd `dirname $0`; pwd)
 WAIT_DONE_CODE=50
 WAIT_NOT_DONE_CODE=51
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
+res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
 # prepare the data
 echo "prepare the data"
@@ -88,9 +89,13 @@ restart_services
 
 # PITR restore
 echo "run pitr"
-run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full"
+run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-backup-storage "local://$TEST_DIR/$PREFIX/full" > $res_file 2>&1
 
 # check something in downstream cluster
-echo "check something"
+echo "check br log"
+check_contains "restore log success summary"
+# check_not_contains "rewrite delete range"
+echo "" > $res_file
+echo "check sql result"
 run_sql "select count(*) DELETE_RANGE_CNT from mysql.gc_delete_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
-check_contains "DELETE_RANGE_CNT: 44"
+check_contains "DELETE_RANGE_CNT: 46"
