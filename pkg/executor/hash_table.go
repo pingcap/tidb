@@ -156,7 +156,7 @@ func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, h
 func (c *hashRowContainer) GetOneMatchedRow(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (*chunk.Row, error) {
 	var err error
 	innerEntry := c.hashTable.Get(probeKey)
-	if innerEntry != nil {
+	if innerEntry == nil {
 		return nil, err
 	}
 	var matchedRow chunk.Row
