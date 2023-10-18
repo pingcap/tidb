@@ -968,7 +968,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			break
 		}
 		step++
-		head := heap.Pop(&mergingHeap).(*heapItem)
+		head := mergingHeap[0]
 		headTopN := head.item
 		if head.nextPosInTopN < topNs[head.idx].Num() {
 			head.item = &topNs[head.idx].TopN[head.nextPosInTopN]
@@ -976,7 +976,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				logutil.BgLogger().Warn("merging topn", zap.String("current head of the heap each 1w step", fmt.Sprintf("topn is from partition %d, position: %d", head.idx, head.nextPosInTopN-1)))
 			}
 			head.nextPosInTopN++
-			heap.Push(&mergingHeap, head)
+			heap.Fix(&mergingHeap, 0)
 		}
 		// The maintained one is cleared before. Set it and goto next round.
 		if cur.cleared {
