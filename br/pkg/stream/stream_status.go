@@ -431,10 +431,8 @@ func (ctl *StatusController) PrintStatusOfTask(ctx context.Context, name string)
 			}
 			if checkpointTime.After(nowTime) {
 				os.Exit(50)
-			} else {
-				os.Exit(51)
 			}
-			failpoint.Return(nil)
+			os.Exit(51)
 		}
 	})
 	ctl.printToView(tasks)
