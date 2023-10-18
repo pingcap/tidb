@@ -357,6 +357,7 @@ func TestBatchClientDataRace(t *testing.T) {
 				rs, _ := tk.ExecWithContext(ctx, sqls[j%len(sqls)])
 				if rs != nil {
 					session.ResultSetToStringSlice(ctx, tk.Session(), rs)
+					rs.Close()
 				}
 			}
 		}()
