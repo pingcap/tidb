@@ -82,6 +82,8 @@ type Extension interface {
 	// if task runs successfully, it should go from StepInit to business steps,
 	// then to StepDone, then dispatcher will mark it as finished.
 	GetNextStep(h TaskHandle, task *proto.Task) proto.Step
+
+	NextStepSubtaskDispatched(*proto.Task) bool
 }
 
 // dispatcherFactoryFn is used to create a dispatcher.

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler/execute"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -43,6 +44,11 @@ type BackfillGlobalMeta struct {
 	// UseMergeSort indicate whether the backfilling task use merge sort step for global sort.
 	// Merge Sort step aims to support more data.
 	UseMergeSort bool `json:"use_merge_sort"`
+
+	// for dynamic dispatch of stepImport
+	StartKey          kv.Key
+	EndKey            kv.Key
+	SubtaskDispatched bool
 }
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.

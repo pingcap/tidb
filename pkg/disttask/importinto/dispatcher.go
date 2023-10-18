@@ -322,6 +322,10 @@ func (dsp *ImportDispatcherExt) OnNextSubtasksBatch(
 	return metaBytes, nil
 }
 
+func (dsp *ImportDispatcherExt) NextStepSubtaskDispatched(task *proto.Task) bool {
+	return true
+}
+
 // OnErrStage implements dispatcher.Extension interface.
 func (dsp *ImportDispatcherExt) OnErrStage(ctx context.Context, handle dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) ([]byte, error) {
 	logger := logutil.BgLogger().With(

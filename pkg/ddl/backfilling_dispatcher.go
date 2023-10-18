@@ -46,6 +46,13 @@ import (
 type backfillingDispatcherExt struct {
 	d                    *ddl
 	previousSchedulerIDs []string
+	// for global sort
+	splitter    *external.RangeSplitter
+	lastKey     kv.Key
+	startKey    kv.Key
+	endKey      kv.Key
+	totalSize   uint64
+	instanceCnt int64
 }
 
 var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
@@ -107,7 +114,20 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 			if gTaskMeta.UseMergeSort {
 				prevStep = proto.StepTwo
 			}
-			return generateGlobalSortIngestPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
+			if h.splitter == nil {
+				err := h.initRangeSplitter(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
+				if err != nil {
+					return nil, err
+				}
+			}
+			res, err := h.generateGlobalSortIngestPlan(ctx, &gTaskMeta)
+			if err != nil {
+				return nil, err
+			}
+			if err := updateMeta(gTask, &gTaskMeta); err != nil {
+				return nil, err
+			}
+			return res, nil
 		}
 		if tblInfo.Partition != nil {
 			return nil, nil
@@ -127,7 +147,7 @@ func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
 	return nil
 }
 
-func (*backfillingDispatcherExt) GetNextStep(
+func (h *backfillingDispatcherExt) GetNextStep(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 ) proto.Step {
@@ -178,6 +198,108 @@ func (*backfillingDispatcherExt) GetNextStep(
 		// current step should be proto.StepThree
 		return proto.StepDone
 	}
+}
+
+func (h *backfillingDispatcherExt) initRangeSplitter(
+	ctx context.Context,
+	taskHandle dispatcher.TaskHandle,
+	task *proto.Task,
+	jobID int64,
+	cloudStorageURI string,
+	step proto.Step,
+) error {
+	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
+	if err != nil {
+		return err
+	}
+	h.lastKey = lastKey
+	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
+	if err != nil {
+		return err
+	}
+	h.instanceCnt = int64(len(instanceIDs))
+	h.splitter, err = getRangeSplitter(
+		ctx, cloudStorageURI, jobID, int64(totalSize), h.instanceCnt, dataFiles, statFiles)
+	h.startKey = firstKey
+	return err
+}
+
+func (h *backfillingDispatcherExt) generateGlobalSortIngestPlan(
+	ctx context.Context,
+	meta *BackfillGlobalMeta,
+) ([][]byte, error) {
+	metaArr := make([][]byte, 0, 16)
+	cnt := 0
+	for {
+		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := h.splitter.SplitOneRangesGroup()
+		if err != nil {
+			return nil, err
+		}
+		if len(endKeyOfGroup) == 0 {
+			h.endKey = h.lastKey.Next()
+		} else {
+			h.endKey = kv.Key(endKeyOfGroup).Clone()
+		}
+		logutil.Logger(ctx).Info("split subtask range",
+			zap.String("startKey", hex.EncodeToString(h.startKey)),
+			zap.String("endKey", hex.EncodeToString(h.endKey)))
+		if h.startKey.Cmp(h.endKey) >= 0 {
+			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
+				hex.EncodeToString(h.startKey), hex.EncodeToString(h.endKey))
+		}
+		if meta.StartKey != nil && h.startKey.Cmp(meta.StartKey) < 0 {
+			// update startKey.
+			h.startKey = h.endKey
+		} else {
+			m := &BackfillSubTaskMeta{
+				SortedKVMeta: external.SortedKVMeta{
+					MinKey:      h.startKey,
+					MaxKey:      h.endKey,
+					DataFiles:   dataFiles,
+					StatFiles:   statFiles,
+					TotalKVSize: h.totalSize / uint64(h.instanceCnt),
+				},
+				RangeSplitKeys: rangeSplitKeys,
+			}
+			metaBytes, err := json.Marshal(m)
+			if err != nil {
+				return nil, err
+			}
+			metaArr = append(metaArr, metaBytes)
+			if len(endKeyOfGroup) == 0 {
+				meta.SubtaskDispatched = true
+				return nil, nil
+			}
+
+			h.startKey = h.endKey
+			cnt++
+			// TODO: deside the batch cnt.
+			if cnt == 16 {
+				// update StartKey and EndKey in meta
+				meta.StartKey = h.startKey
+				meta.EndKey = h.endKey
+				return metaArr, nil
+			}
+		}
+	}
+}
+
+func (h *backfillingDispatcherExt) NextStepSubtaskDispatched(task *proto.Task) bool {
+	var meta BackfillGlobalMeta
+	if err := json.Unmarshal(task.Meta, &meta); err != nil {
+		logutil.BgLogger().Info(
+			"unmarshal task meta met error",
+			zap.String("category", "ddl"),
+			zap.Error(err))
+	}
+
+	if meta.SubtaskDispatched {
+		err := h.splitter.Close()
+		if err != nil {
+			logutil.BgLogger().Error("failed to close range splitter", zap.Error(err))
+		}
+	}
+	return meta.SubtaskDispatched
 }
 
 func skipMergeSort(stats []external.MultipleFilesStat) bool {
@@ -351,76 +473,6 @@ func generateIngestTaskPlan(
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
-}
-
-func generateGlobalSortIngestPlan(
-	ctx context.Context,
-	taskHandle dispatcher.TaskHandle,
-	task *proto.Task,
-	jobID int64,
-	cloudStorageURI string,
-	step proto.Step,
-) ([][]byte, error) {
-	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
-	if err != nil {
-		return nil, err
-	}
-	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		err := splitter.Close()
-		if err != nil {
-			logutil.Logger(ctx).Error("failed to close range splitter", zap.Error(err))
-		}
-	}()
-
-	metaArr := make([][]byte, 0, 16)
-	startKey := firstKey
-	var endKey kv.Key
-	for {
-		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
-		if err != nil {
-			return nil, err
-		}
-		if len(endKeyOfGroup) == 0 {
-			endKey = lastKey.Next()
-		} else {
-			endKey = kv.Key(endKeyOfGroup).Clone()
-		}
-		logutil.Logger(ctx).Info("split subtask range",
-			zap.String("startKey", hex.EncodeToString(startKey)),
-			zap.String("endKey", hex.EncodeToString(endKey)))
-		if startKey.Cmp(endKey) >= 0 {
-			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
-				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
-		}
-		m := &BackfillSubTaskMeta{
-			SortedKVMeta: external.SortedKVMeta{
-				MinKey:      startKey,
-				MaxKey:      endKey,
-				DataFiles:   dataFiles,
-				StatFiles:   statFiles,
-				TotalKVSize: totalSize / uint64(len(instanceIDs)),
-			},
-			RangeSplitKeys: rangeSplitKeys,
-		}
-		metaBytes, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		metaArr = append(metaArr, metaBytes)
-		if len(endKeyOfGroup) == 0 {
-			return metaArr, nil
-		}
-		startKey = endKey
-	}
 }
 
 func generateMergePlan(

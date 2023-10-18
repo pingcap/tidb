@@ -487,10 +487,10 @@ func (d *BaseDispatcher) dispatchSubTask4Revert(meta []byte) error {
 	return d.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
 
-func (*BaseDispatcher) nextStepSubtaskDispatched(*proto.Task) bool {
+func (d *BaseDispatcher) nextStepSubtaskDispatched(task *proto.Task) bool {
 	// TODO: will implement it when we we support dispatch subtask by batch.
 	// since subtask meta might be too large to save in one transaction.
-	return true
+	return d.NextStepSubtaskDispatched(task)
 }
 
 func (d *BaseDispatcher) onNextStage() (err error) {
