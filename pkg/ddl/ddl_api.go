@@ -1352,7 +1352,7 @@ func getDefaultValue(ctx sessionctx.Context, col *table.Column, option *ast.Colu
 			return str, false, err
 		}
 		// For other kind of fields (e.g. INT), we supply its integer as string value.
-		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx)
+		value, err := v.GetBinaryLiteral().ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		if err != nil {
 			return nil, false, err
 		}

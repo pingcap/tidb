@@ -344,7 +344,8 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 
 	d, _, err = ParseDuration(sc, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
-		err = sc.TypeCtx.HandleTruncate(err)
+		typeCtx := sc.TypeCtx()
+		err = typeCtx.HandleTruncate(err)
 	}
 	return d, t, true, errors.Trace(err)
 }
@@ -571,13 +572,13 @@ func ConvertJSONToInt64(sc *stmtctx.StatementContext, j BinaryJSON, unsigned boo
 func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool, tp byte) (int64, error) {
 	switch j.TypeCode {
 	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
-		return 0, sc.TypeCtx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
 		case JSONLiteralFalse:
 			return 0, nil
 		case JSONLiteralNil:
-			return 0, sc.TypeCtx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
+			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", j.String()))
 		default:
 			return 1, nil
 		}
