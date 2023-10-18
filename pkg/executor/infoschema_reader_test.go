@@ -44,6 +44,7 @@ func TestInspectionTables(t *testing.T) {
 		"pd,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
 		"tidb,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,1001",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,mock-version,mock-githash,0",
+		"tiproxy,127.0.0.1:6000,127.0.0.1:3380,mock-version,mock-githash,0",
 	}
 	fpName := "github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo"
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
@@ -54,6 +55,7 @@ func TestInspectionTables(t *testing.T) {
 		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
+		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
 	))
 
 	// enable inspection mode
@@ -63,9 +65,10 @@ func TestInspectionTables(t *testing.T) {
 		"pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
+		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
 	))
 	require.NoError(t, inspectionTableCache["cluster_info"].Err)
-	require.Len(t, inspectionTableCache["cluster_info"].Rows, 3)
+	require.Len(t, inspectionTableCache["cluster_info"].Rows, 4)
 
 	// check whether is obtain data from cache at the next time
 	inspectionTableCache["cluster_info"].Rows[0][0].SetString("modified-pd", mysql.DefaultCollationName)
@@ -73,6 +76,7 @@ func TestInspectionTables(t *testing.T) {
 		"modified-pd 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
 		"tidb 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 1001",
 		"tikv 127.0.0.1:11080 127.0.0.1:10080 mock-version mock-githash 0",
+		"tiproxy 127.0.0.1:6000 127.0.0.1:3380 mock-version mock-githash 0",
 	))
 	tk.Session().GetSessionVars().InspectionTableCache = nil
 }
