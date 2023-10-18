@@ -1008,11 +1008,12 @@ const (
 	version175 = 175
 
 	// version 176
-	// add `mysql.tidb_global_task_history`, `mysql.dist_framework_meta`
+	//   add `mysql.tidb_global_task_history`, `mysql.dist_framework_meta`
 	version176 = 176
 
 	// version 177
-	// add `mysql.dist_framework_meta`
+	//   add `mysql.dist_framework_meta`
+	//   make sure upgrading from v7.4 to higher version, `mysql.dist_framework_meta` exists.
 	version177 = 177
 )
 
@@ -1408,6 +1409,21 @@ func upgradeToVer9(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.user ADD COLUMN `Trigger_priv` ENUM('N','Y') CHARACTER SET utf8 NOT NULL DEFAULT 'N' AFTER `Create_user_priv`", infoschema.ErrColumnExists)
 	// For reasons of compatibility, set the non-exists privilege column value to 'Y', as TiDB doesn't check them in older versions.
 	mustExecute(s, "UPDATE HIGH_PRIORITY mysql.user SET Trigger_priv='Y'")
+}
+
+func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
+	_, err := s.ExecuteInternal(ctx, sql)
+	defer cancel()
+	for _, ignorableErr := range ignorableErrs {
+		if terror.ErrorEqual(err, ignorableErr) {
+			return
+		}
+	}
+	if err != nil {
+		logutil.BgLogger().Fatal("doReentrantDDL error", zap.Error(err))
+	}
 }
 
 func upgradeToVer10(s Session, ver int64) {
@@ -2820,6 +2836,7 @@ func upgradeToVer176(s Session, ver int64) {
 	mustExecute(s, CreateDistFrameworkMeta)
 }
 
+// for users upgrade from v7.4 to higher version, make sure dist_framework_meta exists.
 func upgradeToVer177(s Session, ver int64) {
 	if ver >= version177 {
 		return
@@ -3100,20 +3117,7 @@ func doDMLWorks(s Session) {
 		logutil.BgLogger().Fatal("doDMLWorks failed", zap.Error(err))
 	}
 }
-func doReentrantDDL(s Session, sql string, ignorableErrs ...error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
-	_, err := s.ExecuteInternal(ctx, sql)
-	defer cancel()
-	for _, ignorableErr := range ignorableErrs {
-		if terror.ErrorEqual(err, ignorableErr) {
-			return
-		}
-	}
-	if err != nil {
-		logutil.BgLogger().Fatal("doReentrantDDL error", zap.Error(err))
-	}
-}
+
 func mustExecute(s Session, sql string, args ...interface{}) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBootstrap)
