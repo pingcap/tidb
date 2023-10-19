@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -79,8 +81,11 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	PartitionDefinition map[int64]model.PartitionDefinition
 	tableInfo           map[int64]*model.TableInfo
 	// key is partition id and histID
-	skipPartition             map[skipItem]struct{}
-	exitWhenErrChan           chan struct{}
+	skipPartition map[skipItem]struct{}
+	// ioWorker meet error, it will close this channel to notify cpuWorker.
+	ioWorkerExitWhenErrChan chan struct{}
+	// cpuWorker exit, it will close this channel to notify ioWorker.
+	cpuWorkerExitChan         chan struct{}
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
@@ -97,20 +102,20 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	is infoschema.InfoSchema) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
-		statsHandle:         statsHandle,
-		cmsketch:            make(chan mergeItem[*statistics.CMSketch], 5),
-		fmsketch:            make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:    make(chan mergeItem[*StatsWrapper]),
-		PartitionDefinition: make(map[int64]model.PartitionDefinition),
-		tableInfo:           make(map[int64]*model.TableInfo),
-		partitionIDs:        make([]int64, 0, partitionNum),
-		exitWhenErrChan:     make(chan struct{}),
-		skipPartition:       make(map[skipItem]struct{}),
-		allPartitionStats:   make(map[int64]*statistics.Table),
-		globalTableInfo:     globalTableInfo,
-		histIDs:             histIDs,
-		is:                  is,
-		partitionNum:        partitionNum,
+		statsHandle:             statsHandle,
+		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
+		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
+		histogramAndTopn:        make(chan mergeItem[*StatsWrapper]),
+		PartitionDefinition:     make(map[int64]model.PartitionDefinition),
+		tableInfo:               make(map[int64]*model.TableInfo),
+		partitionIDs:            make([]int64, 0, partitionNum),
+		ioWorkerExitWhenErrChan: make(chan struct{}),
+		skipPartition:           make(map[skipItem]struct{}),
+		allPartitionStats:       make(map[int64]*statistics.Table),
+		globalTableInfo:         globalTableInfo,
+		histIDs:                 histIDs,
+		is:                      is,
+		partitionNum:            partitionNum,
 	}, nil
 }
 
@@ -218,25 +223,26 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissin
 func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			close(a.exitWhenErrChan)
+			logutil.BgLogger().Warn("ioWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			close(a.ioWorkerExitWhenErrChan)
 			err = errors.New(fmt.Sprint(r))
 		}
 	}()
 	err = a.loadFmsketch(sctx, isIndex)
 	if err != nil {
-		close(a.exitWhenErrChan)
+		close(a.ioWorkerExitWhenErrChan)
 		return err
 	}
 	close(a.fmsketch)
 	err = a.loadCMsketch(sctx, isIndex)
 	if err != nil {
-		close(a.exitWhenErrChan)
+		close(a.ioWorkerExitWhenErrChan)
 		return err
 	}
 	close(a.cmsketch)
 	err = a.loadHistogramAndTopN(sctx, a.globalTableInfo, isIndex)
 	if err != nil {
-		close(a.exitWhenErrChan)
+		close(a.ioWorkerExitWhenErrChan)
 		return err
 	}
 	close(a.histogramAndTopn)
@@ -246,13 +252,14 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			close(a.exitWhenErrChan)
+			logutil.BgLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
 			err = errors.New(fmt.Sprint(r))
 		}
+		close(a.cpuWorkerExitChan)
 	}()
 	a.dealFMSketch()
 	select {
-	case <-a.exitWhenErrChan:
+	case <-a.ioWorkerExitWhenErrChan:
 		return nil
 	default:
 		for i := 0; i < a.globalStats.Num; i++ {
@@ -267,10 +274,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 	}
 	err = a.dealCMSketch()
 	if err != nil {
+		logutil.BgLogger().Warn("dealCMSketch failed", zap.Error(err))
 		return err
 	}
 	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 	if err != nil {
+		logutil.BgLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -337,7 +346,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 			case a.fmsketch <- mergeItem[*statistics.FMSketch]{
 				fmsketch, i,
 			}:
-			case <-a.exitWhenErrChan:
+			case <-a.cpuWorkerExitChan:
+				logutil.BgLogger().Warn("ioWorker find CPUWorker exit")
 				return nil
 			}
 		}
@@ -367,7 +377,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 			case a.cmsketch <- mergeItem[*statistics.CMSketch]{
 				cmsketch, i,
 			}:
-			case <-a.exitWhenErrChan:
+			case <-a.cpuWorkerExitChan:
+				logutil.BgLogger().Warn("ioWorker find CPUWorker exit")
 				return nil
 			}
 		}
@@ -402,7 +413,8 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 		case a.histogramAndTopn <- mergeItem[*StatsWrapper]{
 			NewStatsWrapper(hists, topn), i,
 		}:
-		case <-a.exitWhenErrChan:
+		case <-a.cpuWorkerExitChan:
+			logutil.BgLogger().Warn("ioWorker find CPUWorker exit")
 			return nil
 		}
 	}
@@ -422,13 +434,18 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealFMSketch() {
 			} else {
 				a.globalStats.Fms[fms.idx].MergeFMSketch(fms.item)
 			}
-		case <-a.exitWhenErrChan:
+		case <-a.ioWorkerExitWhenErrChan:
 			return
 		}
 	}
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
+	failpoint.Inject("dealCMSketchErr", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			failpoint.Return(errors.New("dealCMSketch returned error"))
+		}
+	})
 	for {
 		select {
 		case cms, ok := <-a.cmsketch:
@@ -443,13 +460,18 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealCMSketch() error {
 					return err
 				}
 			}
-		case <-a.exitWhenErrChan:
+		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}
 	}
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
+	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))
+		}
+	})
 	for {
 		select {
 		case item, ok := <-a.histogramAndTopn:
@@ -478,7 +500,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 				a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
 			}
 			a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
-		case <-a.exitWhenErrChan:
+		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}
 	}
