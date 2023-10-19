@@ -6,7 +6,6 @@ go_library(
         "bootstrap.go",
         "ddl.go",
         "handle.go",
-        "handle_hist.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle",
     visibility = ["//visibility:public"],
@@ -15,8 +14,11 @@ go_library(
         "//pkg/ddl/util",
         "//pkg/infoschema",
         "//pkg/kv",
+<<<<<<< HEAD
         "//pkg/metrics",
         "//pkg/parser/ast",
+=======
+>>>>>>> 6dea081b047 (planner: move more methods from StatsHandle to its sub-packages (#47760))
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
@@ -31,15 +33,14 @@ go_library(
         "//pkg/statistics/handle/history",
         "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/syncload",
         "//pkg/statistics/handle/usage",
         "//pkg/statistics/handle/util",
         "//pkg/types",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tiancaiamao_gp//:gp",
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_zap//:zap",
@@ -51,27 +52,34 @@ go_test(
     timeout = "short",
     srcs = [
         "ddl_test.go",
+<<<<<<< HEAD
         "gc_test.go",
         "handle_hist_test.go",
+=======
+>>>>>>> 6dea081b047 (planner: move more methods from StatsHandle to its sub-packages (#47760))
         "main_test.go",
     ],
     embed = [":handle"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 13,
+=======
+    shard_count = 4,
+>>>>>>> 6dea081b047 (planner: move more methods from StatsHandle to its sub-packages (#47760))
     deps = [
-        "//pkg/config",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
+<<<<<<< HEAD
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
+=======
+>>>>>>> 6dea081b047 (planner: move more methods from StatsHandle to its sub-packages (#47760))
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
-        "//pkg/util/mathutil",
         "//pkg/util/mock",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
