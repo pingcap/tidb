@@ -26,7 +26,6 @@ type preAllocKVBuf struct {
 	curBlock    []byte
 	curBlockIdx int
 	curIdx      int
-	cap         int
 }
 
 func newPreAllocKVBuf(memLimit uint64, blockSize int) *preAllocKVBuf {
@@ -43,14 +42,13 @@ func newPreAllocKVBuf(memLimit uint64, blockSize int) *preAllocKVBuf {
 }
 
 func (b *preAllocKVBuf) Alloc(s int) (blockIdx int32, res []byte, offset int32, allocated bool) {
-	if b.cap-b.curIdx < s {
+	if b.blockSize-b.curIdx < s {
 		if b.curBlockIdx+1 >= len(b.blocks) {
 			return
 		}
 		b.curBlockIdx++
 		b.curBlock = b.blocks[b.curBlockIdx]
 		b.curIdx = 0
-		b.cap = b.blockSize
 	}
 	blockIdx = int32(b.curBlockIdx)
 	res = b.curBlock[b.curIdx : b.curIdx+s]
@@ -65,7 +63,6 @@ func (b *preAllocKVBuf) reset() {
 	b.curBlockIdx = 0
 	b.curBlock = b.blocks[0]
 	b.curIdx = 0
-	b.cap = b.blockSize
 }
 
 func (b *preAllocKVBuf) destroy() {
