@@ -320,9 +320,8 @@ func (do *Domain) AddRunawayWatch(record *resourcegroup.QuarantineRecord) (uint6
 			if err == nil {
 				if len(rows) == 1 {
 					return rows[0].GetUint64(0), nil
-				} else {
-					err = errors.Errorf("unexpected result length: %d", len(rows))
 				}
+				err = errors.Errorf("unexpected result length: %d", len(rows))
 			}
 		}
 		logutil.BgLogger().Warn("failed to get last insert id when adding runaway watch", zap.Error(err))
