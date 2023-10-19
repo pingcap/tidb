@@ -4086,7 +4086,7 @@ func TestGlobalMemoryControl2(t *testing.T) {
 		wg.Done()
 	}()
 	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk0.QueryToErr(sql)))
+	require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(tk0.QueryToErr(sql)))
 	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 	wg.Wait()
 	test[0] = 0
