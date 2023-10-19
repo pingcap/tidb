@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
@@ -124,7 +123,6 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 			if err := updateMeta(gTask, &gTaskMeta); err != nil {
 				return nil, err
 			}
-			logutil.BgLogger().Info("ywq test task", zap.Any("task", gTask))
 			return res, nil
 		}
 		if tblInfo.Partition != nil {
@@ -212,14 +210,15 @@ func (h *backfillingDispatcherExt) initRangeSplitter(
 		return err
 	}
 	gTaskMeta.LastKey = lastKey
+	gTaskMeta.StartKey = firstKey
 	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return err
 	}
 	h.instanceCnt = int64(len(instanceIDs))
+	h.totalSize = totalSize
 	h.splitter, err = getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), h.instanceCnt, dataFiles, statFiles)
-	gTaskMeta.StartKey = firstKey
+		ctx, cloudStorageURI, jobID, int64(totalSize), h.instanceCnt*3, dataFiles, statFiles)
 	return err
 }
 
@@ -234,54 +233,56 @@ func (h *backfillingDispatcherExt) generateGlobalSortIngestPlan(
 		if err != nil {
 			return nil, err
 		}
+		var endKey kv.Key
 		if len(endKeyOfGroup) == 0 {
-			meta.EndKey = meta.LastKey.Next()
+			endKey = meta.LastKey.Next()
 		} else {
-			meta.EndKey = kv.Key(endKeyOfGroup).Clone()
+			endKey = kv.Key(endKeyOfGroup).Clone()
 		}
 		logutil.Logger(ctx).Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(meta.StartKey)),
-			zap.String("endKey", hex.EncodeToString(meta.EndKey)))
-		if meta.StartKey.Cmp(meta.EndKey) >= 0 {
-			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
-				hex.EncodeToString(meta.StartKey), hex.EncodeToString(meta.EndKey))
-		}
-		// if meta.StartKey != nil && kv.Key(endKeyOfGroup).Cmp(meta.StartKey) < 0 {
-		// 	// split more group
-		// } else {
-		m := &BackfillSubTaskMeta{
-			SortedKVMeta: external.SortedKVMeta{
-				MinKey:      meta.StartKey,
-				MaxKey:      meta.EndKey,
-				DataFiles:   dataFiles,
-				StatFiles:   statFiles,
-				TotalKVSize: h.totalSize / uint64(h.instanceCnt),
-			},
-			RangeSplitKeys: rangeSplitKeys,
-		}
-		metaBytes, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		metaArr = append(metaArr, metaBytes)
-		if len(endKeyOfGroup) == 0 {
-			logutil.BgLogger().Info("ywq test reach here")
-			meta.SubtaskDispatched = true
-			return metaArr, nil
-		}
+			zap.String("endKey", hex.EncodeToString(endKey)),
+			zap.String("lastKey", hex.EncodeToString(meta.LastKey)))
 
-		meta.StartKey = meta.EndKey
-		cnt++
-		// TODO: decide the batch cnt.
-		if cnt == 16 {
-			return metaArr, nil
+		if meta.StartKey != nil && endKey.Cmp(meta.StartKey) < 0 {
+			// continue to split ranges group, this only happens when dispatcher node crash.
+			logutil.BgLogger().Warn("invalid range",
+				zap.String("startKey", hex.EncodeToString(meta.StartKey)),
+				zap.String("endKey", hex.EncodeToString(endKey)))
+		} else {
+			meta.EndKey = endKey
+			m := &BackfillSubTaskMeta{
+				SortedKVMeta: external.SortedKVMeta{
+					MinKey:      meta.StartKey,
+					MaxKey:      meta.EndKey,
+					DataFiles:   dataFiles,
+					StatFiles:   statFiles,
+					TotalKVSize: h.totalSize / uint64(h.instanceCnt),
+				},
+				RangeSplitKeys: rangeSplitKeys,
+			}
+			metaBytes, err := json.Marshal(m)
+			if err != nil {
+				return nil, err
+			}
+			metaArr = append(metaArr, metaBytes)
+			if len(endKeyOfGroup) == 0 {
+				meta.SubtaskDispatched = true
+				return metaArr, nil
+			}
+
+			meta.StartKey = meta.EndKey
+			cnt++
+			// TODO: decide the batch cnt.
+			if cnt == 2 {
+				return metaArr, nil
+			}
 		}
 	}
-	// }
 }
 
 func (h *backfillingDispatcherExt) NextStepSubtaskDispatched(task *proto.Task) bool {
-	if task.Step == proto.StepThree {
+	if task.Step == proto.StepOne || task.Step == proto.StepTwo {
 		var meta BackfillGlobalMeta
 		if err := json.Unmarshal(task.Meta, &meta); err != nil {
 			logutil.BgLogger().Info(
@@ -290,11 +291,15 @@ func (h *backfillingDispatcherExt) NextStepSubtaskDispatched(task *proto.Task) b
 				zap.Error(err))
 		}
 
-		if meta.SubtaskDispatched {
+		if meta.SubtaskDispatched && h.splitter != nil {
+			logutil.BgLogger().Info(
+				"subtask for ingest all dispatched",
+				zap.String("category", "ddl"))
 			err := h.splitter.Close()
 			if err != nil {
 				logutil.BgLogger().Error("failed to close range splitter", zap.Error(err))
 			}
+			h.splitter = nil
 		}
 		return meta.SubtaskDispatched
 	}
@@ -539,8 +544,6 @@ func getRangeSplitter(
 	if err != nil {
 		logutil.Logger(ctx).Warn("fail to get region split keys and size", zap.Error(err))
 	}
-	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
-	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange)

@@ -99,6 +99,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	}
 	sb.WriteString(";")
 	tk.MustExec(sb.String())
+	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 
 	var jobID int64
 	origin := dom.DDL().GetHook()
