@@ -2074,7 +2074,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if err != nil {
 		return err
 	}
-	task, err := taskManager.GetGlobalTaskByKey(taskKey)
+	task, err := taskManager.GetGlobalTaskByKeyWithHistory(taskKey)
 	if err != nil {
 		return err
 	}
@@ -2082,6 +2082,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
+			logutil.BgLogger().Info("ywq test reach here")
 			return nil
 		}
 		g.Go(func() error {
@@ -2126,7 +2127,9 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
 			failpoint.Inject("pauseAfterDistTaskSuccess", func() {
 				MockDMLExecutionOnTaskFinished()
+				<-TestSyncChan
 			})
+
 			if w.isReorgPaused(reorgInfo.Job.ID) {
 				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
 				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
