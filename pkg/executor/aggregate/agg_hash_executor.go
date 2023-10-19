@@ -128,7 +128,7 @@ type HashAggExec struct {
 
 	// listInDisk is the chunks to store row values for spilled data.
 	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to ListInDisk.
-	listInDisk *chunk.ListInDisk
+	listInDisk *chunk.DataInDiskByRows
 	// numOfSpilledChks indicates the number of all the spilled chunks.
 	numOfSpilledChks int
 	// offsetOfSpilledChks indicates the offset of the chunk be read from the disk.

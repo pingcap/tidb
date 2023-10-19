@@ -30,8 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// ListInDisk represents a slice of chunks storing in temporary disk.
-type ListInDisk struct {
+// DataInDiskByRows represents some data stored in temporary disk.
+// These data are stored in row format, so they can only be restored by rows.
+type DataInDiskByRows struct {
 	fieldTypes                []*types.FieldType
 	numRowsOfEachChunk        []int
 	rowNumOfEachChunkFirstRow []int
@@ -101,8 +102,8 @@ var defaultChunkListInDiskPath = "chunk.ListInDisk"
 var defaultChunkListInDiskOffsetPath = "chunk.ListInDiskOffset"
 
 // NewListInDisk creates a new ListInDisk with field types.
-func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
-	l := &ListInDisk{
+func NewListInDisk(fieldTypes []*types.FieldType) *DataInDiskByRows {
+	l := &DataInDiskByRows{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
 		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
@@ -110,7 +111,7 @@ func NewListInDisk(fieldTypes []*types.FieldType) *ListInDisk {
 	return l
 }
 
-func (l *ListInDisk) initDiskFile() (err error) {
+func (l *DataInDiskByRows) initDiskFile() (err error) {
 	err = disk.CheckAndInitTempDir()
 	if err != nil {
 		return
@@ -124,19 +125,19 @@ func (l *ListInDisk) initDiskFile() (err error) {
 }
 
 // Len returns the number of rows in ListInDisk
-func (l *ListInDisk) Len() int {
+func (l *DataInDiskByRows) Len() int {
 	return l.totalNumRows
 }
 
 // GetDiskTracker returns the memory tracker of this List.
-func (l *ListInDisk) GetDiskTracker() *disk.Tracker {
+func (l *DataInDiskByRows) GetDiskTracker() *disk.Tracker {
 	return l.diskTracker
 }
 
 // Add adds a chunk to the ListInDisk. Caller must make sure the input chk
 // is not empty and not used any more and has the same field types.
 // Warning: Do not use Add concurrently.
-func (l *ListInDisk) Add(chk *Chunk) (err error) {
+func (l *DataInDiskByRows) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
 		return errors2.New("chunk appended to List should have at least 1 row")
 	}
@@ -170,7 +171,7 @@ func (l *ListInDisk) Add(chk *Chunk) (err error) {
 }
 
 // GetChunk gets a Chunk from the ListInDisk by chkIdx.
-func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
+func (l *DataInDiskByRows) GetChunk(chkIdx int) (*Chunk, error) {
 	chk := NewChunkWithCapacity(l.fieldTypes, l.NumRowsOfChunk(chkIdx))
 	chkSize := l.numRowsOfEachChunk[chkIdx]
 
@@ -207,13 +208,13 @@ func (l *ListInDisk) GetChunk(chkIdx int) (*Chunk, error) {
 }
 
 // GetRow gets a Row from the ListInDisk by RowPtr.
-func (l *ListInDisk) GetRow(ptr RowPtr) (row Row, err error) {
+func (l *DataInDiskByRows) GetRow(ptr RowPtr) (row Row, err error) {
 	row, _, err = l.GetRowAndAppendToChunk(ptr, nil)
 	return row, err
 }
 
 // GetRowAndAppendToChunk gets a Row from the ListInDisk by RowPtr. Return the Row and the Ref Chunk.
-func (l *ListInDisk) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
+func (l *DataInDiskByRows) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
 	off, err := l.getOffset(ptr.ChkIdx, ptr.RowIdx)
 	if err != nil {
 		return
@@ -228,7 +229,7 @@ func (l *ListInDisk) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ 
 	return row, chk, err
 }
 
-func (l *ListInDisk) getOffset(chkIdx uint32, rowIdx uint32) (int64, error) {
+func (l *DataInDiskByRows) getOffset(chkIdx uint32, rowIdx uint32) (int64, error) {
 	offsetInOffsetFile := l.rowNumOfEachChunkFirstRow[chkIdx] + int(rowIdx)
 	b := make([]byte, 8)
 	reader := l.offsetFile.getSectionReader(int64(offsetInOffsetFile) * 8)
@@ -243,17 +244,17 @@ func (l *ListInDisk) getOffset(chkIdx uint32, rowIdx uint32) (int64, error) {
 }
 
 // NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
-func (l *ListInDisk) NumRowsOfChunk(chkID int) int {
+func (l *DataInDiskByRows) NumRowsOfChunk(chkID int) int {
 	return l.numRowsOfEachChunk[chkID]
 }
 
 // NumChunks returns the number of chunks in the ListInDisk.
-func (l *ListInDisk) NumChunks() int {
+func (l *DataInDiskByRows) NumChunks() int {
 	return len(l.numRowsOfEachChunk)
 }
 
 // Close releases the disk resource.
-func (l *ListInDisk) Close() error {
+func (l *DataInDiskByRows) Close() error {
 	if l.dataFile.disk != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
 		terror.Call(l.dataFile.disk.Close)

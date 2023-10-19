@@ -32,7 +32,7 @@ import (
 
 type rowContainerRecord struct {
 	inMemory *List
-	inDisk   *ListInDisk
+	inDisk   *DataInDiskByRows
 	// spillError stores the error when spilling.
 	spillError error
 }

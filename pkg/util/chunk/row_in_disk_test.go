@@ -140,7 +140,7 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 }
 
 type listInDiskWriteDisk struct {
-	ListInDisk
+	DataInDiskByRows
 }
 
 func (l *diskFileReaderWriter) flushForTest() (err error) {
