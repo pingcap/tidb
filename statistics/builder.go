@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/codec"
 	"github.com/pingcap/tidb/util/collate"
+	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/memory"
+	"go.uber.org/zap"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -377,6 +379,20 @@ func BuildHistAndTopN(
 				// find the same value in topn: need to skip over this value in samples
 				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 				samples = samples[:uint64(len(samples))-topNList[j].Count]
+				if i-1 < 0 {
+					allTopNByteStrings := make([][]byte, 0, len(topNList))
+					for _, topN := range topNList {
+						allTopNByteStrings = append(allTopNByteStrings, topN.Encoded)
+					}
+					logutil.BgLogger().Warn("invalid sample data",
+						zap.ByteString("sampleBytes", sampleBytes),
+						zap.ByteString("topNBytes", topNList[j].Encoded),
+						zap.Int64("i", i),
+						zap.Int64("j", int64(j)),
+						zap.ByteStrings("allTopNBytes", allTopNByteStrings),
+					)
+					break
+				}
 				i--
 				continue
 			}
