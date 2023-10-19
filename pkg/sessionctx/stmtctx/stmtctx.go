@@ -155,8 +155,8 @@ type StatementContext struct {
 
 	_ constructor.Constructor `ctor:"NewStmtCtx,NewStmtCtxWithTimeZone,Reset"`
 
-	// TypeCtx is used to indicate how make the type conversation.
-	TypeCtx typectx.Context
+	// 	typeCtx is used to indicate how to make the type conversation.
+	typeCtx typectx.Context
 
 	// Set the following variables before execution
 	StmtHints
@@ -428,7 +428,7 @@ type StatementContext struct {
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
-	sc.TypeCtx = typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning)
 	return sc
 }
 
@@ -436,42 +436,52 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.Assert(tz)
 	sc := &StatementContext{}
-	sc.TypeCtx = typectx.NewContext(typectx.StrictFlags, tz, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, tz, sc.AppendWarning)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		TypeCtx: typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning),
+		typeCtx: typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning),
 	}
 }
 
 // TimeZone returns the timezone of the type context
 func (sc *StatementContext) TimeZone() *time.Location {
-	return sc.TypeCtx.Location()
+	return sc.typeCtx.Location()
 }
 
 // SetTimeZone sets the timezone
 func (sc *StatementContext) SetTimeZone(tz *time.Location) {
 	intest.Assert(tz)
-	sc.TypeCtx = sc.TypeCtx.WithLocation(tz)
+	sc.typeCtx = sc.typeCtx.WithLocation(tz)
+}
+
+// TypeCtx returns the type context
+func (sc *StatementContext) TypeCtx() typectx.Context {
+	return sc.typeCtx
 }
 
 // TypeFlags returns the type flags
 func (sc *StatementContext) TypeFlags() typectx.Flags {
-	return sc.TypeCtx.Flags()
+	return sc.typeCtx.Flags()
 }
 
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags typectx.Flags) {
-	sc.TypeCtx = sc.TypeCtx.WithFlags(flags)
+	sc.typeCtx = sc.typeCtx.WithFlags(flags)
 }
 
 // UpdateTypeFlags updates the flags of the type context
 func (sc *StatementContext) UpdateTypeFlags(fn func(typectx.Flags) typectx.Flags) {
-	flags := fn(sc.TypeCtx.Flags())
-	sc.TypeCtx = sc.TypeCtx.WithFlags(flags)
+	flags := fn(sc.typeCtx.Flags())
+	sc.typeCtx = sc.typeCtx.WithFlags(flags)
+}
+
+// HandleTruncate ignores or returns the error based on the TypeContext inside.
+func (sc *StatementContext) HandleTruncate(err error) error {
+	return sc.typeCtx.HandleTruncate(err)
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -1134,7 +1144,7 @@ func (sc *StatementContext) ShouldClipToZero() bool {
 // so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
 func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
 	// TODO: move this function into `/types` pkg
-	if (sc.InInsertStmt && sc.TypeCtx.Flags().TruncateAsWarning()) || sc.InLoadDataStmt {
+	if (sc.InInsertStmt && sc.TypeFlags().TruncateAsWarning()) || sc.InLoadDataStmt {
 		return true
 	}
 	return false
@@ -1150,9 +1160,9 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.InSelectStmt {
 		flags |= model.FlagInSelectStmt
 	}
-	if sc.TypeCtx.Flags().IgnoreTruncateErr() {
+	if sc.TypeFlags().IgnoreTruncateErr() {
 		flags |= model.FlagIgnoreTruncate
-	} else if sc.TypeCtx.Flags().TruncateAsWarning() {
+	} else if sc.TypeFlags().TruncateAsWarning() {
 		flags |= model.FlagTruncateAsWarning
 	}
 	if sc.OverflowAsWarning {
@@ -1227,11 +1237,11 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 
-	typeFlags := sc.TypeCtx.Flags()
+	typeFlags := sc.TypeFlags()
 	typeFlags = typeFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0)
-	sc.TypeCtx = typectx.NewContext(typeFlags, tz, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typeFlags, tz, sc.AppendWarning)
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
@@ -1376,7 +1386,7 @@ func (sc *StatementContext) RecordedStatsLoadStatusCnt() (cnt int) {
 // little as possible.
 func (sc *StatementContext) TypeCtxOrDefault() typectx.Context {
 	if sc != nil {
-		return sc.TypeCtx
+		return sc.typeCtx
 	}
 
 	return typectx.DefaultNoWarningContext
