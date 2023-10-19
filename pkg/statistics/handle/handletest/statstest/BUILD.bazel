@@ -13,7 +13,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
-        "//pkg/statistics/handle/internal",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

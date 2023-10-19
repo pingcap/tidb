@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "interfaces.go",
         "table_info.go",
+        "testutil.go",
         "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/util",
@@ -29,6 +30,7 @@ go_library(
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_stretchr_testify//require",
         "@com_github_tiancaiamao_gp//:gp",
         "@com_github_tikv_client_go_v2//oracle",
     ],

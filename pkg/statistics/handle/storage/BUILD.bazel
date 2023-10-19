@@ -59,7 +59,6 @@ go_test(
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
-        "//pkg/statistics/handle/internal",
         "//pkg/statistics/handle/util",
         "//pkg/testkit",
         "//pkg/types",
