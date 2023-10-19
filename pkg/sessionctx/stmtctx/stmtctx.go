@@ -473,12 +473,6 @@ func (sc *StatementContext) SetTypeFlags(flags typectx.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
 }
 
-// UpdateTypeFlags updates the flags of the type context
-func (sc *StatementContext) UpdateTypeFlags(fn func(typectx.Flags) typectx.Flags) {
-	flags := fn(sc.typeCtx.Flags())
-	sc.typeCtx = sc.typeCtx.WithFlags(flags)
-}
-
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
 func (sc *StatementContext) HandleTruncate(err error) error {
 	return sc.typeCtx.HandleTruncate(err)
@@ -1133,13 +1127,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	return details
 }
 
-// ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
-// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
-// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-func (sc *StatementContext) ShouldClipToZero() bool {
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
-}
-
 // ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
 // so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
 func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
@@ -1236,12 +1223,11 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
-
-	typeFlags := sc.TypeFlags()
-	typeFlags = typeFlags.
+	sc.SetTypeFlags(typectx.StrictFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
-		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0)
-	sc.typeCtx = typectx.NewContext(typeFlags, tz, sc.AppendWarning)
+		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
+		WithClipNegativeToZero(sc.InInsertStmt),
+	)
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
