@@ -48,9 +48,6 @@ type backfillingDispatcherExt struct {
 	previousSchedulerIDs []string
 	// for global sort
 	splitter    *external.RangeSplitter
-	lastKey     kv.Key
-	startKey    kv.Key
-	endKey      kv.Key
 	totalSize   uint64
 	instanceCnt int64
 }
@@ -115,7 +112,7 @@ func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
 				prevStep = proto.StepTwo
 			}
 			if h.splitter == nil {
-				err := h.initRangeSplitter(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
+				err := h.initRangeSplitter(ctx, taskHandle, gTask, &gTaskMeta, job.ID, gTaskMeta.CloudStorageURI, prevStep)
 				if err != nil {
 					return nil, err
 				}
@@ -205,6 +202,7 @@ func (h *backfillingDispatcherExt) initRangeSplitter(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
+	gTaskMeta *BackfillGlobalMeta,
 	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
@@ -213,7 +211,7 @@ func (h *backfillingDispatcherExt) initRangeSplitter(
 	if err != nil {
 		return err
 	}
-	h.lastKey = lastKey
+	gTaskMeta.LastKey = lastKey
 	instanceIDs, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return err
@@ -221,7 +219,7 @@ func (h *backfillingDispatcherExt) initRangeSplitter(
 	h.instanceCnt = int64(len(instanceIDs))
 	h.splitter, err = getRangeSplitter(
 		ctx, cloudStorageURI, jobID, int64(totalSize), h.instanceCnt, dataFiles, statFiles)
-	h.startKey = firstKey
+	gTaskMeta.StartKey = firstKey
 	return err
 }
 
@@ -237,55 +235,49 @@ func (h *backfillingDispatcherExt) generateGlobalSortIngestPlan(
 			return nil, err
 		}
 		if len(endKeyOfGroup) == 0 {
-			h.endKey = h.lastKey.Next()
+			meta.EndKey = meta.LastKey.Next()
 		} else {
-			h.endKey = kv.Key(endKeyOfGroup).Clone()
+			meta.EndKey = kv.Key(endKeyOfGroup).Clone()
 		}
 		logutil.Logger(ctx).Info("split subtask range",
-			zap.String("startKey", hex.EncodeToString(h.startKey)),
-			zap.String("endKey", hex.EncodeToString(h.endKey)))
-		if h.startKey.Cmp(h.endKey) >= 0 {
+			zap.String("startKey", hex.EncodeToString(meta.StartKey)),
+			zap.String("endKey", hex.EncodeToString(meta.EndKey)))
+		if meta.StartKey.Cmp(meta.EndKey) >= 0 {
 			return nil, errors.Errorf("invalid range, startKey: %s, endKey: %s",
-				hex.EncodeToString(h.startKey), hex.EncodeToString(h.endKey))
+				hex.EncodeToString(meta.StartKey), hex.EncodeToString(meta.EndKey))
 		}
-		if meta.StartKey != nil && h.startKey.Cmp(meta.StartKey) < 0 {
-			// update startKey.
-			h.startKey = h.endKey
-		} else {
-			m := &BackfillSubTaskMeta{
-				SortedKVMeta: external.SortedKVMeta{
-					MinKey:      h.startKey,
-					MaxKey:      h.endKey,
-					DataFiles:   dataFiles,
-					StatFiles:   statFiles,
-					TotalKVSize: h.totalSize / uint64(h.instanceCnt),
-				},
-				RangeSplitKeys: rangeSplitKeys,
-			}
-			metaBytes, err := json.Marshal(m)
-			if err != nil {
-				return nil, err
-			}
-			metaArr = append(metaArr, metaBytes)
-			if len(endKeyOfGroup) == 0 {
-				logutil.BgLogger().Info("ywq test reach here")
-				meta.SubtaskDispatched = true
-				meta.StartKey = h.startKey
-				meta.EndKey = h.endKey
-				return metaArr, nil
-			}
+		// if meta.StartKey != nil && kv.Key(endKeyOfGroup).Cmp(meta.StartKey) < 0 {
+		// 	// split more group
+		// } else {
+		m := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				MinKey:      meta.StartKey,
+				MaxKey:      meta.EndKey,
+				DataFiles:   dataFiles,
+				StatFiles:   statFiles,
+				TotalKVSize: h.totalSize / uint64(h.instanceCnt),
+			},
+			RangeSplitKeys: rangeSplitKeys,
+		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
+		if len(endKeyOfGroup) == 0 {
+			logutil.BgLogger().Info("ywq test reach here")
+			meta.SubtaskDispatched = true
+			return metaArr, nil
+		}
 
-			h.startKey = h.endKey
-			cnt++
-			// TODO: decide the batch cnt.
-			if cnt == 16 {
-				// update StartKey and EndKey in meta
-				meta.StartKey = h.startKey
-				meta.EndKey = h.endKey
-				return metaArr, nil
-			}
+		meta.StartKey = meta.EndKey
+		cnt++
+		// TODO: decide the batch cnt.
+		if cnt == 16 {
+			return metaArr, nil
 		}
 	}
+	// }
 }
 
 func (h *backfillingDispatcherExt) NextStepSubtaskDispatched(task *proto.Task) bool {

@@ -48,6 +48,7 @@ type BackfillGlobalMeta struct {
 	// for dynamic dispatch of stepImport
 	StartKey          kv.Key
 	EndKey            kv.Key
+	LastKey           kv.Key
 	SubtaskDispatched bool
 }
 
