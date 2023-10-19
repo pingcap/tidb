@@ -729,12 +729,12 @@ func doTimeConversionForGL(cmpAsDate bool, ctx sessionctx.Context, sc *stmtctx.S
 	var t types.Time
 	var err error
 	if cmpAsDate {
-		t, err = types.ParseDate(sc, strVal)
+		t, err = types.ParseDate(sc.TypeCtx(), strVal)
 		if err == nil {
 			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDate)
 		}
 	} else {
-		t, err = types.ParseDatetime(sc, strVal)
+		t, err = types.ParseDatetime(sc.TypeCtx(), strVal)
 		if err == nil {
 			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDatetime)
 		}
