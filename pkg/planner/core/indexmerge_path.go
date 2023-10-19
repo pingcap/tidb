@@ -15,7 +15,6 @@
 package core
 
 import (
-	"fmt"
 	"math"
 	"strings"
 
@@ -886,6 +885,7 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 // generateIndexMerge4ComposedIndex generates index path composed of multi indexes including multivalued index from
 // (json_member_of / json_overlaps / json_contains) and single-valued index from normal indexes.
 /*
+CNF path
 	1. select * from t where ((1 member of (a) and c=1) and (2 member of (b) and d=2) and (other index predicates))
 		flatten as: select * from t where 1 member of (a) and 2 member of (b) and c=1 and c=2 and other index predicates
 		analyze: find and utilize index access filter items as much as possible:
@@ -917,15 +917,41 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 				IndexRangeScan(a, [3,3])              --- COP
 			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
 			TableRowIdScan(t)                         --- COP
+DNF path
+	Note: in DNF pattern, every dnf item should be utilized as index path with full range or prefix range. Otherwise,index merge is invalid.
+	1. select * from t where ((1 member of (a)) or (2 member of (b)) or (other index predicates))
+		analyze: find and utilize index access filter items as much as possible:
+		IndexMerge(OR-UNION)                         --- ROOT
+			IndexRangeScan(mv-index-a)(1)             --- COP  ---> simplified from member-of index merge, defer TableRowIdScan(t) to the outer index merge.
+			IndexRangeScan(mv-index-b)(2)             --- COP
+			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
+			TableRowIdScan(t)                         --- COP
+	2. select * from t where ((1 member of (a)) or (json_contains(b, '[1, 2, 3]')) and (other index predicates))
+		analyze: find and utilize index access filter items as much as possible:
+		IndexMerge(OR-UNION)                          --- ROOT
+			IndexRangeScan(mv-index-a)(1)             --- COP
+			IndexMerge(mv-index-b AND-INTERSECTION)   --- ROOT (embedded index merge) ---> can't be simplified
+				IndexRangeScan(a, [1,1])              --- COP
+				IndexRangeScan(a, [2,2])              --- COP
+				IndexRangeScan(a, [3,3])              --- COP
+			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
+			TableRowIdScan(t)                         --- COP
+	3. select * from t where ((1 member of (a) and c=1) or (json_overlap(a, '[1, 2,3]') and d=2) or (other index predicates)
+		analyze: find and utilize index access filter items as much as possible:
+		IndexMerge(OR-UNION)                          --- ROOT
+			IndexRangeScan(mv-index-a)(1)             --- COP
+			IndexMerge(mv-index-b OR-UNION)           --- ROOT (embedded index merge) ---> simplify: we can merge with outer index union merge, and defer TableRowIdScan(t).
+				IndexRangeScan(a, [1,1])              --- COP
+				IndexRangeScan(a, [2,2])              --- COP
+				IndexRangeScan(a, [3,3])              --- COP
+			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
+			TableRowIdScan(t)                         --- COP
 */
 func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexMergeConds []expression.Expression) error {
 	isPossibleIdxMerge := len(indexMergeConds) > 0 && // have corresponding access conditions, and
 		len(ds.possibleAccessPaths) > 1 // have multiple index paths
 	if !isPossibleIdxMerge {
 		return nil
-	}
-	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where ( json_contains(a, '[1, 2, 3]') and d=2) or (2 member of (b) and c=3 and d=2)") {
-		fmt.Println(1)
 	}
 
 	if len(indexMergeConds) == 1 {
