@@ -972,7 +972,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 		headTopN := head.item
 		if head.nextPosInTopN < topNs[head.idx].Num() {
 			head.item = &topNs[head.idx].TopN[head.nextPosInTopN]
-			if step%10000 == 1 {
+			if step%1000000 == 1 {
 				logutil.BgLogger().Warn("merging topn", zap.String("current head of the heap each 1w step", fmt.Sprintf("topn is from partition %d, position: %d", head.idx, head.nextPosInTopN-1)))
 			}
 			head.nextPosInTopN++
@@ -1013,12 +1013,12 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			}
 			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
 				histRemoveCnt++
-				if histRemoveCnt%10000 == 1 {
+				if histRemoveCnt%1000000 == 1 {
 					logutil.BgLogger().Warn("merging topn", zap.String("current hist pos for removing each 1w step", fmt.Sprintf("hist is from partition %d, bucket position %d", histPos, histIters[histPos].curBucketPos)))
 				}
 				// Remove the value from the hist and add it into the current maintained value.
 				cur.item.Count += uint64(histIters[histPos].remove(&d))
-				if histRemoveCnt%10000 == 1 {
+				if histRemoveCnt%1000000 == 1 {
 					logutil.BgLogger().Warn("merging topn", zap.String("current hist pos for removing each 1w step", fmt.Sprintf("hist bucket position %d after removing", histIters[histPos].curBucketPos)))
 				}
 			}

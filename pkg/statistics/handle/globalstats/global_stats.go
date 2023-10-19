@@ -160,7 +160,7 @@ func MergePartitionStats2GlobalStatsByTableID(
 // These values originally came from the analyzeOptionDefault structure in the planner/core/planbuilder.go file.
 var analyzeOptionDefault = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets: 256,
-	ast.AnalyzeOptNumTopN:    20,
+	ast.AnalyzeOptNumTopN:    500,
 }
 
 // UpdateGlobalStats update the global-level stats based on the partition-level stats.
