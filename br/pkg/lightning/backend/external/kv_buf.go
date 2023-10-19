@@ -29,8 +29,8 @@ type preAllocKVBuf struct {
 	cap         int
 }
 
-func newPreAllocKVBuf(memLimit int64, blockSize int) *preAllocKVBuf {
-	blockCount := (memLimit + int64(blockSize) - 1) / int64(blockSize)
+func newPreAllocKVBuf(memLimit uint64, blockSize int) *preAllocKVBuf {
+	blockCount := (memLimit + uint64(blockSize) - 1) / uint64(blockSize)
 	b := &preAllocKVBuf{
 		blocks:    make([][]byte, 0, blockCount),
 		blockSize: blockSize,

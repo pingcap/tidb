@@ -100,6 +100,7 @@ func dummyOnCloseFunc(*WriterSummary) {}
 // WriterBuilder builds a new Writer.
 type WriterBuilder struct {
 	memSizeLimit    uint64
+	blockSize       int
 	writeBatchCount uint64
 	propSizeDist    uint64
 	propKeysDist    uint64
@@ -115,6 +116,7 @@ type WriterBuilder struct {
 func NewWriterBuilder() *WriterBuilder {
 	return &WriterBuilder{
 		memSizeLimit:    DefaultMemSizeLimit,
+		blockSize:       defaultBlockSize,
 		writeBatchCount: 8 * 1024,
 		propSizeDist:    1 * size.MB,
 		propKeysDist:    8 * 1024,
@@ -175,6 +177,12 @@ func (b *WriterBuilder) SetMutex(mu *sync.Mutex) *WriterBuilder {
 	return b
 }
 
+// SetBlockSize sets the block size of pre-allocated buf in the writer.
+func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
+	b.blockSize = blockSize
+	return b
+}
+
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
@@ -198,10 +206,9 @@ func (b *WriterBuilder) Build(
 			propSizeDist: b.propSizeDist,
 			propKeysDist: b.propKeysDist,
 		},
-		memSizeLimit: b.memSizeLimit,
-		store:        store,
-		kvBuffer:     newPreAllocKVBuf(b.memSizeLimit),
-		//writeBatch:     make([]common.KvPair, 0, b.writeBatchCount),
+		memSizeLimit:   b.memSizeLimit,
+		store:          store,
+		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
@@ -467,7 +474,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		sorty.MaxGor = min(8, uint64(variable.GetDDLReorgWorkerCounter()))
 		sorty.Sort(len(w.kvLocations), func(i, j, r, s int) bool {
 			posi, posj := w.kvLocations[i], w.kvLocations[j]
-			if bytes.Compare(w.getKeyByPos(posi), w.getKeyByPos(posj)) < 0 {
+			if bytes.Compare(w.getKeyByLoc(posi), w.getKeyByLoc(posj)) < 0 {
 				if r != s {
 					w.kvLocations[r], w.kvLocations[s] = w.kvLocations[s], w.kvLocations[r]
 				}
@@ -477,7 +484,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		})
 	} else {
 		slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
-			return bytes.Compare(w.getKeyByPos(i), w.getKeyByPos(j))
+			return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 		})
 	}
 	sortDuration = time.Since(sortStart)
@@ -505,7 +512,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 		return err
 	}
 
-	minKey, maxKey := w.getKeyByPos(w.kvLocations[0]), w.getKeyByPos(w.kvLocations[len(w.kvLocations)-1])
+	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
 	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
@@ -538,7 +545,7 @@ func (w *Writer) getEncodedKV(pos kvLocation) []byte {
 	return block[pos.offset : pos.offset+pos.length]
 }
 
-func (w *Writer) getKeyByPos(pos kvLocation) []byte {
+func (w *Writer) getKeyByLoc(pos kvLocation) []byte {
 	block := w.kvBuffer.blocks[pos.blockIdx]
 	keyLen := binary.BigEndian.Uint64(block[pos.offset : pos.offset+lengthBytes])
 	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
