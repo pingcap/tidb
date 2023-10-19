@@ -81,15 +81,16 @@ func (h *mergeHeap[T]) Pop() interface{} {
 }
 
 type mergeIter[T heapElem, R sortedReader[T]] struct {
-	h               mergeHeap[T]
-	readers         []*R
-	curr            T
-	lastReaderIdx   int
-	err             error
-	hotspotMap      map[int]int
-	checkHotspotCnt int
-	lastHotspotIdx  int
-	elemFromHotspot *T
+	h                  mergeHeap[T]
+	readers            []*R
+	curr               T
+	lastReaderIdx      int
+	err                error
+	hotspotMap         map[int]int
+	checkHotspotCnt    int
+	lastHotspotIdx     int
+	elemFromHotspot    *T
+	checkHotspotPeriod int
 
 	logger *zap.Logger
 }
@@ -102,7 +103,7 @@ type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
-](ctx context.Context, readerOpeners []readerOpenerFn[T, R]) (*mergeIter[T, R], error) {
+](ctx context.Context, checkHotspotPeriod int, readerOpeners []readerOpenerFn[T, R]) (*mergeIter[T, R], error) {
 	logger := logutil.Logger(ctx)
 	readers := make([]*R, len(readerOpeners))
 	closeReaders := func() {
@@ -145,11 +146,12 @@ func newMergeIter[
 	}
 
 	i := &mergeIter[T, R]{
-		h:             make(mergeHeap[T], 0, len(readers)),
-		readers:       readers,
-		lastReaderIdx: -1,
-		hotspotMap:    make(map[int]int),
-		logger:        logger,
+		h:                  make(mergeHeap[T], 0, len(readers)),
+		readers:            readers,
+		lastReaderIdx:      -1,
+		hotspotMap:         make(map[int]int),
+		checkHotspotPeriod: checkHotspotPeriod,
+		logger:             logger,
 	}
 	for j := range i.readers {
 		if i.readers[j] == nil {
@@ -222,12 +224,12 @@ func (i *mergeIter[T, R]) next() bool {
 		i.checkHotspotCnt++
 
 		// check hotspot every checkPeriod times
-		if i.checkHotspotCnt == checkHotspotPeriod {
+		if i.checkHotspotCnt == i.checkHotspotPeriod {
 			oldHotspotIdx := i.lastHotspotIdx
 			i.lastHotspotIdx = -1
 			for idx, cnt := range i.hotspotMap {
 				// currently only one reader will become hotspot
-				if cnt > (checkHotspotPeriod / 2) {
+				if cnt > (i.checkHotspotPeriod / 2) {
 					i.lastHotspotIdx = idx
 					break
 				}
@@ -340,13 +342,8 @@ type MergeKVIter struct {
 // NewMergeKVIter creates a new MergeKVIter. The KV can be accessed by calling
 // Next() then Key() or Values(). readBufferSize is the buffer size for each file
 // reader, which means the total memory usage is readBufferSize * len(paths).
-func NewMergeKVIter(
-	ctx context.Context,
-	paths []string,
-	pathsStartOffset []uint64,
-	exStorage storage.ExternalStorage,
-	readBufferSize int,
-) (*MergeKVIter, error) {
+func NewMergeKVIter(ctx context.Context, paths []string, pathsStartOffset []uint64, exStorage storage.ExternalStorage,
+	readBufferSize int, checkHotspotPeriod int) (*MergeKVIter, error) {
 	readerOpeners := make([]readerOpenerFn[*kvPair, kvReaderProxy], 0, len(paths))
 	largeBufSize := ConcurrentReaderBufferSizePerConc * ConcurrentReaderConcurrency
 	memPool := membuf.NewPool(
@@ -373,7 +370,7 @@ func NewMergeKVIter(
 		})
 	}
 
-	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, readerOpeners)
+	it, err := newMergeIter[*kvPair, kvReaderProxy](ctx, checkHotspotPeriod, readerOpeners)
 	return &MergeKVIter{iter: it, memPool: memPool}, err
 }
 
@@ -458,7 +455,7 @@ func NewMergePropIter(
 		})
 	}
 
-	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, readerOpeners)
+	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, 1000, readerOpeners)
 	return &MergePropIter{iter: it}, err
 }
 

@@ -60,9 +60,9 @@ func (af *avgFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEv
 func (af *avgFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) (err error) {
 	switch af.Mode {
 	case Partial1Mode, CompleteMode:
-		err = af.updateSum(sc.TypeCtx, evalCtx, row)
+		err = af.updateSum(sc.TypeCtx(), evalCtx, row)
 	case Partial2Mode, FinalMode:
-		err = af.updateAvg(sc.TypeCtx, evalCtx, row)
+		err = af.updateAvg(sc.TypeCtx(), evalCtx, row)
 	case DedupMode:
 		panic("DedupMode is not supported now.")
 	}

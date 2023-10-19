@@ -557,7 +557,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	err error,
 ) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20})
+	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 50})
 	if err != nil {
 		return "", "", nil, nil, err
 	}

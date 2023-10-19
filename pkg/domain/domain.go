@@ -2268,7 +2268,7 @@ func quitStatsOwner(do *Domain, mgr owner.Manager) {
 func (do *Domain) StartLoadStatsSubWorkers(ctxList []sessionctx.Context) {
 	statsHandle := do.StatsHandle()
 	for i, ctx := range ctxList {
-		statsHandle.StatsLoad.SubCtxs[i] = ctx
+		statsHandle.SetSubCtxs(i, ctx)
 		do.wg.Add(1)
 		go statsHandle.SubLoadWorker(ctx, do.exit, do.wg)
 	}

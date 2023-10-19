@@ -28,9 +28,10 @@ const lengthBytes = 8
 type KeyValueStore struct {
 	dataWriter storage.ExternalFileWriter
 
-	rc     *rangePropertiesCollector
-	ctx    context.Context
-	offset uint64
+	rc          *rangePropertiesCollector
+	ctx         context.Context
+	offset      uint64
+	cacheBuffer []byte
 }
 
 // NewKeyValueStore creates a new KeyValueStore. The data will be written to the
@@ -42,9 +43,10 @@ func NewKeyValueStore(
 	rangePropertiesCollector *rangePropertiesCollector,
 ) (*KeyValueStore, error) {
 	kvStore := &KeyValueStore{
-		dataWriter: dataWriter,
-		ctx:        ctx,
-		rc:         rangePropertiesCollector,
+		dataWriter:  dataWriter,
+		ctx:         ctx,
+		rc:          rangePropertiesCollector,
+		cacheBuffer: make([]byte, 0, 8*1024*1024),
 	}
 	return kvStore, nil
 }
@@ -55,10 +57,13 @@ func NewKeyValueStore(
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
 func (s *KeyValueStore) AddData(val []byte) error {
-	_, err := s.dataWriter.Write(s.ctx, val)
-	if err != nil {
-		return err
+	if len(s.cacheBuffer) >= 5*1024*1024 {
+		if _, err := s.dataWriter.Write(s.ctx, s.cacheBuffer); err != nil {
+			return err
+		}
+		s.cacheBuffer = s.cacheBuffer[:0]
 	}
+	s.cacheBuffer = append(s.cacheBuffer, val...)
 
 	keyLen := binary.BigEndian.Uint64(val)
 	key := val[lengthBytes : lengthBytes+keyLen]
@@ -87,6 +92,7 @@ func (s *KeyValueStore) AddData(val []byte) error {
 
 // Close closes the KeyValueStore and append the last range property.
 func (s *KeyValueStore) Close() {
+	s.dataWriter.Write(s.ctx, s.cacheBuffer)
 	if s.rc.currProp.keys > 0 {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)

@@ -282,7 +282,8 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 			zap.Strings("dataFiles", e.dataFiles),
 			zap.Strings("statsFiles", e.statsFiles))
 	}
-	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024)
+	checkHotspotPeriod := max(1000, 32*1024*1024/len(start))
+	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024, checkHotspotPeriod)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -23,7 +23,7 @@ func MergeOverlappingFiles(
 	onClose OnCloseFunc,
 ) error {
 	zeroOffsets := make([]uint64, len(paths))
-	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize)
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, 1000)
 	if err != nil {
 		return err
 	}
