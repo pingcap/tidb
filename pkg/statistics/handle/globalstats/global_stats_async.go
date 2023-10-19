@@ -103,11 +103,10 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	callWithSCtxFunc callWithSCtxFunc) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
-<<<<<<< HEAD
 		callWithSCtxFunc:       callWithSCtxFunc,
 		cmsketch:               make(chan mergeItem[*statistics.CMSketch], 5),
 		fmsketch:               make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:       make(chan mergeItem[*StatsWrapper], 5),
+		histogramAndTopn:       make(chan mergeItem[*StatsWrapper]),
 		PartitionDefinition:    make(map[int64]model.PartitionDefinition),
 		tableInfo:              make(map[int64]*model.TableInfo),
 		partitionIDs:           make([]int64, 0, partitionNum),
@@ -120,22 +119,6 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		histIDs:                histIDs,
 		is:                     is,
 		partitionNum:           partitionNum,
-=======
-		statsHandle:         statsHandle,
-		cmsketch:            make(chan mergeItem[*statistics.CMSketch], 5),
-		fmsketch:            make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:    make(chan mergeItem[*StatsWrapper]),
-		PartitionDefinition: make(map[int64]model.PartitionDefinition),
-		tableInfo:           make(map[int64]*model.TableInfo),
-		partitionIDs:        make([]int64, 0, partitionNum),
-		exitWhenErrChan:     make(chan struct{}),
-		skipPartition:       make(map[skipItem]struct{}),
-		allPartitionStats:   make(map[int64]*statistics.Table),
-		globalTableInfo:     globalTableInfo,
-		histIDs:             histIDs,
-		is:                  is,
-		partitionNum:        partitionNum,
->>>>>>> ab32fc75514 (statistics: smaller task channel when to merge global stats (#47761))
 	}, nil
 }
 
