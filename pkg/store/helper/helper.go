@@ -98,7 +98,7 @@ func NewHelper(store Storage) *Helper {
 
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	bo := tikv.NewBackofferWithVars(context.Background(), 500, nil)
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	for {
 		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
 		if err != nil {
