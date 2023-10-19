@@ -2,4 +2,6 @@
 options:
   no_parent_owners: true
 approvers:
-  - sig-approvers-statistics
+  - sig-approvers-planner
+labels:
+  - sig/planner
