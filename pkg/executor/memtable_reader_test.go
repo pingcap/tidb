@@ -153,7 +153,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// Tiproxy config
-	router.Handle("/api/admin/config?format=json", fn.Wrap(mockConfig))
+	router.Handle("/api/admin/config", fn.Wrap(mockConfig))
 
 	// mock servers
 	var servers []string
@@ -218,7 +218,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	))
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	require.Len(t, warnings, 0, fmt.Sprintf("unexpected warnings: %+v", warnings))
-	require.Equal(t, int32(12), requestCounter)
+	require.Equal(t, int32(15), requestCounter)
 
 	// TODO: we need remove it when index usage is GA.
 	rs := tk.MustQuery("show config").Rows()
@@ -258,7 +258,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 	}{
 		{
 			sql:      "select * from information_schema.cluster_config",
-			reqCount: 12,
+			reqCount: 15,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tidb"][1],
@@ -291,7 +291,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 		},
 		{
 			sql:      "select * from information_schema.cluster_config where type='pd' or instance='" + testServers[0].address + "'",
-			reqCount: 12,
+			reqCount: 15,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
@@ -372,7 +372,7 @@ func TestTiDBClusterConfig(t *testing.T) {
 		{
 			sql: fmt.Sprintf(`select * from information_schema.cluster_config where instance='%s'`,
 				testServers[0].address),
-			reqCount: 4,
+			reqCount: 5,
 			rows: flatten(
 				rows["tidb"][0],
 				rows["tikv"][0],
