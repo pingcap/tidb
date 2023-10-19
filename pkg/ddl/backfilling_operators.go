@@ -551,23 +551,21 @@ func NewIndexIngestOperator(
 	srcChunkPool chan *chunk.Chunk,
 	concurrency int,
 ) *IndexIngestOperator {
-	var writerIDAlloc atomic.Int32
+	var writersRef atomic.Int64
+	writers := make([]ingest.Writer, 0, len(indexes))
+	for i := range indexes {
+		writer, err := engines[i].CreateWriter(i)
+		if err != nil {
+			return nil
+		}
+		writers = append(writers, writer)
+	}
 	pool := workerpool.NewWorkerPool(
 		"indexIngestOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
-			writers := make([]ingest.Writer, 0, len(indexes))
-			for i := range indexes {
-				writerID := int(writerIDAlloc.Add(1))
-				writer, err := engines[i].CreateWriter(writerID)
-				if err != nil {
-					logutil.Logger(ctx).Error("create index ingest worker failed", zap.Error(err))
-					return nil
-				}
-				writers = append(writers, writer)
-			}
-
+			writersRef.Add(1)
 			return &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,
@@ -576,6 +574,7 @@ func NewIndexIngestOperator(
 				se:           nil,
 				sessPool:     sessPool,
 				writers:      writers,
+				writersRef:   &writersRef,
 				srcChunkPool: srcChunkPool,
 			}
 		})
@@ -595,6 +594,7 @@ type indexIngestWorker struct {
 	se       *session.Session
 
 	writers      []ingest.Writer
+	writersRef   *atomic.Int64
 	srcChunkPool chan *chunk.Chunk
 }
 
@@ -634,10 +634,12 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 }
 
 func (w *indexIngestWorker) Close() {
-	for _, writer := range w.writers {
-		err := writer.Close(w.ctx)
-		if err != nil {
-			w.ctx.onError(err)
+	if w.writersRef.Add(-1) == 0 {
+		for _, writer := range w.writers {
+			err := writer.Close(w.ctx)
+			if err != nil {
+				w.ctx.onError(err)
+			}
 		}
 	}
 	if w.se != nil {
