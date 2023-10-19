@@ -90,7 +90,6 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	cpuWorkerExitChan         chan struct{}
 	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
 	callWithSCtxFunc          callWithSCtxFunc
-	exitWhenErrChan           chan struct{}
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
@@ -109,22 +108,23 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	callWithSCtxFunc callWithSCtxFunc) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
-		callWithSCtxFunc:       callWithSCtxFunc,
-		cmsketch:               make(chan mergeItem[*statistics.CMSketch], 5),
-		fmsketch:               make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:       make(chan mergeItem[*StatsWrapper]),
-		PartitionDefinition:    make(map[int64]model.PartitionDefinition),
-		tableInfo:              make(map[int64]*model.TableInfo),
-		partitionIDs:           make([]int64, 0, partitionNum),
-		exitWhenErrChan:        make(chan struct{}),
-		skipPartition:          make(map[skipItem]struct{}),
-		gpool:                  gpool,
-		allPartitionStats:      make(map[int64]*statistics.Table),
-		globalTableInfo:        globalTableInfo,
-		getTableByPhysicalIDFn: getTableByPhysicalIDFn,
-		histIDs:                histIDs,
-		is:                     is,
-		partitionNum:           partitionNum,
+		callWithSCtxFunc:        callWithSCtxFunc,
+		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
+		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
+		histogramAndTopn:        make(chan mergeItem[*StatsWrapper]),
+		PartitionDefinition:     make(map[int64]model.PartitionDefinition),
+		tableInfo:               make(map[int64]*model.TableInfo),
+		partitionIDs:            make([]int64, 0, partitionNum),
+		ioWorkerExitWhenErrChan: make(chan struct{}),
+		cpuWorkerExitChan:       make(chan struct{}),
+		skipPartition:           make(map[skipItem]struct{}),
+		gpool:                   gpool,
+		allPartitionStats:       make(map[int64]*statistics.Table),
+		globalTableInfo:         globalTableInfo,
+		getTableByPhysicalIDFn:  getTableByPhysicalIDFn,
+		histIDs:                 histIDs,
+		is:                      is,
+		partitionNum:            partitionNum,
 	}, nil
 }
 
