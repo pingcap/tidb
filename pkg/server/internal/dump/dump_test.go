@@ -23,7 +23,7 @@ import (
 )
 
 func TestDumpBinaryTime(t *testing.T) {
-	typeCtx := types.DefaultNoWarningContext
+	typeCtx := types.DefaultStmtNoWarningContext
 	parsedTime, err := types.ParseTimestamp(typeCtx, "0000-00-00 00:00:00.000000")
 	require.NoError(t, err)
 	d := BinaryDateTime(nil, parsedTime)

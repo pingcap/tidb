@@ -24,7 +24,7 @@ import (
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	typeCtx := types.NewContext(types.DefaultFlags.WithIgnoreZeroInData(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
 	tblDate := []struct {
 		Input  string
 		Format string
@@ -78,7 +78,7 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	typeCtx := types.NewContext(types.DefaultFlags.WithIgnoreZeroInData(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
 	tests := []struct {
 		input  string
 		format string

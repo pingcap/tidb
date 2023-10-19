@@ -2107,14 +2107,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 				vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
-		sc.SetTypeFlags(
-			sc.TypeFlags().
-				WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode()))
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(!vars.StrictSQLMode).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode ||
-				vars.SQLMode.HasAllowInvalidDatesMode()))
+				vars.SQLMode.HasAllowInvalidDatesMode()).
+			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode()))
 
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true

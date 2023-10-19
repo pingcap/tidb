@@ -187,7 +187,7 @@ func (f Flags) IgnoreZeroDateErr() bool {
 // WithIgnoreZeroDateErr returns a new flags with `FlagIgnoreZeroDateErr` set/unset according to the ignore parameter
 func (f Flags) WithIgnoreZeroDateErr(ignore bool) Flags {
 	if ignore {
-		return f | FlagIgnoreInvalidDateErr
+		return f | FlagIgnoreZeroDateErr
 	}
 	return f &^ FlagIgnoreZeroDateErr
 }

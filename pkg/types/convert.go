@@ -354,7 +354,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	if number > TimeMaxValue {
 		// Try to parse DATETIME.
 		if number >= 10000000000 { // '2001-00-00 00-00-00'
-			if t, err := ParseDatetimeFromNum(DefaultNoWarningContext, number); err == nil {
+			if t, err := ParseDatetimeFromNum(DefaultStmtNoWarningContext, number); err == nil {
 				dur, err1 := t.ConvertToDuration()
 				return dur, errors.Trace(err1)
 			}

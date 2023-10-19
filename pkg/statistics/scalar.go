@@ -275,7 +275,7 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		}
 		fsp := max(lowTime.Fsp(), highTime.Fsp())
 		var stepSize int64
-		typeCtx := types.DefaultNoWarningContext
+		typeCtx := types.DefaultStmtNoWarningContext
 		if lowTime.Type() == mysql.TypeDate {
 			stepSize = 24 * int64(time.Hour)
 			lowTime.SetCoreTime(types.FromDate(lowTime.Year(), lowTime.Month(), lowTime.Day(), 0, 0, 0, 0))

@@ -526,7 +526,7 @@ func parseTime(t *testing.T, s string) types.Time {
 }
 
 func parseDuration(t *testing.T, s string) types.Duration {
-	m, _, err := types.ParseDuration(types.DefaultNoWarningContext, s, types.DefaultFsp)
+	m, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, s, types.DefaultFsp)
 	require.NoError(t, err)
 	return m
 }
