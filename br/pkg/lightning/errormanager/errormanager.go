@@ -623,7 +623,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !tbl.Meta().PKIsHandle {
+			if !tbl.Meta().PKIsHandle || !tbl.Meta().IsCommonHandle {
 				// for nonclustered PK, need to append handle to decodedData for AddRecord
 				decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
 			}
@@ -727,6 +727,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
+					if !tbl.Meta().PKIsHandle || !tbl.Meta().IsCommonHandle {
+						// for nonclustered PK, need to append handle to decodedData for AddRecord
+						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
+					}
 					_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
 					if err != nil {
 						return errors.Trace(err)
@@ -751,6 +755,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 				tbl.Meta(), handle, tbl.Cols(), rawValue)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if !tbl.Meta().PKIsHandle || !tbl.Meta().IsCommonHandle {
+				// for nonclustered PK, need to append handle to decodedData for AddRecord
+				decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 			}
 			_, err = encoder.Table.AddRecord(encoder.SessionCtx, decodedData)
 			if err != nil {
