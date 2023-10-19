@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -57,7 +56,7 @@ func requireTableEqual(t *testing.T, a *statistics.Table, b *statistics.Table) {
 		}
 		require.True(t, a.Indices[i].TopN.Equal(b.Indices[i].TopN))
 	}
-	require.True(t, internal.IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
+	require.True(t, handleutil.IsSameExtendedStats(a.ExtendedStats, b.ExtendedStats))
 }
 
 func cleanStats(tk *testkit.TestKit, do *domain.Domain) {
