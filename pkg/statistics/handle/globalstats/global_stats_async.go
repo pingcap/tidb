@@ -110,6 +110,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		tableInfo:               make(map[int64]*model.TableInfo),
 		partitionIDs:            make([]int64, 0, partitionNum),
 		ioWorkerExitWhenErrChan: make(chan struct{}),
+		cpuWorkerExitChan:       make(chan struct{}),
 		skipPartition:           make(map[skipItem]struct{}),
 		allPartitionStats:       make(map[int64]*statistics.Table),
 		globalTableInfo:         globalTableInfo,
