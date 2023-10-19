@@ -1899,7 +1899,6 @@ func TestINLJHintSmallTable(t *testing.T) {
 	tk.MustExec("explain format = 'brief' select /*+ TIDB_INLJ(t1) */ * from t1 join t2 on t1.a = t2.a")
 }
 
-<<<<<<< HEAD
 func TestIndexJoinUniqueCompositeIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -1963,7 +1962,7 @@ func TestIndexMergeHint4CNF(t *testing.T) {
 	tk.MustExec("create table t(id int primary key, a int, b int, c int, key(a), key(b), key(c))")
 
 	var input []string
-	var output []struct {
+	var output[]struct {
 		SQL  string
 		Plan []string
 	}
@@ -1976,8 +1975,9 @@ func TestIndexMergeHint4CNF(t *testing.T) {
 		})
 		tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 	}
-=======
-func TestIssue46580(t *testing.T) {
+}
+
+	func TestIssue46580(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1989,7 +1989,6 @@ func TestIssue46580(t *testing.T) {
 	tk.MustExec(`INSERT INTO t0(c0) VALUES (3);`)
 	tk.MustQuery(`SELECT /*+ MERGE_JOIN(t1, t0, v0)*/v0.c2, t1.c0 FROM v0,  t0 CROSS JOIN t1 ORDER BY -v0.c1;`).Sort().Check(
 		testkit.Rows(`0 0`, `0 1`, `1 0`, `1 1`))
->>>>>>> 51f6bb90d98 (planner: fix Uncertain Results caused by MERGE_JOIN (#47078))
 }
 
 func TestInvisibleIndex(t *testing.T) {
