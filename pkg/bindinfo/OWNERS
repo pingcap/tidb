@@ -2,4 +2,6 @@
 options:
   no_parent_owners: true
 approvers:
-  - sig-approvers-bindinfo
+  - sig-approvers-planner
+labels:
+  - sig/planner
