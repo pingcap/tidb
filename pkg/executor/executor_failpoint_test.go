@@ -635,9 +635,9 @@ func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
 	schemaVersion := tk.Session().GetDomainInfoSchema().SchemaMetaVersion()
 	key := m.EncodeSchemaDiffKey(schemaVersion)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/store/mockstore/unistore/epochNotMatch", "11*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch", "2*return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/store/mockstore/unistore/epochNotMatch"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch"))
 	}()
 	resp, err := h.GetMvccByEncodedKey(key)
 	require.NoError(t, err)
