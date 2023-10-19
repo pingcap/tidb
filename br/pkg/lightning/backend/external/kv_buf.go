@@ -16,55 +16,59 @@ package external
 
 import "github.com/docker/go-units"
 
-const blockSize = 16 * units.MiB
+const defaultBlockSize = 16 * units.MiB
 
-type kvBuf struct {
-	bufs      [][]byte
-	curBuf    []byte
-	curBufIdx int
-	curIdx    int
-	cap       int
+// preAllocKVBuf pre allocates a large buffer of limit memLimit to reduce memory
+// allocation, all space in this buffer will be reused when reset.
+type preAllocKVBuf struct {
+	blocks      [][]byte
+	blockSize   int
+	curBlock    []byte
+	curBlockIdx int
+	curIdx      int
+	cap         int
 }
 
-func newKVBuf(memLimit uint64) *kvBuf {
-	blockCount := (memLimit + blockSize - 1) / blockSize
-	b := &kvBuf{
-		bufs: make([][]byte, 0, blockCount),
+func newPreAllocKVBuf(memLimit int64, blockSize int) *preAllocKVBuf {
+	blockCount := (memLimit + int64(blockSize) - 1) / int64(blockSize)
+	b := &preAllocKVBuf{
+		blocks:    make([][]byte, 0, blockCount),
+		blockSize: blockSize,
 	}
 	for i := 0; i < int(blockCount); i++ {
-		b.bufs = append(b.bufs, make([]byte, blockSize))
+		b.blocks = append(b.blocks, make([]byte, blockSize))
 	}
 	b.reset()
 	return b
 }
 
-func (b *kvBuf) Alloc(s int) (bufIdx int32, res []byte, offset int, allocated bool) {
+func (b *preAllocKVBuf) Alloc(s int) (blockIdx int32, res []byte, offset int32, allocated bool) {
 	if b.cap-b.curIdx < s {
-		if b.curBufIdx+1 >= len(b.bufs) {
+		if b.curBlockIdx+1 >= len(b.blocks) {
 			return
 		}
-		b.curBufIdx++
-		b.curBuf = b.bufs[b.curBufIdx]
+		b.curBlockIdx++
+		b.curBlock = b.blocks[b.curBlockIdx]
 		b.curIdx = 0
-		b.cap = blockSize
+		b.cap = b.blockSize
 	}
-	bufIdx = int32(b.curBufIdx)
-	res = b.curBuf[b.curIdx : b.curIdx+s]
-	offset = b.curIdx
+	blockIdx = int32(b.curBlockIdx)
+	res = b.curBlock[b.curIdx : b.curIdx+s]
+	offset = int32(b.curIdx)
 	allocated = true
 
 	b.curIdx += s
 	return
 }
 
-func (b *kvBuf) reset() {
-	b.curBufIdx = 0
-	b.curBuf = b.bufs[0]
+func (b *preAllocKVBuf) reset() {
+	b.curBlockIdx = 0
+	b.curBlock = b.blocks[0]
 	b.curIdx = 0
-	b.cap = blockSize
+	b.cap = b.blockSize
 }
 
-func (b *kvBuf) destroy() {
-	b.bufs = nil
-	b.curBuf = nil
+func (b *preAllocKVBuf) destroy() {
+	b.blocks = nil
+	b.curBlock = nil
 }
