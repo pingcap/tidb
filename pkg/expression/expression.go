@@ -274,7 +274,7 @@ func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, b
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx)
+		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		if err != nil {
 			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
 			if err != nil {
@@ -494,14 +494,14 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc.TypeCtx)
+						iVal, err := bl.ToInt(sc.TypeCtx())
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc.TypeCtx, sVal, false)
+					fVal, err = types.StrToFloat(sc.TypeCtx(), sVal, false)
 					if err != nil {
 						return err
 					}

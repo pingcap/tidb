@@ -324,7 +324,6 @@ go_test(
         "inspection_result_test.go",
         "inspection_summary_test.go",
         "join_pkg_test.go",
-        "join_test.go",
         "joiner_test.go",
         "main_test.go",
         "memtable_reader_test.go",
