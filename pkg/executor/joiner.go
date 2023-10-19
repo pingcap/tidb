@@ -431,8 +431,8 @@ func (j *semiJoiner) tryToMatchOuters(outers chunk.Iterator, inner chunk.Row, ch
 
 func (*semiJoiner) onMissMatch(bool, chunk.Row, *chunk.Chunk) {}
 
-func (*semiJoiner) isSemiJoinWithoutCondition() bool {
-	return true
+func (j *semiJoiner) isSemiJoinWithoutCondition() bool {
+	return len(j.conditions) == 0
 }
 
 // Clone implements joiner interface.
@@ -499,8 +499,8 @@ func (naaj *nullAwareAntiSemiJoiner) onMissMatch(_ bool, outer chunk.Row, chk *c
 	chk.AppendRowByColIdxs(outer, naaj.lUsed)
 }
 
-func (*nullAwareAntiSemiJoiner) isSemiJoinWithoutCondition() bool {
-	return true
+func (naaj *nullAwareAntiSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return len(naaj.conditions) == 0
 }
 
 func (naaj *nullAwareAntiSemiJoiner) Clone() joiner {
@@ -572,8 +572,8 @@ func (j *antiSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *chunk.C
 	}
 }
 
-func (*antiSemiJoiner) isSemiJoinWithoutCondition() bool {
-	return true
+func (j *antiSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return len(j.conditions) == 0
 }
 
 func (j *antiSemiJoiner) Clone() joiner {
@@ -658,8 +658,8 @@ func (j *leftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk *ch
 	}
 }
 
-func (*leftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
-	return true
+func (j *leftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return len(j.conditions) == 0
 }
 
 func (j *leftOuterSemiJoiner) Clone() joiner {
@@ -734,8 +734,8 @@ func (*nullAwareAntiLeftOuterSemiJoiner) tryToMatchOuters(chunk.Iterator, chunk.
 	return nil, err
 }
 
-func (*nullAwareAntiLeftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
-	return true
+func (naal *nullAwareAntiLeftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return len(naal.conditions) == 0
 }
 
 func (naal *nullAwareAntiLeftOuterSemiJoiner) Clone() joiner {
@@ -823,8 +823,8 @@ func (j *antiLeftOuterSemiJoiner) onMissMatch(hasNull bool, outer chunk.Row, chk
 	}
 }
 
-func (*antiLeftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
-	return true
+func (j *antiLeftOuterSemiJoiner) isSemiJoinWithoutCondition() bool {
+	return len(j.conditions) == 0
 }
 
 func (j *antiLeftOuterSemiJoiner) Clone() joiner {
