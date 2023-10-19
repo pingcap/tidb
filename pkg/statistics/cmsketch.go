@@ -960,6 +960,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 	var finalTopNs topNMeataHeap = make([]TopNMeta, 0, n+1)
 	remainedTopNs := make([]TopNMeta, 0, n)
 	skipCount := 0
+	affectedHist := make([]int, 0, len(hists))
 	for {
 		if atomic.LoadUint32(killed) == 1 {
 			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
@@ -997,9 +998,14 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 				return nil, nil, hists, err
 			}
 			maxPossible := int64(0)
+			affectedHist = affectedHist[:0]
+			// The following codes might accesss the NextClear loop twice. Record it here for saving CPU.
+			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+				affectedHist = append(affectedHist, int(histPos))
+			}
 			// Hacking skip.
 			if uint32(len(finalTopNs)) >= n {
-				for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+				for _, histPos := range affectedHist {
 					maxPossible += maxPossibleAdded[histPos]
 				}
 				// The maximum possible added value still cannot make it replace the smallest topn.
@@ -1011,7 +1017,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 					continue
 				}
 			}
-			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+			for _, histPos := range affectedHist {
 				histRemoveCnt++
 				if histRemoveCnt%1000000 == 1 {
 					logutil.BgLogger().Warn("merging topn", zap.String("current hist pos for removing each 1w step", fmt.Sprintf("hist is from partition %d, bucket position %d", histPos, histIters[histPos].curBucketPos)))
