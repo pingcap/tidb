@@ -1560,7 +1560,10 @@ func (local *Backend) doImport(ctx context.Context, engine *Engine, regionRanges
 	if err != nil {
 		firstErr.Set(err)
 		workerCancel()
-		_ = workGroup.Wait()
+		err2 := workGroup.Wait()
+		if !common.IsContextCanceledError(err2) {
+			log.FromContext(ctx).Error("worker meets error", zap.Error(err2))
+		}
 		return firstErr.Get()
 	}
 
