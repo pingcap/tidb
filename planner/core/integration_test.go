@@ -1962,7 +1962,7 @@ func TestIndexMergeHint4CNF(t *testing.T) {
 	tk.MustExec("create table t(id int primary key, a int, b int, c int, key(a), key(b), key(c))")
 
 	var input []string
-	var output[]struct {
+	var output []struct {
 		SQL  string
 		Plan []string
 	}
@@ -1977,7 +1977,7 @@ func TestIndexMergeHint4CNF(t *testing.T) {
 	}
 }
 
-	func TestIssue46580(t *testing.T) {
+func TestIssue46580(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
