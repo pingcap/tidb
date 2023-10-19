@@ -145,7 +145,7 @@ func NewAddIndexIngestPipeline(
 
 	srcOp := NewTableScanTaskSource(jobID, ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
-	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, indexes, writers, srcChkPool, writerCnt)
+	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt)
 	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
