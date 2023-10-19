@@ -286,7 +286,7 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) ([]*string, string, error) {
 	originalAZ, sourceSnapshotIDs := fetchTargetSnapshots(meta)
 
-	if originalAZ == "" {
+	if len(sourceSnapshotIDs) == 0 {
 		return nil, "", errors.Errorf("empty backup meta")
 	}
 
@@ -373,6 +373,10 @@ func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, 
 // DisableDataFSR disables FSR for data volume snapshots
 func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) error {
 	originAZ, sourceSnapshotIDs := fetchTargetSnapshots(meta)
+
+	if len(sourceSnapshotIDs) == 0 {
+		return nil
+	}
 
 	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ), zap.String("original AZ", originAZ))
 
