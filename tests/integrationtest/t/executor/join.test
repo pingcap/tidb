@@ -496,3 +496,76 @@ CREATE VIEW v0(c0) AS SELECT NULL;
 SELECT /*+ HASH_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
 SELECT /*+ MERGE_JOIN(v0) */ * FROM v0 NATURAL LEFT JOIN t0;
 --disable_warnings
+
+# TestTiDBNAAJ
+drop table if exists t;
+set @@session.tidb_enable_null_aware_anti_join=0;
+create table t(a decimal(40,0), b bigint(20) not null);
+insert into t values(7,8),(7,8),(3,4),(3,4),(9,2),(9,2),(2,0),(2,0),(0,4),(0,4),(8,8),(8,8),(6,1),(6,1),(NULL, 0),(NULL,0);
+select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;
+set @@session.tidb_enable_null_aware_anti_join=1;
+select ( table1 . a , table1 . b ) NOT IN ( SELECT 3 , 2 UNION  SELECT 9, 2 ) AS field2 from t as table1 order by field2;
+set @@session.tidb_enable_null_aware_anti_join=default;
+
+# TestNaturalJoin
+drop table if exists t1, t2;
+create table t1 (a int, b int);
+create table t2 (a int, c int);
+insert t1 values (1,2), (10,20), (0,0);
+insert t2 values (1,3), (100,200), (0,0);
+explain format = 'brief' select * from t1 natural join t2;
+--sorted_result
+select * from t1 natural join t2;
+explain format = 'brief' select * from t1 natural left join t2 order by a;
+--sorted_result
+select * from t1 natural left join t2 order by a;
+explain format = 'brief' select * from t1 natural right join t2 order by a;
+--sorted_result
+select * from t1 natural right join t2 order by a;
+explain format = 'brief' SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+--sorted_result
+SELECT * FROM t1 NATURAL LEFT JOIN t2 WHERE not(t1.a <=> t2.a);
+
+# TestUsingAndNaturalJoinSchema
+drop table if exists t1, t2, t3, t4;
+create table t1 (c int, b int);
+create table t2 (a int, b int);
+create table t3 (b int, c int);
+create table t4 (y int, c int);
+insert into t1 values (10,1);
+insert into t1 values (3 ,1);
+insert into t1 values (3 ,2);
+insert into t2 values (2, 1);
+insert into t3 values (1, 3);
+insert into t3 values (1,10);
+insert into t4 values (11,3);
+insert into t4 values (2, 3);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) natural join (t3 natural join t4);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) join (t3 natural join t4) using (c,b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) left outer join (t3 natural join t4) using (c,b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (b);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c);
+--sorted_result
+select t1.*, t2.*, t3.*, t4.* from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
+--sorted_result
+select * from (t1  natural join t2) natural join (t3 natural  join t4);
+--sorted_result
+select * from (t1 natural join t2) join (t3 natural join t4) using (b);
+--sorted_result
+select * from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
+--sorted_result
+select * from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
+
