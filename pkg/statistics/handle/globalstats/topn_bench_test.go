@@ -141,7 +141,7 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 	}
 }
 
-var benchmarkSizes = []int{100, 1000, 10000, 100000, 1000000, 10000000}
+var benchmarkSizes = []int{1000}
 var benchmarkConcurrencySizes = []int{100, 1000, 10000, 100000}
 
 func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {

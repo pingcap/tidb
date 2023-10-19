@@ -971,13 +971,15 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 		step++
 		head := mergingHeap[0]
 		headTopN := head.item
+		if step%1000000 == 1 {
+			logutil.BgLogger().Warn("merging topn", zap.Int64("dealing with the %d-th topn", step), zap.String("info", fmt.Sprintf("topn is from partition %d, position: %d", head.idx, head.nextPosInTopN-1)))
+		}
 		if head.nextPosInTopN < topNs[head.idx].Num() {
 			head.item = &topNs[head.idx].TopN[head.nextPosInTopN]
-			if step%1000000 == 1 {
-				logutil.BgLogger().Warn("merging topn", zap.String("current head of the heap each 1w step", fmt.Sprintf("topn is from partition %d, position: %d", head.idx, head.nextPosInTopN-1)))
-			}
 			head.nextPosInTopN++
 			heap.Fix(&mergingHeap, 0)
+		} else {
+			heap.Pop(&mergingHeap)
 		}
 		// The maintained one is cleared before. Set it and goto next round.
 		if cur.cleared {
@@ -997,7 +999,6 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			if err != nil {
 				return nil, nil, hists, err
 			}
-			maxPossible := int64(0)
 			affectedHist = affectedHist[:0]
 			// The following codes might accesss the NextClear loop twice. Record it here for saving CPU.
 			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
@@ -1005,6 +1006,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n 
 			}
 			// Hacking skip.
 			if uint32(len(finalTopNs)) >= n {
+				maxPossible := int64(0)
 				for _, histPos := range affectedHist {
 					maxPossible += maxPossibleAdded[histPos]
 				}
