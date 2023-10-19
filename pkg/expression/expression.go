@@ -1204,7 +1204,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		switch sourceType.GetType() {
 		case mysql.TypeLong, mysql.TypeShort, mysql.TypeTiny:
 			/*
-				TiFlash only support 4 bytes unsigned integer
+				TiFlash only support unsigned integer(size <= 4 bytes)
 				MySQL will return default value and warning if failed to cast into 4 bytes unsigned integer(include `Out of range`).
 					Warning 1411: Incorrect integer value: '`?`.`?`.`?`' for function inet_ntoa
 			*/
