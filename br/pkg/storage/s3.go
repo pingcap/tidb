@@ -352,6 +352,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3CliConfigs := []*aws.Config{}
+	s3CliConfigs = append(s3CliConfigs,
+		aws.NewConfig().WithS3DisableContentMD5Validation(true))
 	// if role ARN and external ID are provided, try to get the credential using this way
 	if len(qs.RoleArn) > 0 {
 		creds := stscreds.NewCredentials(ses, qs.RoleArn, func(p *stscreds.AssumeRoleProvider) {
