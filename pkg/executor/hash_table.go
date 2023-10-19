@@ -162,7 +162,7 @@ func (c *hashRowContainer) GetOneMatchedRow(probeKey uint64, probeRow chunk.Row,
 	var matchedRow chunk.Row
 
 	c.chkBuf = nil
-	cap := 0
+	capacity := 0
 
 	for i := 0; innerEntry != nil; i, innerEntry = i+1, innerEntry.next {
 		ptr := innerEntry.ptr
@@ -180,8 +180,8 @@ func (c *hashRowContainer) GetOneMatchedRow(probeKey uint64, probeRow chunk.Row,
 		}
 		atomic.AddInt64(&c.stat.probeCollision, 1)
 		if i == 0 {
-			cap = c.chkBuf.Capacity()
-		} else if (i+1)%(cap-1) == 0 {
+			capacity = c.chkBuf.Capacity()
+		} else if (i+1)%(capacity-1) == 0 {
 			c.chkBuf.Reset()
 		}
 	}
