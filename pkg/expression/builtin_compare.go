@@ -731,12 +731,12 @@ func doTimeConversionForGL(cmpAsDate bool, ctx sessionctx.Context, sc *stmtctx.S
 	if cmpAsDate {
 		t, err = types.ParseDate(sc, strVal)
 		if err == nil {
-			t, err = t.Convert(sc, mysql.TypeDate)
+			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDate)
 		}
 	} else {
 		t, err = types.ParseDatetime(sc, strVal)
 		if err == nil {
-			t, err = t.Convert(sc, mysql.TypeDatetime)
+			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDatetime)
 		}
 	}
 	if err != nil {
@@ -774,7 +774,7 @@ func (b *builtinGreatestTimeSig) evalTime(row chunk.Row) (res types.Time, isNull
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
 	sc := b.ctx.GetSessionVars().StmtCtx
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc, resTimeTp); err != nil {
+	if res, err = res.Convert(sc.TypeCtx(), resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	return res, false, nil
@@ -1048,7 +1048,7 @@ func (b *builtinLeastTimeSig) evalTime(row chunk.Row) (res types.Time, isNull bo
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
 	sc := b.ctx.GetSessionVars().StmtCtx
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc, resTimeTp); err != nil {
+	if res, err = res.Convert(sc.TypeCtx(), resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	return res, false, nil

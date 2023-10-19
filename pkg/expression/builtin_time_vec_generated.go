@@ -62,7 +62,7 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 
 		// calculate
 
-		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
 
 		if err != nil {
 			return err
@@ -132,7 +132,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			return err
 		}
 
-		output, err := arg0.Add(sc, arg1Duration)
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration)
 
 		if err != nil {
 			return err
@@ -677,7 +677,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(input *chunk.Chunk, resul
 
 		sc := b.ctx.GetSessionVars().StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 
 		if err != nil {
 			return err
@@ -746,7 +746,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(input *chunk.Chunk, result 
 			}
 			return err
 		}
-		output, err := arg0.Add(sc, arg1Duration.Neg())
+		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 
 		if err != nil {
 			return err

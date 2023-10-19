@@ -512,7 +512,7 @@ func (b *builtinCastJSONAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			duration := val.GetDuration()
 
 			sc := b.ctx.GetSessionVars().StmtCtx
-			tm, err := duration.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+			tm, err := duration.ConvertToTimeWithTimestamp(sc.TypeCtx(), b.tp.GetType(), ts)
 			if err != nil {
 				if err = handleInvalidTimeError(b.ctx, err); err != nil {
 					return err
@@ -665,7 +665,7 @@ func (b *builtinCastDurationAsTimeSig) vecEvalTime(input *chunk.Chunk, result *c
 
 		duration.Duration = ds[i]
 		duration.Fsp = fsp
-		tm, err := duration.ConvertToTimeWithTimestamp(stmtCtx, b.tp.GetType(), ts)
+		tm, err := duration.ConvertToTimeWithTimestamp(stmtCtx.TypeCtx(), b.tp.GetType(), ts)
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -1553,7 +1553,7 @@ func (b *builtinCastTimeAsTimeSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		if result.IsNull(i) {
 			continue
 		}
-		res, err := times[i].Convert(stmt, b.tp.GetType())
+		res, err := times[i].Convert(stmt.TypeCtx(), b.tp.GetType())
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err

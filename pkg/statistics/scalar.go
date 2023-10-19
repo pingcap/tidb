@@ -295,14 +295,14 @@ func EnumRangeValues(low, high types.Datum, lowExclude, highExclude bool) []type
 		startValue := lowTime
 		var err error
 		if lowExclude {
-			startValue, err = lowTime.Add(sc, types.Duration{Duration: time.Duration(stepSize), Fsp: fsp})
+			startValue, err = lowTime.Add(sc.TypeCtx(), types.Duration{Duration: time.Duration(stepSize), Fsp: fsp})
 			if err != nil {
 				return nil
 			}
 		}
 		values := make([]types.Datum, 0, remaining)
 		for i := int64(0); i < remaining; i++ {
-			value, err := startValue.Add(sc, types.Duration{Duration: time.Duration(i * stepSize), Fsp: fsp})
+			value, err := startValue.Add(sc.TypeCtx(), types.Duration{Duration: time.Duration(i * stepSize), Fsp: fsp})
 			if err != nil {
 				return nil
 			}

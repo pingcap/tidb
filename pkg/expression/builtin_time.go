@@ -1931,7 +1931,7 @@ func (b *builtinStrToDateDateSig) evalTime(row chunk.Row) (types.Time, bool, err
 	}
 	var t types.Time
 	sc := b.ctx.GetSessionVars().StmtCtx
-	succ := t.StrToDate(sc, date, format)
+	succ := t.StrToDate(sc.TypeCtx(), date, format)
 	if !succ {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
@@ -1964,7 +1964,7 @@ func (b *builtinStrToDateDatetimeSig) evalTime(row chunk.Row) (types.Time, bool,
 	}
 	var t types.Time
 	sc := b.ctx.GetSessionVars().StmtCtx
-	succ := t.StrToDate(sc, date, format)
+	succ := t.StrToDate(sc.TypeCtx(), date, format)
 	if !succ {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
@@ -2000,7 +2000,7 @@ func (b *builtinStrToDateDurationSig) evalDuration(row chunk.Row) (types.Duratio
 	}
 	var t types.Time
 	sc := b.ctx.GetSessionVars().StmtCtx
-	succ := t.StrToDate(sc, date, format)
+	succ := t.StrToDate(sc.TypeCtx(), date, format)
 	if !succ {
 		return types.Duration{}, true, handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String()))
 	}
@@ -2794,7 +2794,7 @@ func (du *baseDateArithmetical) getDateFromInt(ctx sessionctx.Context, args []Ex
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTimeFromInt64(sc, dateInt)
+	date, err := types.ParseTimeFromInt64(sc.TypeCtx(), dateInt)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -2814,7 +2814,7 @@ func (du *baseDateArithmetical) getDateFromReal(ctx sessionctx.Context, args []E
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTimeFromFloat64(sc, dateReal)
+	date, err := types.ParseTimeFromFloat64(sc.TypeCtx(), dateReal)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -2834,7 +2834,7 @@ func (du *baseDateArithmetical) getDateFromDecimal(ctx sessionctx.Context, args 
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	date, err := types.ParseTimeFromDecimal(sc, dateDec)
+	date, err := types.ParseTimeFromDecimal(sc.TypeCtx(), dateDec)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -3053,7 +3053,7 @@ func (du *baseDateArithmetical) vecGetDateFromInt(b *baseBuiltinFunc, input *chu
 			continue
 		}
 
-		date, err := types.ParseTimeFromInt64(sc, i64s[i])
+		date, err := types.ParseTimeFromInt64(sc.TypeCtx(), i64s[i])
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
@@ -3095,7 +3095,7 @@ func (du *baseDateArithmetical) vecGetDateFromReal(b *baseBuiltinFunc, input *ch
 			continue
 		}
 
-		date, err := types.ParseTimeFromFloat64(sc, f64s[i])
+		date, err := types.ParseTimeFromFloat64(sc.TypeCtx(), f64s[i])
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
@@ -3137,7 +3137,7 @@ func (du *baseDateArithmetical) vecGetDateFromDecimal(b *baseBuiltinFunc, input 
 		}
 
 		dec := buf.GetDecimal(i)
-		date, err := types.ParseTimeFromDecimal(sc, dec)
+		date, err := types.ParseTimeFromDecimal(sc.TypeCtx(), dec)
 		if err != nil {
 			err = handleInvalidTimeError(b.ctx, err)
 			if err != nil {
@@ -4002,7 +4002,7 @@ func (b *builtinAddSubDateDurationAnySig) evalTime(row chunk.Row) (types.Time, b
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	t, err := d.ConvertToTime(sc, mysql.TypeDatetime)
+	t, err := d.ConvertToTime(sc.TypeCtx(), mysql.TypeDatetime)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -4410,7 +4410,7 @@ func (b *builtinTimestamp2ArgsSig) evalTime(row chunk.Row) (types.Time, bool, er
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
-	tmp, err := tm.Add(sc, duration)
+	tmp, err := tm.Add(sc.TypeCtx(), duration)
 	if err != nil {
 		return types.ZeroTime, true, err
 	}
@@ -4554,7 +4554,7 @@ func strDatetimeAddDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 		sc.AppendWarning(err)
 		return "", true, nil
 	}
-	ret, err := arg0.Add(sc, arg1)
+	ret, err := arg0.Add(sc.TypeCtx(), arg1)
 	if err != nil {
 		return "", false, err
 	}
@@ -4591,7 +4591,7 @@ func strDatetimeSubDuration(sc *stmtctx.StatementContext, d string, arg1 types.D
 		sc.AppendWarning(err)
 		return "", true, nil
 	}
-	resultTime, err := arg0.Add(sc, arg1.Neg())
+	resultTime, err := arg0.Add(sc.TypeCtx(), arg1.Neg())
 	if err != nil {
 		return "", false, err
 	}
@@ -4725,7 +4725,7 @@ func (b *builtinAddDatetimeAndDurationSig) evalTime(row chunk.Row) (types.Time, 
 	if isNull || err != nil {
 		return types.ZeroDatetime, isNull, err
 	}
-	result, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx, arg1)
+	result, err := arg0.Add(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), arg1)
 	return result, err != nil, err
 }
 
@@ -4762,7 +4762,7 @@ func (b *builtinAddDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 		}
 		return types.ZeroDatetime, true, err
 	}
-	result, err := arg0.Add(sc, arg1)
+	result, err := arg0.Add(sc.TypeCtx(), arg1)
 	return result, err != nil, err
 }
 
@@ -5678,7 +5678,7 @@ func (b *builtinSubDatetimeAndDurationSig) evalTime(row chunk.Row) (types.Time, 
 		return types.ZeroDatetime, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	result, err := arg0.Add(sc, arg1.Neg())
+	result, err := arg0.Add(sc.TypeCtx(), arg1.Neg())
 	return result, err != nil, err
 }
 
@@ -5715,7 +5715,7 @@ func (b *builtinSubDatetimeAndStringSig) evalTime(row chunk.Row) (types.Time, bo
 		}
 		return types.ZeroDatetime, true, err
 	}
-	result, err := arg0.Add(sc, arg1.Neg())
+	result, err := arg0.Add(sc.TypeCtx(), arg1.Neg())
 	return result, err != nil, err
 }
 
@@ -6238,7 +6238,7 @@ func (b *builtinTimestampAddSig) evalString(row chunk.Row) (string, bool, error)
 		fsp = types.MaxFsp
 	}
 	r := types.NewTime(types.FromGoTime(tb), b.resolveType(arg.Type(), unit), fsp)
-	if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
+	if err = r.Check(b.ctx.GetSessionVars().StmtCtx.TypeCtx()); err != nil {
 		return "", true, handleInvalidTimeError(b.ctx, err)
 	}
 	return r.String(), false, nil

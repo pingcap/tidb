@@ -1528,7 +1528,7 @@ func (b *builtinCastTimeAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 	}
 
 	sc := b.ctx.GetSessionVars().StmtCtx
-	if res, err = res.Convert(sc, b.tp.GetType()); err != nil {
+	if res, err = res.Convert(sc.TypeCtx(), b.tp.GetType()); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
 	res, err = res.RoundFrac(sc, b.tp.GetDecimal())
@@ -1796,7 +1796,7 @@ func (b *builtinCastDurationAsTimeSig) evalTime(row chunk.Row) (res types.Time, 
 	if err != nil {
 		ts = gotime.Now()
 	}
-	res, err = val.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+	res, err = val.ConvertToTimeWithTimestamp(sc.TypeCtx(), b.tp.GetType(), ts)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 	}
@@ -1937,7 +1937,7 @@ func (b *builtinCastJSONAsTimeSig) evalTime(row chunk.Row) (res types.Time, isNu
 		if err != nil {
 			ts = gotime.Now()
 		}
-		res, err = duration.ConvertToTimeWithTimestamp(sc, b.tp.GetType(), ts)
+		res, err = duration.ConvertToTimeWithTimestamp(sc.TypeCtx(), b.tp.GetType(), ts)
 		if err != nil {
 			return types.ZeroTime, true, handleInvalidTimeError(b.ctx, err)
 		}

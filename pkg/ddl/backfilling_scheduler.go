@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -159,13 +158,13 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
-	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()),
-	)
+
+	typeFlags := sessCtx.GetSessionVars().StmtCtx.TypeFlags().
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
+	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
 
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
@@ -218,6 +217,9 @@ func (b *txnBackfillScheduler) adjustWorkerSize() error {
 		case typeUpdateColumnWorker:
 			// Setting InCreateOrAlterStmt tells the difference between SELECT casting and ALTER COLUMN casting.
 			sessCtx.GetSessionVars().StmtCtx.InCreateOrAlterStmt = true
+			sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(
+				sessCtx.GetSessionVars().StmtCtx.TypeFlags().
+					WithIgnoreZeroDateErr(!reorgInfo.ReorgMeta.SQLMode.HasStrictMode()))
 			updateWorker := newUpdateColumnWorker(sessCtx, i, b.tbl, b.decodeColMap, reorgInfo, jc)
 			runner = newBackfillWorker(jc.ddlJobCtx, updateWorker)
 			worker = updateWorker

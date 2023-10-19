@@ -2098,16 +2098,24 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 		sc.Priority = stmt.Priority
-		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr))
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
+			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
+				!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr ||
+				vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-		sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode || sc.AllowInvalidDate
-		sc.NoZeroDate = vars.SQLMode.HasNoZeroDateMode()
-		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode))
+		sc.SetTypeFlags(
+			sc.TypeFlags().
+				WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode()))
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(!vars.StrictSQLMode).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
+			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode ||
+				vars.SQLMode.HasAllowInvalidDatesMode()))
+
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
@@ -2122,9 +2130,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.OverflowAsWarning = true
 
 		// Return warning for truncate error in selection.
-		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(true).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 		if opts := stmt.SelectStmtOpts; opts != nil {
 			sc.Priority = opts.Priority
 			sc.NotFillCache = !opts.SQLCache
@@ -2133,30 +2142,35 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.OverflowAsWarning = true
-		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(true).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.ShowStmt:
-		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithIgnoreTruncateErr(true).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
 		}
 	case *ast.SplitRegionStmt:
-		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(false))
-		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithIgnoreTruncateErr(false).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.SetSessionStatesStmt:
 		sc.InSetSessionStatesStmt = true
-		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithIgnoreTruncateErr(true).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	default:
-		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-		sc.IgnoreZeroInDate = true
-		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithIgnoreTruncateErr(true).
+			WithIgnoreZeroInDate(true).
+			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	}
 
 	sc.SetTypeFlags(sc.TypeFlags().
@@ -2218,11 +2232,13 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
-	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr))
+	sc.SetTypeFlags(sc.TypeFlags().
+		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
+			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
 }
 
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.
@@ -2231,10 +2247,12 @@ func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars
 	sc.DupKeyAsWarning = stmt.IgnoreErr
 	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
-	sc.IgnoreZeroInDate = !vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr || sc.AllowInvalidDate
 	sc.Priority = stmt.Priority
-	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr))
+	sc.SetTypeFlags(sc.TypeFlags().
+		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
+			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {

@@ -1262,7 +1262,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 	}
 	switch d.k {
 	case KindMysqlTime:
-		t, err = d.GetMysqlTime().Convert(sc, target.GetType())
+		t, err = d.GetMysqlTime().Convert(sc.TypeCtxOrDefault(), target.GetType())
 		if err != nil {
 			// t might be an invalid Timestamp, but should still be comparable, since same representation (KindMysqlTime)
 			ret.SetMysqlTime(t)
@@ -1270,7 +1270,7 @@ func (d *Datum) convertToMysqlTimestamp(sc *stmtctx.StatementContext, target *Fi
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
-		t, err = d.GetMysqlDuration().ConvertToTime(sc, mysql.TypeTimestamp)
+		t, err = d.GetMysqlDuration().ConvertToTime(sc.TypeCtxOrDefault(), mysql.TypeTimestamp)
 		if err != nil {
 			ret.SetMysqlTime(t)
 			return ret, errors.Trace(err)
@@ -1315,14 +1315,14 @@ func (d *Datum) convertToMysqlTime(sc *stmtctx.StatementContext, target *FieldTy
 	)
 	switch d.k {
 	case KindMysqlTime:
-		t, err = d.GetMysqlTime().Convert(sc, tp)
+		t, err = d.GetMysqlTime().Convert(sc.TypeCtxOrDefault(), tp)
 		if err != nil {
 			ret.SetMysqlTime(t)
 			return ret, errors.Trace(err)
 		}
 		t, err = t.RoundFrac(sc, fsp)
 	case KindMysqlDuration:
-		t, err = d.GetMysqlDuration().ConvertToTime(sc, tp)
+		t, err = d.GetMysqlDuration().ConvertToTime(sc.TypeCtxOrDefault(), tp)
 		if err != nil {
 			ret.SetMysqlTime(t)
 			return ret, errors.Trace(err)

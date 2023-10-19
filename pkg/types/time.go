@@ -453,7 +453,7 @@ func (t Time) FillNumber(dec *MyDecimal) {
 }
 
 // Convert converts t with type tp.
-func (t Time) Convert(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
+func (t Time) Convert(ctx Context, tp uint8) (Time, error) {
 	t1 := t
 	if t.Type() == tp || t.IsZero() {
 		t1.SetType(tp)
@@ -461,7 +461,7 @@ func (t Time) Convert(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
 	}
 
 	t1.SetType(tp)
-	err := t1.check(sc, nil)
+	err := t1.check(ctx, nil)
 	return t1, errors.Trace(err)
 }
 
@@ -674,18 +674,13 @@ func (t *Time) FromPackedUint(packed uint64) error {
 // check whether t matches valid Time format.
 // If allowZeroInDate is false, it returns ErrZeroDate when month or day is zero.
 // FIXME: See https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sqlmode_no_zero_in_date
-func (t Time) check(sc *stmtctx.StatementContext, explicitTz *gotime.Location) error {
-	allowZeroInDate := false
-	allowInvalidDate := false
-	// We should avoid passing sc as nil here as far as possible.
-	if sc != nil {
-		allowZeroInDate = sc.IgnoreZeroInDate
-		allowInvalidDate = sc.AllowInvalidDate
-	}
+func (t Time) check(ctx Context, explicitTz *gotime.Location) error {
+	allowZeroInDate := ctx.Flags().IgnoreZeroInDate()
+	allowInvalidDate := ctx.Flags().IgnoreInvalidDateErr()
 	var err error
 	switch t.Type() {
 	case mysql.TypeTimestamp:
-		err = checkTimestampType(sc, t.coreTime, explicitTz)
+		err = checkTimestampType(ctx, t.coreTime, explicitTz)
 	case mysql.TypeDatetime, mysql.TypeDate:
 		err = checkDatetimeType(t.coreTime, allowZeroInDate, allowInvalidDate)
 	}
@@ -693,8 +688,8 @@ func (t Time) check(sc *stmtctx.StatementContext, explicitTz *gotime.Location) e
 }
 
 // Check if 't' is valid
-func (t *Time) Check(sc *stmtctx.StatementContext) error {
-	return t.check(sc, nil)
+func (t *Time) Check(ctx Context) error {
+	return t.check(ctx, nil)
 }
 
 // Sub subtracts t1 from t, returns a duration value.
@@ -727,7 +722,7 @@ func (t *Time) Sub(sc *stmtctx.StatementContext, t1 *Time) Duration {
 }
 
 // Add adds d to t, returns the result time value.
-func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
+func (t *Time) Add(ctx Context, d Duration) (Time, error) {
 	seconds, microseconds, _ := calcTimeDurationDiff(t.coreTime, d)
 	days := seconds / secondsIn24Hour
 	year, month, day := getDateFromDaynr(uint(days))
@@ -747,7 +742,7 @@ func (t *Time) Add(sc *stmtctx.StatementContext, d Duration) (Time, error) {
 		fsp = d.Fsp
 	}
 	ret := NewTime(tm.coreTime, t.Type(), fsp)
-	return ret, ret.Check(sc)
+	return ret, ret.Check(ctx)
 }
 
 // TimestampDiff returns t2 - t1 where t1 and t2 are date or datetime expressions.
@@ -1500,24 +1495,24 @@ func (d Duration) ToNumber() *MyDecimal {
 
 // ConvertToTime converts duration to Time.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
-func (d Duration) ConvertToTime(sc *stmtctx.StatementContext, tp uint8) (Time, error) {
-	year, month, day := gotime.Now().In(sc.TimeZone()).Date()
+func (d Duration) ConvertToTime(ctx Context, tp uint8) (Time, error) {
+	year, month, day := gotime.Now().In(ctx.Location()).Date()
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	mixDateAndDuration(&datePart, d)
 
 	t := NewTime(datePart, mysql.TypeDatetime, d.Fsp)
-	return t.Convert(sc, tp)
+	return t.Convert(ctx, tp)
 }
 
 // ConvertToTimeWithTimestamp converts duration to Time by system timestamp.
 // Tp is TypeDatetime, TypeTimestamp and TypeDate.
-func (d Duration) ConvertToTimeWithTimestamp(sc *stmtctx.StatementContext, tp uint8, ts gotime.Time) (Time, error) {
-	year, month, day := ts.In(sc.TimeZone()).Date()
+func (d Duration) ConvertToTimeWithTimestamp(ctx Context, tp uint8, ts gotime.Time) (Time, error) {
+	year, month, day := ts.In(ctx.Location()).Date()
 	datePart := FromDate(year, int(month), day, 0, 0, 0, 0)
 	mixDateAndDuration(&datePart, d)
 
 	t := NewTime(datePart, mysql.TypeDatetime, d.Fsp)
-	return t.Convert(sc, tp)
+	return t.Convert(ctx, tp)
 }
 
 // RoundFrac rounds fractional seconds precision with new fsp and returns a new one.
@@ -1868,7 +1863,7 @@ func splitDuration(t gotime.Duration) (sign int, hours int, minutes int, seconds
 
 var maxDaysInMonth = []int{31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
 
-func getTime(sc *stmtctx.StatementContext, num, originNum int64, tp byte) (Time, error) {
+func getTime(ctx Context, num, originNum int64, tp byte) (Time, error) {
 	s1 := num / 1000000
 	s2 := num - s1*1000000
 
@@ -1888,14 +1883,14 @@ func getTime(sc *stmtctx.StatementContext, num, originNum int64, tp byte) (Time,
 		return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(TimeStr, numStr))
 	}
 	t := NewTime(ct, tp, DefaultFsp)
-	err := t.check(sc, nil)
+	err := t.check(ctx, nil)
 	return t, errors.Trace(err)
 }
 
 // parseDateTimeFromNum parses date time from num.
 // See number_to_datetime function.
 // https://github.com/mysql/mysql-server/blob/5.7/sql-common/my_time.c
-func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error) {
+func parseDateTimeFromNum(ctx Context, num int64) (Time, error) {
 	t := ZeroDate
 	// Check zero.
 	if num == 0 {
@@ -1906,7 +1901,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// Check datetime type.
 	if num >= 10000101000000 {
 		t.SetType(mysql.TypeDatetime)
-		return getTime(sc, num, originNum, t.Type())
+		return getTime(ctx, num, originNum, t.Type())
 	}
 
 	// Check MMDD.
@@ -1918,7 +1913,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDD, year: 2000-2069
 	if num <= (70-1)*10000+1231 {
 		num = (num + 20000000) * 1000000
-		return getTime(sc, num, originNum, t.Type())
+		return getTime(ctx, num, originNum, t.Type())
 	}
 
 	// Check YYMMDD.
@@ -1930,13 +1925,13 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDD, year: 1970-1999
 	if num <= 991231 {
 		num = (num + 19000000) * 1000000
-		return getTime(sc, num, originNum, t.Type())
+		return getTime(ctx, num, originNum, t.Type())
 	}
 
 	// Adjust hour/min/second.
 	if num <= 99991231 {
 		num = num * 1000000
-		return getTime(sc, num, originNum, t.Type())
+		return getTime(ctx, num, originNum, t.Type())
 	}
 
 	// Check MMDDHHMMSS.
@@ -1951,7 +1946,7 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDDHHMMSS, 2000-2069
 	if num <= 69*10000000000+1231235959 {
 		num = num + 20000000000000
-		return getTime(sc, num, originNum, t.Type())
+		return getTime(ctx, num, originNum, t.Type())
 	}
 
 	// Check YYYYMMDDHHMMSS.
@@ -1963,10 +1958,10 @@ func parseDateTimeFromNum(sc *stmtctx.StatementContext, num int64) (Time, error)
 	// YYMMDDHHMMSS, 1970-1999
 	if num <= 991231235959 {
 		num = num + 19000000000000
-		return getTime(sc, num, originNum, t.Type())
+		return getTime(ctx, num, originNum, t.Type())
 	}
 
-	return getTime(sc, num, originNum, t.Type())
+	return getTime(ctx, num, originNum, t.Type())
 }
 
 // ParseTime parses a formatted string with type tp and specific fsp.
@@ -2006,7 +2001,7 @@ func parseTime(sc *stmtctx.StatementContext, str string, tp byte, fsp int, isFlo
 	}
 
 	t.SetType(tp)
-	if err = t.check(sc, explicitTz); err != nil {
+	if err = t.check(sc.TypeCtxOrDefault(), explicitTz); err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
@@ -2045,7 +2040,7 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int)
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
 		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
-		if sc != nil && sc.InCreateOrAlterStmt && !sc.TypeFlags().TruncateAsWarning() && sc.NoZeroDate {
+		if sc != nil && !sc.TypeFlags().TruncateAsWarning() && sc.TypeFlags().IgnoreZeroDateErr() {
 			switch tp {
 			case mysql.TypeTimestamp:
 				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
@@ -2062,14 +2057,14 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int)
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
-	t, err := parseDateTimeFromNum(sc, num)
+	t, err := parseDateTimeFromNum(sc.TypeCtxOrDefault(), num)
 	if err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 
 	t.SetType(tp)
 	t.SetFsp(fsp)
-	if err := t.check(sc, nil); err != nil {
+	if err := t.check(sc.TypeCtxOrDefault(), nil); err != nil {
 		return NewTime(ZeroCoreTime, tp, DefaultFsp), errors.Trace(err)
 	}
 	return t, nil
@@ -2158,17 +2153,13 @@ func checkMonthDay(year, month, day int, allowInvalidDate bool) error {
 	return nil
 }
 
-func checkTimestampType(sc *stmtctx.StatementContext, t CoreTime, explicitTz *gotime.Location) error {
+func checkTimestampType(ctx Context, t CoreTime, explicitTz *gotime.Location) error {
 	if compareTime(t, ZeroCoreTime) == 0 {
 		return nil
 	}
 
-	if sc == nil {
-		return errors.New("statementContext is required during checkTimestampType")
-	}
-
 	var checkTime CoreTime
-	tz := sc.TimeZone()
+	tz := ctx.Location()
 	if explicitTz != nil {
 		tz = explicitTz
 	}
@@ -2650,16 +2641,16 @@ func IsDateFormat(format string) bool {
 }
 
 // ParseTimeFromInt64 parses mysql time value from int64.
-func ParseTimeFromInt64(sc *stmtctx.StatementContext, num int64) (Time, error) {
-	return parseDateTimeFromNum(sc, num)
+func ParseTimeFromInt64(ctx Context, num int64) (Time, error) {
+	return parseDateTimeFromNum(ctx, num)
 }
 
 // ParseTimeFromFloat64 parses mysql time value from float64.
 // It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being real.
 // For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
-func ParseTimeFromFloat64(sc *stmtctx.StatementContext, f float64) (Time, error) {
+func ParseTimeFromFloat64(ctx Context, f float64) (Time, error) {
 	intPart := int64(f)
-	t, err := parseDateTimeFromNum(sc, intPart)
+	t, err := parseDateTimeFromNum(ctx, intPart)
 	if err != nil {
 		return ZeroTime, err
 	}
@@ -2676,13 +2667,13 @@ func ParseTimeFromFloat64(sc *stmtctx.StatementContext, f float64) (Time, error)
 // ParseTimeFromDecimal parses mysql time value from decimal.
 // It is used in scenarios that distinguish date and datetime, e.g., date_add/sub() with first argument being decimal.
 // For example, 20010203 parses to date (no HMS) and 20010203040506 parses to datetime (with HMS).
-func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time, err error) {
+func ParseTimeFromDecimal(ctx Context, dec *MyDecimal) (t Time, err error) {
 	intPart, err := dec.ToInt()
 	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
 		return ZeroTime, err
 	}
 	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
-	t, err = parseDateTimeFromNum(sc, intPart)
+	t, err = parseDateTimeFromNum(ctx, intPart)
 	if err != nil {
 		return ZeroTime, err
 	}
@@ -2894,7 +2885,7 @@ func abbrDayOfMonth(day int) string {
 
 // StrToDate converts date string according to format.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-format
-func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool {
+func (t *Time) StrToDate(typeCtx Context, date, format string) bool {
 	ctx := make(map[string]int)
 	var tm CoreTime
 	success, warning := strToDate(&tm, date, format, ctx)
@@ -2910,13 +2901,13 @@ func (t *Time) StrToDate(sc *stmtctx.StatementContext, date, format string) bool
 
 	t.SetCoreTime(tm)
 	t.SetType(mysql.TypeDatetime)
-	if t.check(sc, nil) != nil {
+	if t.check(typeCtx, nil) != nil {
 		return false
 	}
 	if warning {
 		// Only append this warning when success but still need warning.
 		// Currently this only happens when `date` has extra characters at the end.
-		sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, date))
+		typeCtx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs(DateTimeStr, date))
 	}
 	return true
 }
