@@ -71,15 +71,15 @@ func TestDataInDiskByRows(t *testing.T) {
 	defer func() {
 		err := l.Close()
 		require.NoError(t, err)
-		require.NotNil(t, l.dataFile.disk)
-		_, err = os.Stat(l.dataFile.disk.Name())
+		require.NotNil(t, l.dataFile.file)
+		_, err = os.Stat(l.dataFile.file.Name())
 		require.True(t, os.IsNotExist(err))
 	}()
 	for _, chk := range chks {
 		err := l.Add(chk)
 		assert.NoError(t, err)
 	}
-	require.True(t, strings.HasPrefix(l.dataFile.disk.Name(), filepath.Join(os.TempDir(), "tidb_enable_tmp_storage_on_oom")))
+	require.True(t, strings.HasPrefix(l.dataFile.file.Name(), filepath.Join(os.TempDir(), "tidb_enable_tmp_storage_on_oom")))
 	assert.Equal(t, numChk, l.NumChunks())
 	assert.Greater(t, l.GetDiskTracker().BytesConsumed(), int64(0))
 
@@ -144,14 +144,14 @@ type listInDiskWriteDisk struct {
 }
 
 func (l *diskFileReaderWriter) flushForTest() (err error) {
-	err = l.disk.Close()
+	err = l.file.Close()
 	if err != nil {
 		return
 	}
-	l.w = nil
+	l.writer = nil
 	// the l.disk is the underlying object of the l.w, it will be closed
 	// after calling l.w.Close, we need to reopen it before reading rows.
-	l.disk, err = os.Open(l.disk.Name())
+	l.file, err = os.Open(l.file.Name())
 	if err != nil {
 		return errors2.Trace(err)
 	}
@@ -164,15 +164,15 @@ func newDataInDiskByRowsWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWri
 	if err != nil {
 		return nil, err
 	}
-	l.dataFile.disk = disk
-	l.dataFile.w = disk
+	l.dataFile.file = disk
+	l.dataFile.writer = disk
 
 	disk2, err := os.CreateTemp(config.GetGlobalConfig().TempStoragePath, "offset"+strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return nil, err
 	}
-	l.offsetFile.disk = disk2
-	l.offsetFile.w = disk2
+	l.offsetFile.file = disk2
+	l.offsetFile.writer = disk2
 	return &l, nil
 }
 
@@ -186,7 +186,7 @@ func (l *listInDiskWriteDisk) GetRow(ptr RowPtr) (row Row, err error) {
 		return
 	}
 
-	r := io.NewSectionReader(l.dataFile.disk, off, l.dataFile.offWrite-off)
+	r := io.NewSectionReader(l.dataFile.file, off, l.dataFile.offWrite-off)
 	format := rowInDisk{numCol: len(l.fieldTypes)}
 	_, err = format.ReadFrom(r)
 	if err != nil {
