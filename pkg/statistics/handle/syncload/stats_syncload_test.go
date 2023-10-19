@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package handle_test
+package syncload_test
 
 import (
 	"testing"
@@ -40,14 +40,14 @@ func TestSyncLoadSkipUnAnalyzedItems(t *testing.T) {
 	h.SetLease(1)
 
 	// no item would be loaded
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/assertSyncLoadItems", `return(0)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems", `return(0)`))
 	tk.MustQuery("trace plan select * from t where a > 10")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/assertSyncLoadItems")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems")
 	tk.MustExec("analyze table t1")
 	// one column would be loaded
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/assertSyncLoadItems", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems", `return(1)`))
 	tk.MustQuery("trace plan select * from t1 where a > 10")
-	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/assertSyncLoadItems")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/syncload/assertSyncLoadItems")
 }
 
 func TestConcurrentLoadHist(t *testing.T) {
@@ -175,11 +175,11 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		inTerms  string
 	}{
 		{
-			failPath: "github.com/pingcap/tidb/pkg/statistics/handle/mockReadStatsForOnePanic",
+			failPath: "github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOnePanic",
 			inTerms:  "panic",
 		},
 		{
-			failPath: "github.com/pingcap/tidb/pkg/statistics/handle/mockReadStatsForOneFail",
+			failPath: "github.com/pingcap/tidb/pkg/statistics/handle/syncload/mockReadStatsForOneFail",
 			inTerms:  "return(true)",
 		},
 	}
@@ -206,18 +206,10 @@ func TestConcurrentLoadHistWithPanicAndFail(t *testing.T) {
 		task1, err1 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Error(t, err1)
 		require.NotNil(t, task1)
-		list, ok := h.StatsLoad.WorkingColMap[neededColumns[0]]
-		require.True(t, ok)
-		require.Len(t, list, 1)
-		require.Equal(t, stmtCtx1.StatsLoad.ResultCh, list[0])
 
 		task2, err2 := h.HandleOneTask(testKit.Session().(sessionctx.Context), nil, exitCh)
 		require.Nil(t, err2)
 		require.Nil(t, task2)
-		list, ok = h.StatsLoad.WorkingColMap[neededColumns[0]]
-		require.True(t, ok)
-		require.Len(t, list, 2)
-		require.Equal(t, stmtCtx2.StatsLoad.ResultCh, list[1])
 
 		require.NoError(t, failpoint.Disable(fp.failPath))
 		task3, err3 := h.HandleOneTask(testKit.Session().(sessionctx.Context), task1, exitCh)

@@ -18,11 +18,9 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
 	ddlUtil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
@@ -30,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/history"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -70,6 +69,9 @@ type Handle struct {
 	// StatsAnalyze is used to handle auto-analyze and manage analyze jobs.
 	util.StatsAnalyze
 
+	// StatsSyncLoad is used to load stats syncly.
+	util.StatsSyncLoad
+
 	// StatsReadWriter is used to read/write stats from/to storage.
 	util.StatsReadWriter
 
@@ -94,9 +96,6 @@ type Handle struct {
 	// StatsCache ...
 	util.StatsCache
 
-	// StatsLoad is used to load stats concurrently
-	StatsLoad StatsLoad
-
 	lease atomic2.Duration
 }
 
@@ -111,7 +110,6 @@ func (h *Handle) Clear() {
 
 // NewHandle creates a Handle for update stats.
 func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool util.SessionPool, tracker sessionctx.SysProcTracker, autoAnalyzeProcIDGetter func() uint64) (*Handle, error) {
-	cfg := config.GetGlobalConfig()
 	handle := &Handle{
 		gpool:                   gp.New(math.MaxInt16, time.Minute),
 		ddlEventCh:              make(chan *ddlUtil.Event, 1000),
@@ -135,11 +133,8 @@ func NewHandle(_, initStatsCtx sessionctx.Context, lease time.Duration, pool uti
 	handle.StatsHistory = history.NewStatsHistory(handle)
 	handle.StatsUsage = usage.NewStatsUsageImpl(handle)
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle)
+	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
-	handle.StatsLoad.SubCtxs = make([]sessionctx.Context, cfg.Performance.StatsLoadConcurrency)
-	handle.StatsLoad.NeededItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.TimeoutItemsCh = make(chan *NeededItemTask, cfg.Performance.StatsLoadQueueSize)
-	handle.StatsLoad.WorkingColMap = map[model.TableItemID][]chan stmtctx.StatsLoadResult{}
 	return handle, nil
 }
 
