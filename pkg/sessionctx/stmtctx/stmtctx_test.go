@@ -356,12 +356,6 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagInvalidDateAsWarning)
 	require.Equal(t, typectx.FlagSkipASCIICheck|typectx.FlagSkipUTF8Check|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
-
-	sc.UpdateTypeFlags(func(flags typectx.Flags) typectx.Flags {
-		return (flags | typectx.FlagSkipUTF8Check | typectx.FlagClipNegativeToZero) &^ typectx.FlagSkipASCIICheck
-	})
-	require.Equal(t, typectx.FlagSkipUTF8Check|typectx.FlagClipNegativeToZero|typectx.FlagInvalidDateAsWarning, sc.TypeFlags())
-	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 }
 
 func TestResetStmtCtx(t *testing.T) {

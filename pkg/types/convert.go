@@ -145,8 +145,8 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 }
 
 // ConvertIntToUint converts an int value to an uint value.
-func ConvertIntToUint(sc *stmtctx.StatementContext, val int64, upperBound uint64, tp byte) (uint64, error) {
-	if sc.ShouldClipToZero() && val < 0 {
+func ConvertIntToUint(flags Flags, val int64, upperBound uint64, tp byte) (uint64, error) {
+	if val < 0 && flags.ClipNegativeToZero() {
 		return 0, overflow(val, tp)
 	}
 
@@ -167,10 +167,10 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 }
 
 // ConvertFloatToUint converts a float value to an uint value.
-func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertFloatToUint(flags Flags, fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
-		if sc.ShouldClipToZero() {
+		if flags.ClipNegativeToZero() {
 			return 0, overflow(val, tp)
 		}
 		return uint64(int64(val)), overflow(val, tp)
@@ -586,7 +586,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool,
 		i := j.GetInt64()
 		if unsigned {
 			uBound := IntergerUnsignedUpperBound(tp)
-			u, err := ConvertIntToUint(sc, i, uBound, tp)
+			u, err := ConvertIntToUint(sc.TypeFlags(), i, uBound, tp)
 			return int64(u), sc.HandleOverflow(err, err)
 		}
 
@@ -614,7 +614,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool,
 			return u, sc.HandleOverflow(e, e)
 		}
 		bound := IntergerUnsignedUpperBound(tp)
-		u, err := ConvertFloatToUint(sc, f, bound, tp)
+		u, err := ConvertFloatToUint(sc.TypeFlags(), f, bound, tp)
 		return int64(u), sc.HandleOverflow(err, err)
 	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))

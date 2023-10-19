@@ -766,7 +766,7 @@ func (b *builtinCastRealAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 		} else {
 			var uintVal uint64
 			sc := b.ctx.GetSessionVars().StmtCtx
-			uintVal, err = types.ConvertFloatToUint(sc, f64s[i], types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+			uintVal, err = types.ConvertFloatToUint(sc.TypeFlags(), f64s[i], types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 			i64s[i] = int64(uintVal)
 		}
 		if types.ErrOverflow.Equal(err) {

@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
@@ -33,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -148,12 +148,6 @@ func initSessCtx(
 	sqlMode mysql.SQLMode,
 	tzLocation *model.TimeZoneLocation,
 ) error {
-	// Unify the TimeZone settings in newContext.
-	if sessCtx.GetSessionVars().StmtCtx.TimeZone() == nil {
-		tz := *time.UTC
-		sessCtx.GetSessionVars().StmtCtx.SetTimeZone(&tz)
-	}
-	sessCtx.GetSessionVars().StmtCtx.IsDDLJobInQueue = true
 	// Set the row encode format version.
 	rowFormat := variable.GetDDLReorgRowFormat()
 	sessCtx.GetSessionVars().RowEncoder.Enable = rowFormat != variable.DefTiDBRowFormatV1
@@ -162,15 +156,17 @@ func initSessCtx(
 	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
 		return errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
-
-	typeFlags := sessCtx.GetSessionVars().StmtCtx.TypeFlags().WithTruncateAsWarning(!sqlMode.HasStrictMode())
-	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags.
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithClipNegativeToZero(true),
+	)
 
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
