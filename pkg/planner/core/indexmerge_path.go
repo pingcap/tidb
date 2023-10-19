@@ -926,7 +926,7 @@ DNF path
 			IndexRangeScan(mv-index-b)(2)             --- COP
 			IndexRangeScan(non-mv-index-if-any)(?)    --- COP
 			TableRowIdScan(t)                         --- COP
-	2. select * from t where ((1 member of (a)) or (json_contains(b, '[1, 2, 3]')) and (other index predicates))
+	2. select * from t where ((1 member of (a)) or (json_contains(b, '[1, 2, 3]')) or (other index predicates))
 		analyze: find and utilize index access filter items as much as possible:
 		IndexMerge(OR-UNION)                          --- ROOT
 			IndexRangeScan(mv-index-a)(1)             --- COP
