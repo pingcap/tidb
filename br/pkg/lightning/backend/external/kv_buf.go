@@ -16,7 +16,7 @@ package external
 
 import "github.com/docker/go-units"
 
-const defaultBlockSize = 16 * units.MiB
+const DefaultBlockSize = 16 * units.MiB
 
 // preAllocKVBuf pre allocates a large buffer of limit memLimit to reduce memory
 // allocation, all space in this buffer will be reused when reset.
