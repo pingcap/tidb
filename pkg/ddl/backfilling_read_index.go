@@ -162,6 +162,7 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 		//nolint:forcetypeassert
 		if val.(bool) {
 			MockDMLExecutionAddIndexSubTaskFinish()
+			<-TestSyncChan
 		}
 	})
 	if len(r.cloudStorageURI) == 0 {
