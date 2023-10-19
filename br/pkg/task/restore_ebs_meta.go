@@ -244,12 +244,14 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 
 	// Turn on FSR for TiKV data snapshots
 	if h.cfg.UseFSR {
-		snapshotsIDs, err := ec2Session.EnableDataFSR(h.metaInfo, h.cfg.TargetAZ)
+		snapshotsIDs, targetAZ, err := ec2Session.EnableDataFSR(h.metaInfo, h.cfg.TargetAZ)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
 
-		err = ec2Session.WaitDataFSREnabled(snapshotsIDs, h.cfg.TargetAZ, progress)
+		h.cfg.TargetAZ = targetAZ
+
+		err = ec2Session.WaitDataFSREnabled(snapshotsIDs, targetAZ, progress)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
