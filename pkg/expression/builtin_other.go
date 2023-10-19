@@ -1210,7 +1210,7 @@ func (b *builtinValuesIntSig) evalInt(_ chunk.Row) (int64, bool, error) {
 		}
 		if len(val) < 8 {
 			var binary types.BinaryLiteral = val
-			v, err := binary.ToInt(b.ctx.GetSessionVars().StmtCtx.TypeCtx)
+			v, err := binary.ToInt(b.ctx.GetSessionVars().StmtCtx.TypeCtx())
 			if err != nil {
 				return 0, true, errors.Trace(err)
 			}

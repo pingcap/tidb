@@ -209,7 +209,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 		return nil
 	}
 
-	val, err := dt.ToBool(r.sc.TypeCtx)
+	val, err := dt.ToBool(r.sc.TypeCtx())
 	if err != nil {
 		r.err = err
 		return nil

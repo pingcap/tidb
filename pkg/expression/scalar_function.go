@@ -419,7 +419,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
 			if ctx := sf.GetCtx(); ctx != nil {
 				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-					err = sc.TypeCtx.HandleTruncate(err)
+					err = sc.HandleTruncate(err)
 				}
 			}
 		} else {

@@ -182,7 +182,7 @@ func getStmtTimestamp(ctx sessionctx.Context) (time.Time, error) {
 		return now, err
 	}
 
-	timestamp, err := types.StrToFloat(sessionVars.StmtCtx.TypeCtx, timestampStr, false)
+	timestamp, err := types.StrToFloat(sessionVars.StmtCtx.TypeCtx(), timestampStr, false)
 	if err != nil {
 		return time.Time{}, err
 	}

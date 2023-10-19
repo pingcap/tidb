@@ -1928,7 +1928,7 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			minute = 59
 			second = 59
 			demical = 0
-			err = b.ctx.GetSessionVars().StmtCtx.TypeCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
+			err = b.ctx.GetSessionVars().StmtCtx.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("time", strconv.FormatFloat(secondsFloat, 'f', -1, 64)))
 			if err != nil {
 				return err
 			}
@@ -2411,7 +2411,7 @@ func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Colum
 
 		res, _, err := types.ParseDuration(sc, expr, fsp)
 		if types.ErrTruncatedWrongVal.Equal(err) {
-			err = sc.TypeCtx.HandleTruncate(err)
+			err = sc.HandleTruncate(err)
 		}
 		if err != nil {
 			return err

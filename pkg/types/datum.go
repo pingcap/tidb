@@ -633,7 +633,7 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collate.Collator) (int, error) {
 	typeCtx := DefaultNoWarningContext
 	if sc != nil {
-		typeCtx = sc.TypeCtx
+		typeCtx = sc.TypeCtx()
 	}
 	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
 		cmp, err := ad.Compare(sc, d, comparer)
@@ -758,6 +758,8 @@ func (d *Datum) compareFloat64(ctx Context, f float64) (int, error) {
 }
 
 func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, comparer collate.Collator) (int, error) {
+	typeCtx := sc.TypeCtxOrDefault()
+
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -767,7 +769,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, comparer c
 		return comparer.Compare(d.GetString(), s), nil
 	case KindMysqlDecimal:
 		dec := new(MyDecimal)
-		err := sc.TypeCtx.HandleTruncate(dec.FromString(hack.Slice(s)))
+		err := typeCtx.HandleTruncate(dec.FromString(hack.Slice(s)))
 		return d.GetMysqlDecimal().Compare(dec), errors.Trace(err)
 	case KindMysqlTime:
 		dt, err := ParseDatetime(sc, s)
@@ -791,6 +793,8 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, comparer c
 }
 
 func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (int, error) {
+	typeCtx := sc.TypeCtxOrDefault()
+
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -800,7 +804,7 @@ func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal
 		return d.GetMysqlDecimal().Compare(dec), nil
 	case KindString, KindBytes:
 		dDec := new(MyDecimal)
-		err := sc.TypeCtx.HandleTruncate(dDec.FromString(d.GetBytes()))
+		err := typeCtx.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), errors.Trace(err)
 	default:
 		dVal, err := d.ConvertTo(sc, NewFieldType(mysql.TypeNewDecimal))
@@ -1030,7 +1034,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s   string
 		err error
 	)
-	ctx := sc.TypeCtx
+	ctx := sc.TypeCtx()
 	switch d.k {
 	case KindInt64:
 		s = strconv.FormatInt(d.GetInt64(), 10)

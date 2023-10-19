@@ -206,7 +206,7 @@ func TestBinopComparison(t *testing.T) {
 		require.NoError(t, err)
 		v, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
-		val, err := v.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx)
+		val, err := v.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		require.NoError(t, err)
 		require.Equal(t, tt.result, val)
 	}
@@ -407,10 +407,10 @@ func TestBinopNumeric(t *testing.T) {
 		default:
 			// we use float64 as the result type check for all.
 			sc := ctx.GetSessionVars().StmtCtx
-			f, err := v.ToFloat64(sc.TypeCtx)
+			f, err := v.ToFloat64(sc.TypeCtx())
 			require.NoError(t, err)
 			d := types.NewDatum(tt.ret)
-			r, err := d.ToFloat64(sc.TypeCtx)
+			r, err := d.ToFloat64(sc.TypeCtx())
 			require.NoError(t, err)
 			require.Equal(t, r, f)
 		}

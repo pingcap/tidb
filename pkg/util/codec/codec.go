@@ -110,7 +110,7 @@ func encode(sc *stmtctx.StatementContext, b []byte, vals []types.Datum, comparab
 			b = append(b, decimalFlag)
 			b, err = EncodeDecimal(b, vals[i].GetMysqlDecimal(), vals[i].Length(), vals[i].Frac())
 			if terror.ErrorEqual(err, types.ErrTruncated) {
-				err = sc.TypeCtx.HandleTruncate(err)
+				err = sc.HandleTruncate(err)
 			} else if terror.ErrorEqual(err, types.ErrOverflow) {
 				err = sc.HandleOverflow(err, err)
 			}
@@ -1260,7 +1260,7 @@ func HashGroupKey(sc *stmtctx.StatementContext, n int, col *chunk.Column, buf []
 				buf[i] = append(buf[i], decimalFlag)
 				buf[i], err = EncodeDecimal(buf[i], &ds[i], ft.GetFlen(), ft.GetDecimal())
 				if terror.ErrorEqual(err, types.ErrTruncated) {
-					err = sc.TypeCtx.HandleTruncate(err)
+					err = sc.HandleTruncate(err)
 				} else if terror.ErrorEqual(err, types.ErrOverflow) {
 					err = sc.HandleOverflow(err, err)
 				}

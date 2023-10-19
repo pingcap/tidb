@@ -706,7 +706,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		if err != nil && gCol.FieldType.IsArray() {
 			return nil, completeError(tbl, gCol.Offset, rowIdx, err)
 		}
-		if e.Ctx().GetSessionVars().StmtCtx.TypeCtx.HandleTruncate(err) != nil {
+		if e.Ctx().GetSessionVars().StmtCtx.HandleTruncate(err) != nil {
 			return nil, err
 		}
 		row[colIdx], err = table.CastValue(e.Ctx(), val, gCol.ToInfo(), false, false)

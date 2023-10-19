@@ -729,7 +729,7 @@ func DeleteTrueExprs(p LogicalPlan, conds []expression.Expression) []expression.
 			continue
 		}
 		sc := p.SCtx().GetSessionVars().StmtCtx
-		if isTrue, err := con.Value.ToBool(sc.TypeCtx); err == nil && isTrue == 1 {
+		if isTrue, err := con.Value.ToBool(sc.TypeCtx()); err == nil && isTrue == 1 {
 			continue
 		}
 		newConds = append(newConds, cond)
