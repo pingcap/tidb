@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -43,6 +44,9 @@ const (
 	// Note: this size is the memory taken by KV, not the size of taken by golang,
 	// each KV has additional 24*2 bytes overhead for golang slice.
 	indexKVTotalBufSize = size.GB - external.DefaultMemSizeLimit
+	// we use a larger block size for data KV group to support larger row.
+	// TODO: make it configurable?
+	dataKVGroupBlockSize = 32 * units.MiB
 )
 
 // encodeAndSortOperator is an operator that encodes and sorts data.
@@ -168,7 +172,8 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemoryS
 
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
-			SetOnCloseFunc(op.sharedVars.mergeDataSummary)
+			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
+			SetBlockSize(dataKVGroupBlockSize)
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
