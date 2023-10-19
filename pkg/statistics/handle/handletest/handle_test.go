@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -1623,7 +1622,7 @@ func TestInitStatsLite(t *testing.T) {
 	require.NoError(t, h.InitStatsLite(is))
 	statsTbl1 := h.GetTableStats(tblInfo)
 	checkAllEvicted(t, statsTbl1)
-	internal.AssertTableEqual(t, statsTbl0, statsTbl1)
+	util.AssertTableEqual(t, statsTbl0, statsTbl1)
 
 	// async stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")

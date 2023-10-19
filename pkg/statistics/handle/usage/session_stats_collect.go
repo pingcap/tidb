@@ -96,7 +96,7 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 				return errors.Trace(err)
 			}
 			if updated {
-				UpdateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
+				updateTableDeltaMap(deltaMap, id, -item.Delta, -item.Count, nil)
 			}
 			if err = storage.DumpTableStatColSizeToKV(sctx, id, item); err != nil {
 				delete(deltaMap, id)
@@ -440,7 +440,7 @@ func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
 func (m *TableDelta) Update(id int64, delta int64, count int64, colSize *map[int64]int64) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	UpdateTableDeltaMap(m.delta, id, delta, count, colSize)
+	updateTableDeltaMap(m.delta, id, delta, count, colSize)
 }
 
 // Merge merges the deltaMap into the TableDelta.
@@ -451,12 +451,12 @@ func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 	for id, item := range deltaMap {
-		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count, &item.ColSize)
+		updateTableDeltaMap(m.delta, id, item.Delta, item.Count, &item.ColSize)
 	}
 }
 
-// UpdateTableDeltaMap updates the delta of the table.
-func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64, colSize *map[int64]int64) {
+// updateTableDeltaMap updates the delta of the table.
+func updateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64, colSize *map[int64]int64) {
 	item := m[id]
 	item.Delta += delta
 	item.Count += count

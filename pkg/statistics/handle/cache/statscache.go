@@ -32,12 +32,12 @@ import (
 
 // StatsCacheImpl implements util.StatsCache.
 type StatsCacheImpl struct {
-	atomic.Pointer[StatsCache]
+	atomic.Pointer[statsCache]
 
 	statsHandle util.StatsHandle
 }
 
-// NewStatsCacheImpl creates a new StatsCache.
+// NewStatsCacheImpl creates a new statsCache.
 func NewStatsCacheImpl(statsHandle util.StatsHandle) (util.StatsCache, error) {
 	newCache, err := NewStatsCache()
 	if err != nil {
@@ -50,7 +50,7 @@ func NewStatsCacheImpl(statsHandle util.StatsHandle) (util.StatsCache, error) {
 	return result, nil
 }
 
-// NewStatsCacheImplForTest creates a new StatsCache for test.
+// NewStatsCacheImplForTest creates a new statsCache for test.
 func NewStatsCacheImplForTest() (util.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
@@ -124,7 +124,7 @@ func (s *StatsCacheImpl) Replace(cache util.StatsCache) {
 }
 
 // replace replaces the cache with the new cache.
-func (s *StatsCacheImpl) replace(newCache *StatsCache) {
+func (s *StatsCacheImpl) replace(newCache *statsCache) {
 	old := s.Swap(newCache)
 	if old != nil {
 		old.Close()

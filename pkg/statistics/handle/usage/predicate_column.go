@@ -49,35 +49,35 @@ func NewStatsUsageImpl(statsHandle utilstats.StatsHandle) utilstats.StatsUsage {
 		SessionStatsList: NewSessionStatsList()}
 }
 
-// LoadColumnStatsUsage returns all columns' usage information.
+// loadColumnStatsUsage returns all columns' usage information.
 func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]utilstats.ColStatsTimeInfo, err error) {
 	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		colStatsMap, err = LoadColumnStatsUsage(sctx, loc)
+		colStatsMap, err = loadColumnStatsUsage(sctx, loc)
 		return err
 	})
 	return
 }
 
-// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
+// getPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
 func (u *statsUsageImpl) GetPredicateColumns(tableID int64) (columnIDs []int64, err error) {
 	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		columnIDs, err = GetPredicateColumns(sctx, tableID)
+		columnIDs, err = getPredicateColumns(sctx, tableID)
 		return err
 	})
 	return
 }
 
-// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
+// collectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 func (u *statsUsageImpl) CollectColumnsInExtendedStats(tableID int64) (columnIDs []int64, err error) {
 	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		columnIDs, err = CollectColumnsInExtendedStats(sctx, tableID)
+		columnIDs, err = collectColumnsInExtendedStats(sctx, tableID)
 		return err
 	})
 	return
 }
 
-// LoadColumnStatsUsage loads column stats usage information from disk.
-func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]utilstats.ColStatsTimeInfo, error) {
+// loadColumnStatsUsage loads column stats usage information from disk.
+func loadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]utilstats.ColStatsTimeInfo, error) {
 	disableTime, err := getDisableColumnTrackingTime(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -119,8 +119,8 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 	return colStatsMap, nil
 }
 
-// GetPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
-func GetPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error) {
+// getPredicateColumns returns IDs of predicate columns, which are the columns whose stats are used(needed) when generating query plans.
+func getPredicateColumns(sctx sessionctx.Context, tableID int64) ([]int64, error) {
 	disableTime, err := getDisableColumnTrackingTime(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -170,8 +170,8 @@ func getDisableColumnTrackingTime(sctx sessionctx.Context) (*time.Time, error) {
 	return &t, nil
 }
 
-// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
-func CollectColumnsInExtendedStats(sctx sessionctx.Context, tableID int64) ([]int64, error) {
+// collectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
+func collectColumnsInExtendedStats(sctx sessionctx.Context, tableID int64) ([]int64, error) {
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
 	rows, _, err := utilstats.ExecRows(sctx, sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
 	if err != nil {

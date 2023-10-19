@@ -70,7 +70,7 @@ func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
 // HandleAutoAnalyze analyzes the newly created table or index.
 func (sa *statsAnalyze) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
 	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, is)
+		analyzed = handleAutoAnalyze(sctx, sa.statsHandle, is)
 		return nil
 	})
 	return
@@ -128,8 +128,8 @@ func getAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	return parameters
 }
 
-// HandleAutoAnalyze analyzes the newly created table or index.
-func HandleAutoAnalyze(sctx sessionctx.Context,
+// handleAutoAnalyze analyzes the newly created table or index.
+func handleAutoAnalyze(sctx sessionctx.Context,
 	statsHandle statsutil.StatsHandle,
 	is infoschema.InfoSchema) (analyzed bool) {
 	defer func() {

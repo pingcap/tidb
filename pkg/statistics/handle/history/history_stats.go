@@ -55,7 +55,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 
 	var version uint64
 	err = util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		version, err = RecordHistoricalStatsToStorage(sctx, physicalID, js)
+		version, err = recordHistoricalStatsToStorage(sctx, physicalID, js)
 		return err
 	}, util.FlagWrapTxn)
 	return version, err
@@ -76,8 +76,8 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uin
 		}
 	}
 	err := util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		return RecordHistoricalStatsMeta(sctx, tableID, version, source)
-	})
+		return recordHistoricalStatsMeta(sctx, tableID, version, source)
+	}, util.FlagWrapTxn)
 	if err != nil { // just log the error, hide the error from the outside caller.
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Int64("table-id", tableID),
@@ -96,8 +96,8 @@ func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error
 	return
 }
 
-// RecordHistoricalStatsMeta records the historical stats meta.
-func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64, source string) error {
+// recordHistoricalStatsMeta records the historical stats meta.
+func recordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version uint64, source string) error {
 	if tableID == 0 || version == 0 {
 		return errors.Errorf("tableID %d, version %d are invalid", tableID, version)
 	}
@@ -113,14 +113,6 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-
 	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
 	if _, err := util.Exec(sctx, sql, tableID, modifyCount, count, version, source); err != nil {
 		return errors.Trace(err)
@@ -133,8 +125,8 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 // but here is less than 6MB, because stats_history has other info except stats_data.
 const maxColumnSize = 5 << 20
 
-// RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *util.JSONTable) (uint64, error) {
+// recordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
+func recordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *util.JSONTable) (uint64, error) {
 	version := uint64(0)
 	if len(js.Partitions) == 0 {
 		version = js.Version

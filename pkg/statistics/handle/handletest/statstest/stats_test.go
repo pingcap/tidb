@@ -21,7 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/statistics/handle/internal"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -153,7 +153,7 @@ func TestStatsStoreAndLoad(t *testing.T) {
 	statsTbl2 := do.StatsHandle().GetTableStats(tableInfo)
 	require.False(t, statsTbl2.Pseudo)
 	require.Equal(t, int64(recordCount), statsTbl2.RealtimeCount)
-	internal.AssertTableEqual(t, statsTbl1, statsTbl2)
+	util.AssertTableEqual(t, statsTbl1, statsTbl2)
 }
 
 func testInitStatsMemTrace(t *testing.T) {
@@ -233,7 +233,7 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
+	util.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
 
@@ -268,7 +268,7 @@ func TestInitStatsVer2(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.InitStats(is))
 	table1 := h.GetTableStats(tbl.Meta())
-	internal.AssertTableEqual(t, table0, table1)
+	util.AssertTableEqual(t, table0, table1)
 	h.SetLease(0)
 }
 
