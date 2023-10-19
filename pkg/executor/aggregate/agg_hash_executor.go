@@ -127,7 +127,7 @@ type HashAggExec struct {
 	stats *HashAggRuntimeStats
 
 	// listInDisk is the chunks to store row values for spilled data.
-	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to ListInDisk.
+	// The HashAggExec may be set to `spill mode` multiple times, and all spilled data will be appended to DataInDiskByRows.
 	listInDisk *chunk.DataInDiskByRows
 	// numOfSpilledChks indicates the number of all the spilled chunks.
 	numOfSpilledChks int
@@ -240,7 +240,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed, e.isChildDrained = false, false
-	e.listInDisk = chunk.NewListInDisk(exec.RetTypes(e.Children(0)))
+	e.listInDisk = chunk.NewDataInDiskByRows(exec.RetTypes(e.Children(0)))
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
 	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {

@@ -98,15 +98,15 @@ func (l *diskFileReaderWriter) getWriter() io.Writer {
 	return l.w
 }
 
-var defaultChunkListInDiskPath = "chunk.ListInDisk"
-var defaultChunkListInDiskOffsetPath = "chunk.ListInDiskOffset"
+var defaultChunkDataInDiskByRowsPath = "chunk.DataInDiskByRows"
+var defaultChunkDataInDiskByRowsOffsetPath = "chunk.DataInDiskByRowsOffset"
 
-// NewListInDisk creates a new ListInDisk with field types.
-func NewListInDisk(fieldTypes []*types.FieldType) *DataInDiskByRows {
+// NewDataInDiskByRows creates a new DataInDiskByRows with field types.
+func NewDataInDiskByRows(fieldTypes []*types.FieldType) *DataInDiskByRows {
 	l := &DataInDiskByRows{
 		fieldTypes: fieldTypes,
 		// TODO(fengliyuan): set the quota of disk usage.
-		diskTracker: disk.NewTracker(memory.LabelForChunkListInDisk, -1),
+		diskTracker: disk.NewTracker(memory.LabelForChunkDataInDiskByRows, -1),
 	}
 	return l
 }
@@ -116,15 +116,15 @@ func (l *DataInDiskByRows) initDiskFile() (err error) {
 	if err != nil {
 		return
 	}
-	err = l.dataFile.initWithFileName(defaultChunkListInDiskPath + strconv.Itoa(l.diskTracker.Label()))
+	err = l.dataFile.initWithFileName(defaultChunkDataInDiskByRowsPath + strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return
 	}
-	err = l.offsetFile.initWithFileName(defaultChunkListInDiskOffsetPath + strconv.Itoa(l.diskTracker.Label()))
+	err = l.offsetFile.initWithFileName(defaultChunkDataInDiskByRowsOffsetPath + strconv.Itoa(l.diskTracker.Label()))
 	return
 }
 
-// Len returns the number of rows in ListInDisk
+// Len returns the number of rows in DataInDiskByRows
 func (l *DataInDiskByRows) Len() int {
 	return l.totalNumRows
 }
@@ -134,7 +134,7 @@ func (l *DataInDiskByRows) GetDiskTracker() *disk.Tracker {
 	return l.diskTracker
 }
 
-// Add adds a chunk to the ListInDisk. Caller must make sure the input chk
+// Add adds a chunk to the DataInDiskByRows. Caller must make sure the input chk
 // is not empty and not used any more and has the same field types.
 // Warning: Do not use Add concurrently.
 func (l *DataInDiskByRows) Add(chk *Chunk) (err error) {
@@ -170,7 +170,7 @@ func (l *DataInDiskByRows) Add(chk *Chunk) (err error) {
 	return
 }
 
-// GetChunk gets a Chunk from the ListInDisk by chkIdx.
+// GetChunk gets a Chunk from the DataInDiskByRows by chkIdx.
 func (l *DataInDiskByRows) GetChunk(chkIdx int) (*Chunk, error) {
 	chk := NewChunkWithCapacity(l.fieldTypes, l.NumRowsOfChunk(chkIdx))
 	chkSize := l.numRowsOfEachChunk[chkIdx]
@@ -207,13 +207,13 @@ func (l *DataInDiskByRows) GetChunk(chkIdx int) (*Chunk, error) {
 	return chk, formatChErr
 }
 
-// GetRow gets a Row from the ListInDisk by RowPtr.
+// GetRow gets a Row from the DataInDiskByRows by RowPtr.
 func (l *DataInDiskByRows) GetRow(ptr RowPtr) (row Row, err error) {
 	row, _, err = l.GetRowAndAppendToChunk(ptr, nil)
 	return row, err
 }
 
-// GetRowAndAppendToChunk gets a Row from the ListInDisk by RowPtr. Return the Row and the Ref Chunk.
+// GetRowAndAppendToChunk gets a Row from the DataInDiskByRows by RowPtr. Return the Row and the Ref Chunk.
 func (l *DataInDiskByRows) GetRowAndAppendToChunk(ptr RowPtr, chk *Chunk) (row Row, _ *Chunk, err error) {
 	off, err := l.getOffset(ptr.ChkIdx, ptr.RowIdx)
 	if err != nil {
@@ -243,12 +243,12 @@ func (l *DataInDiskByRows) getOffset(chkIdx uint32, rowIdx uint32) (int64, error
 	return bytesToI64Slice(b)[0], nil
 }
 
-// NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
+// NumRowsOfChunk returns the number of rows of a chunk in the DataInDiskByRows.
 func (l *DataInDiskByRows) NumRowsOfChunk(chkID int) int {
 	return l.numRowsOfEachChunk[chkID]
 }
 
-// NumChunks returns the number of chunks in the ListInDisk.
+// NumChunks returns the number of chunks in the DataInDiskByRows.
 func (l *DataInDiskByRows) NumChunks() int {
 	return len(l.numRowsOfEachChunk)
 }
@@ -434,7 +434,7 @@ func (format *diskFormatRow) toRow(fields []*types.FieldType, chk *Chunk) (Row, 
 }
 
 // ReaderWithCache helps to read data that has not be flushed to underlying layer.
-// By using ReaderWithCache, user can still write data into ListInDisk even after reading.
+// By using ReaderWithCache, user can still write data into DataInDiskByRows even after reading.
 type ReaderWithCache struct {
 	r        io.ReaderAt
 	cacheOff int64
