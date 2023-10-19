@@ -166,6 +166,9 @@ func (r *readIndexExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 			MockDMLExecutionAddIndexSubTaskFinish()
 		}
 	})
+	logutil.Logger(ctx).Info("backend memory consumption",
+		zap.Int64("usage", r.bc.GetLocalBackend().TotalMemoryConsume()))
+
 	if len(r.cloudStorageURI) == 0 {
 		return nil
 	}
