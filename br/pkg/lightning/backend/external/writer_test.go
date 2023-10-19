@@ -110,7 +110,8 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(60).
+		SetMemorySizeLimit(3*(lengthBytes*2+20)).
+		SetBlockSize(3*(lengthBytes*2+20)).
 		Build(memStore, "/test", "0")
 
 	// 200 bytes key values.
@@ -180,6 +181,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 		100,
 		"/test2",
 		"mergeID",
+		1000,
 		1000,
 		8*1024,
 		1*size.MB,
@@ -269,7 +271,8 @@ func TestWriterMultiFileStat(t *testing.T) {
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
-		SetMemorySizeLimit(20). // 2 KV pair will trigger flush
+		SetMemorySizeLimit(52).
+		SetBlockSize(52). // 2 KV pair will trigger flush
 		SetOnCloseFunc(closeFn).
 		Build(memStore, "/test", "0")
 
@@ -375,7 +378,8 @@ func TestWriterMultiFileStat(t *testing.T) {
 		100,
 		"/test2",
 		"mergeID",
-		20,
+		52,
+		52,
 		8*1024,
 		1*size.MB,
 		2,

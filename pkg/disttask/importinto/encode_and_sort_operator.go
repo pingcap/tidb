@@ -162,7 +162,9 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemoryS
 			builder := external.NewWriterBuilder().
 				SetOnCloseFunc(func(summary *external.WriterSummary) {
 					op.sharedVars.mergeIndexSummary(indexID, summary)
-				}).SetMemorySizeLimit(indexMemorySizeLimit)
+				}).
+				SetMemorySizeLimit(indexMemorySizeLimit).
+				SetBlockSize(getKVGroupBlockSize(""))
 			prefix := subtaskPrefix(op.taskID, op.subtaskID)
 			// writer id for index: index/{indexID}/{workerID}
 			writerID := path.Join("index", strconv.Itoa(int(indexID)), workerUUID)
@@ -173,7 +175,7 @@ func newChunkWorker(ctx context.Context, op *encodeAndSortOperator, indexMemoryS
 		// sorted data kv storage path: /{taskID}/{subtaskID}/data/{workerID}
 		builder := external.NewWriterBuilder().
 			SetOnCloseFunc(op.sharedVars.mergeDataSummary).
-			SetBlockSize(dataKVGroupBlockSize)
+			SetBlockSize(getKVGroupBlockSize(dataKVGroup))
 		prefix := subtaskPrefix(op.taskID, op.subtaskID)
 		// writer id for data: data/{workerID}
 		writerID := path.Join("data", workerUUID)
@@ -254,4 +256,11 @@ func getNumOfIndexGenKV(tblInfo *model.TableInfo) int {
 		count++
 	}
 	return count
+}
+
+func getKVGroupBlockSize(group string) int {
+	if group == dataKVGroup {
+		return dataKVGroupBlockSize
+	}
+	return external.DefaultBlockSize
 }
