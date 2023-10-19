@@ -280,3 +280,17 @@ type JSONColumn struct {
 	LastUpdateVersion uint64  `json:"last_update_version"`
 	Correlation       float64 `json:"correlation"`
 }
+
+// TotalMemoryUsage returns the total memory usage of this column.
+func (col *JSONColumn) TotalMemoryUsage() (size int64) {
+	if col.Histogram != nil {
+		size += int64(col.Histogram.Size())
+	}
+	if col.CMSketch != nil {
+		size += int64(col.CMSketch.Size())
+	}
+	if col.FMSketch != nil {
+		size += int64(col.FMSketch.Size())
+	}
+	return size
+}
