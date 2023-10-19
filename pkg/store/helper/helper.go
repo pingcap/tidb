@@ -99,13 +99,12 @@ func NewHelper(store Storage) *Helper {
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
 	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
+	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
 	for {
 		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
 		if err != nil {
 			return nil, derr.ToTiDBErr(err)
 		}
-
-		tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
 		kvResp, err := h.Store.SendReq(bo, tikvReq, keyLocation.Region, time.Minute)
 		if err != nil {
 			logutil.BgLogger().Info("get MVCC by encoded key failed",
@@ -126,7 +125,17 @@ func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyRe
 			}
 			continue
 		}
-		return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
+		mvccResp := kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse)
+		if errMsg := mvccResp.GetError(); errMsg != "" {
+			logutil.BgLogger().Info("get MVCC by encoded key failed",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", errMsg))
+			return nil, errors.New(errMsg)
+		}
+		return mvccResp, nil
 	}
 }
 
