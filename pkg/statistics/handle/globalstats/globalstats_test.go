@@ -76,9 +76,45 @@ func TestGlobalStatsPanicInIOWorker(t *testing.T) {
 	simpleTest(t)
 }
 
+func TestGlobalStatsWithCMSketchErr(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/dealCMSketchErr"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsWithHistogramAndTopNErr(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/dealHistogramAndTopNErr"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
 func TestGlobalStatsPanicInCPUWorker(t *testing.T) {
 	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/PanicInCPUWorker"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"inject panic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsPanicSametime(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/PanicSameTime"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsErrorSametime(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/ErrorSameTime"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()
