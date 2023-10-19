@@ -386,18 +386,13 @@ func (p *PhysicalTopN) getPlanCostVer2(taskType property.TaskType, option *PlanC
 	}
 
 	rows := getCardinality(p.children[0], option.CostFlag)
-<<<<<<< HEAD
-	N := math.Max(1, float64(p.Count+p.Offset))
+	N := max(1, float64(p.Count+p.Offset))
 	rowSize := getAvgRowSize(p.statsInfo(), p.Schema().Columns)
-=======
-	n := max(1, float64(p.Count+p.Offset))
-	if n > 10000 {
+	if N > 10000 {
 		// It's only used to prevent some extreme cases, e.g. `select * from t order by a limit 18446744073709551615`.
 		// For normal cases, considering that `rows` may be under-estimated, better to keep `n` unchanged.
-		n = min(n, rows)
+		N = min(N, rows)
 	}
-	rowSize := getAvgRowSize(p.StatsInfo(), p.Schema().Columns)
->>>>>>> 5fbe25ebe35 (planner: adjust N used in TopN cost formula based on the total number of rows (#46368))
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
 
