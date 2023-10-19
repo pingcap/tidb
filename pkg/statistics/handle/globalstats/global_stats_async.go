@@ -347,7 +347,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 				fmsketch, i,
 			}:
 			case <-a.cpuWorkerExitChan:
-				logutil.BgLogger().Warn("ioWorker find CPUWorker exit")
+				logutil.BgLogger().Warn("ioWorker detects CPUWorker has exited")
 				return nil
 			}
 		}
@@ -378,7 +378,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 				cmsketch, i,
 			}:
 			case <-a.cpuWorkerExitChan:
-				logutil.BgLogger().Warn("ioWorker find CPUWorker exit")
+				logutil.BgLogger().Warn("ioWorker detects CPUWorker has exited")
 				return nil
 			}
 		}
@@ -414,7 +414,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			NewStatsWrapper(hists, topn), i,
 		}:
 		case <-a.cpuWorkerExitChan:
-			logutil.BgLogger().Warn("ioWorker find CPUWorker exit")
+			logutil.BgLogger().Warn("ioWorker detects CPUWorker has exited")
 			return nil
 		}
 	}
