@@ -16,6 +16,7 @@ package external
 
 import "github.com/docker/go-units"
 
+// DefaultBlockSize is the default block size for preAllocKVBuf.
 const DefaultBlockSize = 16 * units.MiB
 
 // preAllocKVBuf pre allocates a large buffer of limit memLimit to reduce memory
