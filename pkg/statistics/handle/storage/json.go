@@ -110,7 +110,7 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 			return nil, errors.Trace(err)
 		}
 		proto := dumpJSONCol(hist, col.CMSketch, col.TopN, col.FMSketch, &col.StatsVer)
-		tracker.Consume(int64(proto.TotalMemoryUsage()))
+		tracker.Consume(proto.TotalMemoryUsage())
 		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
 			return nil, errors.Trace(statistics.ErrQueryInterrupted)
 		}
@@ -119,7 +119,7 @@ func GenJSONTableFromStats(sctx sessionctx.Context, dbName string, tableInfo *mo
 	}
 	for _, idx := range tbl.Indices {
 		proto := dumpJSONCol(&idx.Histogram, idx.CMSketch, idx.TopN, nil, &idx.StatsVer)
-		tracker.Consume(int64(proto.TotalMemoryUsage()))
+		tracker.Consume(proto.TotalMemoryUsage())
 		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
 			return nil, errors.Trace(statistics.ErrQueryInterrupted)
 		}
