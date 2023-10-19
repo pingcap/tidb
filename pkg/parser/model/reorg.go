@@ -29,6 +29,7 @@ type DDLReorgMeta struct {
 	Location          *TimeZoneLocation                `json:"location"`
 	ReorgTp           ReorgType                        `json:"reorg_tp"`
 	IsDistReorg       bool                             `json:"is_dist_reorg"`
+	UseCloudStorage   bool                             `json:"use_cloud_storage"`
 	ResourceGroupName string                           `json:"resource_group_name"`
 }
 

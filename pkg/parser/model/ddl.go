@@ -301,6 +301,7 @@ type SubJob struct {
 	CtxVars     []interface{}   `json:"-"`
 	SchemaVer   int64           `json:"schema_version"`
 	ReorgTp     ReorgType       `json:"reorg_tp"`
+	UseCloud    bool            `json:"use_cloud"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -369,6 +370,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 	sub.RowCount = proxyJob.RowCount
 	sub.SchemaVer = ver
 	sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
+	sub.UseCloud = proxyJob.ReorgMeta.UseCloudStorage
 }
 
 // JobMeta is meta info of Job.

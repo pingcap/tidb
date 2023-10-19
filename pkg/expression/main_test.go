@@ -59,7 +59,7 @@ func createContext(t *testing.T) *mock.Context {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.TruncateAsWarning = true
+	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 	require.NoError(t, ctx.GetSessionVars().SetSystemVar("max_allowed_packet", "67108864"))
 	ctx.GetSessionVars().PlanColumnID.Store(0)
 	return ctx
