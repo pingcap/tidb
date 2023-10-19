@@ -524,8 +524,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	enumColumn := genColumn(mysql.TypeEnum, 10)
 	durationColumn := genColumn(mysql.TypeDuration, 11)
 	// uint64 col
-	uintColumn := genColumn(mysql.TypeLonglong, 12)
-	uintColumn.RetType.AddFlag(mysql.UnsignedFlag)
+	uint64Column := genColumn(mysql.TypeLonglong, 12)
+	uint64Column.RetType.AddFlag(mysql.UnsignedFlag)
+
+	uint32Column := genColumn(mysql.TypeLong, 13)
+	uint32Column.RetType.AddFlag(mysql.UnsignedFlag)
 
 	function, err := NewFunction(mock.NewContext(), ast.JSONLength, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
@@ -800,9 +803,13 @@ func TestExprPushDownToFlash(t *testing.T) {
 	exprs = append(exprs, function)
 
 	// InetNtoa
-	function, err = NewFunction(mock.NewContext(), ast.InetNtoa, types.NewFieldType(mysql.TypeLonglong), stringColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
+	{
+		tp := types.NewFieldType(mysql.TypeLong)
+		tp.SetFlag(mysql.UnsignedFlag)
+		function, err = NewFunction(mock.NewContext(), ast.InetNtoa, tp, uint32Column)
+		require.NoError(t, err)
+		exprs = append(exprs, function)
+	}
 
 	// Inet6Aton
 	function, err = NewFunction(mock.NewContext(), ast.Inet6Aton, types.NewFieldType(mysql.TypeString), stringColumn)
@@ -1285,7 +1292,7 @@ func TestExprPushDownToFlash(t *testing.T) {
 		}
 		return groupingFunc, err
 	}
-	function, err = NewFunctionWithInit(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, uintColumn)
+	function, err = NewFunctionWithInit(mock.NewContext(), ast.Grouping, types.NewFieldType(mysql.TypeLonglong), init, uint64Column)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 

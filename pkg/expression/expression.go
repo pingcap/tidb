@@ -1160,7 +1160,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
 		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.Repeat,
-		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
+		ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
 		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
@@ -1198,6 +1198,17 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_ReverseUTF8,
 			tipb.ScalarFuncSig_Reverse:
 			return true
+		}
+	case ast.InetNtoa:
+		sourceType := function.GetArgs()[0].GetType()
+		switch sourceType.GetType() {
+		case mysql.TypeLong, mysql.TypeShort, mysql.TypeTiny:
+			/*
+				TiFlash only support 4 bytes unsigned integer
+				MySQL will return default value and warning if failed to cast into 4 bytes unsigned integer(include `Out of range`).
+					Warning 1411: Incorrect integer value: '`?`.`?`.`?`' for function inet_ntoa
+			*/
+			return mysql.HasUnsignedFlag(sourceType.GetFlag())
 		}
 	case ast.Cast:
 		sourceType := function.GetArgs()[0].GetType()
