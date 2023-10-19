@@ -62,7 +62,8 @@ func TestIndexMergeFromComposedDNFCondition(t *testing.T) {
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t2")
-	tk.MustExec("create table t2(pk int primary key, a json, b json, c int, d int, index idx(c, (cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));")
+	tk.MustExec("create table t2(pk int primary key, a json, b json, c int, d int, e int, index idx(c, " +
+		"(cast(a as signed array))), index idx2((cast(b as signed array)), c), index idx3(c, d), index idx4(d));")
 
 	var input []string
 	var output []struct {
