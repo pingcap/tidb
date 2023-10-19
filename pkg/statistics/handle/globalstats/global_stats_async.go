@@ -241,6 +241,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 		return err
 	}
 	close(a.cmsketch)
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
 	err = a.loadHistogramAndTopN(sctx, a.globalTableInfo, isIndex)
 	if err != nil {
 		close(a.ioWorkerExitWhenErrChan)
@@ -278,6 +284,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 		logutil.BgLogger().Warn("dealCMSketch failed", zap.Error(err))
 		return err
 	}
+	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			panic("test for PanicSameTime")
+		}
+	})
 	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 	if err != nil {
 		logutil.BgLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
@@ -388,6 +400,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 }
 
 func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx sessionctx.Context, tableInfo *model.TableInfo, isIndex bool) error {
+	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			failpoint.Return(errors.New("ErrorSameTime returned error"))
+		}
+	})
 	for i := 0; i < a.globalStats.Num; i++ {
 		hists := make([]*statistics.Histogram, 0, a.partitionNum)
 		topn := make([]*statistics.TopN, 0, a.partitionNum)
@@ -471,6 +489,12 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 	failpoint.Inject("dealHistogramAndTopNErr", func(val failpoint.Value) {
 		if val, _ := val.(bool); val {
 			failpoint.Return(errors.New("dealHistogramAndTopNErr returned error"))
+		}
+	})
+	failpoint.Inject("ErrorSameTime", func(val failpoint.Value) {
+		if val, _ := val.(bool); val {
+			time.Sleep(1 * time.Second)
+			failpoint.Return(errors.New("ErrorSameTime returned error"))
 		}
 	})
 	for {
