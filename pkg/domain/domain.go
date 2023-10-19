@@ -453,8 +453,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if canSkipSchemaCheckerDDL(diff.Type) {
 			continue
 		}
-		phyTblIDs = append(phyTblIDs, IDs...)
 		diffTypes = append(diffTypes, diff.Type.String())
+		phyTblIDs = append(phyTblIDs, IDs...)
 		for i := 0; i < len(IDs); i++ {
 			actions = append(actions, uint64(diff.Type))
 		}
