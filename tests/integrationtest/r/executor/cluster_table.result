@@ -39,8 +39,6 @@ drop table if exists test_func_decode_sql_digests;
 create table test_func_decode_sql_digests(id int primary key, v int);
 begin;
 select @@tidb_current_ts;
-@@tidb_current_ts
-445038783047925760
 select id, v from test_func_decode_sql_digests where id = 1 for update;
 id	v
 rollback;

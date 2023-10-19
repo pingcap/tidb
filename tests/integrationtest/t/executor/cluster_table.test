@@ -33,7 +33,9 @@ select @@global.tidb_enable_stmt_summary;
 drop table if exists test_func_decode_sql_digests;
 create table test_func_decode_sql_digests(id int primary key, v int);
 begin;
+--disable_result_log
 select @@tidb_current_ts;
+--enable_result_log
 select id, v from test_func_decode_sql_digests where id = 1 for update;
 rollback;
 select tidb_decode_sql_digests('["e6f07d43b5c21db0fbb9a31feac2dc599787763393dd5acbfad80e247eb02ad5","58f3717da2d79c14773a1e3094aaddeff2b11747d3aef95741151af9acba9d44","7e9f826ed22a09940940a42d1aca47a75b3adc3c3fde252f4b912ac886194eb9"]', 0);
