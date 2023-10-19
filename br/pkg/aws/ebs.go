@@ -283,10 +283,18 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 }
 
 // EnableDataFSR enables FSR for data volume snapshots
-func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) ([]*string, error) {
-	sourceSnapshotIDs := fetchTargetSnapshots(meta)
+func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) ([]*string, string, error) {
+	originalAZ, sourceSnapshotIDs := fetchTargetSnapshots(meta)
 
-	log.Info("Start enable FSR for", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ))
+	if originalAZ == "" {
+		return nil, "", errors.Errorf("empty backup meta")
+	}
+
+	log.Info("Start enable FSR for", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ), zap.String("original AZ", originalAZ))
+
+	if targetAZ == "" {
+		targetAZ = originalAZ
+	}
 
 	resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
 		AvailabilityZones: []*string{&targetAZ},
@@ -294,17 +302,17 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 	})
 
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, targetAZ, errors.Trace(err)
 	}
 
 	if len(resp.Unsuccessful) > 0 {
 		log.Warn("not all snapshots enabled FSR")
-		return nil, errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+		return nil, targetAZ, errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 	}
 
 	log.Info("Enable FSR issued")
 
-	return sourceSnapshotIDs, nil
+	return sourceSnapshotIDs, targetAZ, nil
 }
 
 // WaitDataFSREnabled waits FSR for data volume snapshots are all enabled
@@ -317,7 +325,7 @@ func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, 
 		pendingSnapshots[*str] = struct{}{}
 	}
 
-	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots))
+	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots), zap.String("available zone", targetAZ))
 	for {
 		if len(pendingSnapshots) == 0 {
 			log.Info("all snapshots fsr enablement is finished.")
@@ -364,10 +372,13 @@ func (e *EC2Session) WaitDataFSREnabled(snapShotIDs []*string, targetAZ string, 
 
 // DisableDataFSR disables FSR for data volume snapshots
 func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) error {
-	sourceSnapshotIDs := fetchTargetSnapshots(meta)
+	originAZ, sourceSnapshotIDs := fetchTargetSnapshots(meta)
 
-	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ))
+	log.Info("Start disable FSR", zap.Int("snapshot number", len(sourceSnapshotIDs)), zap.Any("Snapshots", sourceSnapshotIDs), zap.String("available zone", targetAZ), zap.String("original AZ", originAZ))
 
+	if targetAZ == "" {
+		targetAZ = originAZ
+	}
 	resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
 		AvailabilityZones: []*string{&targetAZ},
 		SourceSnapshotIds: sourceSnapshotIDs,
@@ -387,8 +398,15 @@ func (e *EC2Session) DisableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string
 	return nil
 }
 
-func fetchTargetSnapshots(meta *config.EBSBasedBRMeta) []*string {
+func fetchTargetSnapshots(meta *config.EBSBasedBRMeta) (string, []*string) {
 	var sourceSnapshotIDs []*string
+
+	if len(meta.TiKVComponent.Stores) == 0 {
+		return "", nil
+	}
+
+	originalAZ := meta.TiKVComponent.Stores[0].Volumes[0].VolumeAZ
+
 	for i := range meta.TiKVComponent.Stores {
 		store := meta.TiKVComponent.Stores[i]
 		for j := range store.Volumes {
@@ -400,7 +418,7 @@ func fetchTargetSnapshots(meta *config.EBSBasedBRMeta) []*string {
 		}
 	}
 
-	return sourceSnapshotIDs
+	return originalAZ, sourceSnapshotIDs
 }
 
 // CreateVolumes create volumes from snapshots
