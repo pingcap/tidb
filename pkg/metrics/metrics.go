@@ -93,6 +93,7 @@ func InitMetrics() {
 	InitTopSQLMetrics()
 	InitTTLMetrics()
 	InitDistTaskMetrics()
+	InitResourceGroupMetrics()
 	InitGlobalSortMetrics()
 	timermetrics.InitTimerMetrics()
 
@@ -271,6 +272,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistTaskSubTaskCntGauge)
 	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
 
+	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageRate)
 	prometheus.MustRegister(GlobalSortReadFromCloudStorageDuration)

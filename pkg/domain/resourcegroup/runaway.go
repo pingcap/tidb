@@ -23,8 +23,10 @@ import (
 
 	"github.com/jellydator/ttlcache/v3"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	rmclient "github.com/tikv/pd/client/resource_group/controller"
@@ -189,6 +191,7 @@ type RunawayManager struct {
 	// activeGroup is used to manage the active runaway watches of resource group
 	activeGroup map[string]int64
 	activeLock  sync.RWMutex
+	metricsMap  map[string]prometheus.Counter
 
 	resourceGroupCtl   *rmclient.ResourceGroupsController
 	serverID           string
@@ -222,6 +225,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		staleQuarantineRecord: staleQuarantineChan,
 		activeGroup:           make(map[string]int64),
+		metricsMap:            make(map[string]prometheus.Counter),
 	}
 	m.insertionCancel = watchList.OnInsertion(func(ctx context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
@@ -252,6 +256,12 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 	if group.RunawaySettings == nil && rm.activeGroup[resourceGroupName] == 0 {
 		return nil
 	}
+	counter, ok := rm.metricsMap[resourceGroupName]
+	if !ok {
+		counter = metrics.RunawayCheckerCounter.WithLabelValues(resourceGroupName, "hit", "")
+		rm.metricsMap[resourceGroupName] = counter
+	}
+	counter.Inc()
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
 }
 
@@ -544,7 +554,9 @@ func (r *RunawayChecker) markQuarantine(now *time.Time) {
 }
 
 func (r *RunawayChecker) markRunaway(matchType RunawayMatchType, action rmpb.RunawayAction, now *time.Time) {
-	r.manager.markRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, strings.ToLower(rmpb.RunawayAction_name[int32(action)]), matchType, now)
+	actionStr := strings.ToLower(rmpb.RunawayAction_name[int32(action)])
+	metrics.RunawayCheckerCounter.WithLabelValues(r.resourceGroupName, matchType.String(), actionStr).Inc()
+	r.manager.markRunaway(r.resourceGroupName, r.originalSQL, r.planDigest, actionStr, matchType, now)
 }
 
 func (r *RunawayChecker) getSettingConvictIdentifier() string {
