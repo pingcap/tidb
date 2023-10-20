@@ -389,7 +389,7 @@ func getValidIntPrefix(ctx Context, str string, isFuncCast bool) (string, error)
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
 		}
-		return floatStrToIntStr(ctx, floatPrefix, str)
+		return floatStrToIntStr(floatPrefix, str)
 	}
 
 	validLen := 0
@@ -445,6 +445,9 @@ func roundIntStr(numNextDot byte, intStr string) string {
 	return string(retStr)
 }
 
+var maxUintStr = strconv.FormatUint(math.MaxUint64, 10)
+var minIntStr = strconv.FormatInt(math.MinInt64, 10)
+
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
@@ -452,7 +455,7 @@ func roundIntStr(numNextDot byte, intStr string) string {
 //
 // This func will find serious overflow such as the len of intStr > 20 (without prefix `+/-`)
 // however, it will not check whether the intStr overflow BIGINT.
-func floatStrToIntStr(ctx Context, validFloat string, oriStr string) (intStr string, _ error) {
+func floatStrToIntStr(validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
 	for i := 0; i < len(validFloat); i++ {
@@ -500,7 +503,12 @@ func floatStrToIntStr(ctx Context, validFloat string, oriStr string) (intStr str
 	}
 	exp, err := strconv.Atoi(validFloat[eIdx+1:])
 	if err != nil {
-		return validFloat, errors.Trace(err)
+		if digits[0] == '-' {
+			intStr = minIntStr
+		} else {
+			intStr = maxUintStr
+		}
+		return intStr, ErrOverflow.GenWithStackByArgs("BIGINT", oriStr)
 	}
 	intCnt += exp
 	if exp >= 0 && (intCnt > 21 || intCnt < 0) {
@@ -508,8 +516,12 @@ func floatStrToIntStr(ctx Context, validFloat string, oriStr string) (intStr str
 		// MaxUint64 has 20 decimal digits.
 		// And the intCnt may contain the len of `+/-`,
 		// so I use 21 here as the early detection.
-		ctx.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
-		return validFloat[:eIdx], nil
+		if digits[0] == '-' {
+			intStr = minIntStr
+		} else {
+			intStr = maxUintStr
+		}
+		return intStr, ErrOverflow.GenWithStackByArgs("BIGINT", oriStr)
 	}
 	if intCnt <= 0 {
 		intStr = "0"

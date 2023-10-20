@@ -974,26 +974,35 @@ func TestGetValidFloat(t *testing.T) {
 	tests2 := []struct {
 		origin   string
 		expected string
+		overflow bool
 	}{
-		{"1e9223372036854775807", "1"},
-		{"125e342", "125"},
-		{"1e21", "1"},
-		{"1e5", "100000"},
-		{"-123.45678e5", "-12345678"},
-		{"+0.5", "1"},
-		{"-0.5", "-1"},
-		{".5e0", "1"},
-		{"+.5e0", "+1"},
-		{"-.5e0", "-1"},
-		{".5", "1"},
-		{"123.456789e5", "12345679"},
-		{"123.456784e5", "12345678"},
-		{"+999.9999e2", "+100000"},
+		{"1e29223372036854775807", "18446744073709551615", true},
+		{"1e9223372036854775807", "18446744073709551615", true},
+		{"125e342", "18446744073709551615", true},
+		{"1e21", "18446744073709551615", true},
+		{"-1e29223372036854775807", "-9223372036854775808", true},
+		{"-1e9223372036854775807", "-9223372036854775808", true},
+		{"1e5", "100000", false},
+		{"-123.45678e5", "-12345678", false},
+		{"+0.5", "1", false},
+		{"-0.5", "-1", false},
+		{".5e0", "1", false},
+		{"+.5e0", "+1", false},
+		{"-.5e0", "-1", false},
+		{".5", "1", false},
+		{"123.456789e5", "12345679", false},
+		{"123.456784e5", "12345678", false},
+		{"+999.9999e2", "+100000", false},
 	}
-	for _, tt := range tests2 {
-		str, err := floatStrToIntStr(ctx, tt.origin, tt.origin)
-		require.NoError(t, err)
-		require.Equalf(t, tt.expected, str, "%v, %v", tt.origin, tt.expected)
+	for i, tt := range tests2 {
+		msg := fmt.Sprintf("%d: %v, %v", i, tt.origin, tt.expected)
+		str, err := floatStrToIntStr(tt.origin, tt.origin)
+		if tt.overflow {
+			require.True(t, terror.ErrorEqual(err, ErrOverflow), msg)
+		} else {
+			require.NoError(t, err, msg)
+		}
+		require.Equalf(t, tt.expected, str, msg)
 	}
 }
 
