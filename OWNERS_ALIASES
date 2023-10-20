@@ -37,3 +37,7 @@ aliases:
     - lance6716
     - lichunzhu
     - okJiang
+  sig-approvers-planner: # approvers for planner module
+    - fixdb
+    - winoros
+    - qw4990
