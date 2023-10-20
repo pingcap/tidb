@@ -207,6 +207,7 @@ func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
 	}
 	l.checksumWriter = checksum.NewWriter(underlying)
 	l.writer = l.checksumWriter
+	l.offWrite = 0
 	return
 }
 
@@ -229,4 +230,10 @@ func (l *diskFileReaderWriter) getSectionReader(off int64) *io.SectionReader {
 
 func (l *diskFileReaderWriter) getWriter() io.Writer {
 	return l.writer
+}
+
+func (l *diskFileReaderWriter) write(writeData []byte) (n int, err error) {
+	writeNum, err := l.writer.Write(writeData)
+	l.offWrite += int64(writeNum)
+	return writeNum, err
 }

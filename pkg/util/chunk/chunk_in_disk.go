@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"strconv"
 	"unsafe"
@@ -27,6 +28,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+type colSizeMetaType = int32
+
+const colSizeMetaLen = int(unsafe.Sizeof(int32(0)))
+
 // DataInDiskByChunk represents some data stored in temporary disk.
 // They can only be restored by chunks.
 type DataInDiskByChunk struct {
@@ -37,13 +42,16 @@ type DataInDiskByChunk struct {
 	diskTracker   *disk.Tracker // track disk usage.
 
 	dataFile diskFileReaderWriter
-	buf      []byte // Store spilled chunk data
+
+	// Write or read data needs this buffer to temporarily store data
+	buf []byte
 }
 
 // NewDataInDiskByChunk creates a new DataInDiskByChunk with field types.
 func NewDataInDiskByChunk(fieldTypes []*types.FieldType) *DataInDiskByChunk {
 	l := &DataInDiskByChunk{
-		fieldTypes: fieldTypes,
+		fieldTypes:    fieldTypes,
+		totalDataSize: 0,
 		// TODO: set the quota of disk usage.
 		diskTracker: disk.NewTracker(memory.LabelForChunkDataInDiskByChunks, -1),
 		buf:         make([]byte, 0, 4096),
@@ -51,12 +59,12 @@ func NewDataInDiskByChunk(fieldTypes []*types.FieldType) *DataInDiskByChunk {
 	return l
 }
 
-func (l *DataInDiskByChunk) initDiskFile() (err error) {
+func (d *DataInDiskByChunk) initDiskFile() (err error) {
 	err = disk.CheckAndInitTempDir()
 	if err != nil {
 		return
 	}
-	err = l.dataFile.initWithFileName(defaultChunkDataInDiskByRowsPath + strconv.Itoa(l.diskTracker.Label()))
+	err = d.dataFile.initWithFileName(defaultChunkDataInDiskByRowsPath + strconv.Itoa(d.diskTracker.Label()))
 	if err != nil {
 		return
 	}
@@ -64,29 +72,28 @@ func (l *DataInDiskByChunk) initDiskFile() (err error) {
 }
 
 // GetDiskTracker returns the memory tracker of this List.
-func (l *DataInDiskByChunk) GetDiskTracker() *disk.Tracker {
-	return l.diskTracker
+func (d *DataInDiskByChunk) GetDiskTracker() *disk.Tracker {
+	return d.diskTracker
 }
 
-// Add adds a chunk to the DataInDiskByChunk. Caller must make sure the input chk
-// is not empty and not used any more and has the same field types.
-// Warning: Do not use Add concurrently.
-func (l *DataInDiskByChunk) Add(chk *Chunk) (err error) {
+// Add adds a chunk to the DataInDiskByChunk. Caller must make sure the input chk has the same field types.
+// Warning: Do not concurrently call this function.
+func (d *DataInDiskByChunk) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
-		return errors2.New("chunk appended to List should have at least 1 row")
+		return errors2.New("Chunk spilled to disk should have at least 1 row")
 	}
 
-	if l.dataFile.file == nil {
-		err = l.initDiskFile()
+	if d.dataFile.file == nil {
+		err = d.initDiskFile()
 		if err != nil {
 			return
 		}
 	}
 
-	serializedBytesNum := l.serializeDataToBuf(chk)
+	serializedBytesNum := d.serializeDataToBuf(chk)
 
 	var writeNum int
-	writeNum, err = l.dataFile.getWriter().Write(l.buf)
+	writeNum, err = d.dataFile.write(d.buf)
 	if err != nil {
 		return
 	}
@@ -95,59 +102,53 @@ func (l *DataInDiskByChunk) Add(chk *Chunk) (err error) {
 		return errors2.New("Some data fail to be spilled to disk")
 	}
 
-	l.dataFile.offWrite += serializedBytesNum
-	l.diskTracker.Consume(serializedBytesNum)
-	l.totalDataSize += serializedBytesNum
+	d.offsetOfEachChunk = append(d.offsetOfEachChunk, d.totalDataSize)
+	d.totalDataSize += serializedBytesNum
+	d.dataFile.offWrite += serializedBytesNum
+
+	d.diskTracker.Consume(serializedBytesNum)
 	return
 }
 
-func (l *DataInDiskByChunk) getChunkSize(chkIdx int) int {
-	
+func (d *DataInDiskByChunk) getChunkSize(chkIdx int) int64 {
+	totalChunkNum := len(d.offsetOfEachChunk)
+	if chkIdx == totalChunkNum-1 {
+		return d.totalDataSize - d.offsetOfEachChunk[chkIdx]
+	}
+	return d.offsetOfEachChunk[chkIdx+1] - d.offsetOfEachChunk[chkIdx]
 }
 
 // GetChunk gets a Chunk from the DataInDiskByChunk by chkIdx.
-func (l *DataInDiskByChunk) GetChunk(chkIdx int) (*Chunk, error) {
-	chk := NewChunkWithCapacity(l.fieldTypes, 1024)
-	chkSize := l.numRowsOfEachChunk[chkIdx]
+func (d *DataInDiskByChunk) GetChunk(chkIdx int) (*Chunk, error) {
+	reader := bufio.NewReader(d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx]))
+	chkSize := d.getChunkSize(chkIdx)
 
-	firstRowOffset, err := l.getOffset(uint32(chkIdx), 0)
+	if len(d.buf) < int(chkSize) {
+		d.buf = make([]byte, chkSize)
+	} else {
+		d.buf = d.buf[:chkSize]
+	}
+	readByteNum, err := io.ReadFull(reader, d.buf)
 	if err != nil {
 		return nil, err
 	}
 
-	// this channel is big enough and will never be blocked.
-	formatCh := make(chan rowInDisk, chkSize)
-	var formatChErr error
-	go func() {
-		defer close(formatCh)
-
-		// If the row is small, a bufio can significantly improve the performance. As benchmark shows, it's still not bad
-		// for longer rows.
-		r := bufio.NewReader(l.dataFile.getSectionReader(firstRowOffset))
-		format := rowInDisk{numCol: len(l.fieldTypes)}
-		for rowIdx := 0; rowIdx < chkSize; rowIdx++ {
-			_, err = format.ReadFrom(r)
-			if err != nil {
-				formatChErr = err
-				break
-			}
-
-			formatCh <- format
-		}
-	}()
-
-	for format := range formatCh {
-		_, chk = format.toRow(l.fieldTypes, chk)
+	if int64(readByteNum) != chkSize {
+		return nil, errors2.New("Fail to restore the spilled chunk")
 	}
-	return chk, formatChErr
+
+	chk := NewChunkWithCapacity(d.fieldTypes, len(d.buf))
+	d.deserializeDataToChunk(d.buf, chk)
+
+	return chk, nil
 }
 
 // Close releases the disk resource.
-func (l *DataInDiskByChunk) Close() error {
-	if l.dataFile.file != nil {
-		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
-		terror.Call(l.dataFile.file.Close)
-		terror.Log(os.Remove(l.dataFile.file.Name()))
+func (d *DataInDiskByChunk) Close() error {
+	if d.dataFile.file != nil {
+		d.diskTracker.Consume(-d.diskTracker.BytesConsumed())
+		terror.Call(d.dataFile.file.Close)
+		terror.Log(os.Remove(d.dataFile.file.Name()))
 	}
 	return nil
 }
@@ -159,28 +160,28 @@ func (l *DataInDiskByChunk) Close() error {
 // row4: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
 //
 // Column size will be -1 if column data is null.
-func (l *DataInDiskByChunk) serializeDataToBuf(chk *Chunk) int64 {
-	l.buf = l.buf[0:0] // clear the buf data
+func (d *DataInDiskByChunk) serializeDataToBuf(chk *Chunk) int64 {
+	d.buf = d.buf[0:0] // clear the buf data
 
 	rowNum := chk.NumRows()
 	colNum := chk.NumCols()
-	colSizeRecordBytes := int64(4 * colNum)
+	colSizeRecordBytes := int64(colSizeMetaLen * colNum)
 	totalBytes := int64(0)
 	addedBytesNum := int64(0)
 	rowBuf := make([]byte, 0, 1024)
-	tmpBuf := make([]byte, 8) // Used for storing column size
+	tmpBuf := make([]byte, colSizeMetaLen) // Used for storing column size
 
 	for i := 0; i < rowNum; i++ {
 		row := chk.GetRow(i)
 		totalBytes += colSizeRecordBytes
 		rowBuf, addedBytesNum = serializeDataToRowBuf(&row, rowBuf, tmpBuf, colNum)
 		totalBytes += addedBytesNum
-		l.buf = append(l.buf, rowBuf...)
+		d.buf = append(d.buf, rowBuf...)
 	}
 	return totalBytes
 }
 
-// Serialize data in a row into a buffer
+// Serialize data of a row into a buffer
 func serializeDataToRowBuf(row *Row, rowBuf []byte, tmpBuf []byte, colNum int) ([]byte, int64) {
 	rowBuf = rowBuf[0:0]
 	addedBytesNum := int64(0)
@@ -200,4 +201,29 @@ func serializeDataToRowBuf(row *Row, rowBuf []byte, tmpBuf []byte, colNum int) (
 		}
 	}
 	return rowBuf, addedBytesNum
+}
+
+func (d *DataInDiskByChunk) deserializeDataToChunk(data []byte, chk *Chunk) {
+	colNum := len(d.fieldTypes)
+	dataSize := len(data)
+	offset := 0
+	for offset < dataSize {
+		for colIdx := 0; colIdx < colNum; colIdx++ {
+			col := chk.columns[colIdx]
+			colDataSize := *(*colSizeMetaType)(unsafe.Pointer(&data[offset]))
+			offset += colSizeMetaLen
+			if colDataSize == -1 { // The data is null
+				col.AppendNull()
+			} else {
+				chunkData := data[offset : offset+int(colDataSize)]
+				if col.isFixed() {
+					col.elemBuf = chunkData
+					col.finishAppendFixed()
+				} else {
+					col.AppendBytes(chunkData)
+				}
+			}
+
+		}
+	}
 }
