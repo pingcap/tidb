@@ -1434,6 +1434,9 @@ type SessionVars struct {
 	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
 	AnalyzePartitionMergeConcurrency int
 
+	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	EnableAsyncMergeGlobalStats bool
+
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
 
