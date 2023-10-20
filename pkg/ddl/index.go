@@ -2082,7 +2082,10 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
-			logutil.BgLogger().Info("ywq test reach here")
+			logutil.BgLogger().Info(
+				"global task succeed, start to resume the ddl job",
+				zap.String("category", "ddl"),
+				zap.String("task-key", taskKey))
 			return nil
 		}
 		g.Go(func() error {
