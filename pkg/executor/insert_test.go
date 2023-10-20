@@ -1594,6 +1594,7 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 // see issue: https://github.com/pingcap/tidb/issues/47945
 func TestUnsignedDecimalFloatInsertNegative(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -1605,4 +1606,26 @@ func TestUnsignedDecimalFloatInsertNegative(t *testing.T) {
 	tk.MustExec("set @@sql_mode=''")
 	tk.MustExec("insert into tf values('-100')")
 	tk.MustQuery("select * from tf").Check(testkit.Rows("0"))
+=======
+// see issue https://github.com/pingcap/tidb/issues/47787
+func TestInsertBigScientificNotation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t1(id int, a int)")
+
+	tk.MustExec("set @@SQL_MODE='STRICT_TRANS_TABLES'")
+	err := tk.ExecToErr("insert into t1 values(1, '1e100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	err = tk.ExecToErr("insert into t1 values(2, '-1e100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows())
+
+	tk.MustExec("set @@SQL_MODE=''")
+	tk.MustExec("insert into t1 values(1, '1e100')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
+	tk.MustExec("insert into t1 values(2, '-1e100')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
+	tk.MustQuery("select id, a from t1 order by id asc").Check(testkit.Rows("1 2147483647", "2 -2147483648"))
+>>>>>>> 5e3210b0d54 (types: fix the behavior when inserting a big scientific notation number to keep it same with mysql (#47803))
 }
