@@ -146,7 +146,7 @@ func NewAddIndexIngestPipeline(
 	srcOp := NewTableScanTaskSource(jobID, ctx, store, tbl, startKey, endKey)
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	ingestOp := NewIndexIngestOperator(ctx, copCtx, sessPool, tbl, indexes, engines, srcChkPool, writerCnt)
-	sinkOp := newIndexWriteResultSink(ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
+	sinkOp := newIndexWriteResultSink(jobID, ctx, backendCtx, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, ingestOp)
@@ -215,7 +215,7 @@ func NewWriteIndexToExternalStoragePipeline(
 	scanOp := NewTableScanOperator(ctx, sessPool, copCtx, srcChkPool, readerCnt)
 	writeOp := NewWriteExternalStoreOperator(
 		ctx, copCtx, sessPool, jobID, subtaskID, tbl, indexes, extStore, srcChkPool, writerCnt, onClose, shareMu, memSize)
-	sinkOp := newIndexWriteResultSink(ctx, nil, tbl, indexes, totalRowCount, metricCounter)
+	sinkOp := newIndexWriteResultSink(jobID, ctx, nil, tbl, indexes, totalRowCount, metricCounter)
 
 	operator.Compose[TableScanTask](srcOp, scanOp)
 	operator.Compose[IndexRecordChunk](scanOp, writeOp)
@@ -691,6 +691,7 @@ func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey
 }
 
 type indexWriteResultSink struct {
+	jobID      int64
 	ctx        *OperatorCtx
 	backendCtx ingest.BackendCtx
 	tbl        table.PhysicalTable
@@ -704,6 +705,7 @@ type indexWriteResultSink struct {
 }
 
 func newIndexWriteResultSink(
+	jobID int64,
 	ctx *OperatorCtx,
 	backendCtx ingest.BackendCtx,
 	tbl table.PhysicalTable,
@@ -712,6 +714,7 @@ func newIndexWriteResultSink(
 	metricCounter prometheus.Counter,
 ) *indexWriteResultSink {
 	return &indexWriteResultSink{
+		jobID:         jobID,
 		ctx:           ctx,
 		backendCtx:    backendCtx,
 		tbl:           tbl,
@@ -738,6 +741,8 @@ func (s *indexWriteResultSink) collectResult() error {
 			return s.ctx.Err()
 		case result, ok := <-s.source.Channel():
 			if !ok {
+				logutil.Logger(s.ctx).Info("channel closed, wait flush")
+				defer util2.InjectSpan(s.jobID, "op-result-collect-flush")()
 				err := s.flush()
 				if err != nil {
 					s.ctx.onError(err)
