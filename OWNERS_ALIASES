@@ -44,3 +44,9 @@ aliases:
     - lance6716
     - tangenta
     - wjhuang2016
+  sig-approvers-ddl: # approvers for ddl pkg
+    - Benjamin2037
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+    - zimulala
