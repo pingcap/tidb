@@ -235,8 +235,8 @@ HashAgg	8878.22	root		group by:Column#17, funcs:firstrow(Column#17)->Column#17
       └─TableRowIDScan(Probe)	5548.89	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id1 from t3 where id2 > '4' or id8 < 7);
 id1
-2
 1
+2
 3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
@@ -244,27 +244,27 @@ select @@last_sql_use_alloc;
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id3 from t3 where id2 > '4' or id8 < 7);
 id1
 NULL
-2
 1
+2
 3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 0
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id4 from t3 where id2 > '4' or id8 < 7);
 id1
-2
 NULL
-3
 1
+2
+3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 0
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id5 from t3 where id2 > '4' or id8 < 7);
 id1
-2
-1
-3
 NULL
+1
+2
+3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 0
@@ -272,17 +272,17 @@ select id1 from t3 where id2 > '3' or id8 < 10 union (select id6 from t3 where i
 id1
 NULL
 1
-3
 2
+3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 1
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id7 from t3 where id2 > '4' or id8 < 7);
 id1
-3
-1
 NULL
+1
 2
+3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 0
@@ -304,33 +304,33 @@ select @@last_sql_use_alloc;
 1
 select id1 from t3 where id2 > '3' or id8 < 10 union (select CHAR_LENGTH(id3) from t3 where id2 > '4' or id8 < 7);
 id1
-2
 NULL
 1
+2
 3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 0
 select id1 from t3 where id2 > '3' or id8 < 10 union (select CHAR_LENGTH(id2) from t3 where id2 > '4' or id8 < 7);
 id1
-3
 1
 2
+3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 1
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where id2 > '4' or id8 < 7 and id3 is null);
 id1
 1
-3
 2
+3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
 0
 select id1 from t3 where id2 > '3' or id8 < 10 union (select id2 from t3 where id2 > '4' or id8 < 7 and char_length(id3) > 0);
 id1
-2
 1
+2
 3
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
