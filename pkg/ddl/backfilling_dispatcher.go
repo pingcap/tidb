@@ -43,76 +43,85 @@ import (
 	"go.uber.org/zap"
 )
 
-type backfillingDispatcherExt struct {
+// BackfillingDispatcherExt is an extension of litBackfillDispatcher, exported for test.
+type BackfillingDispatcherExt struct {
 	d                    *ddl
 	previousSchedulerIDs []string
+	GlobalSort           bool
 }
 
-var _ dispatcher.Extension = (*backfillingDispatcherExt)(nil)
-
-// NewBackfillingDispatcherExt creates a new backfillingDispatcherExt.
+// NewBackfillingDispatcherExt creates a new backfillingDispatcherExt, only used for test now.
 func NewBackfillingDispatcherExt(d DDL) (dispatcher.Extension, error) {
 	ddl, ok := d.(*ddl)
 	if !ok {
 		return nil, errors.New("The getDDL result should be the type of *ddl")
 	}
-	return &backfillingDispatcherExt{
+	return &BackfillingDispatcherExt{
 		d: ddl,
 	}, nil
 }
 
+var _ dispatcher.Extension = (*BackfillingDispatcherExt)(nil)
+
 // OnTick implements dispatcher.Extension interface.
-func (*backfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
+func (*BackfillingDispatcherExt) OnTick(_ context.Context, _ *proto.Task) {
 }
 
 // OnNextSubtasksBatch generate batch of next step's plan.
-func (h *backfillingDispatcherExt) OnNextSubtasksBatch(
+func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
-	step proto.Step,
+	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
-	var gTaskMeta BackfillGlobalMeta
-	if err := json.Unmarshal(gTask.Meta, &gTaskMeta); err != nil {
+	var backfillMeta BackfillGlobalMeta
+	if err := json.Unmarshal(gTask.Meta, &backfillMeta); err != nil {
 		return nil, err
 	}
-
-	job := &gTaskMeta.Job
-	useExtStore := len(gTaskMeta.CloudStorageURI) > 0
-
-	tblInfo, err := getTblInfo(h.d, job)
+	job := &backfillMeta.Job
+	tblInfo, err := getTblInfo(dsp.d, job)
 	if err != nil {
 		return nil, err
 	}
 
-	// StepOne: read index and write to backend.
-	// StepTwo: do merge sort to reduce the global sort reader reads files count. Only used in global sort.
-	// StepThree: ingest data.
 	// TODO: use planner.
-	switch step {
-	case proto.StepOne:
+	switch nextStep {
+	case StepReadIndex:
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		return generateNonPartitionPlan(h.d, tblInfo, job)
-	case proto.StepTwo:
-		gTaskMeta.UseMergeSort = true
-		if err := updateMeta(gTask, &gTaskMeta); err != nil {
+		return generateNonPartitionPlan(dsp.d, tblInfo, job)
+	case StepMergeSort:
+		res, err := generateMergePlan(taskHandle, gTask, &backfillMeta)
+		if err != nil {
 			return nil, err
 		}
-		return generateMergePlan(taskHandle, gTask)
-	case proto.StepThree:
-		if useExtStore {
-			prevStep := proto.StepOne
-			if gTaskMeta.UseMergeSort {
-				prevStep = proto.StepTwo
+		if len(res) > 0 {
+			backfillMeta.UseMergeSort = true
+			if err := updateMeta(gTask, &backfillMeta); err != nil {
+				return nil, err
 			}
-			return generateGlobalSortIngestPlan(ctx, taskHandle, gTask, job.ID, gTaskMeta.CloudStorageURI, prevStep)
 		}
+		return res, nil
+	case StepWriteAndIngest:
+		if dsp.GlobalSort {
+			prevStep := StepReadIndex
+			if backfillMeta.UseMergeSort {
+				prevStep = StepMergeSort
+			}
+			return generateGlobalSortIngestPlan(
+				ctx,
+				taskHandle,
+				gTask,
+				job.ID,
+				backfillMeta.CloudStorageURI,
+				prevStep)
+		}
+		// for partition table, no subtasks for write and ingest step.
 		if tblInfo.Partition != nil {
 			return nil, nil
 		}
-		return generateIngestTaskPlan(ctx, h, taskHandle, gTask)
+		return generateIngestTaskPlan(ctx, dsp, taskHandle, gTask)
 	default:
 		return nil, nil
 	}
@@ -127,55 +136,24 @@ func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
 	return nil
 }
 
-func (*backfillingDispatcherExt) GetNextStep(
+// GetNextStep implements dispatcher.Extension interface.
+func (dsp *BackfillingDispatcherExt) GetNextStep(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 ) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
-		return proto.StepOne
-	case proto.StepOne:
-		// when in tests
-		if taskHandle == nil {
-			return proto.StepThree
+		return StepReadIndex
+	case StepReadIndex:
+		if dsp.GlobalSort {
+			return StepMergeSort
 		}
-
-		var meta BackfillGlobalMeta
-		if err := json.Unmarshal(task.Meta, &meta); err != nil {
-			logutil.BgLogger().Info(
-				"unmarshal task meta met error",
-				zap.String("category", "ddl"),
-				zap.Error(err))
-		}
-		// don't need merge step in local backend.
-		if len(meta.CloudStorageURI) == 0 {
-			return proto.StepThree
-		}
-
-		// if data files overlaps too much, we need a merge step.
-		subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
-		if err != nil {
-			// TODO(lance6716): should we return error?
-			return proto.StepThree
-		}
-		multiStats := make([]external.MultipleFilesStat, 0, 100)
-		for _, bs := range subTaskMetas {
-			var subtask BackfillSubTaskMeta
-			err = json.Unmarshal(bs, &subtask)
-			if err != nil {
-				// TODO(lance6716): should we return error?
-				return proto.StepThree
-			}
-			multiStats = append(multiStats, subtask.MultipleFilesStats...)
-		}
-		if skipMergeSort(multiStats) {
-			return proto.StepThree
-		}
-		return proto.StepTwo
-	case proto.StepTwo:
-		return proto.StepThree
+		return StepWriteAndIngest
+	case StepMergeSort:
+		return StepWriteAndIngest
+	case StepWriteAndIngest:
+		return proto.StepDone
 	default:
-		// current step should be proto.StepThree
 		return proto.StepDone
 	}
 }
@@ -188,7 +166,7 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnErrStage generate error handling stage's plan.
-func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
+func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
 	firstErr := receiveErr[0]
 	task.Error = firstErr
@@ -196,15 +174,16 @@ func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 	return nil, nil
 }
 
-func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
+// GetEligibleInstances implements dispatcher.Extension interface.
+func (dsp *BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if len(h.previousSchedulerIDs) > 0 {
+	if len(dsp.previousSchedulerIDs) > 0 {
 		// Only the nodes that executed step one can have step two.
 		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
-		for _, id := range h.previousSchedulerIDs {
+		for _, id := range dsp.previousSchedulerIDs {
 			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
 				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
 			}
@@ -215,21 +194,37 @@ func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *
 }
 
 // IsRetryableErr implements dispatcher.Extension.IsRetryableErr interface.
-func (*backfillingDispatcherExt) IsRetryableErr(error) bool {
+func (*BackfillingDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
 type litBackfillDispatcher struct {
 	*dispatcher.BaseDispatcher
+	d *ddl
 }
 
-func newLitBackfillDispatcher(ctx context.Context, taskMgr dispatcher.TaskManager,
-	serverID string, task *proto.Task, handle dispatcher.Extension) dispatcher.Dispatcher {
-	dis := litBackfillDispatcher{
+func newLitBackfillDispatcher(ctx context.Context, d *ddl, taskMgr dispatcher.TaskManager,
+	serverID string, task *proto.Task) dispatcher.Dispatcher {
+	dsp := litBackfillDispatcher{
+		d:              d,
 		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
 	}
-	dis.BaseDispatcher.Extension = handle
-	return &dis
+	return &dsp
+}
+
+func (dsp *litBackfillDispatcher) Init() (err error) {
+	taskMeta := &BackfillGlobalMeta{}
+	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
+		return errors.Annotate(err, "unmarshal task meta failed")
+	}
+	dsp.BaseDispatcher.Extension = &BackfillingDispatcherExt{
+		d:          dsp.d,
+		GlobalSort: len(taskMeta.CloudStorageURI) > 0}
+	return dsp.BaseDispatcher.Init()
+}
+
+func (dsp *litBackfillDispatcher) Close() {
+	dsp.BaseDispatcher.Close()
 }
 
 func getTblInfo(d *ddl, job *model.Job) (tblInfo *model.TableInfo, err error) {
@@ -319,7 +314,7 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 
 func generateIngestTaskPlan(
 	ctx context.Context,
-	h *backfillingDispatcherExt,
+	h *BackfillingDispatcherExt,
 	taskHandle dispatcher.TaskHandle,
 	gTask *proto.Task,
 ) ([][]byte, error) {
@@ -426,7 +421,28 @@ func generateGlobalSortIngestPlan(
 func generateMergePlan(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
+	meta *BackfillGlobalMeta,
 ) ([][]byte, error) {
+	// check data files overlaps,
+	// if data files overlaps too much, we need a merge step.
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
+	if err != nil {
+		return nil, err
+	}
+	multiStats := make([]external.MultipleFilesStat, 0, 100)
+	for _, bs := range subTaskMetas {
+		var subtask BackfillSubTaskMeta
+		err = json.Unmarshal(bs, &subtask)
+		if err != nil {
+			return nil, err
+		}
+		multiStats = append(multiStats, subtask.MultipleFilesStats...)
+	}
+	if skipMergeSort(multiStats) {
+		return nil, nil
+	}
+
+	// generate merge sort plan.
 	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, proto.StepOne)
 	if err != nil {
 		return nil, err
