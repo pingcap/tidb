@@ -73,7 +73,9 @@ import (
 
 const (
 	// currentVersion is for all new DDL jobs.
-	currentVersion = 1
+	// 1 for the DDL job created <= v7.4.0.
+	// For fix #46306(whether end key is included or not in the table range) to add version 2.
+	currentVersion = 2
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey = "/tidb/ddl/fg/owner"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
