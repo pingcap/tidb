@@ -1133,6 +1133,12 @@
           "  └─Selection_9(Probe) 0.10 cop[tikv]  eq(test.t2.c, 1), eq(test.t2.d, 3), json_memberof(cast(2, json BINARY), test.t2.b)",
           "    └─TableRowIDScan_8 0.10 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where 1 member of (a) and c=1 and c=2; -- 6: AND index merge from multi complicated mv indexes (empty range)",
+        "Plan": [
+          "TableDual_5 0.00 root  rows:0"
+        ]
       }
     ]
   },

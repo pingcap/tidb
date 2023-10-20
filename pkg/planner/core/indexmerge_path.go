@@ -1125,7 +1125,8 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 	partialPaths []*util.AccessPath, isIntersection bool, ok bool, err error) {
 	var virColID = -1
 	for i := range idxCols {
-		if idxCols[i].VirtualExpr != nil {
+		// index column may contain other virtual column.
+		if idxCols[i].VirtualExpr != nil && idxCols[i].VirtualExpr.GetType().IsArray() {
 			virColID = i
 			break
 		}
@@ -1298,6 +1299,14 @@ func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, id
 // 1: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
 // 2: `x=1 and (1 member of a) and z=1`, remaining: `x+z>0`.
 //
+// Q: case like idx(x, cast(a as array), z), condition like: x=1 and x=2 and ( 2 member of a)? we can derive the x is invalid range?
+// A: no way to here, it will derive an empty range in table path by all these conditions, and the heuristic rule will pick the table-dual table path directly.
+//
+// Theoretically For idx(x, cast(a as array), z), `x=1 and x=2 and (2 member of a) and (1 member of a) and z=1 and x+z>0` here should be split to:
+// 1: `x=1 and x=2 and (2 member of a) and z=1`, remaining: `x+z>0`.
+// 2: `x=1 and x=2 and (1 member of a) and z=1`, remaining: `x+z>0`.
+// Note: x=1 and x=2 will derive an invalid range in ranger detach, for now because of heuristic rule above, we ignore this case here.
+//
 // just as the 3rd point as we said in generateIndexMerge4ComposedIndex
 //
 // 3: The predicate of mv index can not converge to a linear interval range at physical phase like EQ and
@@ -1310,9 +1319,6 @@ func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, id
 // we should build indexMerge above them, and each of them can access to the same mv index. That's why
 // we should derive the mutations of virtual json col's access condition, output the accessFilter combination
 // for each mutation of it.
-
-// todo: case like idx(x, cast(a as array), z), condition like: x=1 and x=2 and (
-// 2 member of a)? we can derive the x is invalid range?
 func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expression,
 	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
@@ -1328,8 +1334,7 @@ func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expre
 				continue
 			}
 			if ds.checkFilter4MVIndexColumn(f, col) {
-				// todo: ban the virtual col in mv index except the json col it self.
-				if col.VirtualExpr != nil {
+				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
 					mvFilterMutations = append(mvFilterMutations, f)

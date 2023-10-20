@@ -307,7 +307,8 @@ create table t(
 	index idx_float_unsigned(float_unsigned),
 	index idx_double_unsigned(double_unsigned),
 	index idx_int(col_int),
-	index idx_float(col_float)
+	index idx_float(col_float),
+	index idx_int_bigint(a, col_int)
 )`)
 	tests := []struct {
 		indexPos    int
@@ -316,6 +317,13 @@ create table t(
 		filterConds string
 		resultStr   string
 	}{
+		{
+			indexPos:    6,
+			exprStr:     `a = 1 and a = 2`,
+			accessConds: "[]",
+			filterConds: "[]",
+			resultStr:   `[]`,
+		},
 		{
 			indexPos:    0,
 			exprStr:     `a not in (0, 1, 2)`,
