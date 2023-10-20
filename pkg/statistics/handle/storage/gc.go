@@ -388,16 +388,10 @@ func MarkExtendedStatsDeleted(sctx sessionctx.Context,
 		logutil.BgLogger().Warn("unexpected duplicate extended stats records found", zap.String("name", statsName), zap.Int64("table_id", tableID))
 	}
 
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
 	defer func() {
-		err1 := util.FinishTransaction(sctx, err)
-		if err == nil && err1 == nil {
+		if err == nil {
 			removeExtendedStatsItem(statsCache, tableID, statsName)
 		}
-		err = err1
 	}()
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
