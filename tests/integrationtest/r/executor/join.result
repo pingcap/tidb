@@ -853,3 +853,24 @@ select * from (t1 natural join t2) right outer join (t3 natural join t4) using (
 c	b	y	a
 3	1	11	2
 3	1	2	2
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_mem_quota_query = 1 << 20;
+set global tidb_mem_oom_action = 'CANCEL';
+set global tidb_enable_tmp_storage_on_oom = off;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
+Error 1105 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=2097156]
+set tidb_mem_quota_query = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_tmp_storage_on_oom = default;
