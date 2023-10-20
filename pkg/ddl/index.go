@@ -2069,7 +2069,11 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		taskKey = fmt.Sprintf("%s/%d", taskKey, mInfo.Seq)
 	}
 
-	// for resuming add index task.
+	// For resuming add index task.
+	// Need to fetch global task by taskKey in tidb_global_task and tidb_global_task_history tables.
+	// When pausing the related ddl job, it is possible that the global task with taskKey is succeed and in tidb_global_task_history.
+	// As a result, when resuming the related ddl job,
+	// it is necessary to check task exits in tidb_global_task and tidb_global_task_history tables.
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return err
