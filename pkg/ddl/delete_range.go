@@ -384,7 +384,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 				startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 				endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
 				elemID := ea.allocForIndexID(tableID, indexID)
-				return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID))
+				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID)); err != nil {
+					return errors.Trace(err)
+				}
+				continue
 			}
 			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
 				if val.(bool) {
