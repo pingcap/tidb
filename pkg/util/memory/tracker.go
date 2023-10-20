@@ -817,8 +817,8 @@ const (
 	LabelForChunkList int = -7
 	// LabelForGlobalSimpleLRUCache represents the label of the Global SimpleLRUCache
 	LabelForGlobalSimpleLRUCache int = -8
-	// LabelForChunkListInDisk represents the label of the chunk list in disk
-	LabelForChunkListInDisk int = -9
+	// LabelForChunkDataInDiskByRows represents the label of the chunk list in disk
+	LabelForChunkDataInDiskByRows int = -9
 	// LabelForRowContainer represents the label of the row container
 	LabelForRowContainer int = -10
 	// LabelForGlobalStorage represents the label of the Global Storage
