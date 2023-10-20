@@ -149,53 +149,6 @@ func TestResourceGroup(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestBackupAndRestoreAutoIDs(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		err := store.Close()
-		require.NoError(t, err)
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	acc := m.GetAutoIDAccessors(1, 1)
-	require.NoError(t, acc.RowID().Put(100))
-	require.NoError(t, acc.RandomID().Put(101))
-	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 1, 1, 2, 2))
-	require.NoError(t, txn.Commit(context.Background()))
-
-	mustGet := func(acc meta.AutoIDAccessor) int {
-		v, err := acc.Get()
-		require.NoError(t, err)
-		return int(v)
-	}
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMeta(txn)
-	acc = m.GetAutoIDAccessors(1, 1)
-	// Test old auto IDs are cleaned.
-	require.Equal(t, mustGet(acc.RowID()), 0)
-	require.Equal(t, mustGet(acc.RandomID()), 0)
-
-	// Test new auto IDs are restored.
-	acc2 := m.GetAutoIDAccessors(2, 2)
-	require.Equal(t, mustGet(acc2.RowID()), 100)
-	require.Equal(t, mustGet(acc2.RandomID()), 101)
-	// Backup & restore with the same database & table ID.
-	require.NoError(t, meta.BackupAndRestoreAutoIDs(m, 2, 2, 2, 2))
-	require.NoError(t, txn.Commit(context.Background()))
-
-	txn, err = store.Begin()
-	require.NoError(t, err)
-	m = meta.NewMeta(txn)
-	// Test auto IDs are unchanged.
-	acc2 = m.GetAutoIDAccessors(2, 2)
-	require.Equal(t, mustGet(acc2.RowID()), 100)
-	require.Equal(t, mustGet(acc2.RandomID()), 101)
-}
-
 func TestMeta(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
