@@ -65,10 +65,11 @@ func TestPacketIOWrite(t *testing.T) {
 func TestPacketIOWriteCompressed(t *testing.T) {
 	var testdata, outBuffer bytes.Buffer
 
+	seq := uint8(0)
 	pkt := &PacketIO{
 		bufWriter:            bufio.NewWriter(&outBuffer),
 		compressionAlgorithm: mysql.CompressionZlib,
-		compressedWriter:     newCompressedWriter(&testdata, mysql.CompressionZlib),
+		compressedWriter:     newCompressedWriter(&testdata, mysql.CompressionZlib, &seq),
 	}
 
 	payload := bytes.Repeat([]byte{'A'}, 16*1024*1024)
@@ -240,8 +241,9 @@ func TestPacketIORead(t *testing.T) {
 func TestCompressedWriterShort(t *testing.T) {
 	var testdata bytes.Buffer
 	payload := []byte("test_short")
+	seq := uint8(0)
 
-	cw := newCompressedWriter(&testdata, mysql.CompressionZlib)
+	cw := newCompressedWriter(&testdata, mysql.CompressionZlib, &seq)
 	cw.Write(payload)
 	cw.Flush()
 
@@ -261,8 +263,9 @@ func TestCompressedWriterLong(t *testing.T) {
 	t.Run("zlib", func(t *testing.T) {
 		var testdata, decoded bytes.Buffer
 		payload := []byte("test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib test_zlib")
+		seq := uint8(0)
 
-		cw := newCompressedWriter(&testdata, mysql.CompressionZlib)
+		cw := newCompressedWriter(&testdata, mysql.CompressionZlib, &seq)
 		cw.Write(payload)
 		cw.Flush()
 
@@ -287,8 +290,9 @@ func TestCompressedWriterLong(t *testing.T) {
 	t.Run("zstd", func(t *testing.T) {
 		var testdata bytes.Buffer
 		payload := []byte("test_zstd test_zstd test_zstd test_zstd test_zstd test_zstd test_zstd")
+		seq := uint8(0)
 
-		cw := newCompressedWriter(&testdata, mysql.CompressionZstd)
+		cw := newCompressedWriter(&testdata, mysql.CompressionZstd, &seq)
 		cw.Write(payload)
 		cw.Flush()
 
