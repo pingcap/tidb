@@ -568,3 +568,4 @@ select * from (t1 natural join t2) join (t3 natural join t4) using (b);
 select * from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
 --sorted_result
 select * from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
+
