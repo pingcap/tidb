@@ -2162,7 +2162,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.SetTypeFlags(sc.TypeFlags().
 		WithSkipUTF8Check(vars.SkipUTF8Check).
 		WithSkipSACIICheck(vars.SkipASCIICheck).
-		WithSkipUTF8MB4Check(!globalConfig.Instance.CheckMb4ValueInUTF8.Load()))
+		WithSkipUTF8MB4Check(!globalConfig.Instance.CheckMb4ValueInUTF8.Load()).
+		// WithClipNegativeToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
+		// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
+		// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+		WithClipNegativeToZero(sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt),
+	)
 
 	vars.PlanCacheParams.Reset()
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {
