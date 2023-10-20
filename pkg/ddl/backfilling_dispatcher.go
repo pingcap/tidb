@@ -522,8 +522,6 @@ func getSummaryFromLastStep(
 			continue
 		}
 
-		logutil.BgLogger().Info("lance test", zap.Binary("start key", subtask.StartKey), zap.Binary("end key", subtask.EndKey))
-
 		if len(startKey) == 0 {
 			startKey = subtask.StartKey
 		} else {

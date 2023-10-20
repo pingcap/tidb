@@ -72,8 +72,6 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			zap.Error(err))
 		return err
 	}
-	logutil.BgLogger().Info("lance test",
-		zap.Binary("start key", sm.StartKey), zap.Binary("end key", sm.EndKey))
 
 	local := m.bc.GetLocalBackend()
 	if local == nil {
