@@ -72,12 +72,3 @@ func TestAddIndexIngestRecoverPartition(t *testing.T) {
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
 }
-
-func TestAddIndexOnlyIngestOnWorkerInstance(t *testing.T) {
-	port := config.GetGlobalConfig().Port
-	tc := testkit.NewDistExecutionContext(t, 3)
-	defer tc.Close()
-	defer ingesttestutil.InjectMockBackendMgr(t, tc.Store)()
-	tk := testkit.NewTestKit(t, tc.Store)
-	tk.MustExec("use test;")
-}
