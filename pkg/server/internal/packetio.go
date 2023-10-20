@@ -314,8 +314,8 @@ func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
 	return &compressedWriter{
 		w,
 		new(bytes.Buffer),
-		ca,
 		seq,
+		ca,
 		3,
 	}
 }
@@ -323,8 +323,8 @@ func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
 type compressedWriter struct {
 	w                    io.Writer
 	buf                  *bytes.Buffer
-	compressionAlgorithm int
 	compressedSequence   *uint8
+	compressionAlgorithm int
 	zstdLevel            zstd.EncoderLevel
 }
 
@@ -433,26 +433,25 @@ func (cw *compressedWriter) Flush() error {
 func newCompressedReader(r io.Reader, ca int, seq *uint8) *compressedReader {
 	return &compressedReader{
 		r,
-		ca,
 		seq,
-		3,
 		nil,
+		ca,
+		3,
 		0,
 	}
 }
 
 type compressedReader struct {
 	r                    io.Reader
-	compressionAlgorithm int
 	compressedSequence   *uint8
-	zstdLevel            zstd.EncoderLevel
 	data                 []byte
+	compressionAlgorithm int
+	zstdLevel            zstd.EncoderLevel
 	pos                  uint64
 }
 
 func (cr *compressedReader) Read(data []byte) (n int, err error) {
 	if cr.data == nil {
-
 		var compressedHeader [7]byte
 		if _, err = io.ReadFull(cr.r, compressedHeader[:]); err != nil {
 			return
@@ -513,6 +512,6 @@ func (cr *compressedReader) Read(data []byte) (n int, err error) {
 	return
 }
 
-func (cr *compressedReader) Close() error {
+func (*compressedReader) Close() error {
 	return nil
 }
