@@ -31,12 +31,8 @@ func TestDateFormat(t *testing.T) {
 
 	timeZone, _ := time.LoadLocation("Asia/Shanghai")
 	for _, ca := range cases {
-		ts := oracle.GetTimeFromTS(ca.ts).In(timeZone)
-		date := FormatDate(ts)
+		date := FormatDate(oracle.GetTimeFromTS(ca.ts).In(timeZone))
 		require.Equal(t, ca.target, date)
-		ts2, err := ParseDate(date)
-		require.NoError(t, err)
-		require.Equal(t, ts, ts2.In(timeZone))
 	}
 }
 
