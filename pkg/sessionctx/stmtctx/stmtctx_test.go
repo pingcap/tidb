@@ -316,7 +316,7 @@ func TestStmtHintsClone(t *testing.T) {
 
 func TestNewStmtCtx(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
 	sc.AppendWarning(errors.New("err1"))
@@ -327,7 +327,7 @@ func TestNewStmtCtx(t *testing.T) {
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
 	sc = stmtctx.NewStmtCtxWithTimeZone(tz)
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, tz, sc.TimeZone())
 	require.Same(t, tz, sc.TimeZone())
 	sc.AppendWarning(errors.New("err2"))
@@ -347,10 +347,10 @@ func TestSetStmtCtxTimeZone(t *testing.T) {
 
 func TestSetStmtCtxTypeFlags(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
-	sc.SetTypeFlags(typectx.FlagClipNegativeToZero | typectx.FlagSkipASCIICheck)
-	require.Equal(t, typectx.FlagClipNegativeToZero|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	sc.SetTypeFlags(typectx.FlagAllowNegativeToUnsigned | typectx.FlagSkipASCIICheck)
+	require.Equal(t, typectx.FlagAllowNegativeToUnsigned|typectx.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
 
 	sc.SetTypeFlags(typectx.FlagSkipASCIICheck | typectx.FlagSkipUTF8Check | typectx.FlagInvalidDateAsWarning)
@@ -360,24 +360,24 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 
 func TestResetStmtCtx(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
 	tz := time.FixedZone("UTC+1", 2*60*60)
 	sc.SetTimeZone(tz)
-	sc.SetTypeFlags(typectx.FlagClipNegativeToZero | typectx.FlagSkipASCIICheck)
+	sc.SetTypeFlags(typectx.FlagAllowNegativeToUnsigned | typectx.FlagSkipASCIICheck)
 	sc.AppendWarning(errors.New("err1"))
 	sc.InRestrictedSQL = true
 	sc.StmtType = "Insert"
 
 	require.Same(t, tz, sc.TimeZone())
-	require.Equal(t, typectx.FlagClipNegativeToZero|typectx.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, typectx.FlagAllowNegativeToUnsigned|typectx.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, 1, len(sc.GetWarnings()))
 
 	sc.Reset()
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
-	require.Equal(t, types.StrictFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.False(t, sc.InRestrictedSQL)
 	require.Empty(t, sc.StmtType)
 	require.Equal(t, 0, len(sc.GetWarnings()))
