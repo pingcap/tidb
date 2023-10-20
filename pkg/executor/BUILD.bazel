@@ -385,6 +385,7 @@ go_test(
         "//pkg/expression/aggregation",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/metrics",
         "//pkg/parser",
