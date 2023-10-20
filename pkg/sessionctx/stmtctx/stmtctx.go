@@ -1127,16 +1127,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	return details
 }
 
-// ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
-// so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
-func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
-	// TODO: move this function into `/types` pkg
-	if (sc.InInsertStmt && sc.TypeFlags().TruncateAsWarning()) || sc.InLoadDataStmt {
-		return true
-	}
-	return false
-}
-
 // PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) PushDownFlags() uint64 {
 	var flags uint64
