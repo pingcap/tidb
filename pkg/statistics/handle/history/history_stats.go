@@ -77,7 +77,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uin
 	}
 	err := util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return RecordHistoricalStatsMeta(sctx, tableID, version, source)
-	})
+	}, util.FlagWrapTxn)
 	if err != nil { // just log the error, hide the error from the outside caller.
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Int64("table-id", tableID),
@@ -112,14 +112,6 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 		return errors.New("no historical meta stats can be recorded")
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
-
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
 
 	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
 	if _, err := util.Exec(sctx, sql, tableID, modifyCount, count, version, source); err != nil {

@@ -125,13 +125,6 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 	needDumpFMS := results.TableID.IsPartitionTable()
 	tableID := results.TableID.GetStatisticsID()
 	ctx := util.StatsCtx
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
 	txn, err := sctx.Txn(true)
 	if err != nil {
 		return 0, err
@@ -334,13 +327,6 @@ func SaveTableStatsToStorage(sctx sessionctx.Context,
 func SaveStatsToStorage(sctx sessionctx.Context,
 	tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 	cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool) (statsVer uint64, err error) {
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -404,13 +390,6 @@ func SaveStatsToStorage(sctx sessionctx.Context,
 func SaveMetaToStorage(
 	sctx sessionctx.Context,
 	tableID, count, modifyCount int64) (statsVer uint64, err error) {
-	_, err = util.Exec(sctx, "begin")
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
 	version, err := util.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
