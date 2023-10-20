@@ -16,8 +16,6 @@ package ddl_test
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
 	"testing"
 	gotime "time"
 
@@ -27,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // See issue: https://github.com/pingcap/tidb/issues/29752
