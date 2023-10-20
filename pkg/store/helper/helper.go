@@ -98,23 +98,45 @@ func NewHelper(store Storage) *Helper {
 
 // GetMvccByEncodedKey get the MVCC value by the specific encoded key.
 func (h *Helper) GetMvccByEncodedKey(encodedKey kv.Key) (*kvrpcpb.MvccGetByKeyResponse, error) {
-	keyLocation, err := h.RegionCache.LocateKey(tikv.NewBackofferWithVars(context.Background(), 500, nil), encodedKey)
-	if err != nil {
-		return nil, derr.ToTiDBErr(err)
-	}
-
+	bo := tikv.NewBackofferWithVars(context.Background(), 5000, nil)
 	tikvReq := tikvrpc.NewRequest(tikvrpc.CmdMvccGetByKey, &kvrpcpb.MvccGetByKeyRequest{Key: encodedKey})
-	kvResp, err := h.Store.SendReq(tikv.NewBackofferWithVars(context.Background(), 500, nil), tikvReq, keyLocation.Region, time.Minute)
-	if err != nil {
-		logutil.BgLogger().Info("get MVCC by encoded key failed",
-			zap.Stringer("encodeKey", encodedKey),
-			zap.Reflect("region", keyLocation.Region),
-			zap.Stringer("keyLocation", keyLocation),
-			zap.Reflect("kvResp", kvResp),
-			zap.Error(err))
-		return nil, errors.Trace(err)
+	for {
+		keyLocation, err := h.RegionCache.LocateKey(bo, encodedKey)
+		if err != nil {
+			return nil, derr.ToTiDBErr(err)
+		}
+		kvResp, err := h.Store.SendReq(bo, tikvReq, keyLocation.Region, time.Minute)
+		if err != nil {
+			logutil.BgLogger().Info("get MVCC by encoded key failed",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp),
+				zap.Error(err))
+			return nil, errors.Trace(err)
+		}
+		regionErr, err := kvResp.GetRegionError()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if regionErr != nil {
+			if err = bo.Backoff(tikv.BoRegionMiss(), errors.New(regionErr.String())); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		mvccResp := kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse)
+		if errMsg := mvccResp.GetError(); errMsg != "" {
+			logutil.BgLogger().Info("get MVCC by encoded key failed",
+				zap.Stringer("encodeKey", encodedKey),
+				zap.Reflect("region", keyLocation.Region),
+				zap.Stringer("keyLocation", keyLocation),
+				zap.Reflect("kvResp", kvResp),
+				zap.String("error", errMsg))
+			return nil, errors.New(errMsg)
+		}
+		return mvccResp, nil
 	}
-	return kvResp.Resp.(*kvrpcpb.MvccGetByKeyResponse), nil
 }
 
 // MvccKV wraps the key's mvcc info in tikv.
