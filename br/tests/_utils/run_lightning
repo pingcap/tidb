@@ -16,8 +16,6 @@
 
 set -eux
 
-export GRPC_DEBUG=true
-
 cur_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 echo "[$(date)] <<<<<< RUNNING TEST FOR: $cur_dir/../$TEST_NAME $@ >>>>>>" >> "$TEST_DIR/lightning.log"
