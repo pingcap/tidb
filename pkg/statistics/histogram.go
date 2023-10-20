@@ -296,8 +296,10 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 			return
 		}
 	}
+	var midIdx = 0
+	var found bool
 	for lowIdx <= highIdx {
-		midIdx := (lowIdx + highIdx) / 2
+		midIdx = (lowIdx + highIdx) / 2
 		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
 			lowIdx = midIdx + 1
@@ -318,7 +320,16 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		if hg.Buckets[midIdx].Count < 0 {
 			hg.Buckets[midIdx].Count = 0
 		}
+		found = true
 		break
+	}
+	if found {
+		for ; midIdx <= hg.Len()-1; midIdx++ {
+			hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
+			if hg.Buckets[midIdx].Count < 0 {
+				hg.Buckets[midIdx].Count = 0
+			}
+		}
 	}
 }
 
