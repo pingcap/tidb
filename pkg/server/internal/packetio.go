@@ -151,7 +151,7 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		compressedSequence := compressedHeader[3]
 		if compressedSequence != p.compressedSequence {
 			return nil, err.ErrInvalidSequence.GenWithStack(
-				"invalid compressed sequence %d != %d", compressedSequence, p.compressedSequence)
+				"invalid compressed sequence, received %d while expecting %d", compressedSequence, p.compressedSequence)
 		}
 		p.compressedSequence++
 		p.compressedWriter.compressedSequence = p.compressedSequence
@@ -184,7 +184,7 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 
 	sequence := header[3]
 	if sequence != p.sequence {
-		return nil, err.ErrInvalidSequence.GenWithStack("invalid sequence %d != %d", sequence, p.sequence)
+		return nil, err.ErrInvalidSequence.GenWithStack("invalid sequence, received %d while expecting %d", sequence, p.sequence)
 	}
 
 	p.sequence++
