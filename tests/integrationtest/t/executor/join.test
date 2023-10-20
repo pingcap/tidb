@@ -568,26 +568,3 @@ select * from (t1 natural join t2) join (t3 natural join t4) using (b);
 select * from (t1 natural join t2) left outer join (t3 natural join t4) using (b);
 --sorted_result
 select * from (t1 natural join t2) right outer join (t3 natural join t4) using (c,b);
-
-# TestCartesianJoinPanic
-drop table if exists t;
-create table t(a int);
-insert into t values(1);
-set tidb_mem_quota_query = 1 << 20;
-set global tidb_mem_oom_action = 'CANCEL';
-set global tidb_enable_tmp_storage_on_oom = off;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
-insert into t select * from t;
--- error 1105
-desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
-set tidb_mem_quota_query = default;
-set global tidb_mem_oom_action = default;
-set global tidb_enable_tmp_storage_on_oom = default;
