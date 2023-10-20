@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -413,7 +414,7 @@ func TopNFromProto(protoTopN []*tipb.CMSketchTopN) *TopN {
 	if len(protoTopN) == 0 {
 		return nil
 	}
-	topN := NewTopN(len(protoTopN))
+	topN := GetTopNPoolMap(len(protoTopN))
 	for _, e := range protoTopN {
 		d := make([]byte, len(e.Data))
 		copy(d, e.Data)
@@ -527,6 +528,33 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 	c.defaultValue = c.count / max(1, ndv)
 }
 
+var topNPoolMap = make(map[int]sync.Pool)
+
+func GetTopNPoolMap(size int) *TopN {
+	pool, ok := topNPoolMap[size]
+	if !ok {
+		pool = sync.Pool{
+			New: func() interface{} {
+				return NewTopN(size)
+			},
+		}
+		topNPoolMap[size] = pool
+	}
+	return pool.Get().(*TopN)
+}
+
+func ReleaseTopNPoolMap(topN *TopN) {
+	if topN == nil {
+		return
+	}
+	size := cap(topN.TopN)
+	pool, ok := topNPoolMap[size]
+	if !ok {
+		return
+	}
+	pool.Put(topN)
+}
+
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
@@ -598,15 +626,22 @@ func (c *TopN) Copy() *TopN {
 	if c == nil {
 		return nil
 	}
-	topN := make([]TopNMeta, len(c.TopN))
+	result := GetTopNPoolMap(len(c.TopN))
+	isAppend := len(result.TopN) == 0
 	for i, t := range c.TopN {
-		topN[i].Encoded = make([]byte, len(t.Encoded))
-		copy(topN[i].Encoded, t.Encoded)
-		topN[i].Count = t.Count
+		if isAppend {
+			var tmp TopNMeta
+			tmp.Encoded = make([]byte, len(t.Encoded))
+			copy(tmp.Encoded, t.Encoded)
+			tmp.Count = t.Count
+			result.TopN = append(result.TopN, tmp)
+		} else {
+			result.TopN[i].Encoded = make([]byte, len(t.Encoded))
+			copy(result.TopN[i].Encoded, t.Encoded)
+			result.TopN[i].Count = t.Count
+		}
 	}
-	return &TopN{
-		TopN: topN,
-	}
+	return result
 }
 
 // TopNMeta stores the unit of the TopN.
