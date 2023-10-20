@@ -346,7 +346,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 			if err := clients[i].SendMsg(preparedMsg); err != nil {
 				if err == io.EOF {
 					// if it's EOF, need RecvMsg to get the error
-					var dummy any
+					dummy := &sst.WriteResponse{}
 					err = clients[i].RecvMsg(dummy)
 				}
 				return annotateErr(err, allPeers[i], "when send data")
