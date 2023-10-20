@@ -114,7 +114,7 @@ func MergePartitionStats2GlobalStats(
 		}
 		return worker.Result(), nil
 	}
-	return oldMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
+	return blockingMergePartitionStats2GlobalStats(sc, statsHandle.GPool(), opts, is, globalTableInfo, isIndex, histIDs, nil, statsHandle)
 }
 
 // MergePartitionStats2GlobalStatsByTableID merge the partition-level stats to global-level stats based on the tableID.
@@ -271,8 +271,9 @@ func UpdateGlobalStats(
 	return nil
 }
 
-// oldMergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
-func oldMergePartitionStats2GlobalStats(
+// blockingMergePartitionStats2GlobalStats merge the partition-level stats to global-level stats based on the tableInfo.
+// It is the old algorithm to merge partition-level stats to global-level stats. It will happen the OOM. because it will load all the partition-level stats into memory.
+func blockingMergePartitionStats2GlobalStats(
 	sc sessionctx.Context,
 	gpool *gp.Pool,
 	opts map[ast.AnalyzeOptionType]uint64,
