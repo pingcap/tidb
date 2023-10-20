@@ -1192,11 +1192,17 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	case KindFloat32, KindFloat64:
 		val, err = ConvertFloatToUint(sc, d.GetFloat64(), upperBound, tp)
 	case KindString, KindBytes:
+<<<<<<< HEAD
 		uval, err1 := StrToUint(sc, d.GetString(), false)
 		if err1 != nil && ErrOverflow.Equal(err1) && !sc.ShouldIgnoreOverflowError() {
 			return ret, errors.Trace(err1)
 		}
 		val, err = ConvertUintToUint(uval, upperBound, tp)
+=======
+		var err1 error
+		val, err1 = StrToUint(sc.TypeCtxOrDefault(), d.GetString(), false)
+		val, err = ConvertUintToUint(val, upperBound, tp)
+>>>>>>> 9f97c9ac0ca (types: fix update unsigned column with overflow string issue (#47817))
 		if err == nil {
 			err = err1
 		}
