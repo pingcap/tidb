@@ -324,7 +324,7 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		break
 	}
 	if found {
-		for ; midIdx <= hg.Len()-1; midIdx++ {
+		for midIdx++; midIdx <= hg.Len()-1; midIdx++ {
 			hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
 			if hg.Buckets[midIdx].Count < 0 {
 				hg.Buckets[midIdx].Count = 0
