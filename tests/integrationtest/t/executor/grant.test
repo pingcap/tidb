@@ -161,7 +161,9 @@ ALTER USER 'maint_auth_str1'@'%' REQUIRE SSL;
 SELECT authentication_string FROM mysql.user WHERE `Host` = '%' and `User` = 'maint_auth_str1';
 
 # TestIssue22721
-create table if not exists xx (id int);
+drop table if exists xx;
+drop user if exists 'sync_ci_data'@'%';
+create table xx (id int);
 CREATE USER 'sync_ci_data'@'%' IDENTIFIED BY 'sNGNQo12fEHe0n3vU';
 GRANT USAGE ON *.* TO 'sync_ci_data'@'%';
 GRANT USAGE ON sync_ci_data.* TO 'sync_ci_data'@'%';
@@ -251,6 +253,7 @@ SELECT `Grantor` FROM `mysql`.`tables_priv` WHERE User = 'test';
 
 # TestGrantOnNonExistTable
 drop user if exists genius;
+drop user if exists u29268;
 create user genius;
 -- error 1146
 select * from nonexist;

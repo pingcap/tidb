@@ -223,6 +223,8 @@ execute stmt using @a, @a, @e;
 --sorted_result
 execute stmt using @b, @b, @c;
 select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
 
 # TestValidity4PlanCache
 set tidb_enable_prepared_plan_cache=1;
@@ -277,7 +279,6 @@ EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b
 # TestMoreSessions4PlanCache
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
-use test;
 drop table if exists t;
 create table t(a int);
 prepare stmt from 'select * from t;';
@@ -303,6 +304,7 @@ set @@tidb_enable_collect_execution_info=default;
 # TestSelectView4PlanCache
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
+drop view if exists view1, view2, view3, view4;
 drop table if exists view_t;
 create table view_t (a int,b int);
 insert into view_t values(1,2);

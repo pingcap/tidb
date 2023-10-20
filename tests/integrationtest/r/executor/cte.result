@@ -388,6 +388,8 @@ c1
 3
 4
 set cte_max_recursion_depth = default;
+drop table if exists executor__cte.t;
+drop view if exists executor__cte.v;
 create database if not exists executor__cte1;
 create table executor__cte.t (a int);
 create table executor__cte1.t (a int);

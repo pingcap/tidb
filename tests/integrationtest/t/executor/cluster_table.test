@@ -12,6 +12,7 @@ select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('sel
 select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;');
 
 # TestFunctionDecodeSQLDigestsPrivilege
+drop user if exists 'testuser'@'localhost';
 create user 'testuser'@'localhost';
 
 connect (conn1, localhost, testuser,,);
@@ -51,5 +52,5 @@ show warnings;
 select tidb_decode_sql_digests('a', 1, 2);
 -- error 1582
 select tidb_decode_sql_digests();
-set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = default;
 

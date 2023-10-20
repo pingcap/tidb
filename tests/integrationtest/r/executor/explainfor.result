@@ -465,6 +465,8 @@ a	b
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
 drop table if exists t;
@@ -541,7 +543,6 @@ TableReader_7	10000.00	root		data:TableFullScan_6
 └─TableFullScan_6	10000.00	cop[tikv]	table:t12	keep order:false, stats:pseudo
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
-use test;
 drop table if exists t;
 create table t(a int);
 prepare stmt from 'select * from t;';
@@ -572,6 +573,7 @@ set tidb_enable_prepared_plan_cache=default;
 set @@tidb_enable_collect_execution_info=default;
 set tidb_enable_prepared_plan_cache=1;
 set @@tidb_enable_collect_execution_info=0;
+drop view if exists view1, view2, view3, view4;
 drop table if exists view_t;
 create table view_t (a int,b int);
 insert into view_t values(1,2);
@@ -622,11 +624,11 @@ select @@last_plan_from_cache;
 drop table view_t;
 create table view_t(c int,d int);
 execute stmt1;
-Error 1356 (HY000): View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+Error 1356 (HY000): View 'plan_cache.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 execute stmt2;
-Error 1356 (HY000): View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+Error 1356 (HY000): View 'plan_cache.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 execute stmt3;
-Error 1356 (HY000): View 'test.view3' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
+Error 1356 (HY000): View 'plan_cache.view3' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them
 drop table view_t;
 create table view_t(a int,b int,c int);
 insert into view_t values(1,2,3);

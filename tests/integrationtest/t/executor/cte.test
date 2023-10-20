@@ -131,7 +131,9 @@ with recursive cte1(c1) as (select c1 from t1 union all select c1 + 1 from cte1 
 set cte_max_recursion_depth = default;
 
 # TestCTEsInView
-#https://github.com/pingcap/tidb/issues/33965
+# https://github.com/pingcap/tidb/issues/33965
+drop table if exists executor__cte.t;
+drop view if exists executor__cte.v;
 create database if not exists executor__cte1;
 create table executor__cte.t (a int);
 create table executor__cte1.t (a int);

@@ -1,3 +1,4 @@
+# TestQueryTime
 set @a = now();
 drop table if exists t;
 create table t(a int);

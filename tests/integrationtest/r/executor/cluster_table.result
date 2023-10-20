@@ -23,6 +23,7 @@ select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('sel
 select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;');
 (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;')
 1
+drop user if exists 'testuser'@'localhost';
 create user 'testuser'@'localhost';
 select tidb_decode_sql_digests('["aa"]');
 Error 1227 (42000): Access denied; you need (at least one of) the PROCESS privilege(s) for this operation
@@ -73,4 +74,4 @@ select tidb_decode_sql_digests('a', 1, 2);
 Error 1582 (42000): Incorrect parameter count in the call to native function 'tidb_decode_sql_digests'
 select tidb_decode_sql_digests();
 Error 1582 (42000): Incorrect parameter count in the call to native function 'tidb_decode_sql_digests'
-set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = default;
