@@ -150,6 +150,7 @@ use mysql;
 admin check table executor__admin.t;
 -- error 1146
 admin check table t;
+use executor__admin;
 drop table if exists t1;
 CREATE TABLE t1 (c2 YEAR, PRIMARY KEY (c2));
 INSERT INTO t1 SET c2 = '1912';

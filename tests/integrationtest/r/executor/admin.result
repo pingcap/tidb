@@ -153,6 +153,7 @@ admin check table executor__admin.t;
 
 admin check table t;
 Error 1146 (42S02): Table 'mysql.t' doesn't exist
+use executor__admin;
 drop table if exists t1;
 CREATE TABLE t1 (c2 YEAR, PRIMARY KEY (c2));
 INSERT INTO t1 SET c2 = '1912';
