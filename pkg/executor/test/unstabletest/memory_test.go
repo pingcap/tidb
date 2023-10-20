@@ -31,6 +31,7 @@ import (
 )
 
 func TestGlobalMemoryControl(t *testing.T) {
+	// will timeout when data race enabled
 	skip.UnderShort(t)
 	// original position at executor_test.go
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -99,6 +100,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 }
 
 func TestPBMemoryLeak(t *testing.T) {
+	// will timeout when data race enabled
 	skip.UnderShort(t)
 	debug.SetGCPercent(1000)
 	defer debug.SetGCPercent(100)
