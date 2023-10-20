@@ -228,16 +228,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	if err != nil {
 		return err
 	}
-	if e.ctx.GetSessionVars().GetTiKVClientReadTimeout() > 0 {
-		var originalKVTimeout uint64
-		if val := txn.GetOption(kv.TiKVClientReadTimeout); val != nil {
-			originalKVTimeout, _ = val.(uint64)
-		}
-		defer func() {
-			txn.SetOption(kv.TiKVClientReadTimeout, originalKVTimeout)
-		}()
-		txn.SetOption(kv.TiKVClientReadTimeout, e.ctx.GetSessionVars().GetTiKVClientReadTimeout())
-	}
+	txn.SetOption(kv.TiKVClientReadTimeout, e.ctx.GetSessionVars().GetTiKVClientReadTimeout())
 
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
