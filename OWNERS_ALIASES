@@ -44,3 +44,8 @@ aliases:
     - lance6716
     - tangenta
     - wjhuang2016
+  sig-approvers-dumpling: # approvers for dumpling module
+    - Benjamin2037
+    - gmhdbjd
+    - lichunzhu
+    - okJiang
