@@ -174,7 +174,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 // WrapTxn uses a transaction here can let different SQLs in this operation have the same data visibility.
 func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (err error) {
 	// TODO: check whether this sctx is already in a txn
-	if _, _, err := ExecRows(sctx, "begin"); err != nil {
+	if _, _, err := ExecRows(sctx, "BEGIN PESSIMISTIC"); err != nil {
 		return err
 	}
 	defer func() {
