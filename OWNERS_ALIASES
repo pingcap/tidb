@@ -37,3 +37,10 @@ aliases:
     - lance6716
     - lichunzhu
     - okJiang
+  sig-approvers-domain: # approvers for domain pkg
+    - zimulala
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
+    - tangenta
+    - wjhuang2016
