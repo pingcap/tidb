@@ -2165,7 +2165,6 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 							// make sure the task is paused.
 							TestSyncChan <- struct{}{}
 						})
-
 					}
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
