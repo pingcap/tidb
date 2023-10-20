@@ -302,12 +302,12 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 		midIdx = (lowIdx + highIdx) / 2
 		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
-			lowIdx = midIdx + 1
+			highIdx = midIdx - 1
 			continue
 		}
 		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
 		if cmpResult < 0 {
-			highIdx = midIdx - 1
+			lowIdx = midIdx + 1
 			continue
 		}
 		if hg.Buckets[midIdx].NDV > 0 {
