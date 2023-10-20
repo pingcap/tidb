@@ -69,7 +69,7 @@ type SessionPool interface {
 // finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
 func finishTransaction(sctx sessionctx.Context, err error) error {
 	if err == nil {
-		_, _, err = ExecRows(sctx, "commit")
+		_, _, err = ExecRows(sctx, "COMMIT")
 	} else {
 		_, _, err1 := ExecRows(sctx, "rollback")
 		terror.Log(errors.Trace(err1))
