@@ -85,7 +85,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed1 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 10)
 		for i := int64(0); i < 10; i++ {
 			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
 		}
@@ -107,7 +107,7 @@ func TestBuildKvRangesForIndexJoinWithoutCwcAndWithMemoryTracker(t *testing.T) {
 
 	bytesConsumed2 := int64(0)
 	{
-		joinKeyRows := make([]*indexJoinLookUpContent, 0, 5)
+		joinKeyRows := make([]*indexJoinLookUpContent, 0, 20)
 		for i := int64(0); i < 20; i++ {
 			joinKeyRows = append(joinKeyRows, &indexJoinLookUpContent{keys: generateDatumSlice(1, i)})
 		}
