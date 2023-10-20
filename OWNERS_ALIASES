@@ -44,3 +44,11 @@ aliases:
     - lance6716
     - tangenta
     - wjhuang2016
+  sig-approvers-infoschema: # approvers for infoschema pkg
+    - zimulala
+    - wjhuang2016
+    - tangenta
+    - ywqzzy
+    - D3Hunter
+    - Benjamin2037
+    - gmhdbjd
