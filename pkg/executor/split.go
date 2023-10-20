@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -272,7 +271,7 @@ func getValuesList(lower, upper []byte, num int, valuesList [][]byte) [][]byte {
 
 // longestCommonPrefixLen gets the longest common prefix byte length.
 func longestCommonPrefixLen(s1, s2 []byte) int {
-	l := mathutil.Min(len(s1), len(s2))
+	l := min(len(s1), len(s2))
 	i := 0
 	for ; i < l; i++ {
 		if s1[i] != s2[i] {

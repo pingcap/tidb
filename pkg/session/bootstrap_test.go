@@ -2085,5 +2085,36 @@ func TestTiDBUpgradeToVer176(t *testing.T) {
 	ver, err = getBootstrapVersion(seV175)
 	require.NoError(t, err)
 	require.Less(t, int64(ver175), ver)
+	MustExec(t, seV175, "SELECT * from mysql.tidb_global_task_history")
+	dom.Close()
+}
+
+func TestTiDBUpgradeToVer177(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	ver176 := version176
+	seV176 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver176))
+	require.NoError(t, err)
+	MustExec(t, seV176, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver176))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV176)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver176), ver)
+
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(seV176)
+	require.NoError(t, err)
+	require.Less(t, int64(ver176), ver)
+	MustExec(t, seV176, "SELECT * from mysql.dist_framework_meta")
 	dom.Close()
 }

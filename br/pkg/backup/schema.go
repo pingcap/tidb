@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -39,7 +39,7 @@ type schemaInfo struct {
 	crc64xor   uint64
 	totalKvs   uint64
 	totalBytes uint64
-	stats      *storage.JSONTable
+	stats      *util.JSONTable
 }
 
 type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error

@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -458,7 +457,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 }
 
 func (c *BackendConfig) adjust() {
-	c.MaxOpenFiles = mathutil.Max(c.MaxOpenFiles, openFilesLowerThreshold)
+	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
 // Backend is a local backend.
@@ -1693,7 +1692,10 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 	if err != nil {
 		firstErr.Set(err)
 		workerCancel()
-		_ = workGroup.Wait()
+		err2 := workGroup.Wait()
+		if !common.IsContextCanceledError(err2) {
+			log.FromContext(ctx).Error("worker meets error", zap.Error(err2))
+		}
 		return firstErr.Get()
 	}
 
