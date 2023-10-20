@@ -1122,6 +1122,9 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 	if err != nil {
 		return err
 	}
+	if e.ctx.GetSessionVars().GetTiKVClientReadTimeout() > 0 {
+		txn.SetOption(kv.TiKVClientReadTimeout, e.ctx.GetSessionVars().GetTiKVClientReadTimeout())
+	}
 	setOptionForTopSQL(e.ctx.GetSessionVars().StmtCtx, txn)
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
