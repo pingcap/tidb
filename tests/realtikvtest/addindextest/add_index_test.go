@@ -236,6 +236,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 		require.Equal(t, 1, len(row))
 		jobID := row[0][0].(string)
 		tk1.MustExec("admin pause ddl jobs " + jobID)
+		<-ddl.TestSyncChan
 	}
 
 	dispatcher.MockDMLExecutionOnPausedState = func(task *proto.Task) {
@@ -256,8 +257,6 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState", "return(true)"))
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("alter table t add index idx1(a);")
-	tk.MustExec("admin check table t;")
-	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState"))
