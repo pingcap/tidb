@@ -2118,3 +2118,26 @@ func TestTiDBUpgradeToVer177(t *testing.T) {
 	MustExec(t, seV176, "SELECT * from mysql.dist_framework_meta")
 	dom.Close()
 }
+
+func TestWriteDDLTableVersionToMySQLTiDB(t *testing.T) {
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	ver, err := m.CheckDDLTableVersion()
+	require.NoError(t, err)
+
+	// Verify that 'ddl_table_version' has been set to the right value
+	ctx := context.Background()
+	se := CreateSessionAndSetID(t, store)
+	r := MustExecToRecodeSet(t, se, fmt.Sprintf(`SELECT VARIABLE_VALUE from mysql.TiDB where VARIABLE_NAME='%s'`, tidbDDLTableVersion))
+	req := r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	require.Equal(t, 1, req.NumRows())
+	require.Equal(t, ver, req.GetRow(0).GetInt64(0))
+	require.NoError(t, r.Close())
+	dom.Close()
+}

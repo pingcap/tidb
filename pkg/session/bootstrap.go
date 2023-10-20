@@ -751,6 +751,8 @@ const (
 	// The variable name in mysql.tidb table and it records the default value of
 	// oom-action when upgrade from v3.0.x to v4.0.11+.
 	tidbDefOOMAction = "default_oom_action"
+	// The variable name in mysql.tidb table and it records the current DDLTableVersion
+	tidbDDLTableVersion = "ddl_table_version"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -2834,6 +2836,25 @@ func upgradeToVer176(s Session, ver int64) {
 	mustExecute(s, CreateGlobalTaskHistory)
 }
 
+// writeDDLTableVersion writes mDDLTableVersion into mysql.tidb
+func writeDDLTableVersion(s Session) {
+	var err error
+	var ddlTableVersion meta.DDLTableVersion
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ddlTableVersion, err = t.CheckDDLTableVersion()
+		return err
+	})
+	terror.MustNil(err)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Global System Timezone.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbDDLTableVersion,
+		ddlTableVersion,
+		ddlTableVersion,
+	)
+}
+
 func upgradeToVer177(s Session, ver int64) {
 	if ver >= version177 {
 		return
@@ -2844,6 +2865,7 @@ func upgradeToVer177(s Session, ver int64) {
 	if err != nil {
 		logutil.BgLogger().Fatal("upgradeToVer177 error", zap.Error(err))
 	}
+	writeDDLTableVersion(s)
 }
 
 func writeOOMAction(s Session) {
@@ -3101,6 +3123,8 @@ func doDMLWorks(s Session) {
 	writeNewCollationParameter(s, config.GetGlobalConfig().NewCollationsEnabledOnFirstBootstrap)
 
 	writeStmtSummaryVars(s)
+
+	writeDDLTableVersion(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
