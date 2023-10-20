@@ -2840,6 +2840,7 @@ func upgradeToVer177(s Session, ver int64) {
 	}
 	// ignore error when upgrading from v7.4 to higher version.
 	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
+	s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncMergeGlobalStats, variable.Off)
 }
 
 func writeOOMAction(s Session) {
