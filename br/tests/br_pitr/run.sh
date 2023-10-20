@@ -19,8 +19,6 @@ set -eu
 CUR=$(cd `dirname $0`; pwd)
 
 # const value
-WAIT_DONE_CODE=50
-WAIT_NOT_DONE_CODE=51
 PREFIX="pitr_backup" # NOTICE: don't start with 'br' because `restart services` would remove file/directory br*.
 res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
 
@@ -49,25 +47,20 @@ run_sql_file $CUR/incremental_data/delete_range.sql
 # wait checkpoint advance
 echo "wait checkpoint advance"
 sleep 10
-now_time=$(date "+%Y-%m-%d %H:%M:%S %z")
-echo "get the current time: $now_time"
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/stream/only-checkpoint-ts-with-check=return(\"$now_time\")"
-set +e # we need to get the exit code of br
+current_ts=$(echo $(($(date --date "2022-05-15 19:00:00.123 +0800" +%s%3N) << 18)))
 i=0
 while true; do
     # run br with failpoint to compare the current checkpoint ts with the current time
-    run_br --pd $PD_ADDR log status --task-name integration_test
-    exit_code=$?
-    echo "exit code: $exit_code"
-    
-    # the checkpoint has advanced
-    if [ $exit_code -eq $WAIT_DONE_CODE ]; then
-        echo "the checkpoint has advanced"
-        break
-    fi
+    checkpoint_ts=$(run_br --pd $PD_ADDR log status --task-name integration_test | jq 'if .[0].last_errors | length  == 0 then .[0].checkpoint else empty end' | tail -n 1)
 
-    # the checkpoint hasn't advanced
-    if [ $exit_code -eq $WAIT_NOT_DONE_CODE ]; then
+    # check whether the checkpoint ts is a number
+    if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
+        # check whether the checkpoint has advanced
+        if [ $checkpoint_ts -gt $current_ts ]; then
+            echo "the checkpoint has advanced"
+            break
+        fi
+        # the checkpoint hasn't advanced
         echo "the checkpoint hasn't advanced"
         i=$((i+1))
         if [ "$i" -gt 50 ]; then
@@ -75,14 +68,12 @@ while true; do
             exit 1
         fi
         sleep 10
-        continue
+    else
+        # unknown status, maybe somewhere is wrong
+        echo "TEST: [$TEST_NAME] failed to wait checkpoint advance!"
+        exit 1
     fi
-
-    # unknown status, maybe somewhere is wrong
-    echo "TEST: [$TEST_NAME] failed to wait checkpoint advance!"
-    exit 1
 done
-set -e
 
 # dump some info from upstream cluster
 # ...
