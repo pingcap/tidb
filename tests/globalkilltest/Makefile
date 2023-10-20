@@ -42,8 +42,8 @@ clean:
 server:
 ifeq ($(TARGET), "")
 	cd ${BASE_DIR} && \
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o $(OUT_DIR)/globalkilltest_tidb-server tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o $(OUT_DIR)/globalkilltest_tidb-server ${BASE_DIR}/cmd/tidb-server
 else
 	cd ${BASE_DIR} && \
-	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' tidb-server/main.go
+	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(GLOBAL_KILL_TEST_SERVER_LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ${BASE_DIR}/cmd/tidb-server
 endif

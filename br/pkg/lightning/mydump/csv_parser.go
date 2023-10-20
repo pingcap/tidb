@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 var (
@@ -267,7 +266,7 @@ func (parser *CSVParser) peekBytes(cnt int) ([]byte, error) {
 	if len(parser.buf) == 0 {
 		return nil, io.EOF
 	}
-	cnt = mathutil.Min(cnt, len(parser.buf))
+	cnt = min(cnt, len(parser.buf))
 	return parser.buf[:cnt], nil
 }
 

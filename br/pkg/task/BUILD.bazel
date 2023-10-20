@@ -110,7 +110,7 @@ go_test(
         "//br/pkg/utils",
         "//pkg/config",
         "//pkg/parser/model",
-        "//pkg/statistics/handle/storage",
+        "//pkg/statistics/handle/util",
         "//pkg/tablecodec",
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
