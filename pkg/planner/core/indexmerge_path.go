@@ -517,11 +517,18 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
 					// some condition is not covered in previous mv index partial path, use it!
 					containRelation = false
+					usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = access
 					break
 				}
 			}
 			if containRelation {
 				continue
+			}
+			// for this picked normal index, mark its access conds.
+			for _, access := range originalPath.AccessConds {
+				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
+					usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = access
+				}
 			}
 		}
 		newPath := originalPath.Clone()
@@ -622,6 +629,7 @@ select * from t where ((1 member of (a) and b=1) or (2 member of (a) and b=2)) a
 Two limitations now:
 1). Not support the embedded index merge case, which (DNF_Item1 OR DNF_Item2), for every DNF item,
 try to map it into a simple normal index path or mv index path, other than an internal index merge path.
+2). Every dnf item should exactly be used as full length index range or prefix index range, other than being not used.
 */
 func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexMergeDNFConds []expression.Expression) ([]*util.AccessPath, []bool, bool, error) {
 	// step1: collect all mv index paths
@@ -689,12 +697,10 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 				bestPaths = paths
 				bestCountAfterAccess = maxCountAfterAccess
 				bestNeedSelection = len(remainingFilters) != 0
-			} else {
-				if bestCountAfterAccess > maxCountAfterAccess {
-					bestPaths = paths
-					bestCountAfterAccess = maxCountAfterAccess
-					bestNeedSelection = len(remainingFilters) != 0
-				}
+			} else if bestCountAfterAccess > maxCountAfterAccess {
+				bestPaths = paths
+				bestCountAfterAccess = maxCountAfterAccess
+				bestNeedSelection = len(remainingFilters) != 0
 			}
 		}
 		if len(bestPaths) != 0 {
@@ -710,7 +716,29 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 	return mvAndPartialPaths, usedMap, needSelection, nil
 }
 
-func (ds *DataSource) generateIndexMergePartialPaths4And(normalPathCnt int,
+// generateMVIndexMergePartialPaths4And try to find mv index merge partial path from a collection of cnf conditions.
+// step1: find all possible access mv index path, map these cnf conditions into it.
+//
+//	if we have two json predicate use a same mv index(c, j) path like: (1 member-of j) and (2 member-of j) and c=1
+//	even for this single mv index path, we should generate two partial index paths: and each from access mutations
+//		mutation 1: [c=1] and [1 member-of j]    ---> index partial path 1
+//		mutation 2: [c=1] and [2 member-of j]    ---> index partial path 2
+//	and finally merge this index partial path together, if there still some other json_col's predicate,
+//	build it partial index path out and merge it too.
+//
+// step2: after all mv index paths is traversed, try to find the normal index partial path. Let's say there is
+//
+//			index built on column ---> idx_c(c), since condition c is already used in previous mv index partial path,
+//			index idx_c is ignored. If there is a additional cnf item as d=1 and there is a idx_d(d) on it. Since
+//	     d=1 is not used in previous mv index partial path, we can build normal index partial path idx_d out from
+//			d=1.
+//
+// step3: after all mv index partial paths and normal index partial paths is all built. Build them up as a whole
+//
+//	index merge path together.
+//
+// this function mainly focus on step1.
+func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int,
 	indexMergeConds []expression.Expression) ([]*util.AccessPath, map[string]expression.Expression, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
@@ -1018,7 +1046,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	// step1: firstly collect all the potential normal index partial paths.
 	// step2: secondly collect all the potential mv index partial path, and merge them into one if possible.
 	// step3: thirdly merge normal index paths and mv index paths together to compose a bigger index merge path.
-	mvIndexPartialPaths, usedAccessMap, err := ds.generateIndexMergePartialPaths4And(normalPathCnt, indexMergeConds)
+	mvIndexPartialPaths, usedAccessMap, err := ds.generateMVIndexMergePartialPaths4And(normalPathCnt, indexMergeConds)
 	if err != nil {
 		return err
 	}
@@ -1195,9 +1223,11 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		if err != nil {
 			return nil, false, false, err
 		}
-		accessFilters[virColID] = eq
+		newAccessFilters := make([]expression.Expression, len(accessFilters))
+		copy(newAccessFilters, accessFilters)
+		newAccessFilters[virColID] = eq
 
-		partialPath, ok, err := ds.buildPartialPath4MVIndex(accessFilters, idxCols, mvIndex)
+		partialPath, ok, err := ds.buildPartialPath4MVIndex(newAccessFilters, idxCols, mvIndex)
 		if !ok || err != nil {
 			return nil, false, ok, err
 		}
@@ -1319,6 +1349,17 @@ func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, id
 // we should build indexMerge above them, and each of them can access to the same mv index. That's why
 // we should derive the mutations of virtual json col's access condition, output the accessFilter combination
 // for each mutation of it.
+//
+// In the first case:
+// the inputs will be:
+//
+//	filters:[x=1, (2 member of a), (1 member of a), z=1, x+z>0], idxCols: [x,a,z]
+//
+// the output will be:
+//
+//	accessFilters: [x=1, (2 member of a), z=1], remainingFilters: [x+z>0], mvColOffset: 1, mvFilterMutations[(2 member of a), (1 member of a)]
+//
+// the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
 func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expression,
 	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
