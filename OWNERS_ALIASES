@@ -44,3 +44,7 @@ aliases:
     - lance6716
     - tangenta
     - wjhuang2016
+  sig-approvers-executor-import: # approvers for importer part of executor pkg.
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
