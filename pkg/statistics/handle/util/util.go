@@ -66,8 +66,8 @@ type SessionPool interface {
 	Put(pools.Resource)
 }
 
-// FinishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func FinishTransaction(sctx sessionctx.Context, err error) error {
+// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
+func finishTransaction(sctx sessionctx.Context, err error) error {
 	if err == nil {
 		_, _, err = ExecRows(sctx, "commit")
 	} else {
@@ -178,7 +178,7 @@ func WrapTxn(sctx sessionctx.Context, f func(sctx sessionctx.Context) error) (er
 		return err
 	}
 	defer func() {
-		err = FinishTransaction(sctx, err)
+		err = finishTransaction(sctx, err)
 	}()
 	err = f(sctx)
 	return
