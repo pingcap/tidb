@@ -478,14 +478,15 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 	if err != nil || tbl == nil {
 		return nil, err
 	}
+	var jsonTbl *util.JSONTable
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
 		tbl.Version, tbl.ModifyCount, tbl.RealtimeCount, err = StatsMetaByTableIDFromStorage(sctx, physicalID, snapshot)
+		if err != nil {
+			return err
+		}
+		jsonTbl, err = GenJSONTableFromStats(sctx, dbName, tableInfo, tbl)
 		return err
 	})
-	if err != nil {
-		return nil, err
-	}
-	jsonTbl, err := GenJSONTableFromStats(dbName, tableInfo, tbl)
 	if err != nil {
 		return nil, err
 	}
