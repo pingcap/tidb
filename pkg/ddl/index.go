@@ -2132,9 +2132,8 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		g.Go(func() error {
 			defer close(done)
 			err := handle.SubmitAndRunGlobalTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
-			failpoint.Inject("pauseAfterDistTaskSuccess", func() {
+			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
-				<-TestSyncChan
 			})
 
 			if w.isReorgPaused(reorgInfo.Job.ID) {
@@ -2162,7 +2161,11 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 							logutil.BgLogger().Error("pause global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 							continue
 						}
-						TestSyncChan <- struct{}{}
+						failpoint.Inject("syncDDLTaskPause", func() {
+							// make sure the task is paused.
+							TestSyncChan <- struct{}{}
+						})
+
 					}
 					if !dbterror.ErrCancelledDDLJob.Equal(err) {
 						return errors.Trace(err)
