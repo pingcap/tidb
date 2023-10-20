@@ -94,7 +94,7 @@ type StatsUsage interface {
 // StatsHistory is used to manage historical stats.
 type StatsHistory interface {
 	// RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history.
-	RecordHistoricalStatsMeta(tableID int64, version uint64, source string)
+	RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool)
 
 	// CheckHistoricalStatsEnable check whether historical stats is enabled.
 	CheckHistoricalStatsEnable() (enable bool, err error)
@@ -213,6 +213,7 @@ type StatsLock interface {
 }
 
 // StatsReadWriter is used to read and write stats to the storage.
+// TODO: merge and remove some methods.
 type StatsReadWriter interface {
 	// TableStatsFromStorage loads table stats info from storage.
 	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
@@ -226,19 +227,29 @@ type StatsReadWriter interface {
 	// ReloadExtendedStatistics drops the cache for extended statistics and reload data from mysql.stats_extended.
 	ReloadExtendedStatistics() error
 
-	//// SaveTableStatsToStorage saves the stats of a table to storage.
-	//SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
-
 	// SaveStatsToStorage save the stats data to the storage.
 	SaveStatsToStorage(tableID int64, count, modifyCount int64, isIndex int, hg *statistics.Histogram,
 		cms *statistics.CMSketch, topN *statistics.TopN, statsVersion int, isAnalyzed int64, updateAnalyzeTime bool, source string) (err error)
 
-	// SaveMetaToStorage saves stats meta to the storage.
-	SaveMetaToStorage(tableID, count, modifyCount int64, source string) (err error)
+	// SaveTableStatsToStorage saves the stats of a table to storage.
+	SaveTableStatsToStorage(results *statistics.AnalyzeResults, analyzeSnapshot bool, source string) (err error)
 
-	// SaveStatsFromJSON saves stats from JSON to the storage.
-	// TODO: use *storage.JSONTable instead of interface{} (which is used to avoid cycle import).
-	SaveStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl interface{}) error
+	// InsertColStats2KV inserts columns stats to kv.
+	InsertColStats2KV(physicalID int64, colInfos []*model.ColumnInfo) (err error)
+
+	// InsertTableStats2KV inserts a record standing for a new table to stats_meta and inserts some records standing for the
+	// new columns and indices which belong to this table.
+	InsertTableStats2KV(info *model.TableInfo, physicalID int64) (err error)
+
+	// UpdateStatsVersion will set statistics version to the newest TS,
+	// then tidb-server will reload automatic.
+	UpdateStatsVersion() error
+
+	// ResetTableStats2KVForDrop resets the count to 0.
+	ResetTableStats2KVForDrop(physicalID int64) (err error)
+
+	// ChangeGlobalStatsID changes the global stats ID.
+	ChangeGlobalStatsID(from, to int64) (err error)
 
 	// TableStatsToJSON dumps table stats to JSON.
 	TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*JSONTable, error)
