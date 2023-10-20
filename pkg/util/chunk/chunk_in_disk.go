@@ -128,6 +128,7 @@ func (d *DataInDiskByChunk) GetChunk(chkIdx int) (*Chunk, error) {
 	} else {
 		d.buf = d.buf[:chkSize]
 	}
+
 	readByteNum, err := io.ReadFull(reader, d.buf)
 	if err != nil {
 		return nil, err
