@@ -39,13 +39,13 @@ func TestSimpleOnOffFlags(t *testing.T) {
 		writeFn func(Flags, bool) Flags
 	}{
 		{
-			name: "FlagClipNegativeToZero",
-			flag: FlagClipNegativeToZero,
+			name: "FlagAllowNegativeToUnsigned",
+			flag: FlagAllowNegativeToUnsigned,
 			readFn: func(f Flags) bool {
-				return f.ClipNegativeToZero()
+				return f.AllowNegativeToUnsigned()
 			},
 			writeFn: func(f Flags, clip bool) Flags {
-				return f.WithClipNegativeToZero(clip)
+				return f.WithAllowNegativeToUnsigned(clip)
 			},
 		},
 		{

@@ -428,7 +428,7 @@ type StatementContext struct {
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.DefaultStmtFlags, time.UTC, sc.AppendWarning)
 	return sc
 }
 
@@ -436,14 +436,14 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.Assert(tz)
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, tz, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.DefaultStmtFlags, tz, sc.AppendWarning)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		typeCtx: typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning),
+		typeCtx: typectx.NewContext(typectx.DefaultStmtFlags, time.UTC, sc.AppendWarning),
 	}
 }
 
@@ -1213,10 +1213,10 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
-	sc.SetTypeFlags(typectx.StrictFlags.
+	sc.SetTypeFlags(typectx.DefaultStmtFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
-		WithClipNegativeToZero(sc.InInsertStmt),
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt),
 	)
 }
 
@@ -1365,7 +1365,7 @@ func (sc *StatementContext) TypeCtxOrDefault() typectx.Context {
 		return sc.typeCtx
 	}
 
-	return typectx.DefaultNoWarningContext
+	return typectx.DefaultStmtNoWarningContext
 }
 
 // UsedStatsInfoForTable records stats that are used during query and their information.

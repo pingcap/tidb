@@ -778,7 +778,7 @@ func TestDecimal(t *testing.T) {
 	_, err = EncodeDecimal(nil, d, 12, 10)
 	require.Truef(t, terror.ErrorEqual(err, types.ErrOverflow), "err %v", err)
 
-	sc.SetTypeFlags(types.StrictFlags.WithIgnoreTruncateErr(true))
+	sc.SetTypeFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	decimalDatum := types.NewDatum(d)
 	decimalDatum.SetLength(20)
 	decimalDatum.SetFrac(5)

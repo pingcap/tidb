@@ -23,7 +23,7 @@ import (
 // StrictFlags is a flags with a fields unset and has the most strict behavior.
 const StrictFlags Flags = 0
 
-// Flags indicates how to handle the conversion of a value.
+// Flags indicate how to handle the conversion of a value.
 type Flags uint16
 
 const (
@@ -32,10 +32,13 @@ const (
 	FlagIgnoreTruncateErr Flags = 1 << iota
 	// FlagTruncateAsWarning indicates to append the truncate error to warnings instead of returning it to user.
 	FlagTruncateAsWarning
-	// FlagClipNegativeToZero indicates to clip the value to zero when casting a negative value to an unsigned integer.
-	// When this flag is set and the clip happens, an overflow error occurs and how to handle it will be determined by flags
-	// `FlagIgnoreOverflowError` and `FlagOverflowAsWarning`.
-	FlagClipNegativeToZero
+	// FlagAllowNegativeToUnsigned indicates to allow the casting from negative to unsigned int.
+	// When this flag is not set by default, casting a negative value to unsigned results an overflow error.
+	// The overflow will also be controlled by `FlagIgnoreOverflowError` and `FlagOverflowAsWarning`. When any of them is set,
+	// a zero value is returned instead.
+	// Whe this flag is set, casting a negative value to unsigned will be allowed. And the negative value will be cast to
+	// a positive value by adding the max value of the unsigned type.
+	FlagAllowNegativeToUnsigned
 	// FlagIgnoreOverflowError indicates to ignore the overflow error.
 	// If this flag is set, `FlagOverflowAsWarning` will be ignored.
 	FlagIgnoreOverflowError
@@ -65,17 +68,17 @@ const (
 	FlagSkipUTF8MB4Check
 )
 
-// ClipNegativeToZero indicates whether the flag `FlagClipNegativeToZero` is set
-func (f Flags) ClipNegativeToZero() bool {
-	return f&FlagClipNegativeToZero != 0
+// AllowNegativeToUnsigned indicates whether the flag `FlagAllowNegativeToUnsigned` is set
+func (f Flags) AllowNegativeToUnsigned() bool {
+	return f&FlagAllowNegativeToUnsigned != 0
 }
 
-// WithClipNegativeToZero returns a new flags with `FlagClipNegativeToZero` set/unset according to the clip parameter
-func (f Flags) WithClipNegativeToZero(clip bool) Flags {
+// WithAllowNegativeToUnsigned returns a new flags with `FlagAllowNegativeToUnsigned` set/unset according to the clip parameter
+func (f Flags) WithAllowNegativeToUnsigned(clip bool) Flags {
 	if clip {
-		return f | FlagClipNegativeToZero
+		return f | FlagAllowNegativeToUnsigned
 	}
-	return f &^ FlagClipNegativeToZero
+	return f &^ FlagAllowNegativeToUnsigned
 }
 
 // SkipASCIICheck indicates whether the flag `FlagSkipASCIICheck` is set
@@ -204,7 +207,12 @@ func (c *Context) AppendWarningFunc() func(err error) {
 	return c.appendWarningFn
 }
 
-// DefaultNoWarningContext is the context without any special configuration
-var DefaultNoWarningContext = NewContext(StrictFlags, time.UTC, func(_ error) {
+// DefaultStmtFlags is the default flags for statement context with the flag `FlagAllowNegativeToUnsigned` set.
+// TODO: make DefaultStmtFlags to be equal with StrictFlags, and setting flag `FlagAllowNegativeToUnsigned`
+// is only for make the code to be equivalent with the old implement during refactoring.
+const DefaultStmtFlags = StrictFlags | FlagAllowNegativeToUnsigned
+
+// DefaultStmtNoWarningContext is the context with default statement flags without any other special configuration
+var DefaultStmtNoWarningContext = NewContext(DefaultStmtFlags, time.UTC, func(_ error) {
 	// the error is ignored
 })

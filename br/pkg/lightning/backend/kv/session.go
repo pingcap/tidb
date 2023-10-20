@@ -314,9 +314,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		}
 	}
 	vars.StmtCtx.SetTimeZone(vars.Location())
-	vars.StmtCtx.SetTypeFlags(types.StrictFlags.
-		WithClipNegativeToZero(true),
-	)
+	vars.StmtCtx.SetTypeFlags(types.StrictFlags)
 	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
 		logger.Warn("new session: failed to set timestamp",
 			log.ShortError(err))

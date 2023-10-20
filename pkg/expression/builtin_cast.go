@@ -480,9 +480,7 @@ var fakeSctx = newFakeSctx()
 
 func newFakeSctx() *stmtctx.StatementContext {
 	sc := stmtctx.NewStmtCtx()
-	sc.SetTypeFlags(types.StrictFlags.
-		WithClipNegativeToZero(true),
-	)
+	sc.SetTypeFlags(types.StrictFlags)
 	return sc
 }
 
