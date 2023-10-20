@@ -230,6 +230,7 @@ connection default;
 
 
 # TestRevokePrivileges
+drop user if exists u4, 'hasgrant', 'withoutgrant';
 CREATE USER 'hasgrant';
 CREATE USER 'withoutgrant';
 GRANT ALL ON *.* TO 'hasgrant';
