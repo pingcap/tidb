@@ -224,7 +224,7 @@ func (d *DataInDiskByChunk) deserializeDataToChunk(data []byte, chk *Chunk) {
 					col.AppendBytes(chunkData)
 				}
 			}
-
+			offset += int(colDataSize)
 		}
 	}
 }
