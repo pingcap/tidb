@@ -894,7 +894,7 @@ func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
 	element, startKey, endKey, physicalTableID, err = getDDLReorgHandle(r.s, job)
 	if job.Version < currentVersion && err == nil {
-		logutil.BgLogger().Info("job get reorg handle", zap.String("category", "ddl"),
+		logutil.BgLogger().Info("job get table range for old version jobs", zap.String("category", "ddl"),
 			zap.Int64("jobID", job.ID), zap.Int64("job version", job.Version), zap.Int64("physical table ID", physicalTableID),
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("current endKey", hex.EncodeToString(endKey)),
