@@ -51,7 +51,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 
 	// 1.1 OnNextSubtasksBatch
 	gTask.Step = dsp.GetNextStep(nil, gTask)
-	require.Equal(t, proto.StepOne, gTask.Step)
+	require.Equal(t, ddl.StepReadIndex, gTask.Step)
 	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -61,11 +61,11 @@ func TestBackfillingDispatcher(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
-	// 1.2 test partition table OnNextSubtasksBatch after StepInit finished.
+	// 1.2 test partition table OnNextSubtasksBatch after StepReadIndex
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(nil, gTask)
-	require.Equal(t, proto.StepThree, gTask.Step)
-	// for partition table, we will not generate subtask for StepThree.
+	require.Equal(t, ddl.StepWriteAndIngest, gTask.Step)
+	// for partition table, we will not generate subtask for StepWriteAndIngest.
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
@@ -103,11 +103,11 @@ func TestBackfillingDispatcher(t *testing.T) {
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
-	require.Equal(t, proto.StepOne, gTask.Step)
-	// 2.2.2 stepOne
+	require.Equal(t, ddl.StepReadIndex, gTask.Step)
+	// 2.2.2 StepReadIndex
 	gTask.State = proto.TaskStateRunning
 	gTask.Step = dsp.GetNextStep(nil, gTask)
-	require.Equal(t, proto.StepThree, gTask.Step)
+	require.Equal(t, ddl.StepWriteAndIngest, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
