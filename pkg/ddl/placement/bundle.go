@@ -67,8 +67,8 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	leaderConst := options.LeaderConstraints
 	learnerConstraints := options.LearnerConstraints
 	followerConstraints := options.FollowerConstraints
-	followerCount := options.Followers
-	learnerCount := options.Learners
+	explicitFollowerCount := options.Followers
+	explicitLearnerCount := options.Learners
 
 	rules := []*Rule{}
 	commonConstraints, err := NewConstraintsFromYaml([]byte(constraints))
@@ -77,7 +77,10 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 		// The dictionary format specifies details for each replica. Constraints are used to define normal
 		// replicas that should act as voters.
 		// For example: CONSTRAINTS='{ "+region=us-east-1":2, "+region=us-east-2": 2, "+region=us-west-1": 1}'
-		normalReplicasRules, err := NewRulesWithDictConstraints(Voter, constraints)
+		normalReplicasRules, err := NewRuleBuilder().
+			SetRole(Voter).
+			SetConstraintStr(constraints).
+			BuildRulesWithDictConstraintsOnly()
 		if err != nil {
 			return nil, err
 		}
@@ -94,15 +97,15 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 		}
 	}
 	leaderReplicas, followerReplicas := uint64(1), uint64(2)
-	if followerCount > 0 {
-		followerReplicas = followerCount
+	if explicitFollowerCount > 0 {
+		followerReplicas = explicitFollowerCount
 	}
 	if !needCreateDefault {
 		if len(leaderConstraints) == 0 {
 			leaderReplicas = 0
 		}
 		if len(followerConstraints) == 0 {
-			if followerCount > 0 {
+			if explicitFollowerCount > 0 {
 				return nil, fmt.Errorf("%w: specify follower count without specify follower constraints when specify other constraints", ErrInvalidPlacementOptions)
 			}
 			followerReplicas = 0
@@ -119,7 +122,12 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	// create follower rules.
 	// if no constraints, we need create default follower rules.
 	if followerReplicas > 0 {
-		followerRules, err := NewRules(Voter, followerReplicas, followerConstraints)
+		builder := NewRuleBuilder().
+			SetRole(Voter).
+			SetReplicasNum(followerReplicas).
+			SetSkipCheckReplicasConsistent(needCreateDefault && (explicitFollowerCount == 0)).
+			SetConstraintStr(followerConstraints)
+		followerRules, err := builder.BuildRules()
 		if err != nil {
 			return nil, fmt.Errorf("%w: invalid FollowerConstraints", err)
 		}
@@ -134,7 +142,11 @@ func NewBundleFromConstraintsOptions(options *model.PlacementSettings) (*Bundle,
 	}
 
 	// create learner rules.
-	learnerRules, err := NewRules(Learner, learnerCount, learnerConstraints)
+	builder := NewRuleBuilder().
+		SetRole(Learner).
+		SetReplicasNum(explicitLearnerCount).
+		SetConstraintStr(learnerConstraints)
+	learnerRules, err := builder.BuildRules()
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid LearnerConstraints", err)
 	}
