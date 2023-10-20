@@ -44,3 +44,7 @@ aliases:
     - lance6716
     - tangenta
     - wjhuang2016
+  sig-approvers-tidb-binlog: # approvers for tidb-binlog module
+    - Benjamin2037
+    - gmhdbjd
+    - lichunzhu
