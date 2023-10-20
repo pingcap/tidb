@@ -494,3 +494,142 @@ func TestIssue23553(t *testing.T) {
 	tk.MustExec(`insert into tt values('1',0),('1',0),('1',0)`)
 	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
 }
+<<<<<<< HEAD:executor/update_test.go
+=======
+
+// see issue https://github.com/pingcap/tidb/issues/47816
+func TestUpdateUnsignedWithOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t1(id int, a int unsigned)")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into t1 values(1, 10), (2, 20)")
+	tk.MustExec("update t1 set a='-1' where id=1")
+	tk.MustExec("update t1 set a='1000000000000000000' where id=2")
+	tk.MustQuery("select id, a from t1 order by id asc").Check(testkit.Rows("1 0", "2 4294967295"))
+}
+
+func TestLockUnchangedUniqueKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	for _, shouldLock := range []bool{true, false} {
+		for _, tt := range []struct {
+			name          string
+			create        string
+			insert        string
+			update        string
+			isClusteredPK bool
+		}{
+			{
+				// ref https://github.com/pingcap/tidb/issues/36438
+				"Issue36438",
+				"create table t (i varchar(10), unique key(i))",
+				"insert into t values ('a')",
+				"update t set i = 'a'",
+				false,
+			},
+			{
+				"ClusteredAndRowUnchanged",
+				"create table t (k int, v int, primary key(k) clustered, key sk(k))",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 10 where k = 1",
+				true,
+			},
+			{
+				"ClusteredAndRowUnchangedAndParted",
+				"create table t (k int, v int, primary key(k) clustered, key sk(k)) partition by hash(k) partitions 4",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 10 where k = 1",
+				true,
+			},
+			{
+				"ClusteredAndRowChanged",
+				"create table t (k int, v int, primary key(k) clustered, key sk(k))",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 11 where k = 1",
+				true,
+			},
+			{
+				"NonClusteredAndRowUnchanged",
+				"create table t (k int, v int, primary key(k) nonclustered, key sk(k))",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 10 where k = 1",
+				false,
+			},
+			{
+				"NonClusteredAndRowUnchangedAndParted",
+				"create table t (k int, v int, primary key(k) nonclustered, key sk(k)) partition by hash(k) partitions 4",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 10 where k = 1",
+				false,
+			},
+			{
+				"NonClusteredAndRowChanged",
+				"create table t (k int, v int, primary key(k) nonclustered, key sk(k))",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 11 where k = 1",
+				false,
+			},
+			{
+				"UniqueAndRowUnchanged",
+				"create table t (k int, v int, unique key uk(k), key sk(k))",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 10 where k = 1",
+				false,
+			},
+			{
+				"UniqueAndRowUnchangedAndParted",
+				"create table t (k int, v int, unique key uk(k), key sk(k)) partition by hash(k) partitions 4",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 10 where k = 1",
+				false,
+			},
+			{
+				"UniqueAndRowChanged",
+				"create table t (k int, v int, unique key uk(k), key sk(k))",
+				"insert into t values (1, 10)",
+				"update t force index(sk) set v = 11 where k = 1",
+				false,
+			},
+		} {
+			t.Run(
+				tt.name+"-"+strconv.FormatBool(shouldLock), func(t *testing.T) {
+					tk1.MustExec(fmt.Sprintf("set @@tidb_lock_unchanged_keys = %v", shouldLock))
+					tk1.MustExec("drop table if exists t")
+					tk1.MustExec(tt.create)
+					tk1.MustExec(tt.insert)
+					tk1.MustExec("begin pessimistic")
+
+					tk1.MustExec(tt.update)
+
+					errCh := make(chan error, 1)
+					go func() {
+						_, err := tk2.Exec(tt.insert)
+						errCh <- err
+					}()
+
+					select {
+					case <-time.After(100 * time.Millisecond):
+						if !shouldLock && !tt.isClusteredPK {
+							require.Fail(t, "insert is blocked by update")
+						}
+						tk1.MustExec("rollback")
+						require.Error(t, <-errCh)
+					case err := <-errCh:
+						require.Error(t, err)
+						if shouldLock {
+							require.Fail(t, "insert is not blocked by update")
+						}
+					}
+				},
+			)
+		}
+	}
+}
+>>>>>>> 9f97c9ac0ca (types: fix update unsigned column with overflow string issue (#47817)):pkg/executor/update_test.go
