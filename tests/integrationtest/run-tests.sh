@@ -264,7 +264,6 @@ enabled_new_collation=""
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do
@@ -276,7 +275,6 @@ fi
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
     start_tidb_server
-    sleep 5
     run_mysql_tester
     kill -15 $SERVER_PID
     while ps -p $SERVER_PID > /dev/null; do

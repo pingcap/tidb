@@ -30,6 +30,7 @@ Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for
 DELETE FROM dbnotexists.t1;
 Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
 drop table t1;
+drop user if exists u1;
 CREATE USER u1;
 CREATE TABLE routine_table (a int);
 GRANT CREATE ROUTINE on privilege__privileges.* to u1;
