@@ -23,6 +23,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/hack",
         "//pkg/util/logutil",
+        "@com_github_bits_and_blooms_bloom_v3//:go_default_library",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tiancaiamao_gp//:gp",
