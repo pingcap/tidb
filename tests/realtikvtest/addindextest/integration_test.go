@@ -27,13 +27,9 @@ import (
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/ddl/ingest"
 	"github.com/pingcap/tidb/ddl/testutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/parser/model"
-=======
-	"github.com/pingcap/tidb/errno"
->>>>>>> cd0f864f714 (lightning/backend/local: fix `buildIndexDupTasks` (#44442))
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -459,7 +455,6 @@ func TestAddIndexFinishImportError(t *testing.T) {
 	require.True(t, strings.Contains(jobTp, "ingest"), jobTp)
 }
 
-<<<<<<< HEAD
 func (c *testCallback) OnJobRunAfter(job *model.Job) {
 	if c.OnJobRunAfterExported != nil {
 		c.OnJobRunAfterExported(job)
@@ -528,23 +523,27 @@ func TestAddIndexBackfillLostUpdate(t *testing.T) {
 }
 
 func TestAddIndexPreCheckFailed(t *testing.T) {
-=======
-func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
->>>>>>> cd0f864f714 (lightning/backend/local: fix `buildIndexDupTasks` (#44442))
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-<<<<<<< HEAD
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
 	tk.MustExec("insert into t values (1, 1, 1);")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/ingest/mockIngestCheckEnvFailed", "return"))
 	tk.MustGetErrMsg("alter table t add index idx(b);", "[ddl:8256]Check ingest environment failed: mock error")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/ingest/mockIngestCheckEnvFailed"))
-=======
+}
+
+func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	tk.MustExec("set global tidb_ddl_reorg_worker_cnt=1;")
 
 	tk.MustExec("create table t(id int primary key, b int, k int);")
@@ -555,5 +554,4 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	ingest.ForceSyncFlagForTest = true
 	tk.MustGetErrCode("alter table t add unique index idx(b);", errno.ErrDupEntry)
 	ingest.ForceSyncFlagForTest = false
->>>>>>> cd0f864f714 (lightning/backend/local: fix `buildIndexDupTasks` (#44442))
 }

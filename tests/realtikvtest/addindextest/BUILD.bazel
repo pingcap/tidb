@@ -38,13 +38,9 @@ go_test(
         "//ddl",
         "//ddl/ingest",
         "//ddl/testutil",
-<<<<<<< HEAD
         "//domain",
         "//errno",
         "//parser/model",
-=======
-        "//errno",
->>>>>>> cd0f864f714 (lightning/backend/local: fix `buildIndexDupTasks` (#44442))
         "//sessionctx/variable",
         "//testkit",
         "//tests/realtikvtest",
