@@ -635,8 +635,9 @@ func (m *DupeDetector) buildIndexDupTasks() ([]dupTask, error) {
 			tid := tablecodec.DecodeTableID(ranges[0].StartKey)
 			for _, r := range ranges {
 				tasks = append(tasks, dupTask{
-					KeyRange: r,
-					tableID:  tid,
+					KeyRange:  r,
+					tableID:   tid,
+					indexInfo: indexInfo,
 				})
 			}
 		})
