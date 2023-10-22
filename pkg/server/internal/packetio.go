@@ -154,8 +154,6 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		if _, err := io.ReadFull(p.compressedReader, header[:]); err != nil {
 			return nil, errors.Trace(err)
 		}
-		//p.compressedSequence = p.compressedReader.compressedSequence
-		//p.compressedWriter.compressedSequence = p.compressedSequence
 	}
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
@@ -188,8 +186,6 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		if _, err := io.ReadFull(p.compressedReader, data); err != nil {
 			return nil, errors.Trace(err)
 		}
-		//p.compressedSequence = p.compressedReader.compressedSequence
-		//p.compressedWriter.compressedSequence = p.compressedSequence
 	}
 	err := r.Close()
 	if err != nil {
