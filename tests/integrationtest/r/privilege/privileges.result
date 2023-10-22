@@ -157,6 +157,7 @@ DROP USER lock_tables_user;
 CREATE USER 'nofile'@'localhost';
 select 1 into outfile '/tmp/doesntmatter-no-permissions';
 Error 1227 (42000): Access denied; you need (at least one of) the FILE privilege(s) for this operation
+drop user if exists u4, 'hasgrant', 'withoutgrant';
 CREATE USER 'hasgrant';
 CREATE USER 'withoutgrant';
 GRANT ALL ON *.* TO 'hasgrant';

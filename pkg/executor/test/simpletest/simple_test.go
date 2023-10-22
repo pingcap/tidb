@@ -16,17 +16,14 @@ package simpletest
 
 import (
 	"context"
-	"strconv"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -35,23 +32,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
-
-func TestFlushTables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("FLUSH TABLES")
-	err := tk.ExecToErr("FLUSH TABLES WITH READ LOCK")
-	require.Error(t, err)
-}
-
-func TestUseDB(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test")
-	err := tk.ExecToErr("USE ``")
-	require.Truef(t, terror.ErrorEqual(core.ErrNoDB, err), "err %v", err)
-}
 
 func TestStmtAutoNewTxn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -82,59 +62,6 @@ func TestStmtAutoNewTxn(t *testing.T) {
 	tk.MustExec("insert into auto_new values (3)")
 	tk.MustExec("rollback")
 	tk.MustQuery("select * from auto_new").Check(testkit.Rows("1", "2"))
-}
-
-func TestIssue9111(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	// CREATE USER / DROP USER fails if admin doesn't have insert privilege on `mysql.user` table.
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user 'user_admin'@'localhost';")
-	tk.MustExec("grant create user on *.* to 'user_admin'@'localhost';")
-
-	// Create a new session.
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "user_admin", Hostname: "localhost"}, nil, nil, nil))
-
-	ctx := context.Background()
-	_, err = se.Execute(ctx, `create user test_create_user`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `drop user test_create_user`)
-	require.NoError(t, err)
-
-	tk.MustExec("revoke create user on *.* from 'user_admin'@'localhost';")
-	tk.MustExec("grant insert, delete on mysql.user to 'user_admin'@'localhost';")
-
-	_, err = se.Execute(ctx, `create user test_create_user`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `drop user test_create_user`)
-	require.NoError(t, err)
-
-	_, err = se.Execute(ctx, `create role test_create_user`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `drop role test_create_user`)
-	require.NoError(t, err)
-
-	tk.MustExec("drop user 'user_admin'@'localhost';")
-}
-
-func TestRoleAtomic(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("create role r2;")
-	err := tk.ExecToErr("create role r1, r2, r3")
-	require.Error(t, err)
-	// Check atomic create role.
-	result := tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
-	result.Check(testkit.Rows("r2"))
-	// Check atomic drop role.
-	err = tk.ExecToErr("drop role r1, r2, r3")
-	require.Error(t, err)
-	result = tk.MustQuery(`SELECT user FROM mysql.User WHERE user in ('r1', 'r2', 'r3')`)
-	result.Check(testkit.Rows("r2"))
-	tk.MustExec("drop role r2;")
 }
 
 func TestExtendedStatsPrivileges(t *testing.T) {
@@ -177,122 +104,6 @@ func TestExtendedStatsPrivileges(t *testing.T) {
 	tk.MustExec("drop user 'u1'@'%'")
 }
 
-func TestIssue17247(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user 'issue17247'")
-	tk.MustExec("grant CREATE USER on *.* to 'issue17247'")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	require.NoError(t, tk1.Session().Auth(&auth.UserIdentity{Username: "issue17247", Hostname: "%"}, nil, nil, nil))
-	tk1.MustExec("ALTER USER USER() IDENTIFIED BY 'xxx'")
-	tk1.MustExec("ALTER USER CURRENT_USER() IDENTIFIED BY 'yyy'")
-	tk1.MustExec("ALTER USER CURRENT_USER IDENTIFIED BY 'zzz'")
-	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY 'kkk'")
-	tk.MustExec("ALTER USER 'issue17247'@'%' IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
-	// Wrong grammar
-	_, err := tk1.Exec("ALTER USER USER() IDENTIFIED BY PASSWORD '*B50FBDB37F1256824274912F2A1CE648082C3F1F'")
-	require.Error(t, err)
-}
-
-// Close issue #23649.
-// See https://github.com/pingcap/tidb/issues/23649
-func TestIssue23649(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("DROP USER IF EXISTS issue23649;")
-	tk.MustExec("CREATE USER issue23649;")
-	err := tk.ExecToErr("GRANT bogusrole to issue23649;")
-	require.Equal(t, "[executor:3523]Unknown authorization ID `bogusrole`@`%`", err.Error())
-	err = tk.ExecToErr("GRANT bogusrole to nonexisting;")
-	require.Equal(t, "[executor:3523]Unknown authorization ID `bogusrole`@`%`", err.Error())
-}
-
-func TestSetCurrentUserPwd(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER issue28534;")
-	defer func() {
-		tk.MustExec("DROP USER IF EXISTS issue28534;")
-	}()
-
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "issue28534", Hostname: "localhost", CurrentUser: true, AuthUsername: "issue28534", AuthHostname: "%"}, nil, nil, nil))
-	tk.MustExec(`SET PASSWORD FOR CURRENT_USER() = "43582eussi"`)
-
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	result := tk.MustQuery(`SELECT authentication_string FROM mysql.User WHERE User="issue28534"`)
-	result.Check(testkit.Rows(auth.EncodePassword("43582eussi")))
-}
-
-func TestShowGrantsAfterDropRole(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER u29473")
-	defer tk.MustExec("DROP USER IF EXISTS u29473")
-
-	tk.MustExec("CREATE ROLE r29473")
-	tk.MustExec("GRANT r29473 TO u29473")
-	tk.MustExec("GRANT CREATE USER ON *.* TO u29473")
-
-	tk.Session().Auth(&auth.UserIdentity{Username: "u29473", Hostname: "%"}, nil, nil, nil)
-	tk.MustExec("SET ROLE r29473")
-	tk.MustExec("DROP ROLE r29473")
-	tk.MustQuery("SHOW GRANTS").Check(testkit.Rows("GRANT CREATE USER ON *.* TO 'u29473'@'%'"))
-}
-
-func TestPrivilegesAfterDropUser(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(id int, v int)")
-	defer tk.MustExec("drop table t1")
-
-	tk.MustExec("CREATE USER u1 require ssl")
-	defer tk.MustExec("DROP USER IF EXISTS u1")
-
-	tk.MustExec("GRANT CREATE ON test.* TO u1")
-	tk.MustExec("GRANT UPDATE ON test.t1 TO u1")
-	tk.MustExec("GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO u1")
-	tk.MustExec("GRANT SELECT(v), UPDATE(v) on test.t1 TO u1")
-
-	tk.MustQuery("SELECT COUNT(1) FROM mysql.global_grants WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT COUNT(1) FROM mysql.global_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT COUNT(1) FROM mysql.tables_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT COUNT(1) FROM mysql.columns_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows("1"))
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
-	tk.MustQuery("SHOW GRANTS FOR u1").Check(testkit.Rows(
-		"GRANT USAGE ON *.* TO 'u1'@'%'",
-		"GRANT CREATE ON `test`.* TO 'u1'@'%'",
-		"GRANT UPDATE ON `test`.`t1` TO 'u1'@'%'",
-		"GRANT SELECT(v), UPDATE(v) ON `test`.`t1` TO 'u1'@'%'",
-		"GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'u1'@'%'",
-	))
-
-	tk.MustExec("DROP USER u1")
-	err := tk.QueryToErr("SHOW GRANTS FOR u1")
-	require.Equal(t, "[privilege:1141]There is no such grant defined for user 'u1' on host '%'", err.Error())
-	tk.MustQuery("SELECT * FROM mysql.global_grants WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
-	tk.MustQuery("SELECT * FROM mysql.global_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
-	tk.MustQuery("SELECT * FROM mysql.tables_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
-	tk.MustQuery("SELECT * FROM mysql.columns_priv WHERE USER='u1' AND HOST='%'").Check(testkit.Rows())
-}
-
-func TestDropRoleAfterRevoke(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	// issue 29781
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil)
-
-	tk.MustExec("create role r1, r2, r3;")
-	defer tk.MustExec("drop role if exists r1, r2, r3;")
-	tk.MustExec("grant r1,r2,r3 to current_user();")
-	tk.MustExec("set role all;")
-	tk.MustExec("revoke r1, r3 from root;")
-	tk.MustExec("drop role r1;")
-}
-
 func TestUserWithSetNames(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -312,125 +123,6 @@ func TestUserWithSetNames(t *testing.T) {
 	tk.MustExec("RENAME USER '\xd2\xbb'@'localhost' to '\xd2\xbb'")
 
 	tk.MustExec("drop user '\xd2\xbb';")
-}
-
-func TestStatementsCauseImplicitCommit(t *testing.T) {
-	// Test some of the implicit commit statements.
-	// See https://dev.mysql.com/doc/refman/5.7/en/implicit-commit.html
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table ic (id int primary key)")
-
-	cases := []string{
-		"create table xx (id int)",
-		"create user 'xx'@'127.0.0.1'",
-		"grant SELECT on test.ic to 'xx'@'127.0.0.1'",
-		"flush privileges",
-		"analyze table ic",
-	}
-	for i, sql := range cases {
-		tk.MustExec("begin")
-		tk.MustExec("insert into ic values (?)", i)
-		tk.MustExec(sql)
-		tk.MustQuery("select * from ic where id = ?", i).Check(testkit.Rows(strconv.FormatInt(int64(i), 10)))
-		// Clean up data
-		tk.MustExec("delete from ic")
-	}
-}
-
-func TestDo(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("do 1, @a:=1")
-	tk.MustQuery("select @a").Check(testkit.Rows("1"))
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t (i int)")
-	tk.MustExec("insert into t values (1)")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
-	tk.MustExec("do @a := (select * from t where i = 1)")
-	tk2.MustExec("insert into t values (2)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1", "2"))
-}
-
-func TestDoWithAggFunc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("DO sum(1)")
-	tk.MustExec("DO avg(@e+@f)")
-	tk.MustExec("DO GROUP_CONCAT(NULLIF(ELT(1, @e), 2.0) ORDER BY 1)")
-}
-
-func TestSetRoleAllCorner(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	// For user with no role, `SET ROLE ALL` should active
-	// a empty slice, rather than nil.
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user set_role_all")
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "set_role_all", Hostname: "localhost"}, nil, nil, nil))
-	ctx := context.Background()
-	_, err = se.Execute(ctx, `set role all`)
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, `select current_role`)
-	require.NoError(t, err)
-}
-
-func TestCreateRole(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user testCreateRole;")
-	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil, nil))
-
-	ctx := context.Background()
-	_, err = se.Execute(ctx, `create role test_create_role;`)
-	require.NoError(t, err)
-	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
-	tk.MustExec("drop role test_create_role;")
-	tk.MustExec("grant CREATE ROLE on *.* to testCreateRole;")
-	_, err = se.Execute(ctx, `create role test_create_role;`)
-	require.NoError(t, err)
-	tk.MustExec("drop role test_create_role;")
-	_, err = se.Execute(ctx, `create user test_create_role;`)
-	require.Error(t, err)
-	tk.MustExec("drop user testCreateRole;")
-}
-
-func TestDropRole(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user testCreateRole;")
-	tk.MustExec("create user test_create_role;")
-	tk.MustExec("grant CREATE USER on *.* to testCreateRole;")
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testCreateRole", Hostname: "localhost"}, nil, nil, nil))
-
-	ctx := context.Background()
-	_, err = se.Execute(ctx, `drop role test_create_role;`)
-	require.NoError(t, err)
-	tk.MustExec("revoke CREATE USER on *.* from testCreateRole;")
-	tk.MustExec("create role test_create_role;")
-	tk.MustExec("grant DROP ROLE on *.* to testCreateRole;")
-	_, err = se.Execute(ctx, `drop role test_create_role;`)
-	require.NoError(t, err)
-	tk.MustExec("create user test_create_role;")
-	_, err = se.Execute(ctx, `drop user test_create_role;`)
-	require.Error(t, err)
-	tk.MustExec("drop user testCreateRole;")
-	tk.MustExec("drop user test_create_role;")
 }
 
 func TestTransaction(t *testing.T) {
@@ -465,30 +157,6 @@ func TestTransaction(t *testing.T) {
 
 func inTxn(ctx sessionctx.Context) bool {
 	return (ctx.GetSessionVars().Status & mysql.ServerStatusInTrans) > 0
-}
-
-func TestIssue33144(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	//Create role
-	tk.MustExec("create role 'r1' ;")
-
-	sessionVars := tk.Session().GetSessionVars()
-	sessionVars.User = &auth.UserIdentity{Username: "root", Hostname: "localhost", AuthUsername: "root", AuthHostname: "%"}
-
-	//Grant role to current_user()
-	tk.MustExec("grant 'r1' to current_user();")
-	//Revoke role from current_user()
-	tk.MustExec("revoke 'r1' from current_user();")
-
-	//Grant role to current_user(),current_user()
-	tk.MustExec("grant 'r1' to current_user(),current_user();")
-	//Revoke role from current_user(),current_user()
-	tk.MustExec("revoke 'r1' from current_user(),current_user();")
-
-	//Drop role
-	tk.MustExec("drop role 'r1' ;")
 }
 
 func TestRole(t *testing.T) {
@@ -586,97 +254,6 @@ func TestRole(t *testing.T) {
 	tk.MustExec("SET ROLE ALL EXCEPT role1, role2")
 	tk.MustExec("SET ROLE DEFAULT")
 	tk.MustExec("SET ROLE NONE")
-}
-
-func TestRoleAdmin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("CREATE USER 'testRoleAdmin';")
-	tk.MustExec("CREATE ROLE 'targetRole';")
-
-	// Create a new session.
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testRoleAdmin", Hostname: "localhost"}, nil, nil, nil))
-
-	ctx := context.Background()
-	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
-	require.Error(t, err)
-
-	tk.MustExec("GRANT SUPER ON *.* TO `testRoleAdmin`;")
-	_, err = se.Execute(ctx, "GRANT `targetRole` TO `testRoleAdmin`;")
-	require.NoError(t, err)
-	_, err = se.Execute(ctx, "REVOKE `targetRole` FROM `testRoleAdmin`;")
-	require.NoError(t, err)
-
-	tk.MustExec("DROP USER 'testRoleAdmin';")
-	tk.MustExec("DROP ROLE 'targetRole';")
-}
-
-func TestDefaultRole(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	createRoleSQL := `CREATE ROLE r_1, r_2, r_3, u_1;`
-	tk.MustExec(createRoleSQL)
-
-	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_1','%','u_1')")
-	tk.MustExec("insert into mysql.role_edges (FROM_HOST,FROM_USER,TO_HOST,TO_USER) values ('%','r_2','%','u_1')")
-
-	tk.MustExec("flush privileges;")
-
-	setRoleSQL := `SET DEFAULT ROLE r_3 TO u_1;`
-	err := tk.ExecToErr(setRoleSQL)
-	require.Error(t, err)
-
-	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1000;`
-	err = tk.ExecToErr(setRoleSQL)
-	require.Error(t, err)
-
-	setRoleSQL = `SET DEFAULT ROLE r_1, r_3 TO u_1;`
-	err = tk.ExecToErr(setRoleSQL)
-	require.Error(t, err)
-
-	setRoleSQL = `SET DEFAULT ROLE r_1 TO u_1;`
-	err = tk.ExecToErr(setRoleSQL)
-	require.NoError(t, err)
-	result := tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
-	result.Check(testkit.Rows("r_1"))
-	setRoleSQL = `SET DEFAULT ROLE r_2 TO u_1;`
-	err = tk.ExecToErr(setRoleSQL)
-	require.NoError(t, err)
-	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
-	result.Check(testkit.Rows("r_2"))
-
-	setRoleSQL = `SET DEFAULT ROLE ALL TO u_1;`
-	err = tk.ExecToErr(setRoleSQL)
-	require.NoError(t, err)
-	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
-	result.Check(testkit.Rows("r_1", "r_2"))
-
-	setRoleSQL = `SET DEFAULT ROLE NONE TO u_1;`
-	err = tk.ExecToErr(setRoleSQL)
-	require.NoError(t, err)
-	result = tk.MustQuery(`SELECT DEFAULT_ROLE_USER FROM mysql.default_roles WHERE USER="u_1"`)
-	result.Check(nil)
-
-	dropRoleSQL := `DROP USER r_1, r_2, r_3, u_1;`
-	tk.MustExec(dropRoleSQL)
-}
-
-func TestSetDefaultRoleAll(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create user test_all;")
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "test_all", Hostname: "localhost"}, nil, nil, nil))
-
-	ctx := context.Background()
-	_, err = se.Execute(ctx, "set default role all to test_all;")
-	require.NoError(t, err)
 }
 
 func TestUser(t *testing.T) {
@@ -919,31 +496,6 @@ func TestSetPwd(t *testing.T) {
 	result.Check(testkit.Rows(auth.EncodePassword("pwd")))
 }
 
-func TestFlushPrivileges(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`CREATE USER 'testflush'@'localhost' IDENTIFIED BY '';`)
-	tk.MustExec(`UPDATE mysql.User SET Select_priv='Y' WHERE User="testflush" and Host="localhost"`)
-
-	// Create a new session.
-	se, err := session.CreateSession4Test(store)
-	require.NoError(t, err)
-	defer se.Close()
-	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "testflush", Hostname: "localhost"}, nil, nil, nil))
-
-	ctx := context.Background()
-	// Before flush.
-	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
-	require.Error(t, err)
-
-	tk.MustExec("FLUSH PRIVILEGES")
-
-	// After flush.
-	_, err = se.Execute(ctx, `SELECT authentication_string FROM mysql.User WHERE User="testflush" and Host="localhost"`)
-	require.NoError(t, err)
-}
-
 func TestFlushPrivilegesPanic(t *testing.T) {
 	defer view.Stop()
 	// Run in a separate suite because this test need to set SkipGrantTable config.
@@ -1104,49 +656,4 @@ func TestDropStatsForMultipleTable(t *testing.T) {
 	statsTbl2 = h.GetTableStats(tableInfo2)
 	require.True(t, statsTbl2.Pseudo)
 	h.SetLease(0)
-}
-
-func TestCreateUserWithLDAP(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=People,dc=example,dc=com authentication_ldap_simple"))
-
-	tk.MustExec("CREATE USER 'bob2'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob2,ou=People,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob2'").Check(testkit.Rows("localhost bob2 uid=bob2,ou=People,dc=example,dc=com authentication_ldap_sasl"))
-}
-
-func TestAlterUserWithLDAP(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// case 1: alter from a LDAP user to LDAP user
-	tk.MustExec("CREATE USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_simple AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=People,dc=example,dc=com authentication_ldap_simple"))
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
-	tk.MustQuery("SELECT Host, User, authentication_string, plugin FROM mysql.User WHERE User = 'bob'").Check(testkit.Rows("localhost bob uid=bob,ou=Manager,dc=example,dc=com authentication_ldap_sasl"))
-
-	// case 2: should ignore the password history
-	tk.MustExec("ALTER USER 'bob'@'localhost' PASSWORD HISTORY 5\n")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=People,dc=example,dc=com'")
-	tk.MustExec("ALTER USER 'bob'@'localhost' IDENTIFIED WITH authentication_ldap_sasl AS 'uid=bob,ou=Manager,dc=example,dc=com'")
-}
-
-func TestIssue44098(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("set global validate_password.enable = 1")
-	tk.MustExec("create user u1 identified with 'tidb_auth_token'")
-	tk.MustExec("create user u2 identified with 'auth_socket'")
-	tk.MustExec("create user u3 identified with 'authentication_ldap_simple'")
-	tk.MustExec("create user u4 identified with 'authentication_ldap_sasl'")
-	tk.MustGetErrCode("create user u5 identified with 'mysql_native_password'", errno.ErrNotValidPassword)
-	tk.MustGetErrCode("create user u5 identified with 'caching_sha2_password'", errno.ErrNotValidPassword)
-	tk.MustGetErrCode("create user u5 identified with 'tidb_sm3_password'", errno.ErrNotValidPassword)
-	tk.MustGetErrCode("create user u5 identified with 'mysql_clear_password'", errno.ErrPluginIsNotLoaded)
-	tk.MustGetErrCode("create user u5 identified with 'tidb_session_token'", errno.ErrPluginIsNotLoaded)
 }

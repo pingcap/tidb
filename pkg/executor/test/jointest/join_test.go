@@ -1435,3 +1435,19 @@ func TestIssue37932(t *testing.T) {
 	}
 	require.NoError(t, err)
 }
+
+func TestCartesianJoinPanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("set tidb_mem_quota_query = 1 << 20")
+	tk.MustExec("set global tidb_mem_oom_action = 'CANCEL'")
+	tk.MustExec("set global tidb_enable_tmp_storage_on_oom = off;")
+	for i := 0; i < 10; i++ {
+		tk.MustExec("insert into t select * from t")
+	}
+	err := tk.QueryToErr("desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;")
+	require.ErrorContains(t, err, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
+}
