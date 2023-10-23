@@ -80,6 +80,8 @@ while true; do
 done
 
 # dump some info from upstream cluster
+delete_range_count=$(run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;" | awk '/COUNT/{print $2}')
+echo "delete_range_count: $delete_range_count"
 # ...
 
 # start a new cluster
@@ -93,8 +95,8 @@ run_br --pd $PD_ADDR restore point -s "local://$TEST_DIR/$PREFIX/log" --full-bac
 # check something in downstream cluster
 echo "check br log"
 check_contains "restore log success summary"
-# check_not_contains "rewrite delete range"
+check_not_contains "rewrite delete range"
 echo "" > $res_file
 echo "check sql result"
-run_sql "select count(*) DELETE_RANGE_CNT from mysql.gc_delete_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
-check_contains "DELETE_RANGE_CNT: 46"
+run_sql "select count(*) DELETE_RANGE_CNT from (select * from mysql.gc_delete_range union all select * from mysql.gc_delete_range_done) del_range group by ts order by DELETE_RANGE_CNT desc limit 1;"
+check_contains "DELETE_RANGE_CNT: 44"
