@@ -369,7 +369,6 @@ func (p *PhysicalSelection) ExplainNormalizedInfo() string {
 		return string(expression.SortedExplainExpressionListIgnoreInlist(p.Conditions))
 	}
 	return string(expression.SortedExplainNormalizedExpressionList(p.Conditions))
-
 }
 
 // ExplainInfo implements Plan interface.
