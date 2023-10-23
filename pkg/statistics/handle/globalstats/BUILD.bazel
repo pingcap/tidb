@@ -43,11 +43,7 @@ go_test(
     ],
     embed = [":globalstats"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 18,
-=======
-    shard_count = 21,
->>>>>>> 98b6c434642 (statistics: move MergePartTopN2GlobalTopN into handle/globalstats (#47901))
+    shard_count = 20,
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
