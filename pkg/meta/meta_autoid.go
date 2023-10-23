@@ -58,10 +58,16 @@ func (a *autoIDAccessor) Inc(step int64) (int64, error) {
 	// it may come from the original schema id the table was created
 	// in, but to allow concurrent use across renames etc. we keep
 	// the full ID (Schema ID + Table ID) as is.
-	// Meaning we cannot verify either the schema id or table id.
+	// Meaning we cannot verify only the schema id.
 	dbKey := m.dbKey(a.databaseID)
+	tblKey := a.idEncodeFn(a.tableID)
+	// Check if the value exist, it should have been set before the use of Inc().
+	err := m.checkTableExists(dbKey, tblKey)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
 
-	return m.txn.HInc(dbKey, a.idEncodeFn(a.tableID), step)
+	return m.txn.HInc(dbKey, tblKey, step)
 }
 
 // Del implements the interface AutoIDAccessor.
