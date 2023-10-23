@@ -972,6 +972,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,
+			externalCfg.CheckHotspot,
 		)
 		local.externalEngine[engineUUID] = externalEngine
 		return nil

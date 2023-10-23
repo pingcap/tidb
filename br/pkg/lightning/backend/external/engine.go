@@ -47,6 +47,7 @@ type Engine struct {
 	splitKeys       [][]byte
 	regionSplitSize int64
 	bufPool         *membuf.Pool
+	checkHotspot    bool
 
 	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
@@ -77,6 +78,7 @@ func NewExternalEngine(
 	ts uint64,
 	totalKVSize int64,
 	totalKVCount int64,
+	checkHotspot bool,
 ) common.Engine {
 	return &Engine{
 		storage:            storage,
@@ -87,6 +89,7 @@ func NewExternalEngine(
 		splitKeys:          splitKeys,
 		regionSplitSize:    regionSplitSize,
 		bufPool:            membuf.NewPool(),
+		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
 		duplicateDetection: duplicateDetection,
 		duplicateDB:        duplicateDB,
@@ -273,7 +276,7 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		logger.Info("no stats files",
 			zap.String("startKey", hex.EncodeToString(start)))
 	} else {
-		offs, err := seekPropsOffsets(ctx, start, e.statsFiles, e.storage)
+		offs, err := seekPropsOffsets(ctx, start, e.statsFiles, e.storage, e.checkHotspot)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -284,7 +287,7 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 			zap.Strings("dataFiles", e.dataFiles),
 			zap.Strings("statsFiles", e.statsFiles))
 	}
-	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024)
+	iter, err := NewMergeKVIter(ctx, e.dataFiles, offsets, e.storage, 64*1024, e.checkHotspot)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
