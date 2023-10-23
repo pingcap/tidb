@@ -456,9 +456,25 @@ func (ds *DataSource) generateNormalIndexPartialPath4Or(dnfItems []expression.Ex
 			remainedDNFItems = append(remainedDNFItems, dnfItems[i])
 		}
 	}
+	noMVIndexPartialPath := false
+	if len(dnfItems) == len(remainedDNFItems) {
+		// there is no mv index paths generated, so for: (a<1) OR (a>2), no need to generated index merge.
+		noMVIndexPartialPath = true
+	}
 	paths, needSelection, usedMap, err := ds.generateNormalIndexPartialPaths4DNF(remainedDNFItems, normalPathCnt)
 	if err != nil {
 		return nil, usedAccessMap, false, err
+	}
+	// If all the partialPaths use the same index, we will not use the indexMerge.
+	singlePath := true
+	for i := len(paths) - 1; i >= 1; i-- {
+		if paths[i].Index != paths[i-1].Index {
+			singlePath = false
+			break
+		}
+	}
+	if singlePath && noMVIndexPartialPath {
+		return nil, usedAccessMap, false, nil
 	}
 	// collect the remain filter's used map.
 	cnt := 0
@@ -517,7 +533,6 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
 					// some condition is not covered in previous mv index partial path, use it!
 					containRelation = false
-					usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = access
 					break
 				}
 			}
@@ -638,6 +653,9 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
 			continue // not a MVIndex path
 		}
+		if !ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
+			continue
+		}
 		possibleMVIndexPaths = append(possibleMVIndexPaths, ds.possibleAccessPaths[idx])
 	}
 	// step2: mapping index merge conditions into possible mv index path
@@ -738,13 +756,15 @@ func (ds *DataSource) generateIndexMergePartialPath4Or(normalPathCnt int, indexM
 //	index merge path together.
 //
 // this function mainly focus on step1.
-func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int,
-	indexMergeConds []expression.Expression) ([]*util.AccessPath, map[string]expression.Expression, error) {
+func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, indexMergeConds []expression.Expression) ([]*util.AccessPath, map[string]expression.Expression, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
 			continue // not a MVIndex path
+		}
+		if !ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
+			continue
 		}
 		possibleMVIndexPaths = append(possibleMVIndexPaths, ds.possibleAccessPaths[idx])
 	}
@@ -994,9 +1014,18 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		if err != nil {
 			return err
 		}
+		if len(mvIndexPartialPaths) == 0 {
+			// no mv index partial paths to be composed of.
+			return nil
+		}
 		normalIndexPartialPaths, usedAccessMap, needSelection4NormalIndex, err := ds.generateNormalIndexPartialPath4Or(dnfFilters, usedAccessMap, normalPathCnt)
 		if err != nil {
 			return err
+		}
+		// since multi normal index merge path is handled before, here focus on multi mv index merge, or mv and normal mixed index merge
+		composed := (len(mvIndexPartialPaths) > 1) || (len(mvIndexPartialPaths) == 1 && len(normalIndexPartialPaths) >= 1)
+		if !composed {
+			return nil
 		}
 		// if any cnf item is not used as index partial path, index merge is not valid anymore.
 		for _, one := range usedAccessMap {
@@ -1050,7 +1079,15 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	if err != nil {
 		return err
 	}
+	if len(mvIndexPartialPaths) == 0 {
+		return nil
+	}
 	normalIndexPartialPaths := ds.generateNormalIndexPartialPath4And(normalPathCnt, usedAccessMap)
+	// since multi normal index merge path is handled before, here focus on multi mv index merge, or mv and normal mixed index merge
+	composed := (len(mvIndexPartialPaths) > 1) || (len(mvIndexPartialPaths) == 1 && len(normalIndexPartialPaths) >= 1)
+	if !composed {
+		return nil
+	}
 
 	var combinedPartialPaths []*util.AccessPath
 	// todo: make this as the portal of all index merge case.
@@ -1063,9 +1100,15 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	if len(combinedPartialPaths) == 0 {
 		return nil
 	}
-	// here we directly use the all index merge conditions as the table filers for simplicity.
-	// todo:  make estimation more correct rather than pruning other index merge path.
-	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, indexMergeConds)
+
+	// collect the remained CNF conditions
+	var remainedCNFs []expression.Expression
+	for _, CNFItem := range indexMergeConds {
+		if _, ok := usedAccessMap[string(CNFItem.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
+			remainedCNFs = append(remainedCNFs, CNFItem)
+		}
+	}
+	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, remainedCNFs)
 
 	ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvp)
 	return nil
