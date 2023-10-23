@@ -611,6 +611,11 @@ func (es *entryStore) GetStore() (e *entry, memDelta int64) {
 
 type baseHashTable interface {
 	Put(hashKey uint64, rowPtr chunk.RowPtr)
+	// e := Get(hashKey)
+	// for ; e != nil; e = e.next {
+	//    rowPtr := e.ptr
+	//    ...
+	// }
 	Get(hashKey uint64) *entry
 	Len() uint64
 	// GetAndCleanMemoryDelta gets and cleans the memDelta of the baseHashTable. Memory delta will be cleared after each fetch.

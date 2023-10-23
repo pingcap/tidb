@@ -635,10 +635,6 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	hashTbl baseHashTable) (hasDup bool, err error) {
 	entry := hashTbl.Get(probeKey)
 
-	if entry == nil {
-		return false, nil
-	}
-
 	for ; entry != nil; entry = entry.next {
 		ptr := entry.ptr
 		var matchedRow chunk.Row
