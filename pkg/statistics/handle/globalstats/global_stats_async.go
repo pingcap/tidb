@@ -31,12 +31,8 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
-=======
->>>>>>> ac1f0d92a6e (planner: move more methods from StatsHandle to its sub-packages (#47749))
 	"golang.org/x/sync/errgroup"
 )
 
@@ -85,18 +81,11 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	PartitionDefinition map[int64]model.PartitionDefinition
 	tableInfo           map[int64]*model.TableInfo
 	// key is partition id and histID
-<<<<<<< HEAD
 	skipPartition map[skipItem]struct{}
 	// ioWorker meet error, it will close this channel to notify cpuWorker.
 	ioWorkerExitWhenErrChan chan struct{}
 	// cpuWorker exit, it will close this channel to notify ioWorker.
 	cpuWorkerExitChan         chan struct{}
-	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
-	callWithSCtxFunc          callWithSCtxFunc
-=======
-	skipPartition             map[skipItem]struct{}
-	exitWhenErrChan           chan struct{}
->>>>>>> ac1f0d92a6e (planner: move more methods from StatsHandle to its sub-packages (#47749))
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
@@ -113,8 +102,7 @@ func NewAsyncMergePartitionStats2GlobalStats(
 	is infoschema.InfoSchema) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
-<<<<<<< HEAD
-		callWithSCtxFunc:        callWithSCtxFunc,
+		statsHandle:             statsHandle,
 		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
 		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
 		histogramAndTopn:        make(chan mergeItem[*StatsWrapper]),
@@ -124,29 +112,11 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		ioWorkerExitWhenErrChan: make(chan struct{}),
 		cpuWorkerExitChan:       make(chan struct{}),
 		skipPartition:           make(map[skipItem]struct{}),
-		gpool:                   gpool,
 		allPartitionStats:       make(map[int64]*statistics.Table),
 		globalTableInfo:         globalTableInfo,
-		getTableByPhysicalIDFn:  getTableByPhysicalIDFn,
 		histIDs:                 histIDs,
 		is:                      is,
 		partitionNum:            partitionNum,
-=======
-		statsHandle:         statsHandle,
-		cmsketch:            make(chan mergeItem[*statistics.CMSketch], 5),
-		fmsketch:            make(chan mergeItem[*statistics.FMSketch], 5),
-		histogramAndTopn:    make(chan mergeItem[*StatsWrapper], 5),
-		PartitionDefinition: make(map[int64]model.PartitionDefinition),
-		tableInfo:           make(map[int64]*model.TableInfo),
-		partitionIDs:        make([]int64, 0, partitionNum),
-		exitWhenErrChan:     make(chan struct{}),
-		skipPartition:       make(map[skipItem]struct{}),
-		allPartitionStats:   make(map[int64]*statistics.Table),
-		globalTableInfo:     globalTableInfo,
-		histIDs:             histIDs,
-		is:                  is,
-		partitionNum:        partitionNum,
->>>>>>> ac1f0d92a6e (planner: move more methods from StatsHandle to its sub-packages (#47749))
 	}, nil
 }
 

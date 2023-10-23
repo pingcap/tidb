@@ -24,11 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD:pkg/statistics/handle/extstats/extended_stats.go
-	"github.com/pingcap/tidb/pkg/util/mathutil"
-=======
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
->>>>>>> ac1f0d92a6e (planner: move more methods from StatsHandle to its sub-packages (#47749)):pkg/statistics/builder_ext_stats.go
 	"go.uber.org/zap"
 )
 
@@ -95,13 +91,8 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
 	// We would modify Ordinal of samplesY, so we make a deep copy.
-<<<<<<< HEAD:pkg/statistics/handle/extstats/extended_stats.go
-	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
-	sampleNum := mathutil.Min(len(samplesX), len(samplesY))
-=======
 	samplesY := CopySampleItems(collectors[colOffsets[1]].Samples)
 	sampleNum := min(len(samplesX), len(samplesY))
->>>>>>> ac1f0d92a6e (planner: move more methods from StatsHandle to its sub-packages (#47749)):pkg/statistics/builder_ext_stats.go
 	if sampleNum == 1 {
 		item.ScalarVals = 1
 		return item
