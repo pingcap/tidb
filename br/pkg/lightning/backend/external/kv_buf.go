@@ -43,6 +43,9 @@ func newPreAllocKVBuf(memLimit uint64, blockSize int) *preAllocKVBuf {
 }
 
 func (b *preAllocKVBuf) Alloc(s int) (blockIdx int32, res []byte, offset int32, allocated bool) {
+	if s > b.blockSize {
+		return
+	}
 	if b.blockSize-b.curIdx < s {
 		if b.curBlockIdx+1 >= len(b.blocks) {
 			return
