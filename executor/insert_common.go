@@ -656,6 +656,11 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 		col.ColumnInfo.Offset = len(tCols)
 		tCols = append(tCols, col)
 	}
+	rowCntInLoadData := uint64(0)
+	if e.ctx.GetSessionVars().StmtCtx.InLoadDataStmt {
+		rowCntInLoadData = e.rowCount
+	}
+
 	for i, c := range tCols {
 		var err error
 		// Evaluate the generated columns later after real columns set
@@ -667,7 +672,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
-				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx); err != nil {
+				if err = c.HandleBadNull(&row[i], e.ctx.GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
 					return nil, err
 				}
 			}
@@ -701,7 +706,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			return nil, err
 		}
 		// Handle the bad null error.
-		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx); err != nil {
+		if err = gCol.HandleBadNull(&row[colIdx], e.ctx.GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
 			return nil, err
 		}
 	}
