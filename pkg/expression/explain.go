@@ -85,7 +85,6 @@ func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 				buffer.WriteString(", ")
 			}
 		}
-
 	}
 	buffer.WriteString(")")
 	return buffer.String()
