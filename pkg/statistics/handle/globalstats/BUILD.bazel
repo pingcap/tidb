@@ -38,10 +38,11 @@ go_test(
         "globalstats_test.go",
         "main_test.go",
         "topn_bench_test.go",
+        "topn_test.go",
     ],
     embed = [":globalstats"],
     flaky = True,
-    shard_count = 19,
+    shard_count = 21,
     deps = [
         "//pkg/config",
         "//pkg/parser/model",
