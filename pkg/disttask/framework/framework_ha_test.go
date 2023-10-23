@@ -66,7 +66,7 @@ func (dsp *haTestDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatc
 	return nil, nil
 }
 
-func (*haTestDispatcherExt) OnErrStage(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErr []error) (subtaskMeta []byte, err error) {
+func (*haTestDispatcherExt) OnErrStage(ctx context.Context, h dispatcher.TaskHandle, gTask *proto.Task, receiveErrs []error) (subtaskMeta []byte, err error) {
 	return nil, nil
 }
 
@@ -78,7 +78,7 @@ func (*haTestDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *haTestDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (dsp *haTestDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne

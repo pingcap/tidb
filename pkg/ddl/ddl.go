@@ -698,17 +698,11 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		}, scheduler.WithSummary,
 	)
 
-	backFillDsp, err := NewBackfillingDispatcherExt(d)
-	if err != nil {
-		logutil.BgLogger().Warn("NewBackfillingDispatcherExt failed", zap.String("category", "ddl"), zap.Error(err))
-	} else {
-		dispatcher.RegisterDispatcherFactory(proto.Backfill,
-			func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-				return newLitBackfillDispatcher(ctx, taskMgr, serverID, task, backFillDsp)
-			})
-		dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
-	}
-
+	dispatcher.RegisterDispatcherFactory(proto.Backfill,
+		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
+			return newLitBackfillDispatcher(ctx, d, taskMgr, serverID, task)
+		})
+	dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL

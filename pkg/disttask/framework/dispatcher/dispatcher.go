@@ -459,9 +459,9 @@ func (d *BaseDispatcher) updateTask(taskState proto.TaskState, newSubTasks []*pr
 	return err
 }
 
-func (d *BaseDispatcher) onErrHandlingStage(receiveErr []error) error {
+func (d *BaseDispatcher) onErrHandlingStage(receiveErrs []error) error {
 	// 1. generate the needed task meta and subTask meta (dist-plan).
-	meta, err := d.OnErrStage(d.ctx, d, d.Task, receiveErr)
+	meta, err := d.OnErrStage(d.ctx, d, d.Task, receiveErrs)
 	if err != nil {
 		// OnErrStage must be retryable, if not, there will have resource leak for tasks.
 		logutil.Logger(d.logCtx).Warn("handle error failed", zap.Error(err))
@@ -499,7 +499,7 @@ func (d *BaseDispatcher) onNextStage() (err error) {
 		failpoint.Return(errors.New("mockDynamicDispatchErr"))
 	})
 
-	nextStep := d.GetNextStep(d, d.Task)
+	nextStep := d.GetNextStep(d.Task)
 	logutil.Logger(d.logCtx).Info("onNextStage",
 		zap.Int64("current-step", int64(d.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))

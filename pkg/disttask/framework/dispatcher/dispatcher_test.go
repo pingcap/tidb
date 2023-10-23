@@ -69,7 +69,7 @@ func (*testDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*testDispatcherExt) GetNextStep(dispatcher.TaskHandle, *proto.Task) proto.Step {
+func (*testDispatcherExt) GetNextStep(*proto.Task) proto.Step {
 	return proto.StepDone
 }
 
@@ -107,7 +107,7 @@ func (*numberExampleDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (*numberExampleDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (*numberExampleDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne
