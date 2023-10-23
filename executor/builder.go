@@ -926,6 +926,8 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		isLoadData:   true,
 		txnInUse:     sync.Mutex{},
 	}
+	restrictive := b.ctx.GetSessionVars().SQLMode.HasStrictMode() &&
+		v.OnDuplicate != ast.OnDuplicateKeyHandlingIgnore
 	loadDataInfo := &LoadDataInfo{
 		row:                make([]types.Datum, 0, len(insertVal.insertColumns)),
 		InsertValues:       insertVal,
@@ -937,6 +939,10 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) Executor {
 		ColumnAssignments:  v.ColumnAssignments,
 		ColumnsAndUserVars: v.ColumnsAndUserVars,
 		Ctx:                b.ctx,
+		restrictive:        restrictive,
+	}
+	if !restrictive {
+		b.ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
 	}
 	columnNames := loadDataInfo.initFieldMappings()
 	err := loadDataInfo.initLoadColumns(columnNames)

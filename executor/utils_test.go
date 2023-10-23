@@ -18,12 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-<<<<<<< HEAD
-=======
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
->>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,17 +95,6 @@ func TestBatchRetrieverHelper(t *testing.T) {
 	require.Equal(t, rangeStarts, []int{0})
 	require.Equal(t, rangeEnds, []int{10})
 }
-<<<<<<< HEAD
-=======
-
-func TestGetMsgFromBRError(t *testing.T) {
-	var berr error = berrors.ErrStorageInvalidConfig
-	require.Equal(t, "[BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "invalid external storage config", getMsgFromBRError(berr))
-	berr = errors.Annotatef(berr, "some message about error reason")
-	require.Equal(t, "some message about error reason: [BR:ExternalStorage:ErrStorageInvalidConfig]invalid external storage config", berr.Error())
-	require.Equal(t, "some message about error reason", getMsgFromBRError(berr))
-}
 
 func TestEqualDatumsAsBinary(t *testing.T) {
 	tests := []struct {
@@ -142,4 +127,3 @@ func TestEqualDatumsAsBinary(t *testing.T) {
 		require.Equal(t, tt.same, res)
 	}
 }
->>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))

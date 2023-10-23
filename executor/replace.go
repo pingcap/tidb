@@ -60,62 +60,6 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	return nil
 }
 
-<<<<<<< HEAD
-// removeRow removes the duplicate row and cleanup its keys in the key-value map,
-// but if the to-be-removed row equals to the to-be-added row, no remove or add things to do.
-func (e *ReplaceExec) removeRow(ctx context.Context, txn kv.Transaction, handle kv.Handle, r toBeCheckedRow) (bool, error) {
-	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.ctx, txn, r.t, handle, e.GenExprs)
-	if err != nil {
-		logutil.BgLogger().Error("get old row failed when replace",
-			zap.String("handle", handle.String()),
-			zap.String("toBeInsertedRow", types.DatumsToStrNoErr(r.row)))
-		if kv.IsErrNotFound(err) {
-			err = errors.NotFoundf("can not be duplicated row, due to old row not found. handle %s", handle)
-		}
-		return false, err
-	}
-
-	rowUnchanged, err := e.EqualDatumsAsBinary(e.ctx.GetSessionVars().StmtCtx, oldRow, newRow)
-	if err != nil {
-		return false, err
-	}
-	if rowUnchanged {
-		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
-		if err != nil {
-			return false, err
-		}
-		return true, nil
-	}
-
-	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
-	if err != nil {
-		return false, err
-	}
-	e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
-	return false, nil
-}
-
-// EqualDatumsAsBinary compare if a and b contains the same datum values in binary collation.
-func (e *ReplaceExec) EqualDatumsAsBinary(sc *stmtctx.StatementContext, a []types.Datum, b []types.Datum) (bool, error) {
-	if len(a) != len(b) {
-		return false, nil
-	}
-	for i, ai := range a {
-		v, err := ai.Compare(sc, &b[i], collate.GetBinaryCollator())
-		if err != nil {
-			return false, errors.Trace(err)
-		}
-		if v != 0 {
-			return false, nil
-		}
-	}
-	return true, nil
-}
-
-=======
->>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 // replaceRow removes all duplicate rows for one row, then inserts it.
 func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	txn, err := e.ctx.Txn(true)

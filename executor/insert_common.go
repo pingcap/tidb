@@ -1183,18 +1183,6 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 		for _, uk := range r.uniqueKeys {
 			_, err := txn.Get(ctx, uk.newKey)
 			if err == nil {
-<<<<<<< HEAD
-				// If duplicate keys were found in BatchGet, mark row = nil.
-				e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
-				if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
-					// lock duplicated unique key on insert-ignore
-					txnCtx.AddUnchangedRowKey(uk.newKey)
-				}
-				skip = true
-				break
-			}
-			if !kv.IsErrNotFound(err) {
-=======
 				if replace {
 					_, handle, err := tables.FetchDuplicatedHandle(
 						ctx,
@@ -1217,11 +1205,14 @@ func (e *InsertValues) batchCheckAndInsert(ctx context.Context, rows [][]types.D
 				} else {
 					// If duplicate keys were found in BatchGet, mark row = nil.
 					e.ctx.GetSessionVars().StmtCtx.AppendWarning(uk.dupErr)
+					if txnCtx := e.ctx.GetSessionVars().TxnCtx; txnCtx.IsPessimistic {
+						// lock duplicated unique key on insert-ignore
+						txnCtx.AddUnchangedRowKey(uk.newKey)
+					}
 					skip = true
 					break
 				}
 			} else if !kv.IsErrNotFound(err) {
->>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 				return err
 			}
 		}
@@ -1270,28 +1261,25 @@ func (e *InsertValues) removeRow(
 		return false, err
 	}
 	if identical {
-<<<<<<< HEAD
-		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
-		if err != nil {
-			return err
-		}
-		return nil
-=======
 		if inReplace {
 			e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 		}
+		_, err := appendUnchangedRowForLock(e.ctx, r.t, handle, oldRow)
+		if err != nil {
+			return false, err
+		}
 		return true, nil
->>>>>>> 25770ffc6b9 (executor: unify replace into logic for InsertValues and ReplaceExec (#41947))
 	}
 
 	err = r.t.RemoveRecord(e.ctx, handle, oldRow)
 	if err != nil {
 		return false, err
 	}
-	err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
-	if err != nil {
-		return false, err
-	}
+	// need https://github.com/pingcap/tidb/pull/40069
+	//err = onRemoveRowForFK(e.ctx, oldRow, e.fkChecks, e.fkCascades)
+	//if err != nil {
+	//	return false, err
+	//}
 	if inReplace {
 		e.ctx.GetSessionVars().StmtCtx.AddAffectedRows(1)
 	} else {
