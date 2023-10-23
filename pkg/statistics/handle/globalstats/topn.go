@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
@@ -30,6 +31,7 @@ import (
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	util.UpdateSCtxVarsForStats(sc)
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 	killer := &sc.GetSessionVars().SQLKiller
 	// use original method if concurrency equals 1 or for version1
