@@ -893,9 +893,6 @@ func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-<<<<<<< HEAD
-	return getDDLReorgHandle(r.s, job)
-=======
 	element, startKey, endKey, physicalTableID, err = getDDLReorgHandle(r.s, job)
 	if job.ReorgMeta != nil && job.ReorgMeta.Version == model.ReorgMetaVersion0 && err == nil {
 		logutil.BgLogger().Info("job get table range for old version ReorgMetas", zap.String("category", "ddl"),
@@ -907,5 +904,4 @@ func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element,
 	}
 
 	return
->>>>>>> c193d8a9074 (ddl, parser: fix the DDL job version using issue (#47915))
 }
