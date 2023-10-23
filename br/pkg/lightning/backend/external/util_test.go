@@ -107,7 +107,8 @@ func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 	w := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")
@@ -127,7 +128,8 @@ func TestGetAllFileNames(t *testing.T) {
 	require.NoError(t, err)
 
 	w2 := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "3")
@@ -140,7 +142,8 @@ func TestGetAllFileNames(t *testing.T) {
 	require.NoError(t, err)
 
 	w3 := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "12")
@@ -169,7 +172,8 @@ func TestCleanUpFiles(t *testing.T) {
 	ctx := context.Background()
 	store := storage.NewMemStorage()
 	w := NewWriterBuilder().
-		SetMemorySizeLimit(20).
+		SetMemorySizeLimit(10*(lengthBytes*2+2)).
+		SetBlockSize(10*(lengthBytes*2+2)).
 		SetPropSizeDistance(5).
 		SetPropKeysDistance(3).
 		Build(store, "/subtask", "0")

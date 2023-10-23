@@ -633,13 +633,10 @@ func (p *cteProducer) checkHasDup(probeKey uint64,
 	curChk *chunk.Chunk,
 	storage cteutil.Storage,
 	hashTbl baseHashTable) (hasDup bool, err error) {
-	ptrs := hashTbl.Get(probeKey)
+	entry := hashTbl.Get(probeKey)
 
-	if len(ptrs) == 0 {
-		return false, nil
-	}
-
-	for _, ptr := range ptrs {
+	for ; entry != nil; entry = entry.next {
+		ptr := entry.ptr
 		var matchedRow chunk.Row
 		if curChk != nil {
 			matchedRow = curChk.GetRow(int(ptr.RowIdx))
