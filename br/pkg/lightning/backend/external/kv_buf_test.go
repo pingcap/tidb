@@ -42,6 +42,9 @@ func TestNewPreAllocKVBuf(t *testing.T) {
 	}
 
 	buf := newPreAllocKVBuf(16, 8)
+	// alloc larger than block size.
+	_, _, _, allocated := buf.Alloc(9)
+	require.False(t, allocated)
 	blockIdx, res, offset, allocated := buf.Alloc(8)
 	require.Equal(t, int32(0), blockIdx)
 	require.Equal(t, int32(0), offset)
