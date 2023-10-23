@@ -631,7 +631,7 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 // Compare compares datum to another datum.
 // Notes: don't rely on datum.collation to get the collator, it's tend to buggy.
 func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collate.Collator) (int, error) {
-	typeCtx := DefaultNoWarningContext
+	typeCtx := DefaultStmtNoWarningContext
 	if sc != nil {
 		typeCtx = sc.TypeCtx()
 	}

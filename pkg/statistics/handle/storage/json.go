@@ -285,13 +285,6 @@ func BlocksToJSONTable(blocks [][]byte) (*util.JSONTable, error) {
 
 // TableHistoricalStatsToJSON converts the historical stats of a table to JSONTable.
 func TableHistoricalStatsToJSON(sctx sessionctx.Context, physicalID int64, snapshot uint64) (jt *util.JSONTable, exist bool, err error) {
-	if _, err := util.Exec(sctx, "begin"); err != nil {
-		return nil, false, err
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-
 	// get meta version
 	rows, _, err := util.ExecRows(sctx, "select distinct version from mysql.stats_meta_history where table_id = %? and version <= %? order by version desc limit 1", physicalID, snapshot)
 	if err != nil {

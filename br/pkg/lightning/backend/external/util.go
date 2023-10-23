@@ -128,7 +128,8 @@ func MockExternalEngine(
 ) (dataFiles []string, statsFiles []string, err error) {
 	subDir := "/mock-test"
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(128).
+		SetMemorySizeLimit(10*(lengthBytes*2+10)).
+		SetBlockSize(10*(lengthBytes*2+10)).
 		SetPropSizeDistance(32).
 		SetPropKeysDistance(4).
 		Build(storage, "/mock-test", "0")

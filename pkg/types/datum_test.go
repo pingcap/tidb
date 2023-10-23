@@ -56,7 +56,7 @@ func TestDatum(t *testing.T) {
 func testDatumToBool(t *testing.T, in interface{}, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
-	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	b, err := datum.ToBool(ctx)
 	require.NoError(t, err)
 	require.Equal(t, res64, b)
@@ -107,7 +107,7 @@ func TestToBool(t *testing.T) {
 	require.NoError(t, err)
 	testDatumToBool(t, v, 1)
 	d := NewDatum(&invalidMockType{})
-	ctx := DefaultNoWarningContext.WithFlags(StrictFlags.WithIgnoreTruncateErr(true))
+	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 	_, err = d.ToBool(ctx)
 	require.Error(t, err)
 }
