@@ -131,7 +131,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementCo
 	cntOfGroupKeys := len(groupKey)
 	allMemDelta := int64(0)
 	partialResultNum := w.getPartialResultSliceLenConsiderByteAlign()
-	partialResultsOfEachGroupKey := w.newPartialResults(cntOfGroupKeys, partialResultNum)
+	partialResultsOfEachRow := w.newPartialResults(cntOfGroupKeys, partialResultNum)
 
 	for i := 0; i < cntOfGroupKeys; i++ {
 		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
@@ -139,16 +139,16 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementCo
 
 		// This group by key has appeared before, reuse the partial result.
 		if ok {
-			partialResultsOfEachGroupKey = append(partialResultsOfEachGroupKey, tmp)
+			partialResultsOfEachRow = append(partialResultsOfEachRow, tmp)
 			continue
 		}
 
 		// It's the first time that this group by key appeared, create it
-		partialResultsOfEachGroupKey = w.expandPartialResults(partialResultsOfEachGroupKey, partialResultNum)
-		lastIdx := len(partialResultsOfEachGroupKey) - 1
+		partialResultsOfEachRow = w.expandPartialResults(partialResultsOfEachRow, partialResultNum)
+		lastIdx := len(partialResultsOfEachRow) - 1
 		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
-			partialResultsOfEachGroupKey[lastIdx][j] = partialResult
+			partialResultsOfEachRow[lastIdx][j] = partialResult
 			allMemDelta += memDelta // the memory usage of PartialResult
 		}
 		allMemDelta += int64(partialResultNum * 8)
@@ -159,11 +159,11 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementCo
 			w.BInMaps[finalWorkerIdx]++
 		}
 
-		mapper[finalWorkerIdx][string(groupKey[i])] = partialResultsOfEachGroupKey[lastIdx]
+		mapper[finalWorkerIdx][string(groupKey[i])] = partialResultsOfEachRow[lastIdx]
 		allMemDelta += int64(len(groupKey[i]))
 	}
 	w.memTracker.Consume(allMemDelta)
-	return partialResultsOfEachGroupKey
+	return partialResultsOfEachRow
 }
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
