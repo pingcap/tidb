@@ -281,23 +281,26 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 		}
 
 		w := HashAggPartialWorker{
-			baseHashAggWorker:                  newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
-			inputCh:                            e.partialInputChs[i],
-			outputChs:                          e.partialOutputChs,
-			giveBackCh:                         e.inputCh,
-			partialResultsBuffer:               make([][][]aggfuncs.PartialResult, finalConcurrency),
-			finalWorkerIdxOfEachGroupKeyBuffer: make([]int, 2048),
-			prIdxOfFinalWorkerBuffer:           make([]int, finalConcurrency),
-			BInMaps:                            make([]int, finalConcurrency),
-			globalOutputCh:                     e.finalOutputCh,
-			partialResultsMap:                  partialResultsMap,
-			groupByItems:                       e.GroupByItems,
-			chk:                                exec.TryNewCacheChunk(e.Children(0)),
-			groupKey:                           make([][]byte, 0, 8),
+			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			inputCh:              e.partialInputChs[i],
+			outputChs:            e.partialOutputChs,
+			giveBackCh:           e.inputCh,
+			BInMaps:              make([]int, finalConcurrency),
+			partialResultsBuffer: make([][]aggfuncs.PartialResult, 2048),
+			globalOutputCh:       e.finalOutputCh,
+			partialResultsMap:    partialResultsMap,
+			groupByItems:         e.GroupByItems,
+			chk:                  exec.TryNewCacheChunk(e.Children(0)),
+			groupKey:             make([][]byte, 0, 8),
+		}
+
+		partialResultNum := w.getPartialResultSliceLenConsiderByteAlign()
+		partialResultsBufferLen := len(w.partialResultsBuffer)
+		for i := 0; i < partialResultsBufferLen; i++ {
+			w.partialResultsBuffer[i] = make([]aggfuncs.PartialResult, partialResultNum)
 		}
 
 		for i := 0; i < finalConcurrency; i++ {
-			w.partialResultsBuffer[i] = make([][]aggfuncs.PartialResult, 0, 2048)
 			w.BInMaps[i] = 0
 		}
 

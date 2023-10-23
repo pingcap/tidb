@@ -37,12 +37,9 @@ type HashAggPartialWorker struct {
 	outputChs      []chan *AggPartialResultMapper
 	globalOutputCh chan *AfFinalResult
 	giveBackCh     chan<- *HashAggInput
+	BInMaps        []int
 
-	partialResultsBuffer               [][][]aggfuncs.PartialResult
-	finalWorkerIdxOfEachGroupKeyBuffer []int
-	prIdxOfFinalWorkerBuffer           []int
-
-	BInMaps []int
+	partialResultsBuffer [][]aggfuncs.PartialResult
 
 	// Length of this map is equal to the number of final workers
 	partialResultsMap []AggPartialResultMapper
@@ -110,76 +107,63 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	}
 }
 
-func (w *HashAggPartialWorker) newFinalWorkerIdxs(rowNum int) []int {
-	if rowNum > len(w.finalWorkerIdxOfEachGroupKeyBuffer) {
-		w.finalWorkerIdxOfEachGroupKeyBuffer = make([]int, rowNum)
+func (w *HashAggPartialWorker) newPartialResults(n int, partialResultNum int) [][]aggfuncs.PartialResult {
+	if n > len(w.partialResultsBuffer) {
+		appendNum := n - len(w.partialResultsBuffer)
+		for i := 0; i < appendNum; i++ {
+			w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, partialResultNum))
+		}
 	}
-	return w.finalWorkerIdxOfEachGroupKeyBuffer[:rowNum]
+	return w.partialResultsBuffer[0:0]
 }
 
-func (w *HashAggPartialWorker) newPartialResults(finalConcurrency int) [][][]aggfuncs.PartialResult {
-	partialResults := w.partialResultsBuffer
-	for i := 0; i < finalConcurrency; i++ {
-		partialResults[i] = partialResults[i][0:0]
-	}
-	return partialResults
-}
-
-func (w *HashAggPartialWorker) expandPartialResults(partialResult [][]aggfuncs.PartialResult, finalWorkerIdx int, partialResultSize int) [][]aggfuncs.PartialResult {
+func (w *HashAggPartialWorker) expandPartialResults(partialResult [][]aggfuncs.PartialResult, partialResultSize int) [][]aggfuncs.PartialResult {
 	partialResultLen := len(partialResult)
-	if len(w.partialResultsBuffer[finalWorkerIdx]) < partialResultLen+1 {
-		w.partialResultsBuffer[finalWorkerIdx] = append(w.partialResultsBuffer[finalWorkerIdx], make([]aggfuncs.PartialResult, partialResultSize))
+	if len(w.partialResultsBuffer) < partialResultLen+1 {
+		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, partialResultSize))
 	}
-	return w.partialResultsBuffer[finalWorkerIdx][:partialResultLen+1]
+	return w.partialResultsBuffer[:partialResultLen+1]
 }
 
-// getPartialResultsOfEachRow gets the partial results of each group key.
 // If the group key has appeared before, reuse the partial result.
 // If the group key has not appeared before, create empty partial results.
-//
-// All of the partial results will be divided into `finalConcurrency` parts according to the hash value of group key，
-// and the partial results belonging to the same part will be sent to the same final worker.
-func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementContext, groupKey [][]byte, mapper []AggPartialResultMapper, finalConcurrency int) ([]int, [][][]aggfuncs.PartialResult) {
+func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementContext, groupKey [][]byte, mapper []AggPartialResultMapper, finalConcurrency int) [][]aggfuncs.PartialResult {
 	cntOfGroupKeys := len(groupKey)
 	allMemDelta := int64(0)
-	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
-
-	// partialResultsOfEachGroupKey[i] indicates the partial results that will be sent to the i-th final worker.
-	partialResultsOfEachGroupKey := w.newPartialResults(finalConcurrency)
-	// finalWorkerIdxOfEachGroupKey indicates the final worker index that this group by key will be sent to.
-	finalWorkerIdxOfEachGroupKey := w.newFinalWorkerIdxs(cntOfGroupKeys)
+	partialResultNum := w.getPartialResultSliceLenConsiderByteAlign()
+	partialResultsOfEachGroupKey := w.newPartialResults(cntOfGroupKeys, partialResultNum)
 
 	for i := 0; i < cntOfGroupKeys; i++ {
 		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
-		finalWorkerIdxOfEachGroupKey[i] = finalWorkerIdx
 		tmp, ok := mapper[finalWorkerIdx][string(groupKey[i])]
 
 		// This group by key has appeared before, reuse the partial result.
 		if ok {
-			partialResultsOfEachGroupKey[finalWorkerIdx] = append(partialResultsOfEachGroupKey[finalWorkerIdx], tmp)
+			partialResultsOfEachGroupKey = append(partialResultsOfEachGroupKey, tmp)
 			continue
 		}
 
 		// It's the first time that this group by key appeared, create it
-		partialResultsOfEachGroupKey[finalWorkerIdx] = w.expandPartialResults(partialResultsOfEachGroupKey[finalWorkerIdx], finalWorkerIdx, partialResultSize)
-		lastIdx := len(partialResultsOfEachGroupKey[finalWorkerIdx]) - 1
+		partialResultsOfEachGroupKey = w.expandPartialResults(partialResultsOfEachGroupKey, partialResultNum)
+		lastIdx := len(partialResultsOfEachGroupKey) - 1
 		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
-			partialResultsOfEachGroupKey[finalWorkerIdx][lastIdx][j] = partialResult
+			partialResultsOfEachGroupKey[lastIdx][j] = partialResult
 			allMemDelta += memDelta // the memory usage of PartialResult
 		}
-		allMemDelta += int64(partialResultSize * 8)
+		allMemDelta += int64(partialResultNum * 8)
 
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper)+1 > (1<<w.BInMaps[finalWorkerIdx])*hack.LoadFactorNum/hack.LoadFactorDen {
 			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMaps[finalWorkerIdx]))
 			w.BInMaps[finalWorkerIdx]++
 		}
-		mapper[finalWorkerIdx][string(groupKey[i])] = partialResultsOfEachGroupKey[finalWorkerIdx][lastIdx]
+
+		mapper[finalWorkerIdx][string(groupKey[i])] = partialResultsOfEachGroupKey[lastIdx]
 		allMemDelta += int64(len(groupKey[i]))
 	}
 	w.memTracker.Consume(allMemDelta)
-	return finalWorkerIdxOfEachGroupKey, partialResultsOfEachGroupKey
+	return partialResultsOfEachGroupKey
 }
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {
@@ -191,27 +175,21 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		return err
 	}
 
-	finalWorkerIdxOfEachRow, partialResultOfEachRow := w.getPartialResultsOfEachRow(sc, w.groupKey, w.partialResultsMap, finalConcurrency)
+	partialResultOfEachRow := w.getPartialResultsOfEachRow(sc, w.groupKey, w.partialResultsMap, finalConcurrency)
 
-	prIdxOfFinalWorker := w.prIdxOfFinalWorkerBuffer
-	for i := 0; i < finalConcurrency; i++ {
-		prIdxOfFinalWorker[i] = 0
-	}
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
-		finalWorkerIdx := finalWorkerIdxOfEachRow[i]
-		prOfOneFinalWorker := partialResultOfEachRow[finalWorkerIdx]
+		partialResult := partialResultOfEachRow[i]
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, prOfOneFinalWorker[prIdxOfFinalWorker[finalWorkerIdx]][j])
+			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResult[j])
 			if err != nil {
 				return err
 			}
 			allMemDelta += memDelta
 		}
-		prIdxOfFinalWorker[finalWorkerIdx]++
 	}
 	w.memTracker.Consume(allMemDelta)
 	return nil
