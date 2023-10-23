@@ -315,6 +315,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		writerID,
 		256*size.MB,
+		getKVGroupBlockSize(sm.KVGroup),
 		8*1024,
 		1*size.MB,
 		8*1024,

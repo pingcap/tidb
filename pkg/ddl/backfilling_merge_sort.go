@@ -110,6 +110,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		prefix,
 		writerID,
 		256*size.MB,
+		external.DefaultBlockSize,
 		8*1024,
 		1*size.MB,
 		8*1024,

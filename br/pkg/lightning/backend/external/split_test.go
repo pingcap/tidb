@@ -144,7 +144,7 @@ func TestSortedData(t *testing.T) {
 	values := make([][]byte, kvNum)
 	for i := range keys {
 		keys[i] = []byte(fmt.Sprintf("key%03d", i))
-		values[i] = []byte(fmt.Sprintf("value%03d", i))
+		values[i] = []byte(fmt.Sprintf("val%03d", i))
 	}
 
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
@@ -177,7 +177,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	subDir := "/mock-test"
 
 	writer1 := NewWriterBuilder().
-		SetMemorySizeLimit(15). // slightly larger than len("key01") + len("value01")
+		SetMemorySizeLimit(2*(lengthBytes*2+10)).
+		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
 		Build(memStore, subDir, "1")
@@ -185,7 +186,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		[]byte("key01"), []byte("key11"), []byte("key21"),
 	}
 	values1 := [][]byte{
-		[]byte("value01"), []byte("value11"), []byte("value21"),
+		[]byte("val01"), []byte("val11"), []byte("val21"),
 	}
 	dataFiles1, statFiles1, err := MockExternalEngineWithWriter(memStore, writer1, subDir, keys1, values1)
 	require.NoError(t, err)
@@ -193,7 +194,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, statFiles1, 2)
 
 	writer2 := NewWriterBuilder().
-		SetMemorySizeLimit(15).
+		SetMemorySizeLimit(2*(lengthBytes*2+10)).
+		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
 		Build(memStore, subDir, "2")
@@ -201,7 +203,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		[]byte("key02"), []byte("key12"), []byte("key22"),
 	}
 	values2 := [][]byte{
-		[]byte("value02"), []byte("value12"), []byte("value22"),
+		[]byte("val02"), []byte("val12"), []byte("val22"),
 	}
 	dataFiles12, statFiles12, err := MockExternalEngineWithWriter(memStore, writer2, subDir, keys2, values2)
 	require.NoError(t, err)
@@ -209,7 +211,8 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 	require.Len(t, statFiles12, 4)
 
 	writer3 := NewWriterBuilder().
-		SetMemorySizeLimit(15).
+		SetMemorySizeLimit(2*(lengthBytes*2+10)).
+		SetBlockSize(2*(lengthBytes*2+10)).
 		SetPropSizeDistance(1).
 		SetPropKeysDistance(1).
 		Build(memStore, subDir, "3")
@@ -217,7 +220,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		[]byte("key03"), []byte("key13"), []byte("key23"),
 	}
 	values3 := [][]byte{
-		[]byte("value03"), []byte("value13"), []byte("value23"),
+		[]byte("val03"), []byte("val13"), []byte("val23"),
 	}
 	dataFiles123, statFiles123, err := MockExternalEngineWithWriter(memStore, writer3, subDir, keys3, values3)
 	require.NoError(t, err)

@@ -16,6 +16,7 @@ func MergeOverlappingFiles(
 	newFilePrefix string,
 	writerID string,
 	memSizeLimit uint64,
+	blockSize int,
 	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
@@ -30,6 +31,7 @@ func MergeOverlappingFiles(
 
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(memSizeLimit).
+		SetBlockSize(blockSize).
 		SetWriterBatchCount(writeBatchCount).
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).

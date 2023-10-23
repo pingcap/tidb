@@ -92,7 +92,7 @@ go_test(
     embed = [":importinto"],
     flaky = True,
     race = "on",
-    shard_count = 14,
+    shard_count = 15,
     deps = [
         "//br/pkg/lightning/backend",
         "//br/pkg/lightning/backend/external",
@@ -116,6 +116,7 @@ go_test(
         "//pkg/util/logutil",
         "//pkg/util/mock",
         "//pkg/util/sqlexec",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -21,6 +21,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
+// we use uint64 to store the length of key and value.
+const lengthBytes = 8
+
 // KeyValueStore stores key-value pairs and maintains the range properties.
 type KeyValueStore struct {
 	dataWriter storage.ExternalFileWriter
@@ -46,51 +49,26 @@ func NewKeyValueStore(
 	return kvStore, nil
 }
 
-// AddKeyValue saves a key-value pair to the KeyValueStore. If the accumulated
+// addEncodedData saves encoded key-value pairs to the KeyValueStore.
+// data layout: keyLen + key + valueLen + value. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
-func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
-	var (
-		b     [8]byte
-		kvLen = 0
-	)
+func (s *KeyValueStore) addEncodedData(val []byte) error {
+	_, err := s.dataWriter.Write(s.ctx, val)
+	if err != nil {
+		return err
+	}
 
-	// data layout: keyLen + key + valueLen + value
-	n, err := s.dataWriter.Write(
-		s.ctx,
-		binary.BigEndian.AppendUint64(b[:0], uint64(len(key))),
-	)
-	if err != nil {
-		return err
-	}
-	kvLen += n
-	n, err = s.dataWriter.Write(s.ctx, key)
-	if err != nil {
-		return err
-	}
-	kvLen += n
-	n, err = s.dataWriter.Write(
-		s.ctx,
-		binary.BigEndian.AppendUint64(b[:0], uint64(len(value))),
-	)
-	if err != nil {
-		return err
-	}
-	kvLen += n
-	n, err = s.dataWriter.Write(s.ctx, value)
-	if err != nil {
-		return err
-	}
-	kvLen += n
-
+	keyLen := binary.BigEndian.Uint64(val)
+	key := val[lengthBytes : lengthBytes+keyLen]
 	if len(s.rc.currProp.firstKey) == 0 {
 		s.rc.currProp.firstKey = key
 	}
 	s.rc.currProp.lastKey = key
 
-	s.offset += uint64(kvLen)
-	s.rc.currProp.size += uint64(len(key) + len(value))
+	s.offset += uint64(len(val))
+	s.rc.currProp.size += uint64(len(val) - lengthBytes*2)
 	s.rc.currProp.keys++
 
 	if s.rc.currProp.size >= s.rc.propSizeDist ||
