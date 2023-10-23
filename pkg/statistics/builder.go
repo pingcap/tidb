@@ -388,7 +388,10 @@ func BuildHistAndTopN(
 					for _, topN := range topNList {
 						allTopNByteStrings = append(allTopNByteStrings, topN.Encoded)
 					}
-					logutil.BgLogger().Warn("invalid sample data",
+					logutil.BgLogger().With(
+						zap.String("category", "stats"),
+					).Warn(
+						"invalid sample data",
 						zap.ByteString("sampleBytes", sampleBytes),
 						zap.ByteString("topNBytes", topNList[j].Encoded),
 						zap.Int64("i", i),
