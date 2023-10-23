@@ -236,6 +236,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 		require.Equal(t, 1, len(row))
 		jobID := row[0][0].(string)
 		tk1.MustExec("admin pause ddl jobs " + jobID)
+		<-ddl.TestSyncChan
 	}
 
 	dispatcher.MockDMLExecutionOnPausedState = func(task *proto.Task) {
@@ -254,10 +255,9 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "3*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", "return()"))
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("alter table t add index idx1(a);")
-	tk.MustExec("admin check table t;")
-	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState"))
@@ -274,9 +274,11 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	}
 	hook.OnJobUpdatedExported.Store(&resumeFunc)
 	dom.DDL().SetHook(hook.Clone())
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskSuccess", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished", "1*return(true)"))
 	tk.MustExec("alter table t add index idx3(a);")
 	tk.MustExec("admin check table t;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskSuccess"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/pauseAfterDistTaskFinished"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause"))
+
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
