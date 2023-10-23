@@ -50,7 +50,7 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tblInfo := tbl.Meta()
 
 	// 1.1 OnNextSubtasksBatch
-	gTask.Step = dsp.GetNextStep(nil, gTask)
+	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, ddl.StepReadIndex, gTask.Step)
 	metas, err := dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
@@ -63,13 +63,13 @@ func TestBackfillingDispatcher(t *testing.T) {
 
 	// 1.2 test partition table OnNextSubtasksBatch after StepReadIndex
 	gTask.State = proto.TaskStateRunning
-	gTask.Step = dsp.GetNextStep(nil, gTask)
+	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, ddl.StepWriteAndIngest, gTask.Step)
 	// for partition table, we will not generate subtask for StepWriteAndIngest.
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
-	gTask.Step = dsp.GetNextStep(nil, gTask)
+	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
@@ -99,19 +99,19 @@ func TestBackfillingDispatcher(t *testing.T) {
 	tk.MustExec("insert into t2 values (), (), (), (), (), ()")
 	gTask = createAddIndexGlobalTask(t, dom, "test", "t2", proto.Backfill)
 	// 2.2.1 stepInit
-	gTask.Step = dsp.GetNextStep(nil, gTask)
+	gTask.Step = dsp.GetNextStep(gTask)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, ddl.StepReadIndex, gTask.Step)
 	// 2.2.2 StepReadIndex
 	gTask.State = proto.TaskStateRunning
-	gTask.Step = dsp.GetNextStep(nil, gTask)
+	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, ddl.StepWriteAndIngest, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
-	gTask.Step = dsp.GetNextStep(nil, gTask)
+	gTask.Step = dsp.GetNextStep(gTask)
 	require.Equal(t, proto.StepDone, gTask.Step)
 	metas, err = dsp.OnNextSubtasksBatch(context.Background(), nil, gTask, gTask.Step)
 	require.NoError(t, err)
