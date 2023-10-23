@@ -126,9 +126,9 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 //  1. `*TopN` is the final global-level topN.
 //  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*statistics.TopN, n uint32, hists []*statistics.Histogram,
+func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN4Merge, n uint32, hists []*statistics.Histogram,
 	isIndex bool, killed *uint32) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
-	if statistics.CheckEmptyTopNs(topNs) {
+	if CheckEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
 	partNum := len(topNs)
@@ -144,7 +144,7 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*statisti
 		if topN.TotalCount() == 0 {
 			continue
 		}
-		for _, val := range topN.TopN {
+		for _, val := range topN.TopN.TopN {
 			encodedVal := hack.String(val.Encoded)
 			_, exists := counter[encodedVal]
 			counter[encodedVal] += float64(val.Count)
