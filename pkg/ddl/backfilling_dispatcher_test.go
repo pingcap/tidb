@@ -145,7 +145,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	ctx := context.WithValue(context.Background(), "etcd", true)
 	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
 	storage.SetTaskManager(mgr)
-	dsp_manager, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
+	dspManager, err := dispatcher.NewManager(util.WithInternalSourceType(ctx, "dispatcher"), mgr, "host:port")
 	require.NoError(t, err)
 
 	tk.MustExec("use test")
@@ -156,7 +156,7 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
 	task := createAddIndexGlobalTask(t, dom, "test", "t1", proto.Backfill, true)
 
-	dsp := dsp_manager.MockDispatcher(task)
+	dsp := dspManager.MockDispatcher(task)
 	ext, err := ddl.NewBackfillingDispatcherExt(dom.DDL())
 	require.NoError(t, err)
 	ext.(*ddl.BackfillingDispatcherExt).GlobalSort = true
@@ -257,11 +257,11 @@ func TestBackfillingDispatcherGlobalSortMode(t *testing.T) {
 	task.Step = ext.GetNextStep(task)
 	require.Equal(t, ddl.StepWriteAndIngest, task.Step)
 	// 4. to done stage.
-	// subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, ext.GetNextStep(task))
-	// require.NoError(t, err)
-	// require.Len(t, subtaskMetas, 0)
-	// task.Step = ext.GetNextStep(task)
-	// require.Equal(t, proto.StepDone, task.Step)
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, dsp, task, ext.GetNextStep(task))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 0)
+	task.Step = ext.GetNextStep(task)
+	require.Equal(t, proto.StepDone, task.Step)
 }
 
 func TestGetNextStep(t *testing.T) {
