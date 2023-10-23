@@ -136,7 +136,13 @@ func (e *Engine) LoadIngestData(
 ) error {
 	// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 	// try to concurrently process ranges.
-	concurrency := e.workerConcurrency
+	var concurrency int
+	if e.checkHotspot {
+		concurrency = int(MergeSortOverlapThreshold) / len(e.dataFiles)
+		concurrency = min(concurrency, 8)
+	} else {
+		concurrency = e.workerConcurrency
+	}
 	rangeGroups := split(regionRanges, concurrency)
 
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("concurrency", concurrency),

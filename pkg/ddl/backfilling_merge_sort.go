@@ -115,7 +115,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		1*size.MB,
 		8*1024,
 		onClose,
-		true,
+		false,
 	)
 }
 
