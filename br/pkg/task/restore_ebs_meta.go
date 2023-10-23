@@ -175,10 +175,10 @@ func (h *restoreEBSMetaHelper) restore() error {
 		return errors.Trace(err)
 	}
 
-	storeCount := h.metaInfo.GetStoreCount()
-	progress := h.g.StartProgress(ctx, h.cmdName, int64(storeCount), !h.cfg.LogProgress)
+	volumeCount := h.metaInfo.GetStoreCount() * h.metaInfo.GetTiKVVolumeCount()
+	progress := h.g.StartProgress(ctx, h.cmdName, int64(volumeCount), !h.cfg.LogProgress)
 	defer progress.Close()
-	go progressFileWriterRoutine(ctx, progress, int64(storeCount), h.cfg.ProgressFile)
+	go progressFileWriterRoutine(ctx, progress, int64(volumeCount), h.cfg.ProgressFile)
 
 	resolvedTs = h.metaInfo.ClusterInfo.ResolvedTS
 	if totalSize, err = h.doRestore(ctx, progress); err != nil {
@@ -226,6 +226,8 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		volumeIDMap = make(map[string]string)
 		err         error
 		totalSize   int64
+		// a map whose key is available zone, and value is the snapshot id array
+		snapshotsIDsMap = make(map[string][]*string)
 	)
 	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency, h.cfg.S3.Region)
 	if err != nil {
@@ -238,23 +240,17 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		}
 
 		if h.cfg.UseFSR {
-			err = ec2Session.DisableDataFSR(h.metaInfo, h.cfg.TargetAZ)
+			err = ec2Session.DisableDataFSR(snapshotsIDsMap)
 		}
 	}()
 
 	// Turn on FSR for TiKV data snapshots
 	if h.cfg.UseFSR {
-		snapshotsIDs, targetAZ, err := ec2Session.EnableDataFSR(h.metaInfo, h.cfg.TargetAZ)
+		snapshotsIDsMap, err = ec2Session.EnableDataFSR(h.metaInfo, h.cfg.TargetAZ)
 		if err != nil {
 			return nil, 0, errors.Trace(err)
 		}
 
-		h.cfg.TargetAZ = targetAZ
-
-		err = ec2Session.WaitDataFSREnabled(snapshotsIDs, targetAZ, progress)
-		if err != nil {
-			return nil, 0, errors.Trace(err)
-		}
 	}
 
 	volumeIDMap, err = ec2Session.CreateVolumes(h.metaInfo,
