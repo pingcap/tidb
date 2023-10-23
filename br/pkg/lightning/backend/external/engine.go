@@ -134,6 +134,8 @@ func (e *Engine) LoadIngestData(
 	concurrency = min(concurrency, 8)
 	rangeGroups := split(regionRanges, concurrency)
 
+	logutil.Logger(ctx).Info("load ingest data", zap.Int("concurrency", concurrency),
+		zap.Int("range-groups", len(rangeGroups)))
 	eg, egCtx := errgroup.WithContext(ctx)
 	for _, ranges := range rangeGroups {
 		ranges := ranges
