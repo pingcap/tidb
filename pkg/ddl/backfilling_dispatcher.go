@@ -99,7 +99,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(dsp.d, tblInfo, job)
 	case StepMergeSort:
-		res, err := generateMergePlan(taskHandle, gTask, &backfillMeta)
+		res, err := generateMergePlan(taskHandle, gTask, &backfillMeta, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -116,6 +116,16 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 			if backfillMeta.UseMergeSort {
 				prevStep = StepMergeSort
 			}
+
+			failpoint.Inject("mockWriteIngest", func() {
+				m := &BackfillSubTaskMeta{
+					SortedKVMeta: external.SortedKVMeta{},
+				}
+				metaBytes, _ := json.Marshal(m)
+				metaArr := make([][]byte, 0, 16)
+				metaArr = append(metaArr, metaBytes)
+				failpoint.Return(metaArr, nil)
+			})
 			return generateGlobalSortIngestPlan(
 				ctx,
 				taskHandle,
@@ -209,6 +219,7 @@ func (*BackfillingDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
+// LitBackfillDispatcher wraps BaseDispatcher.
 type LitBackfillDispatcher struct {
 	*dispatcher.BaseDispatcher
 	d *ddl
@@ -223,6 +234,7 @@ func newLitBackfillDispatcher(ctx context.Context, d *ddl, taskMgr dispatcher.Ta
 	return &dsp
 }
 
+// Init implements BaseDispatcher interface.
 func (dsp *LitBackfillDispatcher) Init() (err error) {
 	taskMeta := &BackfillGlobalMeta{}
 	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
@@ -234,6 +246,7 @@ func (dsp *LitBackfillDispatcher) Init() (err error) {
 	return dsp.BaseDispatcher.Init()
 }
 
+// Close implements BaseDispatcher interface.
 func (dsp *LitBackfillDispatcher) Close() {
 	dsp.BaseDispatcher.Close()
 }
@@ -434,6 +447,7 @@ func generateMergePlan(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
 	meta *BackfillGlobalMeta,
+	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
@@ -451,6 +465,7 @@ func generateMergePlan(
 		multiStats = append(multiStats, subtask.MultipleFilesStats...)
 	}
 	if skipMergeSort(multiStats) {
+		logger.Info("skip merge sort")
 		return nil, nil
 	}
 
@@ -558,6 +573,7 @@ func getSummaryFromLastStep(
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
 }
 
+// StepStr convert proto.Step to string.
 func StepStr(step proto.Step) string {
 	switch step {
 	case proto.StepInit:
