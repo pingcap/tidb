@@ -398,11 +398,10 @@ func BuildHistAndTopN(
 					// NOTE: if we don't return here, we may meet panic in the following code.
 					// The i may decrease to a negative value.
 					break
-				} else {
-					i--
-					foundTwice = true
-					continue
 				}
+				i--
+				foundTwice = true
+				continue
 			}
 		}
 	}
