@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -73,12 +72,11 @@ func toSQLIndex(isIndex bool) int {
 // └────────────────────────┘        └───────────────────────┘
 type AsyncMergePartitionStats2GlobalStats struct {
 	is                  infoschema.InfoSchema
+	statsHandle         util.StatsHandle
 	globalStats         *GlobalStats
-	pool                util.SessionPool
 	cmsketch            chan mergeItem[*statistics.CMSketch]
 	fmsketch            chan mergeItem[*statistics.FMSketch]
 	histogramAndTopn    chan mergeItem[*StatsWrapper]
-	gpool               *gp.Pool
 	allPartitionStats   map[int64]*statistics.Table
 	PartitionDefinition map[int64]model.PartitionDefinition
 	tableInfo           map[int64]*model.TableInfo
@@ -88,8 +86,6 @@ type AsyncMergePartitionStats2GlobalStats struct {
 	ioWorkerExitWhenErrChan chan struct{}
 	// cpuWorker exit, it will close this channel to notify ioWorker.
 	cpuWorkerExitChan         chan struct{}
-	getTableByPhysicalIDFn    getTableByPhysicalIDFunc
-	callWithSCtxFunc          callWithSCtxFunc
 	globalTableInfo           *model.TableInfo
 	histIDs                   []int64
 	globalStatsNDV            []int64
@@ -100,15 +96,13 @@ type AsyncMergePartitionStats2GlobalStats struct {
 
 // NewAsyncMergePartitionStats2GlobalStats creates a new AsyncMergePartitionStats2GlobalStats.
 func NewAsyncMergePartitionStats2GlobalStats(
-	gpool *gp.Pool,
+	statsHandle util.StatsHandle,
 	globalTableInfo *model.TableInfo,
 	histIDs []int64,
-	is infoschema.InfoSchema,
-	getTableByPhysicalIDFn getTableByPhysicalIDFunc,
-	callWithSCtxFunc callWithSCtxFunc) (*AsyncMergePartitionStats2GlobalStats, error) {
+	is infoschema.InfoSchema) (*AsyncMergePartitionStats2GlobalStats, error) {
 	partitionNum := len(globalTableInfo.Partition.Definitions)
 	return &AsyncMergePartitionStats2GlobalStats{
-		callWithSCtxFunc:        callWithSCtxFunc,
+		statsHandle:             statsHandle,
 		cmsketch:                make(chan mergeItem[*statistics.CMSketch], 5),
 		fmsketch:                make(chan mergeItem[*statistics.FMSketch], 5),
 		histogramAndTopn:        make(chan mergeItem[*StatsWrapper]),
@@ -118,10 +112,8 @@ func NewAsyncMergePartitionStats2GlobalStats(
 		ioWorkerExitWhenErrChan: make(chan struct{}),
 		cpuWorkerExitChan:       make(chan struct{}),
 		skipPartition:           make(map[skipItem]struct{}),
-		gpool:                   gpool,
 		allPartitionStats:       make(map[int64]*statistics.Table),
 		globalTableInfo:         globalTableInfo,
-		getTableByPhysicalIDFn:  getTableByPhysicalIDFn,
 		histIDs:                 histIDs,
 		is:                      is,
 		partitionNum:            partitionNum,
@@ -146,7 +138,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) prepare(sctx sessionctx.Context, 
 		partitionID := def.ID
 		a.partitionIDs = append(a.partitionIDs, partitionID)
 		a.PartitionDefinition[partitionID] = def
-		partitionTable, ok := a.getTableByPhysicalIDFn(a.is, partitionID)
+		partitionTable, ok := a.statsHandle.TableInfoByID(a.is, partitionID)
 		if !ok {
 			return errors.Errorf("unknown physical ID %d in stats meta table, maybe it has been dropped", partitionID)
 		}
@@ -321,7 +313,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) MergePartitionStats2GlobalStats(
 	tz := sctx.GetSessionVars().StmtCtx.TimeZone()
 	analyzeVersion := sctx.GetSessionVars().AnalyzeVersion
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	return a.callWithSCtxFunc(
+	return util.CallWithSCtx(a.statsHandle.SPool(),
 		func(sctx sessionctx.Context) error {
 			err := a.prepare(sctx, isIndex)
 			if err != nil {
@@ -515,7 +507,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			var poppedTopN []statistics.TopNMeta
 			var allhg []*statistics.Histogram
 			wrapper := item.item
-			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.gpool, sctx, wrapper,
+			a.globalStats.TopN[item.idx], poppedTopN, allhg, err = mergeGlobalStatsTopN(a.statsHandle.GPool(), sctx, wrapper,
 				tz, analyzeVersion, uint32(opts[ast.AnalyzeOptNumTopN]), isIndex)
 			if err != nil {
 				return err
