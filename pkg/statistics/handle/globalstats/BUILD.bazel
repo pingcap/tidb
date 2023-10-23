@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "global_stats.go",
         "global_stats_async.go",
-        "merge_topn.go",
         "merge_worker.go",
         "topn.go",
     ],
