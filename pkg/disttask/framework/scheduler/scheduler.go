@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -137,7 +138,7 @@ func (s *BaseScheduler) Run(ctx context.Context, task *proto.Task) (err error) {
 	return s.updateErrorToSubtask(ctx, task.ID, err)
 }
 
-func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
+func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error) {
 	if ctx.Err() != nil {
 		s.onError(ctx.Err())
 		return s.getError()
@@ -146,7 +147,10 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) error {
 	defer runCancel(ErrFinishSubtask)
 	s.registerCancelFunc(runCancel)
 	s.resetError()
-	logutil.Logger(s.logCtx).Info("scheduler run a step", zap.Any("step", task.Step), zap.Any("concurrency", task.Concurrency))
+	stepLogger := log.BeginTask(logutil.Logger(s.logCtx).With(zap.Any("step", task.Step),
+		zap.Any("concurrency", task.Concurrency)), "schedule step")
+	// log as info level, subtask might be cancelled, let caller check it.
+	defer stepLogger.End(zap.InfoLevel, resErr)
 
 	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
 	if err != nil {

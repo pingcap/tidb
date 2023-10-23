@@ -969,6 +969,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			local.DupeDetectEnabled,
 			local.duplicateDB,
 			local.DuplicateDetectOpt,
+			local.WorkerConcurrency,
 			ts,
 			externalCfg.TotalFileSize,
 			externalCfg.TotalKVCount,

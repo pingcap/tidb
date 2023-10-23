@@ -53,6 +53,7 @@ type Engine struct {
 	duplicateDetection bool
 	duplicateDB        *pebble.DB
 	dupDetectOpt       common.DupDetectOpt
+	workerConcurrency  int
 	ts                 uint64
 
 	totalKVSize  int64
@@ -75,6 +76,7 @@ func NewExternalEngine(
 	duplicateDetection bool,
 	duplicateDB *pebble.DB,
 	dupDetectOpt common.DupDetectOpt,
+	workerConcurrency int,
 	ts uint64,
 	totalKVSize int64,
 	totalKVCount int64,
@@ -94,6 +96,7 @@ func NewExternalEngine(
 		duplicateDetection: duplicateDetection,
 		duplicateDB:        duplicateDB,
 		dupDetectOpt:       dupDetectOpt,
+		workerConcurrency:  workerConcurrency,
 		ts:                 ts,
 		totalKVSize:        totalKVSize,
 		totalKVCount:       totalKVCount,
@@ -133,8 +136,7 @@ func (e *Engine) LoadIngestData(
 ) error {
 	// estimate we will open at most 1000 files, so if e.dataFiles is small we can
 	// try to concurrently process ranges.
-	concurrency := int(MergeSortOverlapThreshold) / len(e.dataFiles)
-	concurrency = min(concurrency, 8)
+	concurrency := e.workerConcurrency
 	rangeGroups := split(regionRanges, concurrency)
 
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("concurrency", concurrency),
