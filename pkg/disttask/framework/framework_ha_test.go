@@ -78,7 +78,7 @@ func (*haTestDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-func (dsp *haTestDispatcherExt) GetNextStep(_ dispatcher.TaskHandle, task *proto.Task) proto.Step {
+func (dsp *haTestDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return proto.StepOne

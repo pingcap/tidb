@@ -137,10 +137,7 @@ func updateMeta(gTask *proto.Task, taskMeta *BackfillGlobalMeta) error {
 }
 
 // GetNextStep implements dispatcher.Extension interface.
-func (dsp *BackfillingDispatcherExt) GetNextStep(
-	taskHandle dispatcher.TaskHandle,
-	task *proto.Task,
-) proto.Step {
+func (dsp *BackfillingDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		return StepReadIndex
