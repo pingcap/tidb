@@ -47,11 +47,15 @@ run_sql_file $CUR/incremental_data/delete_range.sql
 # wait checkpoint advance
 echo "wait checkpoint advance"
 sleep 10
-current_ts=$(echo $(($(date --date "2022-05-15 19:00:00.123 +0800" +%s%3N) << 18)))
+current_ts=$(echo $(($(date +%s%3N) << 18)))
+echo "current ts: $current_ts"
 i=0
 while true; do
-    # run br with failpoint to compare the current checkpoint ts with the current time
-    checkpoint_ts=$(run_br --pd $PD_ADDR log status --task-name integration_test | jq 'if .[0].last_errors | length  == 0 then .[0].checkpoint else empty end' | tail -n 1)
+    # extract the checkpoint ts of the log backup task. If there is some error, the checkpoint ts should be empty
+    log_backup_status=$(unset BR_LOG_TO_TERM && run_br --pd $PD_ADDR log status --task-name integration_test --json 2>/dev/null)
+    echo "log backup status: $log_backup_status"
+    checkpoint_ts=$(echo "$log_backup_status" | head -n 1 | jq 'if .[0].last_errors | length  == 0 then .[0].checkpoint else empty end')
+    echo "checkpoint ts: $checkpoint_ts"
 
     # check whether the checkpoint ts is a number
     if [ $checkpoint_ts -gt 0 ] 2>/dev/null; then
