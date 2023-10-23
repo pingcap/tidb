@@ -287,7 +287,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			giveBackCh:                         e.inputCh,
 			partialResultsBuffer:               make([][][]aggfuncs.PartialResult, finalConcurrency),
 			finalWorkerIdxOfEachGroupKeyBuffer: make([]int, 2048),
-			partialResultsIdxsBuffer:           make([]int, finalConcurrency),
+			prIdxOfFinalWorkerBuffer:           make([]int, finalConcurrency),
 			BInMaps:                            make([]int, finalConcurrency),
 			globalOutputCh:                     e.finalOutputCh,
 			partialResultsMap:                  partialResultsMap,

@@ -40,7 +40,7 @@ type HashAggPartialWorker struct {
 
 	partialResultsBuffer               [][][]aggfuncs.PartialResult
 	finalWorkerIdxOfEachGroupKeyBuffer []int
-	partialResultsIdxsBuffer           []int
+	prIdxOfFinalWorkerBuffer           []int
 
 	BInMaps []int
 
@@ -133,13 +133,13 @@ func (w *HashAggPartialWorker) expandPartialResults(partialResult [][]aggfuncs.P
 	return w.partialResultsBuffer[finalWorkerIdx][:partialResultLen+1]
 }
 
-// getPartialResultsOfEachGroupKey gets the partial results of each group key.
+// getPartialResultsOfEachRow gets the partial results of each group key.
 // If the group key has appeared before, reuse the partial result.
 // If the group key has not appeared before, create empty partial results.
 //
 // All of the partial results will be divided into `finalConcurrency` parts according to the hash value of group key，
 // and the partial results belonging to the same part will be sent to the same final worker.
-func (w *HashAggPartialWorker) getPartialResultsForAllFinalWorker(_ *stmtctx.StatementContext, groupKey [][]byte, mapper []AggPartialResultMapper, finalConcurrency int) ([]int, [][][]aggfuncs.PartialResult) {
+func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementContext, groupKey [][]byte, mapper []AggPartialResultMapper, finalConcurrency int) ([]int, [][][]aggfuncs.PartialResult) {
 	cntOfGroupKeys := len(groupKey)
 	allMemDelta := int64(0)
 	partialResultSize := w.getPartialResultSliceLenConsiderByteAlign()
@@ -191,26 +191,27 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 		return err
 	}
 
-	finalWorkerIdxs, partialResults := w.getPartialResultsForAllFinalWorker(sc, w.groupKey, w.partialResultsMap, finalConcurrency)
+	finalWorkerIdxOfEachRow, partialResultOfEachRow := w.getPartialResultsOfEachRow(sc, w.groupKey, w.partialResultsMap, finalConcurrency)
 
-	partialResultsIdxs := w.partialResultsIdxsBuffer
+	prIdxOfFinalWorker := w.prIdxOfFinalWorkerBuffer
 	for i := 0; i < finalConcurrency; i++ {
-		partialResultsIdxs[i] = 0
+		prIdxOfFinalWorker[i] = 0
 	}
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
-		finalWorkerIdx := finalWorkerIdxs[i]
+		finalWorkerIdx := finalWorkerIdxOfEachRow[i]
+		prOfOneFinalWorker := partialResultOfEachRow[finalWorkerIdx]
 		for j, af := range w.aggFuncs {
 			rows[0] = chk.GetRow(i)
-			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[finalWorkerIdx][partialResultsIdxs[finalWorkerIdx]][j])
+			memDelta, err := af.UpdatePartialResult(ctx, rows, prOfOneFinalWorker[prIdxOfFinalWorker[finalWorkerIdx]][j])
 			if err != nil {
 				return err
 			}
 			allMemDelta += memDelta
 		}
-		partialResultsIdxs[finalWorkerIdx]++
+		prIdxOfFinalWorker[finalWorkerIdx]++
 	}
 	w.memTracker.Consume(allMemDelta)
 	return nil
