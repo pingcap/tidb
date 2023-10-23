@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/tablecodec"
 	filter "github.com/pingcap/tidb/util/table-filter"
 	"go.uber.org/zap"
 )
@@ -567,13 +568,9 @@ func (sr *SchemasReplace) RewriteKvEntry(e *kv.Entry, cf string) (*kv.Entry, err
 func (sr *SchemasReplace) tryToGCJob(job *model.Job) error {
 	if !job.IsCancelled() {
 		switch job.Type {
-		case model.ActionAddIndex, model.ActionAddPrimaryKey:
-			if job.State == model.JobStateRollbackDone {
-				return sr.deleteRange(job)
-			}
-			return nil
 		case model.ActionDropSchema, model.ActionDropTable, model.ActionTruncateTable, model.ActionDropIndex, model.ActionDropPrimaryKey,
-			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes:
+			model.ActionDropTablePartition, model.ActionTruncateTablePartition, model.ActionDropColumn, model.ActionDropColumns, model.ActionModifyColumn, model.ActionDropIndexes,
+			model.ActionAddIndex, model.ActionAddPrimaryKey:
 			return sr.deleteRange(job)
 		case model.ActionMultiSchemaChange:
 			for _, sub := range job.MultiSchemaInfo.SubJobs {
@@ -734,8 +731,14 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 			return errors.Trace(err)
 		}
 
+		tempIdxID := tablecodec.TempIndexPrefix | indexID
 		var elementID int64 = 1
-		indexIDs := []int64{indexID}
+		var indexIDs []int64
+		if job.State == model.JobStateRollbackDone {
+			indexIDs = []int64{indexID, tempIdxID}
+		} else {
+			indexIDs = []int64{tempIdxID}
+		}
 
 		if len(partitionIDs) > 0 {
 			for _, oldPid := range partitionIDs {
