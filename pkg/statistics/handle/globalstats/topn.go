@@ -32,7 +32,7 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	killed := &sc.GetSessionVars().Killed
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
-		return statistics.MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killed)
+		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killed)
 	}
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
