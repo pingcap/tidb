@@ -520,6 +520,19 @@ func TestIssue23553(t *testing.T) {
 	tk.MustExec(`update tt a inner join (select m0 from tt where status!=1 group by m0 having count(*)>1) b on a.m0=b.m0 set a.status=1`)
 }
 
+// see issue https://github.com/pingcap/tidb/issues/47816
+func TestUpdateUnsignedWithOverflow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t1(id int, a int unsigned)")
+	tk.MustExec("set sql_mode=''")
+	tk.MustExec("insert into t1 values(1, 10), (2, 20)")
+	tk.MustExec("update t1 set a='-1' where id=1")
+	tk.MustExec("update t1 set a='1000000000000000000' where id=2")
+	tk.MustQuery("select id, a from t1 order by id asc").Check(testkit.Rows("1 0", "2 4294967295"))
+}
+
 func TestLockUnchangedUniqueKeys(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
