@@ -87,7 +87,7 @@ func TestMergeKVIter(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -139,7 +139,7 @@ func TestOneUpstream(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -217,7 +217,7 @@ func TestCorruptContent(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, kv := range data[i] {
-			err = kvStore.AddData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
+			err = kvStore.addEncodedData(getEncodedData([]byte(kv[0]), []byte(kv[1])))
 			require.NoError(t, err)
 		}
 		if i == 0 {
@@ -354,7 +354,7 @@ func TestHotspot(t *testing.T) {
 		kvStore, err := NewKeyValueStore(ctx, writer, rc)
 		require.NoError(t, err)
 		for _, k := range keys[i] {
-			err = kvStore.AddData(getEncodedData([]byte(k), value))
+			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
@@ -455,13 +455,13 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 		for j := 0; j < checkHotspotPeriod; j++ {
 			key := fmt.Sprintf("key%06d", cur)
 			val := fmt.Sprintf("value%06d", cur)
-			err = kvStore.AddData(getEncodedData([]byte(key), []byte(val)))
+			err = kvStore.addEncodedData(getEncodedData([]byte(key), []byte(val)))
 			require.NoError(t, err)
 			cur++
 		}
 		for j := 0; j <= 12; j++ {
 			key := fmt.Sprintf("key999%06d", cur+j)
-			err = kvStore.AddData(getEncodedData([]byte(key), largeChunk))
+			err = kvStore.addEncodedData(getEncodedData([]byte(key), largeChunk))
 			require.NoError(t, err)
 		}
 		err = writer.Close(ctx)
