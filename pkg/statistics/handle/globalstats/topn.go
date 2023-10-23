@@ -50,11 +50,7 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	} else if batchSize > MaxPartitionMergeBatchSize {
 		batchSize = MaxPartitionMergeBatchSize
 	}
-<<<<<<< HEAD
-	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
-=======
-	return MergeGlobalStatsTopNByConcurrency(gp, int(mergeConcurrency), batchSize, wrapper, timeZone, version, n, isIndex, killed)
->>>>>>> b29265aa01 (*)
+	return MergeGlobalStatsTopNByConcurrency(gp, int(mergeConcurrency), batchSize, wrapper, timeZone, version, n, isIndex, killer)
 }
 
 // MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
