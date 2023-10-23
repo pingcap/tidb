@@ -14,10 +14,35 @@
 
 package chunk
 
-import "testing"
+import (
+	"testing"
 
-func testDataInDiskByChunks(t *testing.T) {
-	numChk, numRow := 10, 1000
+	"github.com/stretchr/testify/require"
+)
+
+func checkChunk(t *testing.T, chk1, chk2 *Chunk) {
+	require.Equal(t, chk1.NumRows(), chk2.NumRows())
+
+	numRows := chk1.NumRows()
+	for i := 0; i < numRows; i++ {
+		checkRow(t, chk1.GetRow(i), chk2.GetRow(i))
+	}
+}
+
+func TestDataInDiskByChunks(t *testing.T) {
+	numChk, numRow := 100, 1000
 	chks, fields := initChunks(numChk, numRow)
+	dataInDiskByChunks := NewDataInDiskByChunks(fields)
+	defer dataInDiskByChunks.Close()
 
+	for _, chk := range chks {
+		err := dataInDiskByChunks.Add(chk)
+		require.NoError(t, err)
+	}
+
+	for i := 0; i < numChk; i++ {
+		chk, err := dataInDiskByChunks.GetChunk(i)
+		require.NoError(t, err)
+		checkChunk(t, chk, chks[i])
+	}
 }

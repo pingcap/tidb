@@ -30,7 +30,7 @@ import (
 
 type colSizeMetaType = int32
 
-const colSizeMetaLen = int(unsafe.Sizeof(int32(0)))
+const colSizeMetaLen = int(unsafe.Sizeof(colSizeMetaType(0)))
 
 // DataInDiskByChunks represents some data stored in temporary disk.
 // They can only be restored by chunks.
@@ -47,8 +47,8 @@ type DataInDiskByChunks struct {
 	buf []byte
 }
 
-// NewDataInDiskByChunk creates a new DataInDiskByChunks with field types.
-func NewDataInDiskByChunk(fieldTypes []*types.FieldType) *DataInDiskByChunks {
+// NewDataInDiskByChunks creates a new DataInDiskByChunks with field types.
+func NewDataInDiskByChunks(fieldTypes []*types.FieldType) *DataInDiskByChunks {
 	l := &DataInDiskByChunks{
 		fieldTypes:    fieldTypes,
 		totalDataSize: 0,
@@ -101,7 +101,6 @@ func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
 	if int64(writeNum) != serializedBytesNum {
 		return errors2.New("Some data fail to be spilled to disk")
 	}
-
 	d.offsetOfEachChunk = append(d.offsetOfEachChunk, d.totalDataSize)
 	d.totalDataSize += serializedBytesNum
 	d.dataFile.offWrite += serializedBytesNum
@@ -188,17 +187,17 @@ func serializeDataToRowBuf(row *Row, rowBuf []byte, tmpBuf []byte, colNum int) (
 	addedBytesNum := int64(0)
 	for j := 0; j < colNum; j++ {
 		if row.IsNull(j) {
-			*(*int64)(unsafe.Pointer(&tmpBuf[0])) = -1
+			*(*colSizeMetaType)(unsafe.Pointer(&tmpBuf[0])) = -1
 			rowBuf = append(rowBuf, tmpBuf...)
 		} else {
 			colBytes := row.GetRaw(j)
-			colBytesNum := int64(len(colBytes))
+			colBytesNum := colSizeMetaType(len(colBytes))
 
-			*(*int64)(unsafe.Pointer(&tmpBuf[0])) = colBytesNum
+			*(*colSizeMetaType)(unsafe.Pointer(&tmpBuf[0])) = colBytesNum
 			rowBuf = append(rowBuf, tmpBuf...)
 			rowBuf = append(rowBuf, colBytes...)
 
-			addedBytesNum += colBytesNum
+			addedBytesNum += int64(colBytesNum)
 		}
 	}
 	return rowBuf, addedBytesNum
@@ -223,8 +222,8 @@ func (d *DataInDiskByChunks) deserializeDataToChunk(data []byte, chk *Chunk) {
 				} else {
 					col.AppendBytes(chunkData)
 				}
+				offset += int(colDataSize)
 			}
-			offset += int(colDataSize)
 		}
 	}
 }
