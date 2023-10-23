@@ -17,7 +17,6 @@ package exec
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -27,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql"
@@ -267,11 +265,8 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		defer func() { base.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
 	}
 	sessVars := base.Ctx().GetSessionVars()
-	if atomic.LoadUint32(&sessVars.Killed) == 2 {
-		return exeerrors.ErrMaxExecTimeExceeded
-	}
-	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		return exeerrors.ErrQueryInterrupted
+	if err := sessVars.SQLKiller.HandleSignal(); err != nil {
+		return err
 	}
 
 	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
@@ -286,13 +281,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 		return err
 	}
 	// recheck whether the session/query is killed during the Next()
-	if atomic.LoadUint32(&sessVars.Killed) == 2 {
-		err = exeerrors.ErrMaxExecTimeExceeded
-	}
-	if atomic.LoadUint32(&sessVars.Killed) == 1 {
-		err = exeerrors.ErrQueryInterrupted
-	}
-	return err
+	return sessVars.SQLKiller.HandleSignal()
 }
 
 // RegisterSQLAndPlanInExecForTopSQL register the sql and plan information if it doesn't register before execution.

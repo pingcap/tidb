@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -215,7 +215,7 @@ func TestSleepVectorized(t *testing.T) {
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
-		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
 	err = f.vecEvalInt(input, result)
 	sub = time.Since(start)

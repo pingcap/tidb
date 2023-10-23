@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -1886,34 +1887,34 @@ func TestOOMPanicAction(t *testing.T) {
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
 	require.Error(t, err)
-	require.Regexp(t, memory.PanicMemoryExceedWarnMsg, err.Error())
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 
 	// Test insert from select oom panic.
 	tk.MustExec("drop table if exists t,t1")
 	tk.MustExec("create table t (a bigint);")
 	tk.MustExec("create table t1 (a bigint);")
 	tk.MustExec("set @@tidb_mem_quota_query=200;")
-	tk.MustMatchErrMsg("insert into t1 values (1),(2),(3),(4),(5);", memory.PanicMemoryExceedWarnMsg)
-	tk.MustMatchErrMsg("replace into t1 values (1),(2),(3),(4),(5);", memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("insert into t1 values (1),(2),(3),(4),(5);")))
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("replace into t1 values (1),(2),(3),(4),(5);")))
 	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=10;")
-	tk.MustMatchErrMsg("insert into t select a from t1 order by a desc;", memory.PanicMemoryExceedWarnMsg)
-	tk.MustMatchErrMsg("replace into t select a from t1 order by a desc;", memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("insert into t select a from t1 order by a desc;")))
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("replace into t select a from t1 order by a desc;")))
 
 	tk.MustExec("set @@tidb_mem_quota_query=10000")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
 	// Set the memory quota to 244 to make this SQL panic during the DeleteExec
 	// instead of the TableReaderExec.
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	tk.MustMatchErrMsg("delete from t", memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("delete from t")))
 
 	tk.MustExec("set @@tidb_mem_quota_query=10000;")
 	tk.MustExec("delete from t1")
 	tk.MustExec("insert into t1 values(1)")
 	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	tk.MustMatchErrMsg("delete t, t1 from t join t1 on t.a = t1.a", memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("delete t, t1 from t join t1 on t.a = t1.a")))
 
 	tk.MustExec("set @@tidb_mem_quota_query=100000;")
 	tk.MustExec("truncate table t")
@@ -1921,7 +1922,7 @@ func TestOOMPanicAction(t *testing.T) {
 	// set the memory to quota to make the SQL panic during UpdateExec instead
 	// of TableReader.
 	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	tk.MustMatchErrMsg("update t set a = 4", memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("update t set a = 4")))
 }
 
 func TestPointGetPreparedPlan(t *testing.T) {
@@ -3954,7 +3955,7 @@ func TestSummaryFailedUpdate(t *testing.T) {
 	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
 	tk.MustExec("set @@tidb_mem_quota_query=1")
-	tk.MustMatchErrMsg("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)", memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)")))
 	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
 	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'").Check(testkit.Rows("Update"))
 }
@@ -4085,7 +4086,7 @@ func TestGlobalMemoryControl2(t *testing.T) {
 		wg.Done()
 	}()
 	sql := "select * from t t1 join t t2 join t t3 on t1.a=t2.a and t1.a=t3.a order by t1.a;" // Need 500MB
-	require.True(t, strings.Contains(tk0.QueryToErr(sql).Error(), memory.PanicMemoryExceedWarnMsg))
+	require.True(t, exeerrors.ErrMemoryExceedForInstance.Equal(tk0.QueryToErr(sql)))
 	require.Equal(t, tk0.Session().GetSessionVars().DiskTracker.MaxConsumed(), int64(0))
 	wg.Wait()
 	test[0] = 0
@@ -4104,7 +4105,7 @@ func TestCompileOutOfMemoryQuota(t *testing.T) {
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
 	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
-	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestSignalCheckpointForSort(t *testing.T) {
@@ -4130,7 +4131,7 @@ func TestSignalCheckpointForSort(t *testing.T) {
 	tk.Session().GetSessionVars().ConnectionID = 123456
 
 	err := tk.QueryToErr("select * from t order by a")
-	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestSessionRootTrackerDetach(t *testing.T) {
@@ -4142,7 +4143,9 @@ func TestSessionRootTrackerDetach(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create table t1(a int, c int, index idx(a))")
 	tk.MustExec("set tidb_mem_quota_query=10")
-	tk.MustContainErrMsg("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a", memory.PanicMemoryExceedWarnMsg)
+	err := tk.ExecToErr("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
+	fmt.Println(err.Error())
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	tk.MustExec("set tidb_mem_quota_query=1000")
 	rs, err := tk.Exec("select /*+hash_join(t1)*/ t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
 	require.NoError(t, err)

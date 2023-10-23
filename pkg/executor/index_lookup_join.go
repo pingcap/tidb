@@ -25,7 +25,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -371,7 +371,7 @@ func (ow *outerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 			ow.lookup.finished.Store(true)
 			logutil.Logger(ctx).Error("outerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
 			task := &lookUpJoinTask{doneCh: make(chan error, 1)}
-			err := errors.Errorf("%v", r)
+			err := util.GetRecoverError(r)
 			task.doneCh <- err
 			ow.pushToChan(ctx, task, ow.resultCh)
 		}
@@ -489,7 +489,7 @@ func (iw *innerWorker) run(ctx context.Context, wg *sync.WaitGroup) {
 		if r := recover(); r != nil {
 			iw.lookup.finished.Store(true)
 			logutil.Logger(ctx).Error("innerWorker panicked", zap.Any("recover", r), zap.Stack("stack"))
-			err := errors.Errorf("%v", r)
+			err := util.GetRecoverError(r)
 			// "task != nil" is guaranteed when panic happened.
 			task.doneCh <- err
 		}

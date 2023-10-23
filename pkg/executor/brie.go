@@ -549,7 +549,7 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		for {
 			select {
 			case <-ticker.C:
-				if atomic.LoadUint32(&e.Ctx().GetSessionVars().Killed) == 1 {
+				if e.Ctx().GetSessionVars().SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
 					bq.cancelTask(taskID)
 					return
 				}

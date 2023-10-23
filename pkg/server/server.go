@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/sys/linux"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	uatomic "go.uber.org/atomic"
@@ -889,9 +890,9 @@ func (s *Server) GetTLSConfig() *tls.Config {
 func killQuery(conn *clientConn, maxExecutionTime bool) {
 	sessVars := conn.ctx.GetSessionVars()
 	if maxExecutionTime {
-		atomic.StoreUint32(&sessVars.Killed, 2)
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	} else {
-		atomic.StoreUint32(&sessVars.Killed, 1)
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
 	conn.mu.RLock()
 	cancelFunc := conn.mu.cancelFunc

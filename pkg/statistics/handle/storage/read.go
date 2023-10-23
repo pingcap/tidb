@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -450,8 +449,8 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		return nil, nil
 	}
 	for _, row := range rows {
-		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
-			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
 		}
 		if row.GetInt64(1) > 0 {
 			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)

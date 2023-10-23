@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -682,7 +681,7 @@ func TestCancelMppTasks(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 0)
+	tk.Session().GetSessionVars().SQLKiller.Reset()
 	require.Nil(t, failpoint.Enable(hang, `return(true)`))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
@@ -693,7 +692,7 @@ func TestCancelMppTasks(t *testing.T) {
 		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	time.Sleep(1 * time.Second)
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	wg.Wait()
 	require.Nil(t, failpoint.Disable(hang))
 }
@@ -1481,7 +1480,7 @@ func TestMPPMemoryTracker(t *testing.T) {
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestTiFlashComputeDispatchPolicy(t *testing.T) {

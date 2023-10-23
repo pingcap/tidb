@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -717,7 +717,7 @@ select * from t1;
 
 		err = tk.QueryToErr("select * from `information_schema`.`slow_query` where time > '2022-04-14 00:00:00' and time < '2022-04-15 00:00:00'")
 		require.Error(t, err, quota)
-		require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg, quota)
+		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	}
 	memQuotas := []int{128, 512, 1024, 2048, 4096}
 	for _, quota := range memQuotas {

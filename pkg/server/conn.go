@@ -98,7 +98,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -1187,7 +1186,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	defer func() {
 		// reset killed for each request
-		atomic.StoreUint32(&cc.ctx.GetSessionVars().Killed, 0)
+		cc.ctx.GetSessionVars().SQLKiller.Reset()
 	}()
 	t := time.Now()
 	if (cc.ctx.Status() & mysql.ServerStatusInTrans) > 0 {
@@ -1252,7 +1251,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 
 	vars := cc.ctx.GetSessionVars()
 	// reset killed for each request
-	atomic.StoreUint32(&vars.Killed, 0)
+	vars.SQLKiller.Reset()
 	if cmd < mysql.ComEnd {
 		cc.ctx.SetCommandValue(cmd)
 	}
@@ -1586,7 +1585,7 @@ func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *execut
 		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
 		for !drained {
 			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().Killed, 1, 0) {
+			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().SQLKiller.Signal, 1, 0) {
 				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
 				return exeerrors.ErrQueryInterrupted
 			}
@@ -2149,11 +2148,15 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 		if r == nil {
 			return
 		}
-		if str, ok := r.(string); !ok || !strings.HasPrefix(str, memory.PanicMemoryExceedWarnMsg) {
+		if recoverdErr, ok := r.(error); !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
+			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
+			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
+			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)
+		} else {
+			runErr = recoverdErr
 		}
 		// TODO(jianzhang.zj: add metrics here)
-		runErr = errors.Errorf("%v", r)
 		logutil.Logger(ctx).Error("write query result panic", zap.Stringer("lastSQL", getLastStmtInConn{cc}), zap.Stack("stack"), zap.Any("recover", r))
 	}()
 	cc.initResultEncoder(ctx)

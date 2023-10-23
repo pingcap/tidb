@@ -573,7 +573,11 @@ func (c *SortedRowContainer) Sort() (ret error) {
 	ret = nil
 	defer func() {
 		if r := recover(); r != nil {
-			ret = fmt.Errorf("%v", r)
+			if err, ok := r.(error); ok {
+				ret = err
+			} else {
+				ret = fmt.Errorf("%v", r)
+			}
 		}
 	}()
 	if c.ptrM.rowPtrs != nil {

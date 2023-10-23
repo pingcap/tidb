@@ -62,6 +62,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -1126,7 +1127,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 		}
 
 		// If the connection being killed, we need to CANCEL the DDL job.
-		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+		if sessVars.SQLKiller.HandleSignal() == exeerrors.ErrQueryInterrupted {
 			if atomic.LoadInt32(&sessVars.ConnectionStatus) == variable.ConnStatusShutdown {
 				logutil.BgLogger().Info("DoDDLJob will quit because context done", zap.String("category", "ddl"))
 				return context.Canceled

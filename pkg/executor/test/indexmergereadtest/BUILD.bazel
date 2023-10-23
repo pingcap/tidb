@@ -18,7 +18,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testutil",
         "//pkg/util",
-        "//pkg/util/memory",
+        "//pkg/util/dbterror/exeerrors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",

@@ -1211,7 +1211,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 		return nil, err
 	}
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
-	lockCtx.Killed = &seVars.Killed
+	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
@@ -1844,7 +1844,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
-			result.err = errors.Errorf("%v", r)
+			result.err = util.GetRecoverError(r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
 		}
@@ -1993,6 +1993,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Detach()
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
+	vars.MemTracker.Killer = &vars.SQLKiller
+	vars.DiskTracker.Killer = &vars.SQLKiller
+	vars.SQLKiller.Reset()
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
 	isAnalyze := false
@@ -2015,7 +2018,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
 	switch variable.OOMAction.Load() {
 	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID}
+		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	case variable.OOMActionLog:

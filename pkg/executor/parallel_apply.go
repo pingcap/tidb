@@ -20,12 +20,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/applycache"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -267,7 +267,7 @@ func (e *ParallelNestedLoopApplyExec) putResult(chk *chunk.Chunk, err error) (ex
 
 func (e *ParallelNestedLoopApplyExec) handleWorkerPanic(ctx context.Context, wg *sync.WaitGroup) {
 	if r := recover(); r != nil {
-		err := errors.Errorf("%v", r)
+		err := util.GetRecoverError(r)
 		logutil.Logger(ctx).Error("parallel nested loop join worker panicked", zap.Error(err), zap.Stack("stack"))
 		e.resultChkCh <- result{nil, err}
 	}

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -254,8 +255,8 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
-	err := errors.Errorf("%v", r)
-	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
+	err := util.GetRecoverError(r)
+	output <- &shuffleOutput{err: util.GetRecoverError(r)}
 	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 

@@ -16,13 +16,11 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"runtime/trace"
 	"slices"
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -31,6 +29,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -296,7 +295,7 @@ func (omw *outerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 	defer func() {
 		if r := recover(); r != nil {
 			task := &lookUpMergeJoinTask{
-				doneErr: fmt.Errorf("%v", r),
+				doneErr: util.GetRecoverError(r),
 				results: make(chan *indexMergeJoinResult, numResChkHold),
 			}
 			close(task.results)
@@ -395,7 +394,7 @@ func (imw *innerMergeWorker) run(ctx context.Context, wg *sync.WaitGroup, cancel
 		wg.Done()
 		if r := recover(); r != nil {
 			if task != nil {
-				task.doneErr = errors.Errorf("%v", r)
+				task.doneErr = util.GetRecoverError(r)
 				close(task.results)
 			}
 			logutil.Logger(ctx).Error("innerMergeWorker panicked", zap.Any("recover", r), zap.Stack("stack"))

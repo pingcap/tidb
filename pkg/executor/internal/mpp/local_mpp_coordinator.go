@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -382,7 +383,7 @@ func (c *localMppCoordinator) sendToRespCh(resp *mppResponse) (exit bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("localMppCoordinator panic", zap.Stack("stack"), zap.Any("recover", r))
-			c.sendError(errors.New(fmt.Sprint(r)))
+			c.sendError(util2.GetRecoverError(r))
 		}
 	}()
 	if c.memTracker != nil {

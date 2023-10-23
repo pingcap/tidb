@@ -1871,6 +1871,16 @@ error = '''
 BRIE Job %d not found
 '''
 
+["executor:8175"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]
+'''
+
+["executor:8176"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s

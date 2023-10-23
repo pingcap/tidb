@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -824,7 +824,7 @@ func TestOrderByAndLimit(t *testing.T) {
 	tk.MustExec("set global tidb_mem_oom_action=CANCEL")
 	err := tk.QueryToErr("select /*+ LIMIT_TO_COP() */ a from trange use index(idx_a) where a > 1 order by a limit 2000")
 	require.Error(t, err)
-	require.Regexp(t, memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery, err)
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	tk.MustExec(fmt.Sprintf("set session tidb_mem_quota_query=%s", originMemQuota))
 	tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action=%s", originOOMAction))
 }

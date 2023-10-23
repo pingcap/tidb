@@ -84,6 +84,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
@@ -2959,7 +2960,7 @@ func (s *SysProcesses) Track(id uint64, proc sessionctx.Context) error {
 	}
 	s.procMap[id] = proc
 	proc.GetSessionVars().ConnectionID = id
-	atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+	proc.GetSessionVars().SQLKiller.Reset()
 	return nil
 }
 
@@ -2970,7 +2971,7 @@ func (s *SysProcesses) UnTrack(id uint64) {
 	if proc, ok := s.procMap[id]; ok {
 		delete(s.procMap, id)
 		proc.GetSessionVars().ConnectionID = 0
-		atomic.StoreUint32(&proc.GetSessionVars().Killed, 0)
+		proc.GetSessionVars().SQLKiller.Reset()
 	}
 }
 
@@ -2993,6 +2994,6 @@ func (s *SysProcesses) KillSysProcess(id uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if proc, ok := s.procMap[id]; ok {
-		atomic.StoreUint32(&proc.GetSessionVars().Killed, 1)
+		proc.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}
 }
