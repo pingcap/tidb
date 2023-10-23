@@ -65,6 +65,7 @@ func (expr *ScalarFunction) ExplainNormalizedInfo() string {
 	return expr.explainInfo(true)
 }
 
+// ExplainNormalizedInfo4InList implements the Expression interface.
 func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
@@ -183,6 +184,7 @@ func SortedExplainExpressionList(exprs []Expression) []byte {
 	return sortedExplainExpressionList(exprs, false, false)
 }
 
+// SortedExplainExpressionListIgnoreInlist generates explain information for a list of expressions in order.
 func SortedExplainExpressionListIgnoreInlist(exprs []Expression) []byte {
 	return sortedExplainExpressionList(exprs, false, true)
 }
