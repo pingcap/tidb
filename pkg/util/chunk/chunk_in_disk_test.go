@@ -13,3 +13,11 @@
 // limitations under the License.
 
 package chunk
+
+import "testing"
+
+func testDataInDiskByChunks(t *testing.T) {
+	numChk, numRow := 10, 1000
+	chks, fields := initChunks(numChk, numRow)
+
+}

@@ -32,9 +32,9 @@ type colSizeMetaType = int32
 
 const colSizeMetaLen = int(unsafe.Sizeof(int32(0)))
 
-// DataInDiskByChunk represents some data stored in temporary disk.
+// DataInDiskByChunks represents some data stored in temporary disk.
 // They can only be restored by chunks.
-type DataInDiskByChunk struct {
+type DataInDiskByChunks struct {
 	fieldTypes        []*types.FieldType
 	offsetOfEachChunk []int64
 
@@ -47,9 +47,9 @@ type DataInDiskByChunk struct {
 	buf []byte
 }
 
-// NewDataInDiskByChunk creates a new DataInDiskByChunk with field types.
-func NewDataInDiskByChunk(fieldTypes []*types.FieldType) *DataInDiskByChunk {
-	l := &DataInDiskByChunk{
+// NewDataInDiskByChunk creates a new DataInDiskByChunks with field types.
+func NewDataInDiskByChunk(fieldTypes []*types.FieldType) *DataInDiskByChunks {
+	l := &DataInDiskByChunks{
 		fieldTypes:    fieldTypes,
 		totalDataSize: 0,
 		// TODO: set the quota of disk usage.
@@ -59,7 +59,7 @@ func NewDataInDiskByChunk(fieldTypes []*types.FieldType) *DataInDiskByChunk {
 	return l
 }
 
-func (d *DataInDiskByChunk) initDiskFile() (err error) {
+func (d *DataInDiskByChunks) initDiskFile() (err error) {
 	err = disk.CheckAndInitTempDir()
 	if err != nil {
 		return
@@ -72,13 +72,13 @@ func (d *DataInDiskByChunk) initDiskFile() (err error) {
 }
 
 // GetDiskTracker returns the memory tracker of this List.
-func (d *DataInDiskByChunk) GetDiskTracker() *disk.Tracker {
+func (d *DataInDiskByChunks) GetDiskTracker() *disk.Tracker {
 	return d.diskTracker
 }
 
-// Add adds a chunk to the DataInDiskByChunk. Caller must make sure the input chk has the same field types.
+// Add adds a chunk to the DataInDiskByChunks. Caller must make sure the input chk has the same field types.
 // Warning: Do not concurrently call this function.
-func (d *DataInDiskByChunk) Add(chk *Chunk) (err error) {
+func (d *DataInDiskByChunks) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
 		return errors2.New("Chunk spilled to disk should have at least 1 row")
 	}
@@ -110,7 +110,7 @@ func (d *DataInDiskByChunk) Add(chk *Chunk) (err error) {
 	return
 }
 
-func (d *DataInDiskByChunk) getChunkSize(chkIdx int) int64 {
+func (d *DataInDiskByChunks) getChunkSize(chkIdx int) int64 {
 	totalChunkNum := len(d.offsetOfEachChunk)
 	if chkIdx == totalChunkNum-1 {
 		return d.totalDataSize - d.offsetOfEachChunk[chkIdx]
@@ -118,8 +118,8 @@ func (d *DataInDiskByChunk) getChunkSize(chkIdx int) int64 {
 	return d.offsetOfEachChunk[chkIdx+1] - d.offsetOfEachChunk[chkIdx]
 }
 
-// GetChunk gets a Chunk from the DataInDiskByChunk by chkIdx.
-func (d *DataInDiskByChunk) GetChunk(chkIdx int) (*Chunk, error) {
+// GetChunk gets a Chunk from the DataInDiskByChunks by chkIdx.
+func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 	reader := bufio.NewReader(d.dataFile.getSectionReader(d.offsetOfEachChunk[chkIdx]))
 	chkSize := d.getChunkSize(chkIdx)
 
@@ -145,7 +145,7 @@ func (d *DataInDiskByChunk) GetChunk(chkIdx int) (*Chunk, error) {
 }
 
 // Close releases the disk resource.
-func (d *DataInDiskByChunk) Close() error {
+func (d *DataInDiskByChunks) Close() error {
 	if d.dataFile.file != nil {
 		d.diskTracker.Consume(-d.diskTracker.BytesConsumed())
 		terror.Call(d.dataFile.file.Close)
@@ -161,7 +161,7 @@ func (d *DataInDiskByChunk) Close() error {
 // row4: | col1 size | col1 data | col2 size | col2 data | col3 size | col3 data |
 //
 // Column size will be -1 if column data is null.
-func (d *DataInDiskByChunk) serializeDataToBuf(chk *Chunk) int64 {
+func (d *DataInDiskByChunks) serializeDataToBuf(chk *Chunk) int64 {
 	d.buf = d.buf[0:0] // clear the buf data
 
 	rowNum := chk.NumRows()
@@ -204,7 +204,7 @@ func serializeDataToRowBuf(row *Row, rowBuf []byte, tmpBuf []byte, colNum int) (
 	return rowBuf, addedBytesNum
 }
 
-func (d *DataInDiskByChunk) deserializeDataToChunk(data []byte, chk *Chunk) {
+func (d *DataInDiskByChunks) deserializeDataToChunk(data []byte, chk *Chunk) {
 	colNum := len(d.fieldTypes)
 	dataSize := len(data)
 	offset := 0
