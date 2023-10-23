@@ -631,7 +631,7 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 // Compare compares datum to another datum.
 // Notes: don't rely on datum.collation to get the collator, it's tend to buggy.
 func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collate.Collator) (int, error) {
-	typeCtx := DefaultNoWarningContext
+	typeCtx := DefaultStmtNoWarningContext
 	if sc != nil {
 		typeCtx = sc.TypeCtx()
 	}
@@ -1194,17 +1194,15 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	)
 	switch d.k {
 	case KindInt64:
-		val, err = ConvertIntToUint(sc, d.GetInt64(), upperBound, tp)
+		val, err = ConvertIntToUint(sc.TypeFlags(), d.GetInt64(), upperBound, tp)
 	case KindUint64:
 		val, err = ConvertUintToUint(d.GetUint64(), upperBound, tp)
 	case KindFloat32, KindFloat64:
-		val, err = ConvertFloatToUint(sc, d.GetFloat64(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc.TypeFlags(), d.GetFloat64(), upperBound, tp)
 	case KindString, KindBytes:
-		uval, err1 := StrToUint(sc.TypeCtxOrDefault(), d.GetString(), false)
-		if err1 != nil && ErrOverflow.Equal(err1) && !sc.ShouldIgnoreOverflowError() {
-			return ret, errors.Trace(err1)
-		}
-		val, err = ConvertUintToUint(uval, upperBound, tp)
+		var err1 error
+		val, err1 = StrToUint(sc.TypeCtxOrDefault(), d.GetString(), false)
+		val, err = ConvertUintToUint(val, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
@@ -1215,7 +1213,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		if err == nil {
 			err = err1
 		}
-		val, err1 = ConvertIntToUint(sc, ival, upperBound, tp)
+		val, err1 = ConvertIntToUint(sc.TypeFlags(), ival, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
@@ -1230,9 +1228,9 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	case KindMysqlDecimal:
 		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
 	case KindMysqlEnum:
-		val, err = ConvertFloatToUint(sc, d.GetMysqlEnum().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc.TypeFlags(), d.GetMysqlEnum().ToNumber(), upperBound, tp)
 	case KindMysqlSet:
-		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc.TypeFlags(), d.GetMysqlSet().ToNumber(), upperBound, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err = d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
 		if err == nil {

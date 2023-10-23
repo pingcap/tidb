@@ -428,7 +428,7 @@ type StatementContext struct {
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.DefaultStmtFlags, time.UTC, sc.AppendWarning)
 	return sc
 }
 
@@ -436,14 +436,14 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.Assert(tz)
 	sc := &StatementContext{}
-	sc.typeCtx = typectx.NewContext(typectx.StrictFlags, tz, sc.AppendWarning)
+	sc.typeCtx = typectx.NewContext(typectx.DefaultStmtFlags, tz, sc.AppendWarning)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		typeCtx: typectx.NewContext(typectx.StrictFlags, time.UTC, sc.AppendWarning),
+		typeCtx: typectx.NewContext(typectx.DefaultStmtFlags, time.UTC, sc.AppendWarning),
 	}
 }
 
@@ -470,12 +470,6 @@ func (sc *StatementContext) TypeFlags() typectx.Flags {
 
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags typectx.Flags) {
-	sc.typeCtx = sc.typeCtx.WithFlags(flags)
-}
-
-// UpdateTypeFlags updates the flags of the type context
-func (sc *StatementContext) UpdateTypeFlags(fn func(typectx.Flags) typectx.Flags) {
-	flags := fn(sc.typeCtx.Flags())
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
 }
 
@@ -1133,23 +1127,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	return details
 }
 
-// ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
-// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
-// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-func (sc *StatementContext) ShouldClipToZero() bool {
-	return sc.InInsertStmt || sc.InLoadDataStmt || sc.InUpdateStmt || sc.InCreateOrAlterStmt || sc.IsDDLJobInQueue
-}
-
-// ShouldIgnoreOverflowError indicates whether we should ignore the error when type conversion overflows,
-// so we can leave it for further processing like clipping values less than 0 to 0 for unsigned integer types.
-func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
-	// TODO: move this function into `/types` pkg
-	if (sc.InInsertStmt && sc.TypeFlags().TruncateAsWarning()) || sc.InLoadDataStmt {
-		return true
-	}
-	return false
-}
-
 // PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) PushDownFlags() uint64 {
 	var flags uint64
@@ -1236,12 +1213,11 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
-
-	typeFlags := sc.TypeFlags()
-	typeFlags = typeFlags.
+	sc.SetTypeFlags(typectx.DefaultStmtFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
-		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0)
-	sc.typeCtx = typectx.NewContext(typeFlags, tz, sc.AppendWarning)
+		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt),
+	)
 }
 
 // GetLockWaitStartTime returns the statement pessimistic lock wait start time
@@ -1389,7 +1365,7 @@ func (sc *StatementContext) TypeCtxOrDefault() typectx.Context {
 		return sc.typeCtx
 	}
 
-	return typectx.DefaultNoWarningContext
+	return typectx.DefaultStmtNoWarningContext
 }
 
 // UsedStatsInfoForTable records stats that are used during query and their information.
