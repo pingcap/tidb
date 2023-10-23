@@ -36,12 +36,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mathutil"
-	filter "github.com/pingcap/tidb/util/table-filter"
-	router "github.com/pingcap/tidb/util/table-router"
+	tidbcfg "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -148,7 +147,7 @@ type DBStore struct {
 	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
-	Vars                       map[string]string `toml:"-" json:"vars"`
+	Vars                       map[string]string `toml:"session-vars" json:"vars"`
 
 	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
 	UUID         string         `toml:"-" json:"-"`
@@ -1370,7 +1369,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	if c.MaxRecordRows < 0 {
 		maxErr := l.MaxError
 		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := mathutil.Max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
+		maxAccepted := max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
 		if maxAccepted < defaultMaxRecordRows {
 			maxAccepted = defaultMaxRecordRows
 		}

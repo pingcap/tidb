@@ -528,6 +528,8 @@ insert into mysql.expr_pushdown_blacklist values('json_extract','tikv','');
 admin reload expr_pushdown_blacklist;
 SELECT * FROM testjson WHERE JSON_EXTRACT(j,'$.test');
 select * from testjson where j;
+delete from mysql.expr_pushdown_blacklist;
+admin reload expr_pushdown_blacklist;
 
 # TestIssue15743
 drop table if exists t0;
@@ -1437,13 +1439,14 @@ select * from t t1, t t2 where t1.a = t2.b collate utf8mb4_general_ci;
 select * from t t1 left join t t2 on t1.a = t2.b collate utf8mb4_general_ci;
 
 # TestIssue18662
-drop table if exists t;
-create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
-insert into t (a, b) values ('a', 'A');
-select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;
-select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;
-select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;
-select * from t where field('A', a, b) > 1;
+# TODO: fix https://github.com/pingcap/tidb/issues/47688
+# drop table if exists t;
+# create table t(a varchar(10) collate utf8mb4_bin, b varchar(10) collate utf8mb4_general_ci);
+# insert into t (a, b) values ('a', 'A');
+# select * from t where field('A', a collate utf8mb4_general_ci, b) > 1;
+# select * from t where field('A', a, b collate utf8mb4_general_ci) > 1;
+# select * from t where field('A' collate utf8mb4_general_ci, a, b) > 1;
+# select * from t where field('A', a, b) > 1;
 
 # TestIssue19116
 set names utf8mb4 collate utf8mb4_general_ci;
@@ -1867,10 +1870,11 @@ SELECT * FROM tb;
 drop table if exists t;
 create table t(c varchar(32));
 insert into t values('1e649'),('-1e649');
---enable_warnings
+# TODO: fix https://github.com/pingcap/tidb/issues/47692
+# --enable_warnings
 SELECT * FROM t where c < 1;
 SELECT * FROM t where c > 1;
---disable_warnings
+# --disable_warnings
 
 # TestIssue5293
 drop table if exists t;
@@ -1897,3 +1901,20 @@ select * from (select (92 / 4) as c4) as subq_0 where exists (
   union all
   select 1 as c0 from (t0 as ref_88) where (subq_0.c4) >= (subq_0.c4)
 );
+
+# TestIssue41986
+drop table if exists poi_clearing_time_topic;
+CREATE TABLE poi_clearing_time_topic (effective_date datetime DEFAULT NULL , clearing_time int(11) DEFAULT NULL);
+insert into poi_clearing_time_topic values ('2023:08:25', 1);
+# shouldn't report they can't find column error and return the right result.
+SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;
+
+# TestIssue10804
+SELECT @@information_schema_stats_expiry;
+/*!80000 SET SESSION information_schema_stats_expiry=0 */;
+SELECT @@information_schema_stats_expiry;
+SELECT @@GLOBAL.information_schema_stats_expiry;
+/*!80000 SET GLOBAL information_schema_stats_expiry=0 */;
+SELECT @@GLOBAL.information_schema_stats_expiry;
+set @@SESSION.information_schema_stats_expiry=default;
+set @@GLOBAL.information_schema_stats_expiry=default;

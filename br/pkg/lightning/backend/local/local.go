@@ -53,13 +53,13 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/infoschema"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -457,7 +457,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 }
 
 func (c *BackendConfig) adjust() {
-	c.MaxOpenFiles = mathutil.Max(c.MaxOpenFiles, openFilesLowerThreshold)
+	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
 }
 
 // Backend is a local backend.
@@ -964,6 +964,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 			externalCfg.MinKey,
 			externalCfg.MaxKey,
 			externalCfg.SplitKeys,
+			externalCfg.RegionSplitSize,
 			local.keyAdapter,
 			local.DupeDetectEnabled,
 			local.duplicateDB,
@@ -1166,8 +1167,7 @@ func (local *Backend) generateAndSendJob(
 	jobWg *sync.WaitGroup,
 ) error {
 	logger := log.FromContext(ctx)
-	// TODO(lance6716): external engine should also support split into smaller ranges
-	// to improve concurrency.
+	// for external engine, it will split into smaller data inside LoadIngestData
 	if localEngine, ok := engine.(*Engine); ok {
 		// when use dynamic region feature, the region may be very big, we need
 		// to split to smaller ranges to increase the concurrency.
@@ -1186,51 +1186,55 @@ func (local *Backend) generateAndSendJob(
 
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	eg, egCtx := errgroup.WithContext(ctx)
-	eg.SetLimit(local.WorkerConcurrency)
-	for _, jobRange := range jobRanges {
-		r := jobRange
-		data, err := engine.LoadIngestData(ctx, r.Start, r.End)
-		if err != nil {
-			cancel()
-			err2 := eg.Wait()
-			if err2 != nil && !common.IsContextCanceledError(err2) {
-				logger.Warn("meet error when canceling", log.ShortError(err2))
-			}
-			return errors.Trace(err)
-		}
-		eg.Go(func() error {
-			if egCtx.Err() != nil {
-				return nil
-			}
 
-			failpoint.Inject("beforeGenerateJob", nil)
-			jobs, err := local.generateJobForRange(egCtx, data, r, regionSplitSize, regionSplitKeys)
-			if err != nil {
-				if common.IsContextCanceledError(err) {
-					return nil
-				}
-				return err
-			}
-			for _, job := range jobs {
-				data.IncRef()
-				jobWg.Add(1)
+	dataAndRangeCh := make(chan common.DataAndRange)
+	for i := 0; i < local.WorkerConcurrency; i++ {
+		eg.Go(func() error {
+			for {
 				select {
 				case <-egCtx.Done():
-					// this job is not put into jobToWorkerCh
-					jobWg.Done()
-					// if the context is canceled, it means worker has error, the first error can be
-					// found by worker's error group LATER. if this function returns an error it will
-					// seize the "first error".
 					return nil
-				case jobToWorkerCh <- job:
+				case p, ok := <-dataAndRangeCh:
+					if !ok {
+						return nil
+					}
+
+					failpoint.Inject("beforeGenerateJob", nil)
+					jobs, err := local.generateJobForRange(egCtx, p.Data, p.Range, regionSplitSize, regionSplitKeys)
+					if err != nil {
+						if common.IsContextCanceledError(err) {
+							return nil
+						}
+						return err
+					}
+					for _, job := range jobs {
+						job.ref(jobWg)
+						select {
+						case <-egCtx.Done():
+							// this job is not put into jobToWorkerCh
+							job.done(jobWg)
+							// if the context is canceled, it means worker has error, the first error can be
+							// found by worker's error group LATER. if this function returns an error it will
+							// seize the "first error".
+							return nil
+						case jobToWorkerCh <- job:
+						}
+					}
 				}
 			}
-			return nil
 		})
 	}
+
+	eg.Go(func() error {
+		err := engine.LoadIngestData(egCtx, jobRanges, dataAndRangeCh)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		close(dataAndRangeCh)
+		return nil
+	})
+
 	return eg.Wait()
 }
 
@@ -1318,6 +1322,7 @@ func (local *Backend) startWorker(
 	jobInCh, jobOutCh chan *regionJob,
 	jobWg *sync.WaitGroup,
 ) error {
+	metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Set(0)
 	for {
 		select {
 		case <-ctx.Done():
@@ -1329,7 +1334,9 @@ func (local *Backend) startWorker(
 				return nil
 			}
 
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Inc()
 			err := local.executeJob(ctx, job)
+			metrics.GlobalSortIngestWorkerCnt.WithLabelValues("execute job").Dec()
 			switch job.stage {
 			case regionScanned, wrote, ingested:
 				jobOutCh <- job
@@ -1345,14 +1352,13 @@ func (local *Backend) startWorker(
 					// Don't need to put the job back to retry, because generateJobForRange
 					// has done the retry internally. Here just done for the "needRescan"
 					// job and exit directly.
-					jobWg.Done()
+					job.done(jobWg)
 					return err2
 				}
 				// 1 "needRescan" job becomes len(jobs) "regionScanned" jobs.
 				newJobCnt := len(jobs) - 1
-				jobWg.Add(newJobCnt)
 				for newJobCnt > 0 {
-					job.ingestData.IncRef()
+					job.ref(jobWg)
 					newJobCnt--
 				}
 				for _, j := range jobs {
@@ -1635,7 +1641,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 				if job.retryCount > maxWriteAndIngestRetryTimes {
 					firstErr.Set(job.lastRetryableErr)
 					workerCancel()
-					jobWg.Done()
+					job.done(&jobWg)
 					continue
 				}
 				// max retry backoff time: 2+4+8+16+30*26=810s
@@ -1652,10 +1658,10 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 					zap.Time("waitUntil", job.waitUntil))
 				if !retryer.push(job) {
 					// retryer is closed by worker error
-					jobWg.Done()
+					job.done(&jobWg)
 				}
 			case ingested:
-				jobWg.Done()
+				job.done(&jobWg)
 			case needRescan:
 				panic("should not reach here")
 			}
@@ -1686,7 +1692,10 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 	if err != nil {
 		firstErr.Set(err)
 		workerCancel()
-		_ = workGroup.Wait()
+		err2 := workGroup.Wait()
+		if !common.IsContextCanceledError(err2) {
+			log.FromContext(ctx).Error("worker meets error", zap.Error(err2))
+		}
 		return firstErr.Get()
 	}
 

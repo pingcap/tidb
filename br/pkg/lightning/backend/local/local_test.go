@@ -50,14 +50,14 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/keyspace"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/engine"
-	"github.com/pingcap/tidb/util/hack"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
@@ -108,7 +108,7 @@ func TestNextKey(t *testing.T) {
 		{types.NewStringDatum("test\255"), types.NewStringDatum("test\255\000")},
 	}
 
-	stmtCtx := new(stmtctx.StatementContext)
+	stmtCtx := stmtctx.NewStmtCtx()
 	for _, datums := range testDatums {
 		keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(123), datums[0])
 		require.NoError(t, err)
@@ -1209,6 +1209,8 @@ func (m mockIngestData) GetTS() uint64 { return 0 }
 
 func (m mockIngestData) IncRef() {}
 
+func (m mockIngestData) DecRef() {}
+
 func (m mockIngestData) Finish(_, _ int64) {}
 
 func TestCheckPeersBusy(t *testing.T) {
@@ -1741,6 +1743,77 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		job := <-jobCh
 		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
 		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
+		jobWg.Done()
+	}
+	jobWg.Wait()
+}
+
+func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	backup := external.LargeRegionSplitDataThreshold
+	external.LargeRegionSplitDataThreshold = 1
+	t.Cleanup(func() {
+		external.LargeRegionSplitDataThreshold = backup
+	})
+
+	ctx := context.Background()
+	local := &Backend{
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},      // we have one big region
+			panicSplitRegionClient{}, // make sure no further split region
+		),
+	}
+	local.BackendConfig.WorkerConcurrency = 1
+	bigRegionRange := []common.Range{{Start: []byte{1}, End: []byte{11}}}
+
+	keys := make([][]byte, 0, 10)
+	value := make([][]byte, 0, 10)
+	for i := byte(1); i <= 10; i++ {
+		keys = append(keys, []byte{i})
+		value = append(value, []byte{i})
+	}
+	memStore := storage.NewMemStorage()
+
+	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
+	require.NoError(t, err)
+
+	extEngine := external.NewExternalEngine(
+		memStore,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{10},
+		[][]byte{{1}, {11}},
+		1<<30,
+		common.NoopKeyAdapter{},
+		false,
+		nil,
+		common.DupDetectOpt{},
+		123,
+		456,
+		789,
+	)
+
+	jobCh := make(chan *regionJob, 10)
+	jobWg := sync.WaitGroup{}
+	err = local.generateAndSendJob(
+		ctx,
+		extEngine,
+		bigRegionRange,
+		10*units.GB,
+		1<<30,
+		jobCh,
+		&jobWg,
+	)
+	require.NoError(t, err)
+	require.Len(t, jobCh, 10)
+	for i := 0; i < 10; i++ {
+		job := <-jobCh
+		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
+		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
+		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte{byte(i + 1)}, firstKey)
+		require.Equal(t, []byte{byte(i + 1)}, lastKey)
 		jobWg.Done()
 	}
 	jobWg.Wait()

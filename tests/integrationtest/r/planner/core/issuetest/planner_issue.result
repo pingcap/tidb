@@ -1,0 +1,123 @@
+CREATE TABLE aa311c3c (
+57fd8d09 year(4) DEFAULT '1913',
+afbdd7c3 char(220) DEFAULT 'gakkl6occ0yd2jmhi2qxog8szibtcqwxyxmga3hp4ktszjplmg3rjvu8v6lgn9q6hva2lekhw6napjejbut6svsr8q2j8w8rc551e5vq',
+43b06e99 date NOT NULL DEFAULT '3403-10-08',
+b80b3746 tinyint(4) NOT NULL DEFAULT '34',
+6302d8ac timestamp DEFAULT '2004-04-01 18:21:18',
+PRIMARY KEY (43b06e99,b80b3746) /*T![clustered_index] CLUSTERED */,
+KEY 3080c821 (57fd8d09,43b06e99,b80b3746),
+KEY a9af33a4 (57fd8d09,b80b3746,43b06e99),
+KEY 464b386e (b80b3746),
+KEY 19dc3c2d (57fd8d09)
+) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin COMMENT='320f8401';
+explain select  /*+ use_index_merge( `aa311c3c` ) */   `aa311c3c`.`43b06e99` as r0 , `aa311c3c`.`6302d8ac` as r1 from `aa311c3c` where IsNull( `aa311c3c`.`b80b3746` ) or not( `aa311c3c`.`57fd8d09` >= '2008' )   order by r0,r1 limit 95;
+id	estRows	task	access object	operator info
+Projection_7	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac
+└─TopN_9	95.00	root		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+  └─IndexMerge_17	95.00	root		type: union
+    ├─TableFullScan_13(Build)	0.00	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
+    ├─IndexRangeScan_14(Build)	3323.33	cop[tikv]	table:aa311c3c, index:3080c821(57fd8d09, 43b06e99, b80b3746)	range:[-inf,2008), keep order:false, stats:pseudo
+    └─TopN_16(Probe)	95.00	cop[tikv]		planner__core__issuetest__planner_issue.aa311c3c.43b06e99, planner__core__issuetest__planner_issue.aa311c3c.6302d8ac, offset:0, count:95
+      └─TableRowIDScan_15	3323.33	cop[tikv]	table:aa311c3c	keep order:false, stats:pseudo
+CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
+CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
+INSERT INTO t1 values(1,NULL,NULL,null),(2,NULL,NULL,null),(3,NULL,NULL,null);
+INSERT INTO t2 values(1,'a','aa','aaa'),(2,'b','bb','bbb'),(3,'c','cc','ccc');
+WITH tmp AS (SELECT t2.* FROM t2) select (SELECT tmp.col1 FROM tmp WHERE tmp.id=t1.id ) col1, (SELECT tmp.col2 FROM tmp WHERE tmp.id=t1.id ) col2, (SELECT tmp.col3 FROM tmp WHERE tmp.id=t1.id ) col3 from t1;
+col1	col2	col3
+a	aa	aaa
+b	bb	bbb
+c	cc	ccc
+set tidb_enable_index_merge=on;
+drop table if exists t;
+create table t(a int, b int, index idx_a(a), index idx_b(b));
+set @@session.sql_select_limit=3;
+explain format = 'brief' select * from t where a = 1 or b = 1;
+id	estRows	task	access object	operator info
+IndexMerge	3.00	root		type: union, limit embedded(offset:0, count:3)
+├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select /*+ use_index_merge(t) */ * from t where a = 1 or b = 1;
+id	estRows	task	access object	operator info
+IndexMerge	3.00	root		type: union, limit embedded(offset:0, count:3)
+├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+set @@session.sql_select_limit=18446744073709551615;
+explain format = 'brief' select * from t where a = 1 or b = 1;
+id	estRows	task	access object	operator info
+IndexMerge	19.99	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'brief' select * from t where a = 1 or b = 1 limit 3;
+id	estRows	task	access object	operator info
+IndexMerge	3.00	root		type: union, limit embedded(offset:0, count:3)
+├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_a(a)	range:[1,1], keep order:false, stats:pseudo
+├─Limit(Build)	1.50	cop[tikv]		offset:0, count:3
+│ └─IndexRangeScan	1.50	cop[tikv]	table:t, index:idx_b(b)	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	3.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+CREATE TABLE t1(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
+CREATE TABLE t2(id int,col1 varchar(10),col2 varchar(10),col3 varchar(10));
+INSERT INTO t1 values(1,NULL,NULL,null),(2,NULL,NULL,null),(3,NULL,NULL,null);
+INSERT INTO t2 values(1,'a','aa','aaa'),(2,'b','bb','bbb'),(3,'c','cc','ccc');
+WITH tmp AS (SELECT t2.* FROM t2) SELECT * FROM t1 WHERE t1.id = (select id from tmp where id = 1) or t1.id = (select id from tmp where id = 2) or t1.id = (select id from tmp where id = 3);
+id	col1	col2	col3
+1	NULL	NULL	NULL
+2	NULL	NULL	NULL
+3	NULL	NULL	NULL
+drop table if exists t1, t2;
+CREATE TABLE t1 (a INT, b INT);
+CREATE TABLE t2 (a INT, b INT);
+INSERT INTO t1 VALUES (1, 1);
+INSERT INTO t2 VALUES (1, 1);
+SELECT one.a, one.b as b2 FROM t1 one ORDER BY (SELECT two.b FROM t2 two WHERE two.a = one.b);
+a	b2
+1	1
+CREATE TABLE ads_txn (
+`cusno` varchar(10) NOT NULL,
+`txn_dt` varchar(8) NOT NULL,
+`unn_trno` decimal(22,0) NOT NULL,
+`aml_cntpr_accno` varchar(64) DEFAULT NULL,
+`acpayr_accno` varchar(35) DEFAULT NULL,
+PRIMARY KEY (`cusno`,`txn_dt`,`unn_trno`) NONCLUSTERED
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY LIST COLUMNS(`txn_dt`)
+(PARTITION `p20000101` VALUES IN ('20000101'),
+PARTITION `p20220101` VALUES IN ('20220101'),
+PARTITION `p20230516` VALUES IN ('20230516'));
+analyze table ads_txn;
+set autocommit=OFF;
+explain update ads_txn s set aml_cntpr_accno = trim(acpayr_accno) where s._tidb_rowid between 1 and 100000;
+id	estRows	task	access object	operator info
+Update_5	N/A	root		N/A
+└─Projection_6	8000.00	root		planner__core__issuetest__planner_issue.ads_txn.cusno, planner__core__issuetest__planner_issue.ads_txn.txn_dt, planner__core__issuetest__planner_issue.ads_txn.unn_trno, planner__core__issuetest__planner_issue.ads_txn.aml_cntpr_accno, planner__core__issuetest__planner_issue.ads_txn.acpayr_accno, planner__core__issuetest__planner_issue.ads_txn._tidb_rowid
+  └─SelectLock_7	8000.00	root		for update 0
+    └─TableReader_9	10000.00	root	partition:all	data:TableRangeScan_8
+      └─TableRangeScan_8	10000.00	cop[tikv]	table:s	range:[1,100000], keep order:false, stats:pseudo
+CREATE TABLE tb1 (cid INT, code INT, class VARCHAR(10));
+CREATE TABLE tb2 (cid INT, code INT, class VARCHAR(10));
+UPDATE tb1, (SELECT code AS cid, code, MAX(class) AS class FROM tb2 GROUP BY code) tb3 SET tb1.cid = tb3.cid, tb1.code = tb3.code, tb1.class = tb3.class;
+CREATE TEMPORARY TABLE v0(v1 int);
+INSERT INTO v0 WITH ta2 AS (TABLE v0) TABLE ta2 FOR UPDATE OF ta2;
+create table tbl_39(col_239 year(4) not null default '2009', primary key(col_239), unique key idx_223(col_239), key idx_224(col_239));
+insert into tbl_39 values (1994),(1995),(1996),(1997);
+explain select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
+id	estRows	task	access object	operator info
+Projection_8	382.00	root		planner__core__issuetest__planner_issue.tbl_39.col_239
+└─Limit_15	382.00	root		offset:0, count:382
+  └─UnionScan_26	382.00	root		or(and(not(not(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994))), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(not(le(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996)), not(and(ge(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), le(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011)))))
+    └─IndexReader_29	382.00	root		index:Selection_28
+      └─Selection_28	382.00	cop[tikv]		or(and(eq(planner__core__issuetest__planner_issue.tbl_39.col_239, 1994), not(in(planner__core__issuetest__planner_issue.tbl_39.col_239, 2004, 2010, 2010))), and(gt(planner__core__issuetest__planner_issue.tbl_39.col_239, 1996), or(lt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2026), gt(cast(planner__core__issuetest__planner_issue.tbl_39.col_239, double UNSIGNED BINARY), 2011))))
+        └─IndexRangeScan_27	477.50	cop[tikv]	table:tbl_39, index:PRIMARY(col_239)	range:[1994,1994], (1996,+inf], keep order:true, stats:pseudo
+select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.col_239 not in ( '1994' ) ) and tbl_39.col_239 not in ( '2004' , '2010' , '2010' ) or not( tbl_39.col_239 <= '1996' ) and not( tbl_39.col_239 between '2026' and '2011' ) order by tbl_39.col_239 limit 382;
+col_239
+1994
+1997
