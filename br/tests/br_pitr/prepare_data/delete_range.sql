@@ -36,7 +36,7 @@ insert into table_to_be_dropped_or_truncated.t1_dropped values (1, 2, "123"), (2
 insert into table_to_be_dropped_or_truncated.t0_truncated values (1, 2, "123"), (2, 3, "123");
 insert into table_to_be_dropped_or_truncated.t1_truncated values (1, 2, "123"), (2, 3, "123");
 
--- 3. Drop/Truncate Table Partition
+-- 3. Drop/Truncate/Reorganize Table Partition
 create database partition_to_be_dropped_or_truncated;
 create table partition_to_be_dropped_or_truncated.t0_dropped(id int primary key, c int, name char(20));
 create table partition_to_be_dropped_or_truncated.t1_dropped(id int primary key, c int, name char(20)) PARTITION BY RANGE(id) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (10), PARTITION p2 VALUES LESS THAN MAXVALUE );

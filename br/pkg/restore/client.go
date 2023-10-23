@@ -2789,7 +2789,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
 				Name:         newTableInfo.Name.O,
 				TableID:      newTableInfo.ID,
-				PartitionMap: getTableIDMap(newTableInfo, t.Info),
+				PartitionMap: getPartitionIDMap(newTableInfo, t.Info),
 				IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 			}
 		}

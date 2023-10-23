@@ -5,14 +5,19 @@ drop table table_to_be_dropped_or_truncated.t0_dropped;
 drop table table_to_be_dropped_or_truncated.t1_dropped;
 truncate table table_to_be_dropped_or_truncated.t0_truncated;
 truncate table table_to_be_dropped_or_truncated.t1_truncated;
--- 3. Drop/Truncate Table Partition
+-- 3. Drop/Truncate/Reorganize Table Partition
 alter table partition_to_be_dropped_or_truncated.t1_dropped drop partition p0; 
 alter table partition_to_be_dropped_or_truncated.t1_truncated truncate partition p0;
--- 4. Drop Table Index/PrimaryKey
+alter table partition_to_be_dropped_or_truncated.t1_truncated reorganize partition p2 INTO (PARTITION p2 VALUES LESS THAN (20), PARTITION p3 VALUES LESS THAN MAXVALUE);
+-- 4. Drop Table Index/PrimaryKey or Add Table Index/Primary
 alter table index_or_primarykey_to_be_dropped.t0 drop index k1;
 alter table index_or_primarykey_to_be_dropped.t1 drop index k1;
 alter table index_or_primarykey_to_be_dropped.t0 drop primary key;
 alter table index_or_primarykey_to_be_dropped.t1 drop primary key;
+create index k1 on index_or_primarykey_to_be_dropped.t0 (name);
+create index k1 on index_or_primarykey_to_be_dropped.t1 (name);
+alter table index_or_primarykey_to_be_dropped.t0 add primary key;
+alter table index_or_primarykey_to_be_dropped.t1 add primary key;
 -- 5. Drop Table Indexes
 alter table indexes_to_be_dropped.t0 drop index k1, drop index k2;
 alter table indexes_to_be_dropped.t1 drop index k1, drop index k2;
