@@ -26,11 +26,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestShowGlobalStats(t *testing.T) {
+func TestShowGlobalStatsWithAsyncMergeGlobal(t *testing.T) {
+	testShowGlobalStats(t, true)
+}
+
+func TestShowGlobalStatsWithoutAsyncMergeGlobal(t *testing.T) {
+	testShowGlobalStats(t, false)
+}
+
+func testShowGlobalStats(t *testing.T, isAsync bool) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_analyze_version = 0")
+	if isAsync {
+		tk.MustExec("set @@global.tidb_enable_async_merge_global_stats = 0")
+	} else {
+		tk.MustExec("set @@global.tidb_enable_async_merge_global_stats = 1")
+	}
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
 	tk.MustExec("create table t (a int, key(a)) partition by hash(a) partitions 2")
@@ -76,9 +89,45 @@ func TestGlobalStatsPanicInIOWorker(t *testing.T) {
 	simpleTest(t)
 }
 
+func TestGlobalStatsWithCMSketchErr(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/dealCMSketchErr"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsWithHistogramAndTopNErr(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/dealHistogramAndTopNErr"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
 func TestGlobalStatsPanicInCPUWorker(t *testing.T) {
 	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/PanicInCPUWorker"
 	require.NoError(t, failpoint.Enable(fpName, "panic(\"inject panic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsPanicSametime(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/PanicSameTime"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	simpleTest(t)
+}
+
+func TestGlobalStatsErrorSametime(t *testing.T) {
+	fpName := "github.com/pingcap/tidb/pkg/statistics/handle/globalstats/ErrorSameTime"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable(fpName))
 	}()

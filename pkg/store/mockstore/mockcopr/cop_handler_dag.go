@@ -460,7 +460,7 @@ func (e *evalContext) decodeRelatedColumnVals(relatedColOffsets []int, value [][
 
 // flagsAndTzToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
 func flagsAndTzToStatementContext(flags uint64, tz *time.Location) *stmtctx.StatementContext {
-	sc := new(stmtctx.StatementContext)
+	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	return sc
 }
