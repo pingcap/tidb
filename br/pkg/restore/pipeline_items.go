@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
+	"github.com/pingcap/tidb/br/pkg/metrics"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -38,6 +39,7 @@ type chanTableSink struct {
 }
 
 func (sink chanTableSink) EmitTables(tables ...CreatedTable) {
+	metrics.RestoreInFlightCounters.WithLabelValues("emit_tables").Inc()
 	sink.outCh <- tables
 }
 
@@ -235,6 +237,7 @@ func (b *tikvSender) PutSink(sink TableSink) {
 func (b *tikvSender) RestoreBatch(ranges DrainResult) {
 	log.Info("restore batch: waiting ranges", zap.Int("range", len(b.inCh)))
 	b.inCh <- ranges
+	metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_split").Inc()
 }
 
 // NewTiKVSender make a sender that send restore requests to TiKV.
@@ -303,6 +306,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 			if !ok {
 				return
 			}
+			metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_split").Desc()
 			// When the batcher has sent all ranges from a table, it would
 			// mark this table 'all done'(BlankTablesAfterSend), and then we can send it to checksum.
 			//
@@ -329,6 +333,7 @@ func (b *tikvSender) splitWorker(ctx context.Context,
 					result: result,
 					done:   done,
 				}
+				metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_restore").Inc()
 				return nil
 			})
 		}
@@ -385,6 +390,7 @@ func (b *tikvSender) restoreWorker(ctx context.Context, ranges <-chan drainResul
 			if !ok {
 				return
 			}
+			metrics.RestoreInFlightCounters.WithLabelValues("ranges_to_be_restore").Desc()
 			files := r.result.Files()
 			// There has been a worker in the `RestoreSSTFiles` procedure.
 			// Spawning a raw goroutine won't make too many requests to TiKV.

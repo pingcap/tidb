@@ -3,13 +3,73 @@
 package utils
 
 import (
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metrics"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
+
+type RestoreSendType int
+
+const (
+	SendSignal RestoreSendType = iota
+	SendTable
+)
+
+// RestoreChannel is used to record the stats of a channel during restore.
+type RestoreChannel[T any] struct {
+	name string
+	size int
+	ch   chan T
+}
+
+func NewRestoreChannel[T any](name string, size int) *RestoreChannel[T] {
+	return &RestoreChannel[T]{
+		name: name,
+		size: size,
+		ch:   make(chan T, size),
+	}
+}
+
+func (r *RestoreChannel[T]) Send(item T) {
+	metrics.RestoreInFlightCounters.WithLabelValues(r.name).Inc()
+	r.ch <- item
+}
+
+func (r *RestoreChannel[T]) Recv() (T, bool) {
+	metrics.RestoreInFlightCounters.WithLabelValues(r.name).Desc()
+	item, ok := <-r.ch
+	return item, ok
+}
+
+func (r *RestoreChannel[T]) Close() {
+	close(r.ch)
+	log.Info("channel closed", zap.String("name", r.name))
+}
+
+func (r *RestoreChannel[T]) Len() int {
+	return len(r.ch)
+}
+
+// golang does not support type parameter in method.
+// so we cannot transform T to Other types.
+// https://github.com/golang/go/issues/49085
+func (r *RestoreChannel[T]) Map(f func(T) T) *RestoreChannel[T] {
+	name := fmt.Sprintf("%s_mapped", r.name)
+	outCh := NewRestoreChannel[T](name, r.size)
+	go func() {
+		defer outCh.Close()
+		for item := range r.ch {
+			outCh.Send(f(item))
+		}
+	}()
+	return outCh
+}
 
 // WorkerPool contains a pool of workers.
 type WorkerPool struct {

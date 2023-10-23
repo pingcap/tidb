@@ -920,7 +920,7 @@ func (rc *Client) GoCreateTables(
 	tables []*metautil.Table,
 	newTS uint64,
 	errCh chan<- error,
-) <-chan CreatedTable {
+) *utils.RestoreChannel[CreatedTable] {
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
@@ -930,11 +930,11 @@ func (rc *Client) GoCreateTables(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	outCh := make(chan CreatedTable, len(tables))
+	outCh := utils.NewRestoreChannel[CreatedTable]("created_table", len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	if err := rc.allocTableIDs(ctx, tables); err != nil {
 		errCh <- err
-		close(outCh)
+		outCh.Close()
 		return outCh
 	}
 
@@ -944,11 +944,11 @@ func (rc *Client) GoCreateTables(
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
 		if err == nil {
 			defer log.Debug("all tables are created")
-			close(outCh)
+			outCh.Close()
 			return outCh
 		} else if !utils.FallBack2CreateTable(err) {
 			errCh <- err
-			close(outCh)
+			outCh.Close()
 			return outCh
 		}
 		// fall back to old create table (sequential create table)
@@ -970,10 +970,10 @@ func (rc *Client) GoCreateTables(
 			return errors.Trace(err)
 		}
 		log.Debug("table created and send to next",
-			zap.Int("output chan size", len(outCh)),
+			zap.Int("output chan size", outCh.Len()),
 			zap.Stringer("table", t.Info.Name),
 			zap.Stringer("database", t.DB.Name))
-		outCh <- rt
+		outCh.Send(rt)
 		rater.Inc()
 		rater.L().Info("table created",
 			zap.Stringer("table", t.Info.Name),
@@ -981,7 +981,7 @@ func (rc *Client) GoCreateTables(
 		return nil
 	}
 	go func() {
-		defer close(outCh)
+		defer outCh.Close()
 		defer log.Debug("all tables are created")
 		var err error
 		if len(rc.dbPool) > 0 {
@@ -1023,7 +1023,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	return eg.Wait()
 }
 
-func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh *utils.RestoreChannel[CreatedTable]) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
@@ -1048,10 +1048,10 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 			}
 			for _, ct := range cts {
 				log.Debug("table created and send to next",
-					zap.Int("output chan size", len(outCh)),
+					zap.Int("output chan size", outCh.Len()),
 					zap.Stringer("table", ct.OldTable.Info.Name),
 					zap.Stringer("database", ct.OldTable.DB.Name))
-				outCh <- ct
+				outCh.Send(ct)
 				rater.Inc()
 				rater.L().Info("table created",
 					zap.Stringer("table", ct.OldTable.Info.Name),

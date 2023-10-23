@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -893,7 +892,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
-		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream.Map(func(t restore.CreatedTable) restore.CreatedTable {
 			// Set the keyspace info for the checksum requests
 			t.RewriteRule.OldKeyspace = oldKeyspace
 			t.RewriteRule.NewKeyspace = newKeyspace
@@ -907,7 +906,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.tiflashRecorder != nil {
-		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream.Map(func(t restore.CreatedTable) restore.CreatedTable {
 			if cfg.tiflashRecorder != nil {
 				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
 			}

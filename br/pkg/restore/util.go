@@ -319,22 +319,23 @@ func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
 // tables with range.
 func GoValidateFileRanges(
 	ctx context.Context,
-	tableStream <-chan CreatedTable,
+	tableStream *utils.RestoreChannel[CreatedTable],
 	fileOfTable map[int64][]*backuppb.File,
 	splitSizeBytes, splitKeyCount uint64,
 	errCh chan<- error,
-) <-chan TableWithRange {
+) *utils.RestoreChannel[TableWithRange] {
 	// Could we have a smaller outCh size?
-	outCh := make(chan TableWithRange, len(fileOfTable))
+	outCh := utils.NewRestoreChannel[TableWithRange]("table_ranges", len(fileOfTable))
 	go func() {
-		defer close(outCh)
+		defer outCh.Close()
 		defer log.Info("all range generated")
 		for {
 			select {
 			case <-ctx.Done():
 				errCh <- ctx.Err()
 				return
-			case t, ok := <-tableStream:
+			default:
+				t, ok := tableStream.Recv()
 				if !ok {
 					return
 				}
@@ -384,8 +385,8 @@ func GoValidateFileRanges(
 					zap.Stringer("table", t.Table.Name),
 					zap.Int("files", len(files)),
 					zap.Int("range size", len(ranges)),
-					zap.Int("output channel size", len(outCh)))
-				outCh <- tableWithRange
+					zap.Int("output channel size", outCh.Len()))
+				outCh.Send(tableWithRange)
 			}
 		}
 	}()

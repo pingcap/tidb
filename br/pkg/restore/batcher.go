@@ -12,6 +12,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
+	"github.com/pingcap/tidb/br/pkg/metrics"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"go.uber.org/zap"
@@ -87,6 +88,7 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables <-chan []CreatedTab
 			if !ok {
 				return
 			}
+			metrics.RestoreInFlightCounters.WithLabelValues("emit_tables").Desc()
 			if err := b.manager.Leave(ctx, tbls); err != nil {
 				b.sendErr <- err
 				return
@@ -94,6 +96,7 @@ func (b *Batcher) contextCleaner(ctx context.Context, tables <-chan []CreatedTab
 			for _, tbl := range tbls {
 				cloneTable := tbl
 				b.outCh <- &cloneTable
+				metrics.RestoreInFlightCounters.WithLabelValues("finish_table").Inc()
 			}
 		}
 	}
@@ -174,12 +177,14 @@ func (b *Batcher) joinAutoCommitWorker() {
 // TODO since all operations are asynchronous now, it's possible to remove this worker.
 func (b *Batcher) sendWorker(ctx context.Context, send <-chan SendType) {
 	sendUntil := func(lessOrEqual int) {
+
 		for b.Len() > lessOrEqual {
 			b.Send(ctx)
 		}
 	}
 
 	for sendType := range send {
+		metrics.RestoreInFlightCounters.WithLabelValues("send_signal").Desc()
 		switch sendType {
 		case SendUntilLessThanBatch:
 			sendUntil(b.batchSizeThreshold)
@@ -217,6 +222,7 @@ func (b *Batcher) autoCommitWorker(ctx context.Context, joiner <-chan struct{}, 
 func (b *Batcher) asyncSend(t SendType) {
 	// add a check here so we won't replica sending.
 	if len(b.sendCh) == 0 {
+		metrics.RestoreInFlightCounters.WithLabelValues("send_signal").Inc()
 		b.sendCh <- t
 	}
 }
