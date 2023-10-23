@@ -400,6 +400,7 @@ func BuildHistAndTopN(
 					break
 				} else {
 					i--
+					foundTwice = true
 					continue
 				}
 			}
