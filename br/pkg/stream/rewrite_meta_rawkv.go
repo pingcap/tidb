@@ -845,7 +845,6 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 		return nil
 	// ActionAddIndex, ActionAddPrimaryKey needs do it, because it needs to be rolled back when it's canceled.
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
-		// iff job.State = model.JobStateRollbackDone
 		tableReplace, exist := dbReplace.TableMap[job.TableID]
 		if !exist {
 			logutil.CL(lctx).Warn("AddIndex/AddPrimaryKey roll-back: try to drop a non-existent table, missing oldTableID",

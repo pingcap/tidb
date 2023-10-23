@@ -16,8 +16,8 @@ alter table index_or_primarykey_to_be_dropped.t0 drop primary key;
 alter table index_or_primarykey_to_be_dropped.t1 drop primary key;
 create index k1 on index_or_primarykey_to_be_dropped.t0 (name);
 create index k1 on index_or_primarykey_to_be_dropped.t1 (name);
-alter table index_or_primarykey_to_be_dropped.t0 add primary key;
-alter table index_or_primarykey_to_be_dropped.t1 add primary key;
+alter table index_or_primarykey_to_be_dropped.t0 add primary key (id);
+alter table index_or_primarykey_to_be_dropped.t1 add primary key (id);
 -- 5. Drop Table Indexes
 alter table indexes_to_be_dropped.t0 drop index k1, drop index k2;
 alter table indexes_to_be_dropped.t1 drop index k1, drop index k2;
