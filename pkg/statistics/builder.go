@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 // SortedBuilder is used to build histograms for PK and index.
@@ -374,12 +376,32 @@ func BuildHistAndTopN(
 			return nil, nil, errors.Trace(err)
 		}
 		for j := 0; j < len(topNList); j++ {
+			foundTwice := false
 			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 				// find the same value in topn: need to skip over this value in samples
 				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 				samples = samples[:uint64(len(samples))-topNList[j].Count]
-				i--
-				continue
+				// This should never happen, but we met this panic before, so we add this check here.
+				// See: https://github.com/pingcap/tidb/issues/35948
+				if foundTwice {
+					allTopNByteStrings := make([][]byte, 0, len(topNList))
+					for _, topN := range topNList {
+						allTopNByteStrings = append(allTopNByteStrings, topN.Encoded)
+					}
+					logutil.BgLogger().Warn("invalid sample data",
+						zap.ByteString("sampleBytes", sampleBytes),
+						zap.ByteString("topNBytes", topNList[j].Encoded),
+						zap.Int64("i", i),
+						zap.Int64("j", int64(j)),
+						zap.ByteStrings("allTopNBytes", allTopNByteStrings),
+					)
+					// NOTE: if we don't return here, we may meet panic in the following code.
+					// The i may decrease to a negative value.
+					break
+				} else {
+					i--
+					continue
+				}
 			}
 		}
 	}
