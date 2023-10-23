@@ -375,8 +375,8 @@ func BuildHistAndTopN(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+		foundTwice := false
 		for j := 0; j < len(topNList); j++ {
-			foundTwice := false
 			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
 				// find the same value in topn: need to skip over this value in samples
 				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
