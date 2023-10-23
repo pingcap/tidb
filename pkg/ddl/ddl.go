@@ -72,7 +72,7 @@ import (
 )
 
 const (
-	// currentVersion is for all new DDL jobs.
+	// currentVersion is for all new DDL jobs. If we need to add a new version, please check the upgrade case in issues/47916.
 	// 1 for the DDL job created <= v7.4.0.
 	// For fix #46306(whether end key is included or not in the table range) to add version 2.
 	currentVersion = 2
