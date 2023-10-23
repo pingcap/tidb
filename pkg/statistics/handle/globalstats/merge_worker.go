@@ -19,22 +19,60 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
+// TopN4Merge is used to merge topn
+type TopN4Merge struct {
+	*statistics.TopN
+	bm *bloom.BloomFilter
+}
+
+// FindTopN finds topn
+func (t *TopN4Merge) FindTopN(d []byte) int {
+	if !t.bm.Test(d) {
+		return -1
+	}
+	return t.TopN.FindTopN(d)
+}
+
+// CheckEmptyTopNs checks whether all TopNs are empty.
+func CheckEmptyTopNs(topNs []*TopN4Merge) bool {
+	count := uint64(0)
+	for _, topN := range topNs {
+		count += topN.TotalCount()
+		if count != 0 {
+			return false
+		}
+	}
+	return count == 0
+}
+
 // StatsWrapper wrapper stats
 type StatsWrapper struct {
 	AllHg   []*statistics.Histogram
-	AllTopN []*statistics.TopN
+	AllTopN []*TopN4Merge
 }
 
 // NewStatsWrapper returns wrapper
 func NewStatsWrapper(hg []*statistics.Histogram, topN []*statistics.TopN) *StatsWrapper {
+	t := make([]*TopN4Merge, 0, len(topN))
+	for _, top := range topN {
+		bm := bloom.NewWithEstimates(500, 0.01)
+		for _, raw := range top.TopN {
+			bm.Add(raw.Encoded)
+		}
+		t = append(t, &TopN4Merge{
+			TopN: top,
+			bm:   bm,
+		})
+	}
 	return &StatsWrapper{
 		AllHg:   hg,
-		AllTopN: topN,
+		AllTopN: t,
 	}
 }
 
@@ -96,7 +134,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		allTopNs := worker.statsWrapper.AllTopN
 		allHists := worker.statsWrapper.AllHg
 		resp := &TopnStatsMergeResponse{}
-		if statistics.CheckEmptyTopNs(checkTopNs) {
+		if CheckEmptyTopNs(checkTopNs) {
 			worker.respCh <- resp
 			return
 		}
@@ -116,7 +154,7 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			if topN.TotalCount() == 0 {
 				continue
 			}
-			for _, val := range topN.TopN {
+			for _, val := range topN.TopN.TopN {
 				encodedVal := hack.String(val.Encoded)
 				_, exists := counter[encodedVal]
 				counter[encodedVal] += float64(val.Count)

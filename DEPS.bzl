@@ -642,6 +642,32 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_bits_and_blooms_bitset",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/bits-and-blooms/bitset",
+        sha256 = "b636514bfb66e65360dee3d842714ecaccae4bc4b2a5a1de5df57c866015e3ec",
+        strip_prefix = "github.com/bits-and-blooms/bitset@v1.10.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.10.0.zip",
+            "http://ats.apps.svc/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.10.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.10.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bits-and-blooms/bitset/com_github_bits_and_blooms_bitset-v1.10.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_bits_and_blooms_bloom_v3",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/bits-and-blooms/bloom/v3",
+        sha256 = "db41b02720a6a81a85ba8e8abd3bad6e31ca46949d10d1f4565cf55e7895ca47",
+        strip_prefix = "github.com/bits-and-blooms/bloom/v3@v3.6.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bits-and-blooms/bloom/v3/com_github_bits_and_blooms_bloom_v3-v3.6.0.zip",
+            "http://ats.apps.svc/gomod/github.com/bits-and-blooms/bloom/v3/com_github_bits_and_blooms_bloom_v3-v3.6.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/bits-and-blooms/bloom/v3/com_github_bits_and_blooms_bloom_v3-v3.6.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bits-and-blooms/bloom/v3/com_github_bits_and_blooms_bloom_v3-v3.6.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_bketelsen_crypt",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/bketelsen/crypt",

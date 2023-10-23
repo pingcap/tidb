@@ -18,6 +18,7 @@ require (
 	github.com/aws/aws-sdk-go v1.44.259
 	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
 	github.com/bazelbuild/rules_go v0.40.0
+	github.com/bits-and-blooms/bloom/v3 v3.6.0
 	github.com/blacktear23/go-proxyprotocol v1.0.6
 	github.com/butuzov/mirror v1.1.0
 	github.com/carlmjohnson/flagext v0.21.0
@@ -143,6 +144,7 @@ require (
 )
 
 require (
+	github.com/bits-and-blooms/bitset v1.10.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
