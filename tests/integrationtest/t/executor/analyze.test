@@ -1,3 +1,8 @@
+# TestAnalyzePartitionTableForFloat
+# https://github.com/pingcap/tidb/issues/35910
+set @@tidb_partition_prune_mode='dynamic';
+drop table if exists t1;
+CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;
 INSERT INTO t1 (id,num) VALUES
                             (6404,0.44816685),
                             (6532,0.7986926),
@@ -9,6 +14,7 @@ INSERT INTO t1 (id,num) VALUES
                             (7300,0.00568179),
                             (7428,0.33018935),
                             (7556,0.00455456);
+
 INSERT INTO t1 (id,num) VALUES
                             (7684,0.36683157),
                             (7812,0.6140698),
@@ -20,6 +26,7 @@ INSERT INTO t1 (id,num) VALUES
                             (8580,0.01050341),
                             (8708,0.00030031),
                             (8836,0.02070964);
+
 INSERT INTO t1 (id,num) VALUES
                             (8964,0.02303072),
                             (9092,0.44560316),
@@ -31,6 +38,7 @@ INSERT INTO t1 (id,num) VALUES
                             (9860,0.0025045),
                             (9988,0.03484399),
                             (10116,0.00193867);
+
 INSERT INTO t1 (id,num) VALUES
                             (10244,0.0),
                             (10372,0.0007868),
@@ -42,6 +50,7 @@ INSERT INTO t1 (id,num) VALUES
                             (11140,0.7572566),
                             (11268,0.00018916),
                             (11396,0.00969914);
+
 INSERT INTO t1 (id,num) VALUES
                             (11524,0.05069033),
                             (11652,0.25621885),
@@ -53,6 +62,7 @@ INSERT INTO t1 (id,num) VALUES
                             (12420,0.9929275),
                             (12548,0.15242451),
                             (12676,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (12804,0.0246472),
                             (12932,0.00472382),
@@ -64,6 +74,7 @@ INSERT INTO t1 (id,num) VALUES
                             (13700,0.0),
                             (13828,NULL),
                             (13956,0.12757756);
+
 INSERT INTO t1 (id,num) VALUES
                             (14084,0.00484138),
                             (14212,0.02226818),
@@ -75,6 +86,7 @@ INSERT INTO t1 (id,num) VALUES
                             (14980,0.55768555),
                             (15108,0.04359115),
                             (15236,0.00277844);
+
 INSERT INTO t1 (id,num) VALUES
                             (15364,NULL),
                             (15492,NULL),
@@ -86,6 +98,7 @@ INSERT INTO t1 (id,num) VALUES
                             (16260,0.14020711),
                             (16388,0.16946065),
                             (16516,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (16644,0.00692773),
                             (16772,0.00527069),
@@ -97,6 +110,7 @@ INSERT INTO t1 (id,num) VALUES
                             (17540,0.0),
                             (17668,0.00351416),
                             (17796,0.00437542);
+
 INSERT INTO t1 (id,num) VALUES
                             (17924,0.0012496),
                             (18052,0.00040084),
@@ -108,6 +122,7 @@ INSERT INTO t1 (id,num) VALUES
                             (18820,0.00246549),
                             (18948,NULL),
                             (19076,0.9188499);
+
 INSERT INTO t1 (id,num) VALUES
                             (19204,0.0168393),
                             (19332,0.00016338),
@@ -119,6 +134,7 @@ INSERT INTO t1 (id,num) VALUES
                             (20100,0.00113875),
                             (20228,0.02503506),
                             (20356,0.01585903);
+
 INSERT INTO t1 (id,num) VALUES
                             (20484,0.84865177),
                             (20612,0.00004633),
@@ -130,6 +146,7 @@ INSERT INTO t1 (id,num) VALUES
                             (21380,NULL),
                             (21508,0.06476934),
                             (21636,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (21764,0.05436462),
                             (21892,0.0),
@@ -141,6 +158,7 @@ INSERT INTO t1 (id,num) VALUES
                             (22660,0.03836808),
                             (22788,0.01743244),
                             (22916,0.90398115);
+
 INSERT INTO t1 (id,num) VALUES
                             (23044,0.39467624),
                             (23172,0.9271143),
@@ -152,6 +170,7 @@ INSERT INTO t1 (id,num) VALUES
                             (23940,0.00256223),
                             (24068,0.05586718),
                             (24196,0.00675368);
+
 INSERT INTO t1 (id,num) VALUES
                             (24324,0.00235754),
                             (24452,0.00048123),
@@ -163,6 +182,7 @@ INSERT INTO t1 (id,num) VALUES
                             (25220,0.21413554),
                             (25348,0.00061148),
                             (25476,0.00622709);
+
 INSERT INTO t1 (id,num) VALUES
                             (25604,0.00213495),
                             (25732,NULL),
@@ -174,6 +194,7 @@ INSERT INTO t1 (id,num) VALUES
                             (26500,0.00969678),
                             (26628,0.01092109),
                             (26756,0.07614598);
+
 INSERT INTO t1 (id,num) VALUES
                             (26884,0.02030184),
                             (27012,0.0),
@@ -185,6 +206,7 @@ INSERT INTO t1 (id,num) VALUES
                             (27780,0.01139362),
                             (27908,0.12942761),
                             (28036,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (28164,0.973725),
                             (28292,0.0),
@@ -196,6 +218,7 @@ INSERT INTO t1 (id,num) VALUES
                             (29060,0.00213988),
                             (29188,0.20606396),
                             (29316,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (29444,0.00029995),
                             (29572,0.11128831),
@@ -207,6 +230,7 @@ INSERT INTO t1 (id,num) VALUES
                             (30340,NULL),
                             (30468,0.03264421),
                             (30596,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (30724,0.02093143),
                             (30852,0.00251696),
@@ -218,6 +242,7 @@ INSERT INTO t1 (id,num) VALUES
                             (31620,0.0),
                             (31748,0.0124521),
                             (31876,0.10001199);
+
 INSERT INTO t1 (id,num) VALUES
                             (32004,0.9572708),
                             (32132,0.2702167),
@@ -229,6 +254,7 @@ INSERT INTO t1 (id,num) VALUES
                             (32900,0.0001796),
                             (33028,0.00109745),
                             (33156,0.00084148);
+
 INSERT INTO t1 (id,num) VALUES
                             (33284,0.02335174),
                             (33412,NULL),
@@ -240,6 +266,7 @@ INSERT INTO t1 (id,num) VALUES
                             (34180,0.20418067),
                             (34308,0.21699235),
                             (34436,0.00151851);
+
 INSERT INTO t1 (id,num) VALUES
                             (34564,0.00260781),
                             (34692,0.00042542),
@@ -251,6 +278,7 @@ INSERT INTO t1 (id,num) VALUES
                             (35460,0.00029132),
                             (35588,0.0038553),
                             (35716,0.00028413);
+
 INSERT INTO t1 (id,num) VALUES
                             (35844,0.0001824),
                             (35972,0.8047172),
@@ -262,6 +290,7 @@ INSERT INTO t1 (id,num) VALUES
                             (36740,0.00146691),
                             (36868,0.00613281),
                             (36996,0.02881232);
+
 INSERT INTO t1 (id,num) VALUES
                             (37124,0.0),
                             (37252,0.5468523),
@@ -273,6 +302,7 @@ INSERT INTO t1 (id,num) VALUES
                             (38020,0.00258847),
                             (38148,0.0),
                             (38276,0.0013263);
+
 INSERT INTO t1 (id,num) VALUES
                             (38404,0.00610365),
                             (38532,0.0022153),
@@ -284,6 +314,7 @@ INSERT INTO t1 (id,num) VALUES
                             (39300,0.00193156),
                             (39428,0.00059531),
                             (39556,0.10964896);
+
 INSERT INTO t1 (id,num) VALUES
                             (39684,0.02697241),
                             (39812,0.00929319),
@@ -295,6 +326,7 @@ INSERT INTO t1 (id,num) VALUES
                             (40580,NULL),
                             (40708,0.08479243),
                             (40836,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (40964,NULL),
                             (41092,0.2487916),
@@ -306,6 +338,7 @@ INSERT INTO t1 (id,num) VALUES
                             (41860,0.00011041),
                             (41988,0.01406988),
                             (42116,0.00199188);
+
 INSERT INTO t1 (id,num) VALUES
                             (42244,0.2924709),
                             (42372,NULL),
@@ -317,6 +350,7 @@ INSERT INTO t1 (id,num) VALUES
                             (43140,0.00188494),
                             (43268,0.00071816),
                             (43396,0.00012918);
+
 INSERT INTO t1 (id,num) VALUES
                             (43524,0.00498049),
                             (43652,0.13445085),
@@ -328,6 +362,7 @@ INSERT INTO t1 (id,num) VALUES
                             (44420,0.93815935),
                             (44548,0.00112602),
                             (44676,0.00970578);
+
 INSERT INTO t1 (id,num) VALUES
                             (44804,0.00539565),
                             (44932,0.00198959),
@@ -339,6 +374,7 @@ INSERT INTO t1 (id,num) VALUES
                             (45700,0.00005143),
                             (45828,NULL),
                             (45956,0.02388487);
+
 INSERT INTO t1 (id,num) VALUES
                             (46084,0.00037795),
                             (46212,NULL),
@@ -350,6 +386,7 @@ INSERT INTO t1 (id,num) VALUES
                             (46980,0.7427731),
                             (47108,0.03969904),
                             (47236,0.00078965);
+
 INSERT INTO t1 (id,num) VALUES
                             (47364,0.03562958),
                             (47492,0.00100583),
@@ -361,6 +398,7 @@ INSERT INTO t1 (id,num) VALUES
                             (48260,NULL),
                             (48388,0.0029398),
                             (48516,0.0168582);
+
 INSERT INTO t1 (id,num) VALUES
                             (48644,0.15535928),
                             (48772,0.04729551),
@@ -372,6 +410,7 @@ INSERT INTO t1 (id,num) VALUES
                             (49540,0.0011836),
                             (49668,0.59423715),
                             (49796,0.07930596);
+
 INSERT INTO t1 (id,num) VALUES
                             (49924,0.00970574),
                             (50052,0.1389579),
@@ -383,6 +422,7 @@ INSERT INTO t1 (id,num) VALUES
                             (50820,0.00506184),
                             (50948,0.07310118),
                             (51076,0.08932291);
+
 INSERT INTO t1 (id,num) VALUES
                             (51204,0.00027035),
                             (51332,0.00340637),
@@ -394,6 +434,7 @@ INSERT INTO t1 (id,num) VALUES
                             (52100,0.9233999),
                             (52228,0.00086335),
                             (52356,0.0101455);
+
 INSERT INTO t1 (id,num) VALUES
                             (52484,0.0),
                             (52612,0.04069425),
@@ -405,6 +446,7 @@ INSERT INTO t1 (id,num) VALUES
                             (53380,NULL),
                             (53508,0.00010061),
                             (53636,0.00038794);
+
 INSERT INTO t1 (id,num) VALUES
                             (53764,0.34211513),
                             (53892,0.02905787),
@@ -416,6 +458,7 @@ INSERT INTO t1 (id,num) VALUES
                             (54660,0.03211332),
                             (54788,0.61193645),
                             (54916,0.00076543);
+
 INSERT INTO t1 (id,num) VALUES
                             (55044,0.0),
                             (55172,0.00331305),
@@ -427,6 +470,7 @@ INSERT INTO t1 (id,num) VALUES
                             (55940,0.0161851),
                             (56068,NULL),
                             (56196,0.4822152);
+
 INSERT INTO t1 (id,num) VALUES
                             (56324,0.00293867),
                             (56452,0.00180932),
@@ -438,6 +482,7 @@ INSERT INTO t1 (id,num) VALUES
                             (57220,0.01060274),
                             (57348,0.0002598),
                             (57476,0.00377207);
+
 INSERT INTO t1 (id,num) VALUES
                             (57604,0.00066885),
                             (57732,0.12196585),
@@ -449,6 +494,7 @@ INSERT INTO t1 (id,num) VALUES
                             (58500,0.001862),
                             (58628,NULL),
                             (58756,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (58884,NULL),
                             (59012,0.0),
@@ -460,6 +506,7 @@ INSERT INTO t1 (id,num) VALUES
                             (59780,0.01153614),
                             (59908,0.0),
                             (60036,0.2763834);
+
 INSERT INTO t1 (id,num) VALUES
                             (60164,NULL),
                             (60292,NULL),
@@ -471,6 +518,7 @@ INSERT INTO t1 (id,num) VALUES
                             (61060,0.00005242),
                             (61188,0.01232633),
                             (61316,0.0005189);
+
 INSERT INTO t1 (id,num) VALUES
                             (61444,0.0),
                             (61572,0.00196546),
@@ -482,6 +530,7 @@ INSERT INTO t1 (id,num) VALUES
                             (62340,NULL),
                             (62468,0.00006262),
                             (62596,0.00334187);
+
 INSERT INTO t1 (id,num) VALUES
                             (62724,NULL),
                             (62852,0.11244337),
@@ -493,6 +542,7 @@ INSERT INTO t1 (id,num) VALUES
                             (63620,0.70078176),
                             (63748,0.2610763),
                             (63876,0.58452475);
+
 INSERT INTO t1 (id,num) VALUES
                             (64004,0.00037725),
                             (64132,0.01363691),
@@ -504,6 +554,7 @@ INSERT INTO t1 (id,num) VALUES
                             (64900,0.02986313),
                             (65028,0.00005731),
                             (65156,0.259131);
+
 INSERT INTO t1 (id,num) VALUES
                             (65284,0.00433746),
                             (65412,0.03780772),
@@ -515,6 +566,7 @@ INSERT INTO t1 (id,num) VALUES
                             (66180,0.00053285),
                             (66308,NULL),
                             (66436,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (66564,0.00215946),
                             (66692,0.00012339),
@@ -526,6 +578,7 @@ INSERT INTO t1 (id,num) VALUES
                             (67460,0.00022264),
                             (67588,0.5755771),
                             (67716,0.07973811);
+
 INSERT INTO t1 (id,num) VALUES
                             (67844,0.00075325),
                             (67972,0.02588654),
@@ -537,6 +590,7 @@ INSERT INTO t1 (id,num) VALUES
                             (68740,NULL),
                             (68868,0.00148165),
                             (68996,0.00069906);
+
 INSERT INTO t1 (id,num) VALUES
                             (69124,0.36696395),
                             (69252,0.00176318),
@@ -548,6 +602,7 @@ INSERT INTO t1 (id,num) VALUES
                             (70020,NULL),
                             (70148,0.3849655),
                             (70276,0.00634581);
+
 INSERT INTO t1 (id,num) VALUES
                             (70404,0.00898295),
                             (70532,0.10214821),
@@ -559,6 +614,7 @@ INSERT INTO t1 (id,num) VALUES
                             (71300,0.00323015),
                             (71428,0.00015896),
                             (71556,0.04674813);
+
 INSERT INTO t1 (id,num) VALUES
                             (71684,0.00002449),
                             (71812,0.5066135),
@@ -570,6 +626,7 @@ INSERT INTO t1 (id,num) VALUES
                             (72580,0.0),
                             (72708,0.23283394),
                             (72836,0.04149162);
+
 INSERT INTO t1 (id,num) VALUES
                             (72964,0.00059429),
                             (73092,0.0),
@@ -581,6 +638,7 @@ INSERT INTO t1 (id,num) VALUES
                             (73860,0.02864335),
                             (73988,0.9),
                             (74116,0.01258155);
+
 INSERT INTO t1 (id,num) VALUES
                             (74244,0.00925873),
                             (74372,0.00323526),
@@ -592,6 +650,7 @@ INSERT INTO t1 (id,num) VALUES
                             (75140,0.06355022),
                             (75268,0.0),
                             (75396,0.01389665);
+
 INSERT INTO t1 (id,num) VALUES
                             (75524,0.49072826),
                             (75652,0.00250901),
@@ -603,6 +662,7 @@ INSERT INTO t1 (id,num) VALUES
                             (76420,NULL),
                             (76548,0.1040872),
                             (76676,0.10566042);
+
 INSERT INTO t1 (id,num) VALUES
                             (76804,NULL),
                             (76932,0.00663577),
@@ -614,6 +674,7 @@ INSERT INTO t1 (id,num) VALUES
                             (77700,0.00237827),
                             (77828,0.00146376),
                             (77956,0.03254667);
+
 INSERT INTO t1 (id,num) VALUES
                             (78084,0.00237725),
                             (78212,NULL),
@@ -625,6 +686,7 @@ INSERT INTO t1 (id,num) VALUES
                             (78980,0.07082515),
                             (79108,NULL),
                             (79236,0.0019473);
+
 INSERT INTO t1 (id,num) VALUES
                             (79364,0.00358919),
                             (79492,NULL),
@@ -636,6 +698,7 @@ INSERT INTO t1 (id,num) VALUES
                             (80260,0.0002941),
                             (80388,0.00061776),
                             (80516,0.00002488);
+
 INSERT INTO t1 (id,num) VALUES
                             (80644,0.09067673),
                             (80772,0.97947466),
@@ -647,6 +710,7 @@ INSERT INTO t1 (id,num) VALUES
                             (81540,0.01013091),
                             (81668,0.00044435),
                             (81796,0.00101722);
+
 INSERT INTO t1 (id,num) VALUES
                             (81924,0.0),
                             (82052,0.01291962),
@@ -658,6 +722,7 @@ INSERT INTO t1 (id,num) VALUES
                             (82820,0.00505329),
                             (82948,0.00197535),
                             (83076,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (83204,NULL),
                             (83332,0.02577116),
@@ -669,6 +734,7 @@ INSERT INTO t1 (id,num) VALUES
                             (84100,0.0009958),
                             (84228,0.21305683),
                             (84356,0.01075263);
+
 INSERT INTO t1 (id,num) VALUES
                             (84484,NULL),
                             (84612,0.04209423),
@@ -680,6 +746,7 @@ INSERT INTO t1 (id,num) VALUES
                             (85380,0.00797018),
                             (85508,0.03014666),
                             (85636,0.0);
+
 INSERT INTO t1 (id,num) VALUES
                             (85764,0.0198979),
                             (85892,NULL),
@@ -691,6 +758,7 @@ INSERT INTO t1 (id,num) VALUES
                             (86660,0.00034572),
                             (86788,0.0),
                             (86916,0.00194455);
+
 INSERT INTO t1 (id,num) VALUES
                             (87044,0.0),
                             (87172,0.0),
@@ -702,6 +770,7 @@ INSERT INTO t1 (id,num) VALUES
                             (87940,0.10825046),
                             (88068,0.11218246),
                             (88196,NULL);
+
 INSERT INTO t1 (id,num) VALUES
                             (88324,0.16741024),
                             (88452,0.00222767),
@@ -713,6 +782,7 @@ INSERT INTO t1 (id,num) VALUES
                             (515,0.28516522),
                             (643,0.07687332),
                             (771,0.00015758);
+
 INSERT INTO t1 (id,num) VALUES
                             (6019,0.36197448),
                             (6147,0.00694031),
@@ -724,3 +794,38 @@ INSERT INTO t1 (id,num) VALUES
                             (6915,0.05876909),
                             (7043,NULL),
                             (7171,NULL);
+analyze table t1;
+set @@tidb_partition_prune_mode=default;
+
+# TestMergeGlobalStatsWithUnAnalyzedPartition
+set tidb_partition_prune_mode=dynamic;
+drop table if exists t;
+CREATE TABLE `t` (   `id` int(11) DEFAULT NULL,   `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL ) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (3),  PARTITION `p1` VALUES LESS THAN (7),  PARTITION `p2` VALUES LESS THAN (11));
+insert into t values (1,1,1,1),(2,2,2,2),(4,4,4,4),(5,5,5,5),(6,6,6,6),(8,8,8,8),(9,9,9,9);
+create index idxa on t (a);
+create index idxb on t (b);
+create index idxc on t (c);
+analyze table t partition p0 index idxa;
+analyze table t partition p1 index idxb;
+analyze table t partition p2 index idxc;
+show warnings;
+analyze table t partition p0;
+show warnings;
+set tidb_partition_prune_mode=default;
+
+
+# TestSetFastAnalyzeSystemVariable
+set @@session.tidb_enable_fast_analyze=1;
+show warnings;
+set @@session.tidb_enable_fast_analyze=default;
+
+# TestIncrementalAnalyze
+drop table if exists t;
+create table t(a int, b int, primary key(a), index idx(b));
+-- error 1105
+analyze incremental table t index;
+drop table if exists t;
+create table t(a int, b int, primary key(a), index idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20));
+-- error 1105
+analyze incremental table t partition p0 index idx;
+

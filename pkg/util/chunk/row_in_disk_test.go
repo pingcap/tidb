@@ -64,10 +64,10 @@ func initChunks(numChk, numRow int) ([]*Chunk, []*types.FieldType) {
 	return chks, fields
 }
 
-func TestListInDisk(t *testing.T) {
+func TestDataInDiskByRows(t *testing.T) {
 	numChk, numRow := 2, 2
 	chks, fields := initChunks(numChk, numRow)
-	l := NewListInDisk(fields)
+	l := NewDataInDiskByRows(fields)
 	defer func() {
 		err := l.Close()
 		require.NoError(t, err)
@@ -92,11 +92,11 @@ func TestListInDisk(t *testing.T) {
 	}
 }
 
-func BenchmarkListInDiskAdd(b *testing.B) {
+func BenchmarkDataInDiskByRowsAdd(b *testing.B) {
 	numChk, numRow := 1, 2
 	chks, fields := initChunks(numChk, numRow)
 	chk := chks[0]
-	l := NewListInDisk(fields)
+	l := NewDataInDiskByRows(fields)
 	defer l.Close()
 
 	b.ResetTimer()
@@ -108,10 +108,10 @@ func BenchmarkListInDiskAdd(b *testing.B) {
 	}
 }
 
-func BenchmarkListInDiskGetRow(b *testing.B) {
+func BenchmarkDataInDiskByRowsGetRow(b *testing.B) {
 	numChk, numRow := 10000, 2
 	chks, fields := initChunks(numChk, numRow)
-	l := NewListInDisk(fields)
+	l := NewDataInDiskByRows(fields)
 	defer l.Close()
 	for _, chk := range chks {
 		err := l.Add(chk)
@@ -140,7 +140,7 @@ func BenchmarkListInDiskGetRow(b *testing.B) {
 }
 
 type listInDiskWriteDisk struct {
-	ListInDisk
+	DataInDiskByRows
 }
 
 func (l *diskFileReaderWriter) flushForTest() (err error) {
@@ -158,8 +158,8 @@ func (l *diskFileReaderWriter) flushForTest() (err error) {
 	return nil
 }
 
-func newListInDiskWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
-	l := listInDiskWriteDisk{*NewListInDisk(fieldTypes)}
+func newDataInDiskByRowsWriteDisk(fieldTypes []*types.FieldType) (*listInDiskWriteDisk, error) {
+	l := listInDiskWriteDisk{*NewDataInDiskByRows(fieldTypes)}
 	disk, err := os.CreateTemp(config.GetGlobalConfig().TempStoragePath, strconv.Itoa(l.diskTracker.Label()))
 	if err != nil {
 		return nil, err
@@ -214,12 +214,12 @@ func checkRow(t *testing.T, row1, row2 Row) {
 	}
 }
 
-func testListInDisk(t *testing.T, concurrency int) {
+func testDataInDiskByRows(t *testing.T, concurrency int) {
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
-	lChecksum := NewListInDisk(fields)
+	lChecksum := NewDataInDiskByRows(fields)
 	defer lChecksum.Close()
-	lDisk, err := newListInDiskWriteDisk(fields)
+	lDisk, err := newDataInDiskByRowsWriteDisk(fields)
 	require.NoError(t, err)
 	defer lDisk.Close()
 	for _, chk := range chks {
@@ -261,11 +261,11 @@ func testListInDisk(t *testing.T, concurrency int) {
 	wg.Wait()
 }
 
-func BenchmarkListInDisk_GetChunk(b *testing.B) {
+func BenchmarkDataInDiskByRows_GetChunk(b *testing.B) {
 	b.StopTimer()
 	numChk, numRow := 10, 1000
 	chks, fields := initChunks(numChk, numRow)
-	l := NewListInDisk(fields)
+	l := NewDataInDiskByRows(fields)
 	defer l.Close()
 	for _, chk := range chks {
 		_ = l.Add(chk)
@@ -278,31 +278,31 @@ func BenchmarkListInDisk_GetChunk(b *testing.B) {
 	}
 }
 
-func TestListInDiskWithChecksum1(t *testing.T) {
+func TestDataInDiskByRowsWithChecksum1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
 	})
-	testListInDisk(t, 1)
+	testDataInDiskByRows(t, 1)
 }
 
-func TestListInDiskWithChecksum2(t *testing.T) {
+func TestDataInDiskByRowsWithChecksum2(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
 	})
-	testListInDisk(t, 2)
+	testDataInDiskByRows(t, 2)
 }
 
-func TestListInDiskWithChecksum8(t *testing.T) {
+func TestDataInDiskByRowsWithChecksum8(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
 	})
-	testListInDisk(t, 8)
+	testDataInDiskByRows(t, 8)
 }
 
-func TestListInDiskWithChecksumReaderWithCache(t *testing.T) {
+func TestDataInDiskByRowsWithChecksumReaderWithCache(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
@@ -310,7 +310,7 @@ func TestListInDiskWithChecksumReaderWithCache(t *testing.T) {
 	testReaderWithCache(t)
 }
 
-func TestListInDiskWithChecksumReaderWithCacheNoFlush(t *testing.T) {
+func TestDataInDiskByRowsWithChecksumReaderWithCacheNoFlush(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodPlaintext
@@ -318,31 +318,31 @@ func TestListInDiskWithChecksumReaderWithCacheNoFlush(t *testing.T) {
 	testReaderWithCacheNoFlush(t)
 }
 
-func TestListInDiskWithChecksumAndEncrypt1(t *testing.T) {
+func TestDataInDiskByRowsWithChecksumAndEncrypt1(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
-	testListInDisk(t, 1)
+	testDataInDiskByRows(t, 1)
 }
 
-func TestListInDiskWithChecksumAndEncrypt2(t *testing.T) {
+func TestDataInDiskByRowsWithChecksumAndEncrypt2(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
-	testListInDisk(t, 2)
+	testDataInDiskByRows(t, 2)
 }
 
-func TestListInDiskWithChecksumAndEncrypt8(t *testing.T) {
+func TestDataInDiskByRowsWithChecksumAndEncrypt8(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
 	})
-	testListInDisk(t, 8)
+	testDataInDiskByRows(t, 8)
 }
 
-func TestListInDiskWithChecksumAndEncryptReaderWithCache(t *testing.T) {
+func TestDataInDiskByRowsWithChecksumAndEncryptReaderWithCache(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
@@ -350,7 +350,7 @@ func TestListInDiskWithChecksumAndEncryptReaderWithCache(t *testing.T) {
 	testReaderWithCache(t)
 }
 
-func TestListInDiskWithChecksumAndEncryptReaderWithCacheNoFlush(t *testing.T) {
+func TestDataInDiskByRowsWithChecksumAndEncryptReaderWithCacheNoFlush(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Security.SpilledFileEncryptionMethod = config.SpilledFileEncryptionMethodAES128CTR
@@ -383,7 +383,7 @@ func testReaderWithCache(t *testing.T) {
 	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
 	chk := NewChunkWithCapacity(field, 1)
 	chk.AppendString(0, buf.String())
-	l := NewListInDisk(field)
+	l := NewDataInDiskByRows(field)
 	err := l.Add(chk)
 	require.NoError(t, err)
 
@@ -453,7 +453,7 @@ func testReaderWithCacheNoFlush(t *testing.T) {
 	field := []*types.FieldType{types.NewFieldType(mysql.TypeString)}
 	chk := NewChunkWithCapacity(field, 1)
 	chk.AppendString(0, testData)
-	l := NewListInDisk(field)
+	l := NewDataInDiskByRows(field)
 	err := l.Add(chk)
 	require.NoError(t, err)
 

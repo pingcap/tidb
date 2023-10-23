@@ -31,13 +31,23 @@ func TestWithNewFlags(t *testing.T) {
 	require.Equal(t, time.UTC, ctx2.Location())
 }
 
-func TestStringFlags(t *testing.T) {
+func TestSimpleOnOffFlags(t *testing.T) {
 	cases := []struct {
 		name    string
 		flag    Flags
-		readFn  func(f Flags) bool
-		writeFn func(f Flags, skip bool) Flags
+		readFn  func(Flags) bool
+		writeFn func(Flags, bool) Flags
 	}{
+		{
+			name: "FlagAllowNegativeToUnsigned",
+			flag: FlagAllowNegativeToUnsigned,
+			readFn: func(f Flags) bool {
+				return f.AllowNegativeToUnsigned()
+			},
+			writeFn: func(f Flags, clip bool) Flags {
+				return f.WithAllowNegativeToUnsigned(clip)
+			},
+		},
 		{
 			name: "FlagSkipASCIICheck",
 			flag: FlagSkipASCIICheck,

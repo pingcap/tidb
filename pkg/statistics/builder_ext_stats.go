@@ -12,37 +12,42 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package extstats
+package statistics
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
 // BuildExtendedStats build extended stats for column groups if needed based on the column samples.
-// TODO: move this function to statistics/builder.go.
 func BuildExtendedStats(sctx sessionctx.Context,
-	tableID int64, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) (*statistics.ExtendedStatsColl, error) {
+	tableID int64, cols []*model.ColumnInfo, collectors []*SampleCollector) (*ExtendedStatsColl, error) {
 	const sql = "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)"
-	rows, _, err := util.ExecRows(sctx, sql, tableID, statistics.ExtendedStatsAnalyzed, statistics.ExtendedStatsInited)
+
+	sqlExec, ok := sctx.(sqlexec.RestrictedSQLExecutor)
+	if !ok {
+		return nil, errors.Errorf("invalid sql executor")
+	}
+	rows, _, err := sqlExec.ExecRestrictedSQL(kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats), nil, sql, tableID, ExtendedStatsAnalyzed, ExtendedStatsInited)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	if len(rows) == 0 {
 		return nil, nil
 	}
-	statsColl := statistics.NewExtendedStatsColl()
+	statsColl := NewExtendedStatsColl()
 	for _, row := range rows {
 		name := row.GetString(0)
-		item := &statistics.ExtendedStatsItem{Tp: uint8(row.GetInt64(1))}
+		item := &ExtendedStatsItem{Tp: uint8(row.GetInt64(1))}
 		colIDs := row.GetString(2)
 		err := json.Unmarshal([]byte(colIDs), &item.ColIDs)
 		if err != nil {
@@ -60,7 +65,7 @@ func BuildExtendedStats(sctx sessionctx.Context,
 	return statsColl, nil
 }
 
-func fillExtendedStatsItemVals(sctx sessionctx.Context, item *statistics.ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) *statistics.ExtendedStatsItem {
+func fillExtendedStatsItemVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
 	switch item.Tp {
 	case ast.StatsTypeCardinality, ast.StatsTypeDependency:
 		return nil
@@ -70,7 +75,7 @@ func fillExtendedStatsItemVals(sctx sessionctx.Context, item *statistics.Extende
 	return nil
 }
 
-func fillExtStatsCorrVals(sctx sessionctx.Context, item *statistics.ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*statistics.SampleCollector) *statistics.ExtendedStatsItem {
+func fillExtStatsCorrVals(sctx sessionctx.Context, item *ExtendedStatsItem, cols []*model.ColumnInfo, collectors []*SampleCollector) *ExtendedStatsItem {
 	colOffsets := make([]int, 0, 2)
 	for _, id := range item.ColIDs {
 		for i, col := range cols {
@@ -86,7 +91,7 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *statistics.ExtendedStat
 	// samplesX and samplesY are in order of handle, i.e, their SampleItem.Ordinals are in order.
 	samplesX := collectors[colOffsets[0]].Samples
 	// We would modify Ordinal of samplesY, so we make a deep copy.
-	samplesY := statistics.CopySampleItems(collectors[colOffsets[1]].Samples)
+	samplesY := CopySampleItems(collectors[colOffsets[1]].Samples)
 	sampleNum := min(len(samplesX), len(samplesY))
 	if sampleNum == 1 {
 		item.ScalarVals = 1
@@ -100,11 +105,11 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *statistics.ExtendedStat
 	sc := sctx.GetSessionVars().StmtCtx
 
 	var err error
-	samplesX, err = statistics.SortSampleItems(sc, samplesX)
+	samplesX, err = SortSampleItems(sc, samplesX)
 	if err != nil {
 		return nil
 	}
-	samplesYInXOrder := make([]*statistics.SampleItem, 0, sampleNum)
+	samplesYInXOrder := make([]*SampleItem, 0, sampleNum)
 	for i, itemX := range samplesX {
 		if itemX.Ordinal >= len(samplesY) {
 			continue
@@ -113,7 +118,7 @@ func fillExtStatsCorrVals(sctx sessionctx.Context, item *statistics.ExtendedStat
 		itemY.Ordinal = i
 		samplesYInXOrder = append(samplesYInXOrder, itemY)
 	}
-	samplesYInYOrder, err := statistics.SortSampleItems(sc, samplesYInXOrder)
+	samplesYInYOrder, err := SortSampleItems(sc, samplesYInXOrder)
 	if err != nil {
 		return nil
 	}

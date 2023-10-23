@@ -631,9 +631,9 @@ func (d *Datum) SetValue(val interface{}, tp *types.FieldType) {
 // Compare compares datum to another datum.
 // Notes: don't rely on datum.collation to get the collator, it's tend to buggy.
 func (d *Datum) Compare(sc *stmtctx.StatementContext, ad *Datum, comparer collate.Collator) (int, error) {
-	typeCtx := DefaultNoWarningContext
+	typeCtx := DefaultStmtNoWarningContext
 	if sc != nil {
-		typeCtx = sc.TypeCtx
+		typeCtx = sc.TypeCtx()
 	}
 	if d.k == KindMysqlJSON && ad.k != KindMysqlJSON {
 		cmp, err := ad.Compare(sc, d, comparer)
@@ -758,6 +758,8 @@ func (d *Datum) compareFloat64(ctx Context, f float64) (int, error) {
 }
 
 func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, comparer collate.Collator) (int, error) {
+	typeCtx := sc.TypeCtxOrDefault()
+
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -767,7 +769,7 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, comparer c
 		return comparer.Compare(d.GetString(), s), nil
 	case KindMysqlDecimal:
 		dec := new(MyDecimal)
-		err := sc.TypeCtx.HandleTruncate(dec.FromString(hack.Slice(s)))
+		err := typeCtx.HandleTruncate(dec.FromString(hack.Slice(s)))
 		return d.GetMysqlDecimal().Compare(dec), errors.Trace(err)
 	case KindMysqlTime:
 		dt, err := ParseDatetime(sc, s)
@@ -791,6 +793,8 @@ func (d *Datum) compareString(sc *stmtctx.StatementContext, s string, comparer c
 }
 
 func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (int, error) {
+	typeCtx := sc.TypeCtxOrDefault()
+
 	switch d.k {
 	case KindNull, KindMinNotNull:
 		return -1, nil
@@ -800,7 +804,7 @@ func (d *Datum) compareMysqlDecimal(sc *stmtctx.StatementContext, dec *MyDecimal
 		return d.GetMysqlDecimal().Compare(dec), nil
 	case KindString, KindBytes:
 		dDec := new(MyDecimal)
-		err := sc.TypeCtx.HandleTruncate(dDec.FromString(d.GetBytes()))
+		err := typeCtx.HandleTruncate(dDec.FromString(d.GetBytes()))
 		return dDec.Compare(dec), errors.Trace(err)
 	default:
 		dVal, err := d.ConvertTo(sc, NewFieldType(mysql.TypeNewDecimal))
@@ -1030,7 +1034,7 @@ func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType)
 		s   string
 		err error
 	)
-	ctx := sc.TypeCtx
+	ctx := sc.TypeCtx()
 	switch d.k {
 	case KindInt64:
 		s = strconv.FormatInt(d.GetInt64(), 10)
@@ -1190,17 +1194,15 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	)
 	switch d.k {
 	case KindInt64:
-		val, err = ConvertIntToUint(sc, d.GetInt64(), upperBound, tp)
+		val, err = ConvertIntToUint(sc.TypeFlags(), d.GetInt64(), upperBound, tp)
 	case KindUint64:
 		val, err = ConvertUintToUint(d.GetUint64(), upperBound, tp)
 	case KindFloat32, KindFloat64:
-		val, err = ConvertFloatToUint(sc, d.GetFloat64(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc.TypeFlags(), d.GetFloat64(), upperBound, tp)
 	case KindString, KindBytes:
-		uval, err1 := StrToUint(sc.TypeCtxOrDefault(), d.GetString(), false)
-		if err1 != nil && ErrOverflow.Equal(err1) && !sc.ShouldIgnoreOverflowError() {
-			return ret, errors.Trace(err1)
-		}
-		val, err = ConvertUintToUint(uval, upperBound, tp)
+		var err1 error
+		val, err1 = StrToUint(sc.TypeCtxOrDefault(), d.GetString(), false)
+		val, err = ConvertUintToUint(val, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
@@ -1211,7 +1213,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		if err == nil {
 			err = err1
 		}
-		val, err1 = ConvertIntToUint(sc, ival, upperBound, tp)
+		val, err1 = ConvertIntToUint(sc.TypeFlags(), ival, upperBound, tp)
 		if err == nil {
 			err = err1
 		}
@@ -1226,9 +1228,9 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 	case KindMysqlDecimal:
 		val, err = ConvertDecimalToUint(sc, d.GetMysqlDecimal(), upperBound, tp)
 	case KindMysqlEnum:
-		val, err = ConvertFloatToUint(sc, d.GetMysqlEnum().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc.TypeFlags(), d.GetMysqlEnum().ToNumber(), upperBound, tp)
 	case KindMysqlSet:
-		val, err = ConvertFloatToUint(sc, d.GetMysqlSet().ToNumber(), upperBound, tp)
+		val, err = ConvertFloatToUint(sc.TypeFlags(), d.GetMysqlSet().ToNumber(), upperBound, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err = d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
 		if err == nil {
