@@ -61,11 +61,11 @@ func TestAbs(t *testing.T) {
 func TestCeil(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(tmpIT)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	type testCase struct {
 		arg    interface{}
@@ -177,11 +177,11 @@ func TestExp(t *testing.T) {
 func TestFloor(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(tmpIT)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	genDuration := func(h, m, s int64) types.Duration {
 		duration := time.Duration(h)*time.Hour +
@@ -631,11 +631,11 @@ func TestConv(t *testing.T) {
 func TestSign(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	tmpIT := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(tmpIT)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	for _, tt := range []struct {
 		num []interface{}
@@ -666,7 +666,12 @@ func TestSign(t *testing.T) {
 func TestDegrees(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreTruncate.Store(false)
+	oldTypeFlags := sc.TypeFlags()
+	defer func() {
+		sc.SetTypeFlags(oldTypeFlags)
+	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(false))
+
 	cases := []struct {
 		args       interface{}
 		expected   float64

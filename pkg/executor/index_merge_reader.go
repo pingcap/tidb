@@ -48,7 +48,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -429,7 +428,7 @@ func (e *IndexMergeReaderExecutor) startPartialIndexWorker(ctx context.Context, 
 					results = append(results, result)
 					failpoint.Inject("testIndexMergePartialIndexWorkerCoprLeak", nil)
 				}
-				worker.batchSize = mathutil.Min(e.MaxChunkSize(), worker.maxBatchSize)
+				worker.batchSize = min(e.MaxChunkSize(), worker.maxBatchSize)
 				if len(results) > 1 && len(e.byItems) != 0 {
 					// e.Schema() not the output schema for partialIndexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 					ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
@@ -679,7 +678,7 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			if w.pushedLimit.Offset+w.pushedLimit.Count <= w.scannedKeys {
 				return handles, retChk, nil
 			}
-			requiredRows = mathutil.Min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
+			requiredRows = min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
 		start := time.Now()
@@ -825,7 +824,7 @@ func (e *IndexMergeReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) e
 			return nil
 		}
 		if resultTask.cursor < len(resultTask.rows) {
-			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, e.MaxChunkSize()-req.NumRows())
+			numToAppend := min(len(resultTask.rows)-resultTask.cursor, e.MaxChunkSize()-req.NumRows())
 			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
 			resultTask.cursor += numToAppend
 			if req.NumRows() >= e.MaxChunkSize() {
@@ -997,7 +996,7 @@ func (w *indexMergeProcessWorker) NewHandleHeap(taskMap map[int][]*indexMergeTab
 
 	requiredCnt := uint64(0)
 	if w.indexMerge.pushedLimit != nil {
-		requiredCnt = mathutil.Max(requiredCnt, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
+		requiredCnt = max(requiredCnt, w.indexMerge.pushedLimit.Count+w.indexMerge.pushedLimit.Offset)
 	}
 	return &handleHeap{
 		requiredCnt: requiredCnt,
@@ -1092,7 +1091,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 
 	needCount := taskHeap.Len()
 	if w.indexMerge.pushedLimit != nil {
-		needCount = mathutil.Max(0, taskHeap.Len()-int(w.indexMerge.pushedLimit.Offset))
+		needCount = max(0, taskHeap.Len()-int(w.indexMerge.pushedLimit.Offset))
 	}
 	if needCount == 0 {
 		return
@@ -1106,7 +1105,7 @@ func (w *indexMergeProcessWorker) fetchLoopUnionWithOrderBy(ctx context.Context,
 	batchSize := w.indexMerge.Ctx().GetSessionVars().IndexLookupSize
 	tasks := make([]*indexMergeTableTask, 0, len(fhs)/batchSize+1)
 	for len(fhs) > 0 {
-		l := mathutil.Min(len(fhs), batchSize)
+		l := min(len(fhs), batchSize)
 		// Save the index order.
 		indexOrder := kv.NewHandleMap()
 		for i, h := range fhs[:l] {
@@ -1158,7 +1157,7 @@ func pushedLimitCountingDown(pushedLimit *plannercore.PushedDownLimit, handles [
 	if fhsLen > pushedLimit.Count {
 		handles = handles[:pushedLimit.Count]
 	}
-	pushedLimit.Count -= mathutil.Min(pushedLimit.Count, fhsLen)
+	pushedLimit.Count -= min(pushedLimit.Count, fhsLen)
 	return false, handles
 }
 
@@ -1514,7 +1513,7 @@ func (w *indexMergeProcessWorker) fetchLoopIntersection(ctx context.Context, fet
 	if w.indexMerge.partitionTableMode {
 		partCnt = len(w.indexMerge.prunedPartitions)
 	}
-	workerCnt := mathutil.Min(partCnt, maxWorkerCnt)
+	workerCnt := min(partCnt, maxWorkerCnt)
 	failpoint.Inject("testIndexMergeIntersectionConcurrency", func(val failpoint.Value) {
 		con := val.(int)
 		if con != workerCnt {
@@ -1749,7 +1748,7 @@ func (w *partialIndexWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 			if w.pushedLimit.Offset+w.pushedLimit.Count <= w.scannedKeys {
 				return handles, retChk, nil
 			}
-			requiredRows = mathutil.Min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
+			requiredRows = min(int(w.pushedLimit.Offset+w.pushedLimit.Count-w.scannedKeys), requiredRows)
 		}
 		chk.SetRequiredRows(requiredRows, w.maxChunkSize)
 		start := time.Now()

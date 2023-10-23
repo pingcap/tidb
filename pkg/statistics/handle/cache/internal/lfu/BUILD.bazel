@@ -15,7 +15,6 @@ go_library(
         "//pkg/statistics/handle/cache/internal/metrics",
         "//pkg/util/intest",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "@com_github_dgraph_io_ristretto//:ristretto",
         "@org_golang_x_exp//maps",

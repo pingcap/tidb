@@ -76,6 +76,7 @@ go_test(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/rowcodec",
+        "//pkg/util/timeutil",
         "@com_github_pingcap_badger//:badger",
         "@com_github_pingcap_badger//y",
         "@com_github_pingcap_kvproto//pkg/coprocessor",

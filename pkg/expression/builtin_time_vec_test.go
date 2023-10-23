@@ -581,7 +581,8 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 func TestVecMonth(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
-	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
+	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(true))
 	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
 	input.Reset()
 	input.AppendTime(0, types.ZeroDate)
@@ -594,6 +595,6 @@ func TestVecMonth(t *testing.T) {
 	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
-	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(false))
 	require.NoError(t, f.vecEvalInt(input, result))
 }

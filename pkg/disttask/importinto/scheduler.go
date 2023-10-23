@@ -107,7 +107,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
-	s.logger.Info("memory size limit per index writer per concurrency",
+	s.logger.Info("index writer memory size limit",
 		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
 	return nil
 }
@@ -478,7 +478,7 @@ func (*importScheduler) GetSubtaskExecutor(_ context.Context, task *proto.Task, 
 		return nil, errors.Trace(err)
 	}
 	logger := logutil.BgLogger().With(
-		zap.String("type", proto.ImportInto),
+		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
 		zap.String("step", stepStr(task.Step)),
 	)

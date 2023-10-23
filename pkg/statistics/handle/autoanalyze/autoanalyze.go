@@ -44,26 +44,52 @@ import (
 // statsAnalyze implements util.StatsAnalyze.
 // statsAnalyze is used to handle auto-analyze and manage analyze jobs.
 type statsAnalyze struct {
-	pool statsutil.SessionPool
+	statsHandle statsutil.StatsHandle
 }
 
 // NewStatsAnalyze creates a new StatsAnalyze.
-func NewStatsAnalyze(pool statsutil.SessionPool) statsutil.StatsAnalyze {
-	return &statsAnalyze{pool: pool}
+func NewStatsAnalyze(statsHandle statsutil.StatsHandle) statsutil.StatsAnalyze {
+	return &statsAnalyze{statsHandle: statsHandle}
 }
 
+// InsertAnalyzeJob inserts the analyze job to the storage.
 func (sa *statsAnalyze) InsertAnalyzeJob(job *statistics.AnalyzeJob, instance string, procID uint64) error {
-	return statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return insertAnalyzeJob(sctx, job, instance, procID)
 	})
 }
 
 // DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 func (sa *statsAnalyze) DeleteAnalyzeJobs(updateTime time.Time) error {
-	return statsutil.CallWithSCtx(sa.pool, func(sctx sessionctx.Context) error {
+	return statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		_, _, err := statsutil.ExecRows(sctx, "DELETE FROM mysql.analyze_jobs WHERE update_time < CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)", updateTime.UTC().Format(types.TimeFormat))
 		return err
 	})
+}
+
+// HandleAutoAnalyze analyzes the newly created table or index.
+func (sa *statsAnalyze) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
+	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, is)
+		return nil
+	})
+	return
+}
+
+// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
+func (sa *statsAnalyze) CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool {
+	// We simply choose one physical id to get its stats.
+	var tbl *statistics.Table
+	for _, pid := range physicalIDs {
+		tbl = sa.statsHandle.GetPartitionStats(tblInfo, pid)
+		if !tbl.Pseudo {
+			break
+		}
+	}
+	if tbl == nil || tbl.Pseudo {
+		return true
+	}
+	return statistics.CheckAnalyzeVerOnTable(tbl, version)
 }
 
 func parseAutoAnalyzeRatio(ratio string) float64 {
@@ -102,25 +128,9 @@ func getAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	return parameters
 }
 
-// Opt is used to hold parameters for auto analyze.
-type Opt struct {
-	// SysProcTracker is used to track analyze resource consumption.
-	SysProcTracker sessionctx.SysProcTracker
-	// GetLockedTables is used to look up locked tables which will be skipped in auto analyze.
-	GetLockedTables func(tableIDs ...int64) (map[int64]struct{}, error)
-	// GetTableStats is used to look up table stats to decide whether to analyze the table.
-	GetTableStats func(tblInfo *model.TableInfo) *statistics.Table
-	// GetPartitionStats is used to look up partition stats to decide whether to analyze the partition.
-	GetPartitionStats func(tblInfo *model.TableInfo, pid int64) *statistics.Table
-	// AutoAnalyzeProcIDGetter is used to assign job ID for analyze jobs.
-	AutoAnalyzeProcIDGetter func() uint64
-	// StatsLease is the current stats lease.
-	StatsLease time.Duration
-}
-
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(sctx sessionctx.Context,
-	opt *Opt,
+	statsHandle statsutil.StatsHandle,
 	is infoschema.InfoSchema) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -170,7 +180,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			}
 		}
 
-		lockedTables, err := opt.GetLockedTables(tidsAndPids...)
+		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
 		if err != nil {
 			logutil.BgLogger().Error("check table lock failed",
 				zap.String("category", "stats"), zap.Error(err))
@@ -189,9 +199,9 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			}
 			pi := tblInfo.GetPartitionInfo()
 			if pi == nil {
-				statsTbl := opt.GetTableStats(tblInfo)
+				statsTbl := statsHandle.GetTableStats(tblInfo)
 				sql := "analyze table %n.%n"
-				analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
+				analyzed := autoAnalyzeTable(sctx, statsHandle, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
 					// analyze one table at a time to let it get the freshest parameters.
 					// others will be analyzed next round which is just 3s later.
@@ -207,7 +217,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 				}
 			}
 			if pruneMode == variable.Dynamic {
-				analyzed := autoAnalyzePartitionTableInDynamicMode(sctx, opt, tblInfo, partitionDefs, db, autoAnalyzeRatio)
+				analyzed := autoAnalyzePartitionTableInDynamicMode(sctx, statsHandle, tblInfo, partitionDefs, db, autoAnalyzeRatio)
 				if analyzed {
 					return true
 				}
@@ -215,8 +225,8 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			}
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
-				statsTbl := opt.GetPartitionStats(tblInfo, def.ID)
-				analyzed := autoAnalyzeTable(sctx, opt, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
+				statsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
+				analyzed := autoAnalyzeTable(sctx, statsHandle, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
 				}
@@ -230,13 +240,13 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 var AutoAnalyzeMinCnt int64 = 1000
 
 func autoAnalyzeTable(sctx sessionctx.Context,
-	opt *Opt,
+	statsHandle statsutil.StatsHandle,
 	tblInfo *model.TableInfo, statsTbl *statistics.Table,
 	ratio float64, sql string, params ...interface{}) bool {
 	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 		return false
 	}
-	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*opt.StatsLease, ratio); needAnalyze {
+	if needAnalyze, reason := NeedAnalyzeTable(statsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
 		escaped, err := sqlexec.EscapeSQL(sql, params...)
 		if err != nil {
 			return false
@@ -244,7 +254,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 		logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"), zap.String("sql", escaped), zap.String("reason", reason))
 		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		execAutoAnalyze(sctx, opt, tableStatsVer, sql, params...)
+		execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
 		return true
 	}
 	for _, idx := range tblInfo.Indices {
@@ -258,7 +268,7 @@ func autoAnalyzeTable(sctx sessionctx.Context,
 			logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"), zap.String("sql", escaped))
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			execAutoAnalyze(sctx, opt, tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -310,19 +320,24 @@ func TableAnalyzed(tbl *statistics.Table) bool {
 }
 
 func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
-	opt *Opt,
+	statsHandle statsutil.StatsHandle,
 	tblInfo *model.TableInfo, partitionDefs []model.PartitionDefinition,
 	db string, ratio float64) bool {
 	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 	partitionNames := make([]interface{}, 0, len(partitionDefs))
 	for _, def := range partitionDefs {
-		partitionStatsTbl := opt.GetPartitionStats(tblInfo, def.ID)
+		partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
 		if partitionStatsTbl.Pseudo || partitionStatsTbl.RealtimeCount < AutoAnalyzeMinCnt {
 			continue
 		}
-		if needAnalyze, _ := NeedAnalyzeTable(partitionStatsTbl, 20*opt.StatsLease, ratio); needAnalyze {
+		if needAnalyze, reason := NeedAnalyzeTable(partitionStatsTbl, 20*statsHandle.Lease(), ratio); needAnalyze {
 			partitionNames = append(partitionNames, def.Name.O)
+			logutil.BgLogger().Info("need to auto analyze", zap.String("category", "stats"),
+				zap.String("database", db),
+				zap.String("table", tblInfo.Name.String()),
+				zap.String("partition", def.Name.O),
+				zap.String("reason", reason))
 			statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 		}
 	}
@@ -340,10 +355,11 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 	}
 	if len(partitionNames) > 0 {
 		logutil.BgLogger().Info("start to auto analyze", zap.String("category", "stats"),
+			zap.String("database", db),
 			zap.String("table", tblInfo.Name.String()),
 			zap.Any("partitions", partitionNames),
 			zap.Int("analyze partition batch size", analyzePartitionBatchSize))
-		statsTbl := opt.GetTableStats(tblInfo)
+		statsTbl := statsHandle.GetTableStats(tblInfo)
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 		for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
 			start := i
@@ -354,9 +370,10 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
 			params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 			logutil.BgLogger().Info("auto analyze triggered", zap.String("category", "stats"),
+				zap.String("database", db),
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", partitionNames[start:end]))
-			execAutoAnalyze(sctx, opt, tableStatsVer, sql, params...)
+			execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
 		}
 		return true
 	}
@@ -365,14 +382,14 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 			continue
 		}
 		for _, def := range partitionDefs {
-			partitionStatsTbl := opt.GetPartitionStats(tblInfo, def.ID)
+			partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
 			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
 				partitionNames = append(partitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)
 			}
 		}
 		if len(partitionNames) > 0 {
-			statsTbl := opt.GetTableStats(tblInfo)
+			statsTbl := statsHandle.GetTableStats(tblInfo)
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
 			for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
 				start := i
@@ -384,10 +401,11 @@ func autoAnalyzePartitionTableInDynamicMode(sctx sessionctx.Context,
 				params := append([]interface{}{db, tblInfo.Name.O}, partitionNames[start:end]...)
 				params = append(params, idx.Name.O)
 				logutil.BgLogger().Info("auto analyze for unanalyzed", zap.String("category", "stats"),
+					zap.String("database", db),
 					zap.String("table", tblInfo.Name.String()),
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", partitionNames[start:end]))
-				execAutoAnalyze(sctx, opt, tableStatsVer, sql, params...)
+				execAutoAnalyze(sctx, statsHandle, tableStatsVer, sql, params...)
 			}
 			return true
 		}
@@ -402,11 +420,11 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 }
 
 func execAutoAnalyze(sctx sessionctx.Context,
-	opt *Opt,
+	statsHandle statsutil.StatsHandle,
 	statsVer int,
 	sql string, params ...interface{}) {
 	startTime := time.Now()
-	_, _, err := execAnalyzeStmt(sctx, opt, statsVer, sql, params...)
+	_, _, err := execAnalyzeStmt(sctx, statsHandle, statsVer, sql, params...)
 	dur := time.Since(startTime)
 	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
 	if err != nil {
@@ -422,7 +440,7 @@ func execAutoAnalyze(sctx sessionctx.Context,
 }
 
 func execAnalyzeStmt(sctx sessionctx.Context,
-	opt *Opt,
+	statsHandle statsutil.StatsHandle,
 	statsVer int,
 	sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
 	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
@@ -432,7 +450,7 @@ func execAnalyzeStmt(sctx sessionctx.Context,
 		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
 		sqlexec.GetPartitionPruneModeOption(pruneMode),
 		sqlexec.ExecOptionUseCurSession,
-		sqlexec.ExecOptionWithSysProcTrack(opt.AutoAnalyzeProcIDGetter(), opt.SysProcTracker.Track, opt.SysProcTracker.UnTrack),
+		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), statsHandle.SysProcTracker().Track, statsHandle.SysProcTracker().UnTrack),
 	}
 	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }
