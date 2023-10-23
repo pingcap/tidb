@@ -498,7 +498,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	}
 
 	for _, pair := range w.kvLocations {
-		err = w.kvStore.AddData(w.getEncodedKV(pair))
+		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
 		if err != nil {
 			return err
 		}
@@ -540,7 +540,7 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	return nil
 }
 
-func (w *Writer) getEncodedKV(pos kvLocation) []byte {
+func (w *Writer) getEncodedKVData(pos kvLocation) []byte {
 	block := w.kvBuffer.blocks[pos.blockIdx]
 	return block[pos.offset : pos.offset+pos.length]
 }

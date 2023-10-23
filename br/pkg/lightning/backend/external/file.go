@@ -49,12 +49,12 @@ func NewKeyValueStore(
 	return kvStore, nil
 }
 
-// AddData saves encoded key-value pairs to the KeyValueStore.
+// addEncodedData saves encoded key-value pairs to the KeyValueStore.
 // data layout: keyLen + key + valueLen + value. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
-func (s *KeyValueStore) AddData(val []byte) error {
+func (s *KeyValueStore) addEncodedData(val []byte) error {
 	_, err := s.dataWriter.Write(s.ctx, val)
 	if err != nil {
 		return err
