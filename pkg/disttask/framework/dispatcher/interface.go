@@ -69,7 +69,7 @@ type Extension interface {
 	// OnErrStage is called when:
 	// 	1. subtask is finished with error.
 	// 	2. task is cancelled after we have dispatched some subtasks.
-	OnErrStage(ctx context.Context, h TaskHandle, task *proto.Task, receiveErr []error) (subtaskMeta []byte, err error)
+	OnErrStage(ctx context.Context, h TaskHandle, task *proto.Task, receiveErrs []error) (subtaskMeta []byte, err error)
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.

@@ -74,6 +74,12 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	gTask *proto.Task,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
+	logger := logutil.BgLogger().With(
+		zap.Stringer("type", gTask.Type),
+		zap.Int64("task-id", gTask.ID),
+		zap.String("curr-step", StepStr(gTask.Step)),
+		zap.String("next-step", StepStr(nextStep)),
+	)
 	var backfillMeta BackfillGlobalMeta
 	if err := json.Unmarshal(gTask.Meta, &backfillMeta); err != nil {
 		return nil, err
@@ -83,6 +89,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 	if err != nil {
 		return nil, err
 	}
+	logger.Info("on next subtasks batch")
 
 	// TODO: use planner.
 	switch nextStep {
@@ -115,7 +122,8 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 				gTask,
 				job.ID,
 				backfillMeta.CloudStorageURI,
-				prevStep)
+				prevStep,
+				logger)
 		}
 		// for partition table, no subtasks for write and ingest step.
 		if tblInfo.Partition != nil {
@@ -163,9 +171,15 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnErrStage generate error handling stage's plan.
-func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErr []error) (meta []byte, err error) {
+func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, task *proto.Task, receiveErrs []error) (meta []byte, err error) {
 	// We do not need extra meta info when rolling back
-	firstErr := receiveErr[0]
+	logger := logutil.BgLogger().With(
+		zap.Stringer("type", task.Type),
+		zap.Int64("task-id", task.ID),
+		zap.String("step", StepStr(task.Step)),
+	)
+	logger.Info("on error stage", zap.Errors("errors", receiveErrs))
+	firstErr := receiveErrs[0]
 	task.Error = firstErr
 
 	return nil, nil
@@ -195,21 +209,21 @@ func (*BackfillingDispatcherExt) IsRetryableErr(error) bool {
 	return true
 }
 
-type litBackfillDispatcher struct {
+type LitBackfillDispatcher struct {
 	*dispatcher.BaseDispatcher
 	d *ddl
 }
 
 func newLitBackfillDispatcher(ctx context.Context, d *ddl, taskMgr dispatcher.TaskManager,
 	serverID string, task *proto.Task) dispatcher.Dispatcher {
-	dsp := litBackfillDispatcher{
+	dsp := LitBackfillDispatcher{
 		d:              d,
 		BaseDispatcher: dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task),
 	}
 	return &dsp
 }
 
-func (dsp *litBackfillDispatcher) Init() (err error) {
+func (dsp *LitBackfillDispatcher) Init() (err error) {
 	taskMeta := &BackfillGlobalMeta{}
 	if err = json.Unmarshal(dsp.BaseDispatcher.Task.Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
@@ -220,7 +234,7 @@ func (dsp *litBackfillDispatcher) Init() (err error) {
 	return dsp.BaseDispatcher.Init()
 }
 
-func (dsp *litBackfillDispatcher) Close() {
+func (dsp *LitBackfillDispatcher) Close() {
 	dsp.BaseDispatcher.Close()
 }
 
@@ -352,6 +366,7 @@ func generateGlobalSortIngestPlan(
 	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
+	logger *zap.Logger,
 ) ([][]byte, error) {
 	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
 	if err != nil {
@@ -362,14 +377,14 @@ func generateGlobalSortIngestPlan(
 		return nil, err
 	}
 	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles)
+		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles, logger)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		err := splitter.Close()
 		if err != nil {
-			logutil.Logger(ctx).Error("failed to close range splitter", zap.Error(err))
+			logger.Error("failed to close range splitter", zap.Error(err))
 		}
 	}()
 
@@ -386,7 +401,7 @@ func generateGlobalSortIngestPlan(
 		} else {
 			endKey = kv.Key(endKeyOfGroup).Clone()
 		}
-		logutil.Logger(ctx).Info("split subtask range",
+		logger.Info("split subtask range",
 			zap.String("startKey", hex.EncodeToString(startKey)),
 			zap.String("endKey", hex.EncodeToString(endKey)))
 		if startKey.Cmp(endKey) >= 0 {
@@ -422,7 +437,7 @@ func generateMergePlan(
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.StepInit)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepReadIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -440,7 +455,7 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, proto.StepOne)
+	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -476,6 +491,7 @@ func getRangeSplitter(
 	totalSize int64,
 	instanceCnt int64,
 	dataFiles, statFiles []string,
+	logger *zap.Logger,
 ) (*external.RangeSplitter, error) {
 	backend, err := storage.ParseBackend(cloudStorageURI, nil)
 	if err != nil {
@@ -499,7 +515,7 @@ func getRangeSplitter(
 	}
 	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
 	if err != nil {
-		logutil.Logger(ctx).Warn("fail to get region split keys and size", zap.Error(err))
+		logger.Warn("fail to get region split keys and size", zap.Error(err))
 	}
 	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
 	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
@@ -540,4 +556,21 @@ func getSummaryFromLastStep(
 		}
 	}
 	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
+}
+
+func StepStr(step proto.Step) string {
+	switch step {
+	case proto.StepInit:
+		return "init"
+	case StepReadIndex:
+		return "read-index"
+	case StepMergeSort:
+		return "merge-sort"
+	case StepWriteAndIngest:
+		return "write&ingest"
+	case proto.StepDone:
+		return "done"
+	default:
+		return "unknown"
+	}
 }
