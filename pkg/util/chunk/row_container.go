@@ -32,7 +32,7 @@ import (
 
 type rowContainerRecord struct {
 	inMemory *List
-	inDisk   *ListInDisk
+	inDisk   *DataInDiskByRows
 	// spillError stores the error when spilling.
 	spillError error
 }
@@ -152,7 +152,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 	var err error
 	memory.QueryForceDisk.Add(1)
 	n := c.m.records.inMemory.NumChunks()
-	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
+	c.m.records.inDisk = NewDataInDiskByRows(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
 	defer func() {
 		if r := recover(); r != nil {
@@ -221,7 +221,7 @@ func (c *RowContainer) NumRow() int {
 	return c.m.records.inMemory.Len()
 }
 
-// NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
+// NumRowsOfChunk returns the number of rows of a chunk in the DataInDiskByRows.
 func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 	c.m.RLock()
 	defer c.m.RUnlock()

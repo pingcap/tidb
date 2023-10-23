@@ -164,8 +164,7 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(types.StrictFlags.
-		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
-		WithClipNegativeToZero(true),
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()),
 	)
 
 	// Prevent initializing the mock context in the workers concurrently.

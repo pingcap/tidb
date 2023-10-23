@@ -925,8 +925,18 @@ func (w *probeWorker) joinNAAJMatchProbeSideRow2Chunk(probeKey uint64, probeKeyN
 func (w *probeWorker) joinMatchedProbeSideRow2Chunk(probeKey uint64, probeSideRow chunk.Row, hCtx *hashContext,
 	joinResult *hashjoinWorkerResult) (bool, *hashjoinWorkerResult) {
 	var err error
-	w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
-	buildSideRows := w.buildSideRows
+	var buildSideRows []chunk.Row
+	if w.joiner.isSemiJoinWithoutCondition() {
+		var rowPtr *chunk.Row
+		rowPtr, err = w.rowContainerForProbe.GetOneMatchedRow(probeKey, probeSideRow, hCtx)
+		if rowPtr != nil {
+			buildSideRows = append(buildSideRows, *rowPtr)
+		}
+	} else {
+		w.buildSideRows, err = w.rowContainerForProbe.GetMatchedRows(probeKey, probeSideRow, hCtx, w.buildSideRows)
+		buildSideRows = w.buildSideRows
+	}
+
 	if err != nil {
 		joinResult.err = err
 		return false, joinResult

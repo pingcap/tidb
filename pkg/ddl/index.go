@@ -2104,9 +2104,11 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 				return err
 			}
 			err = handle.WaitGlobalTask(ctx, task)
-			if w.isReorgPaused(reorgInfo.Job.ID) {
-				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
-				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if dbterror.ErrPausedDDLJob.Equal(err) {
+					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
+					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+				}
 			}
 			return err
 		})
@@ -2135,10 +2137,11 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})
-
-			if w.isReorgPaused(reorgInfo.Job.ID) {
-				logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
-				return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
+				if dbterror.ErrPausedDDLJob.Equal(err) {
+					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
+					return dbterror.ErrPausedDDLJob.GenWithStackByArgs(reorgInfo.Job.ID)
+				}
 			}
 			return err
 		})
@@ -2171,7 +2174,7 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 					}
 					if err = handle.CancelGlobalTask(taskKey); err != nil {
 						logutil.BgLogger().Error("cancel global task error", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
-						// continue to cancel global task
+						// continue to cancel global task.
 						continue
 					}
 				}

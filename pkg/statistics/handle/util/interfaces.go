@@ -222,6 +222,9 @@ type StatsReadWriter interface {
 	// TableStatsFromStorage loads table stats info from storage.
 	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
 
+	// LoadTablePartitionStats loads partition stats info from storage.
+	LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
+
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
