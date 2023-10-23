@@ -17,13 +17,13 @@ package globalstats
 import (
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
 )
 
@@ -31,10 +31,10 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-	killed := &sc.GetSessionVars().Killed
+	killer := &sc.GetSessionVars().SQLKiller
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
-		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killed)
+		return MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
 	}
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
@@ -42,7 +42,7 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	} else if batchSize > MaxPartitionMergeBatchSize {
 		batchSize = MaxPartitionMergeBatchSize
 	}
-	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
+	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
 }
 
 // MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
@@ -50,7 +50,7 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 // mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
 // the partition size for each worker to solve it
 func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatchSize int, wrapper *StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
+	timeZone *time.Location, version int, n uint32, isIndex bool, killer *sqlkiller.SQLKiller) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
 		mergeConcurrency = len(wrapper.AllTopN)
@@ -70,7 +70,7 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	taskCh := make(chan *TopnStatsMergeTask, taskNum)
 	respCh := make(chan *TopnStatsMergeResponse, taskNum)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
+		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
@@ -127,7 +127,7 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 //  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
 //  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
 func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*statistics.TopN, n uint32, hists []*statistics.Histogram,
-	isIndex bool, killed *uint32) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
+	isIndex bool, killer *sqlkiller.SQLKiller) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
 	if statistics.CheckEmptyTopNs(topNs) {
 		return nil, nil, hists, nil
 	}
@@ -138,8 +138,8 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*statisti
 	// The datum is used to find the value in the histogram.
 	datumMap := statistics.NewDatumMapCache()
 	for i, topN := range topNs {
-		if atomic.LoadUint32(killed) == 1 {
-			return nil, nil, nil, errors.Trace(statistics.ErrQueryInterrupted)
+		if err := killer.HandleSignal(); err != nil {
+			return nil, nil, nil, err
 		}
 		if topN.TotalCount() == 0 {
 			continue
@@ -156,8 +156,8 @@ func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*statisti
 			// 1. Check the topN first.
 			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
 			for j := 0; j < partNum; j++ {
-				if atomic.LoadUint32(killed) == 1 {
-					return nil, nil, nil, errors.Trace(statistics.ErrQueryInterrupted)
+				if err := killer.HandleSignal(); err != nil {
+					return nil, nil, nil, err
 				}
 				if (j == i && version >= 2) || topNs[j].FindTopN(val.Encoded) != -1 {
 					continue

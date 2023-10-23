@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -1080,8 +1081,8 @@ type SessionVars struct {
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
 	TiKVClientReadTimeout uint64
 
-	// Killed is a flag to indicate that this query is killed.
-	Killed uint32
+	// SQLKiller is a flag to indicate that this query is killed.
+	SQLKiller sqlkiller.SQLKiller
 
 	// ConnectionStatus indicates current connection status.
 	ConnectionStatus int32
@@ -2022,7 +2023,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
-	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
+	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
@@ -2065,6 +2066,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
+	vars.SQLKiller.ConnID = vars.ConnectionID
+	vars.MemTracker.Killer = &vars.SQLKiller
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
