@@ -99,7 +99,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		}
 		return generateNonPartitionPlan(dsp.d, tblInfo, job)
 	case StepMergeSort:
-		res, err := generateMergePlan(taskHandle, gTask, &backfillMeta, logger)
+		res, err := generateMergePlan(taskHandle, gTask, logger)
 		if err != nil {
 			return nil, err
 		}
@@ -446,7 +446,6 @@ func generateGlobalSortIngestPlan(
 func generateMergePlan(
 	taskHandle dispatcher.TaskHandle,
 	task *proto.Task,
-	meta *BackfillGlobalMeta,
 	logger *zap.Logger,
 ) ([][]byte, error) {
 	// check data files overlaps,
