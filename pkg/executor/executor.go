@@ -2114,15 +2114,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.IgnoreNoPartition = true
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
-
-		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-		// said "For statements such as SELECT that do not change data, invalid values
-		// generate a warning in strict mode, not an error."
-		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		sc.OverflowAsWarning = true
-
 		// Return warning for truncate error in selection.
-		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(true).
+			// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
+			// said "For statements such as SELECT that do not change data, invalid values
+			// generate a warning in strict mode, not an error."
+			// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+			WithOverflowAsWarning(true),
+		)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 		if opts := stmt.SelectStmtOpts; opts != nil {
@@ -2132,8 +2132,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
-		sc.OverflowAsWarning = true
-		sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
+		sc.SetTypeFlags(sc.TypeFlags().
+			WithTruncateAsWarning(true).
+			WithOverflowAsWarning(true),
+		)
 		sc.IgnoreZeroInDate = true
 		sc.AllowInvalidDate = vars.SQLMode.HasAllowInvalidDatesMode()
 	case *ast.ShowStmt:

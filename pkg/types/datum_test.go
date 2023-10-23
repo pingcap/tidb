@@ -413,8 +413,10 @@ func TestEstimatedMemUsage(t *testing.T) {
 
 func TestChangeReverseResultByUpperLowerBound(t *testing.T) {
 	sc := stmtctx.NewStmtCtx()
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-	sc.OverflowAsWarning = true
+	sc.SetTypeFlags(sc.TypeFlags().
+		WithIgnoreTruncateErr(true).
+		WithOverflowAsWarning(true),
+	)
 	// TODO: add more reserve convert tests for each pair of convert type.
 	testData := []struct {
 		a         Datum

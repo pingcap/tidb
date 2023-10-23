@@ -181,7 +181,6 @@ type StatementContext struct {
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
-	OverflowAsWarning             bool
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
@@ -1026,7 +1025,7 @@ func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
 		return nil
 	}
 
-	if sc.OverflowAsWarning {
+	if sc.TypeFlags().OverflowAsWarning() {
 		sc.AppendWarning(warnErr)
 		return nil
 	}
@@ -1142,7 +1141,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		flags |= model.FlagTruncateAsWarning
 	}
-	if sc.OverflowAsWarning {
+	if sc.TypeFlags().OverflowAsWarning() {
 		flags |= model.FlagOverflowAsWarning
 	}
 	if sc.IgnoreZeroInDate {
@@ -1209,14 +1208,14 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(typectx.DefaultStmtFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).
 		WithTruncateAsWarning((flags & model.FlagTruncateAsWarning) > 0).
-		WithAllowNegativeToUnsigned(!sc.InInsertStmt),
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt).
+		WithOverflowAsWarning((flags & model.FlagOverflowAsWarning) > 0),
 	)
 }
 

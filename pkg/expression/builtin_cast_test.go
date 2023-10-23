@@ -98,7 +98,7 @@ func TestCastFunctions(t *testing.T) {
 	defer func() {
 		sc.InSelectStmt = oldInSelectStmt
 	}()
-	sc.OverflowAsWarning = true
+	sc.SetTypeFlags(sc.TypeFlags().WithOverflowAsWarning(true))
 
 	// cast('18446744073709551616' as unsigned);
 	tp1 := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.BinaryFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()

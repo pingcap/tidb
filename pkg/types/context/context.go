@@ -81,6 +81,32 @@ func (f Flags) WithAllowNegativeToUnsigned(clip bool) Flags {
 	return f &^ FlagAllowNegativeToUnsigned
 }
 
+// IgnoreOverflowError indicates whether the flag `FlagIgnoreOverflowError` is set
+func (f Flags) IgnoreOverflowError() bool {
+	return f&FlagIgnoreOverflowError != 0
+}
+
+// WithIgnoreOverflowError returns a new flags with `FlagIgnoreOverflowError` set/unset according to the ignore parameter
+func (f Flags) WithIgnoreOverflowError(ignore bool) Flags {
+	if ignore {
+		return f | FlagIgnoreOverflowError
+	}
+	return f &^ FlagIgnoreOverflowError
+}
+
+// OverflowAsWarning indicates whether the flag `FlagOverflowAsWarning` is set
+func (f Flags) OverflowAsWarning() bool {
+	return f&FlagOverflowAsWarning != 0
+}
+
+// WithOverflowAsWarning returns a new flags with `FlagOverflowAsWarning` set/unset according to the warn parameter
+func (f Flags) WithOverflowAsWarning(warn bool) Flags {
+	if warn {
+		return f | FlagOverflowAsWarning
+	}
+	return f &^ FlagOverflowAsWarning
+}
+
 // SkipASCIICheck indicates whether the flag `FlagSkipASCIICheck` is set
 func (f Flags) SkipASCIICheck() bool {
 	return f&FlagSkipASCIICheck != 0

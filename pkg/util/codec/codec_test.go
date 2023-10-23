@@ -785,7 +785,7 @@ func TestDecimal(t *testing.T) {
 	_, err = EncodeValue(sc, nil, decimalDatum)
 	require.NoError(t, err)
 
-	sc.OverflowAsWarning = true
+	sc.SetTypeFlags(sc.TypeFlags().WithOverflowAsWarning(true))
 	decimalDatum.SetLength(12)
 	decimalDatum.SetFrac(10)
 	_, err = EncodeValue(sc, nil, decimalDatum)

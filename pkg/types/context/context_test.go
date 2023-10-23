@@ -49,6 +49,26 @@ func TestSimpleOnOffFlags(t *testing.T) {
 			},
 		},
 		{
+			name: "FlagIgnoreOverflowError",
+			flag: FlagIgnoreOverflowError,
+			readFn: func(f Flags) bool {
+				return f.IgnoreOverflowError()
+			},
+			writeFn: func(f Flags, ignore bool) Flags {
+				return f.WithIgnoreOverflowError(ignore)
+			},
+		},
+		{
+			name: "FlagOverflowAsWarning",
+			flag: FlagOverflowAsWarning,
+			readFn: func(f Flags) bool {
+				return f.OverflowAsWarning()
+			},
+			writeFn: func(f Flags, warn bool) Flags {
+				return f.WithOverflowAsWarning(warn)
+			},
+		},
+		{
 			name: "FlagSkipASCIICheck",
 			flag: FlagSkipASCIICheck,
 			readFn: func(f Flags) bool {
