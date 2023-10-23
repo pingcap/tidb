@@ -263,7 +263,7 @@ type allocator struct {
 	base  int64
 	end   int64
 	store kv.Storage
-	// dbID is current database's ID.
+	// dbID is database ID where it was created.
 	dbID          int64
 	tbID          int64
 	tbVersion     uint16

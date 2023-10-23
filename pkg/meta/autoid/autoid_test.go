@@ -560,7 +560,11 @@ func TestAllocComputationIssue(t *testing.T) {
 		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
+		err = m.GetAutoIDAccessors(1, 1).RowID().Put(0)
+		require.NoError(t, err)
 		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
+		require.NoError(t, err)
+		err = m.GetAutoIDAccessors(1, 2).RowID().Put(0)
 		require.NoError(t, err)
 		return nil
 	})
