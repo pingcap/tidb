@@ -39,11 +39,16 @@ go_test(
         "globalstats_test.go",
         "main_test.go",
         "topn_bench_test.go",
+        "topn_test.go",
     ],
+    embed = [":globalstats"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 18,
+=======
+    shard_count = 21,
+>>>>>>> 98b6c434642 (statistics: move MergePartTopN2GlobalTopN into handle/globalstats (#47901))
     deps = [
-        ":globalstats",
         "//pkg/config",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
