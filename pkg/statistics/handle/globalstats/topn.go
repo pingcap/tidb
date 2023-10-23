@@ -31,7 +31,10 @@ import (
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
-	util.UpdateSCtxVarsForStats(sc)
+	err := util.UpdateSCtxVarsForStats(sc)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
 	killer := &sc.GetSessionVars().SQLKiller
 	// use original method if concurrency equals 1 or for version1
