@@ -208,7 +208,7 @@ func getCNFItemRangeResult(sctx sessionctx.Context, rangeResult *DetachRangeResu
 			minColNum = len(ran.LowVal)
 		} else {
 			maxColNum = mathutil.Max(maxColNum, len(ran.LowVal))
-			minColNum = mathutil.Min(minColNum, len(ran.LowVal))
+			minColNum = min(minColNum, len(ran.LowVal))
 		}
 	}
 	if minColNum != maxColNum {

@@ -284,7 +284,7 @@ func TestChunkSizeControl(t *testing.T) {
 	chk.Reset()
 	for i := 1; i < maxChunkSize*2; i++ {
 		chk.SetRequiredRows(i, maxChunkSize)
-		require.Equal(t, mathutil.Min(maxChunkSize, i), chk.RequiredRows())
+		require.Equal(t, min(maxChunkSize, i), chk.RequiredRows())
 	}
 
 	chk.SetRequiredRows(1, maxChunkSize).

@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/sysutil"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/shirou/gopsutil/v3/mem"
 )
 
@@ -116,7 +115,7 @@ func MemTotalCGroup() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	memo = mathutil.Min(v.Total, memo)
+	memo = min(v.Total, memo)
 	memLimit.set(memo, time.Now())
 	return memo, nil
 }
@@ -135,7 +134,7 @@ func MemUsedCGroup() (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	memo = mathutil.Min(v.Used, memo)
+	memo = min(v.Used, memo)
 	memUsage.set(memo, time.Now())
 	return memo, nil
 }
