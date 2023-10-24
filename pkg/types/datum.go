@@ -924,7 +924,7 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 		}
 		return d.convertToInt(sc, target)
 	case mysql.TypeFloat, mysql.TypeDouble:
-		return d.convertToFloat(sc, target)
+		return d.convertToFloat(sc.TypeCtxOrDefault(), target)
 	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
 		return d.convertToString(sc, target)
@@ -935,7 +935,7 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 	case mysql.TypeDuration:
 		return d.convertToMysqlDuration(sc, target)
 	case mysql.TypeNewDecimal:
-		return d.convertToMysqlDecimal(sc, target)
+		return d.convertToMysqlDecimal(sc.TypeCtxOrDefault(), target)
 	case mysql.TypeYear:
 		return d.ConvertToMysqlYear(sc, target)
 	case mysql.TypeEnum:
@@ -953,7 +953,7 @@ func (d *Datum) ConvertTo(sc *stmtctx.StatementContext, target *FieldType) (Datu
 	}
 }
 
-func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToFloat(ctx Context, target *FieldType) (Datum, error) {
 	var (
 		f   float64
 		ret Datum
@@ -969,7 +969,7 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 	case KindFloat32, KindFloat64:
 		f = d.GetFloat64()
 	case KindString, KindBytes:
-		f, err = StrToFloat(sc.TypeCtxOrDefault(), d.GetString(), false)
+		f, err = StrToFloat(ctx, d.GetString(), false)
 	case KindMysqlTime:
 		f, err = d.GetMysqlTime().ToNumber().ToFloat64()
 	case KindMysqlDuration:
@@ -981,10 +981,10 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 	case KindMysqlEnum:
 		f = d.GetMysqlEnum().ToNumber()
 	case KindBinaryLiteral, KindMysqlBit:
-		val, err1 := d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
+		val, err1 := d.GetBinaryLiteral().ToInt(ctx)
 		f, err = float64(val), err1
 	case KindMysqlJSON:
-		f, err = ConvertJSONToFloat(sc.TypeCtxOrDefault(), d.GetMysqlJSON())
+		f, err = ConvertJSONToFloat(ctx, d.GetMysqlJSON())
 	default:
 		return invalidConv(d, target.GetType())
 	}
@@ -1441,7 +1441,7 @@ func (d *Datum) convertToMysqlDuration(sc *stmtctx.StatementContext, target *Fie
 	return ret, nil
 }
 
-func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
+func (d *Datum) convertToMysqlDecimal(ctx Context, target *FieldType) (Datum, error) {
 	var ret Datum
 	ret.SetLength(target.GetFlen())
 	ret.SetFrac(target.GetDecimal())
@@ -1467,11 +1467,11 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 	case KindMysqlSet:
 		err = dec.FromFloat64(d.GetMysqlSet().ToNumber())
 	case KindBinaryLiteral, KindMysqlBit:
-		val, err1 := d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
+		val, err1 := d.GetBinaryLiteral().ToInt(ctx)
 		err = err1
 		dec.FromUint(val)
 	case KindMysqlJSON:
-		f, err1 := ConvertJSONToDecimal(sc.TypeCtxOrDefault(), d.GetMysqlJSON())
+		f, err1 := ConvertJSONToDecimal(ctx, d.GetMysqlJSON())
 		if err1 != nil {
 			return ret, errors.Trace(err1)
 		}
@@ -1479,7 +1479,7 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 	default:
 		return invalidConv(d, target.GetType())
 	}
-	dec1, err1 := ProduceDecWithSpecifiedTp(dec, target, sc)
+	dec1, err1 := ProduceDecWithSpecifiedTp(ctx, dec, target)
 	// If there is a error, dec1 may be nil.
 	if dec1 != nil {
 		dec = dec1
@@ -1498,7 +1498,7 @@ func (d *Datum) convertToMysqlDecimal(sc *stmtctx.StatementContext, target *Fiel
 }
 
 // ProduceDecWithSpecifiedTp produces a new decimal according to `flen` and `decimal`.
-func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.StatementContext) (_ *MyDecimal, err error) {
+func ProduceDecWithSpecifiedTp(ctx Context, dec *MyDecimal, tp *FieldType) (_ *MyDecimal, err error) {
 	flen, decimal := tp.GetFlen(), tp.GetDecimal()
 	if flen != UnspecifiedLength && decimal != UnspecifiedLength {
 		if flen < decimal {
@@ -1526,14 +1526,10 @@ func ProduceDecWithSpecifiedTp(dec *MyDecimal, tp *FieldType, sc *stmtctx.Statem
 			// select cast(111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if old != nil && dec.Compare(old) != 0 {
-			sc.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", old))
+			ctx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", old))
 		}
 	}
 
-	if ErrOverflow.Equal(err) {
-		// TODO: warnErr need to be ErrWarnDataOutOfRange
-		err = sc.HandleOverflow(err, err)
-	}
 	unsigned := mysql.HasUnsignedFlag(tp.GetFlag())
 	if unsigned && dec.IsNegative() {
 		dec = dec.FromUint(0)
