@@ -60,6 +60,7 @@ func (a *autoIDAccessor) Inc(step int64) (int64, error) {
 	// the full ID (Schema ID + Table ID) as is.
 	// Meaning we cannot verify only the schema id.
 	// And a rename may have happened before the first id is set,
+	// as well as dropping the original schema.
 	// So no Schema ID or Table ID verifications can be done.
 	dbKey := m.dbKey(a.databaseID)
 	tblKey := a.idEncodeFn(a.tableID)

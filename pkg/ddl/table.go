@@ -1051,7 +1051,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		return finishJobRenameTables(d, t, job, tableNames, tableIDs, newSchemaIDs)
 	}
 
-	var tblInfos = make([]*model.TableInfo, 0, len(tableNames))
 	var err error
 	fkh := newForeignKeyHelper()
 	for i, oldSchemaID := range oldSchemaIDs {
@@ -1069,7 +1068,6 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		tblInfos = append(tblInfos, tblInfo)
 	}
 
 	ver, err = updateSchemaVersion(d, t, job, fkh.getLoadedTables()...)

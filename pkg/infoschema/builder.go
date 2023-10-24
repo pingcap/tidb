@@ -521,8 +521,6 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	if tableIDIsValid(oldTableID) {
 		if oldTableID == newTableID &&
 			// For rename table, keep the old alloc.
-			// TODO: Add test for multi table rename!
-			diff.Type != model.ActionRenameTables &&
 
 			// For repairing table in TiDB cluster, given 2 normal node and 1 repair node.
 			// For normal node's information schema, repaired table is existed.
