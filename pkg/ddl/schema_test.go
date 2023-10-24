@@ -398,6 +398,11 @@ func TestRenameTableAutoIDs(t *testing.T) {
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (50, 5)`)
 
 	tk2.MustExec(`insert into t values (null, 6)`)
+	tk3.MustExec(`insert into ` + dbName + `2.t2 values (20, 5)`)
+
+	// Done: Fix https://github.com/pingcap/tidb/issues/46904
+	//tk2.MustContainErrMsg(`insert into t values (null, 6)`, "[tikv:1205]Lock wait timeout exceeded; try restarting transaction")
+	tk2.MustExec(`insert into t values (null, 6)`)
 	tk3.MustExec(`insert into ` + dbName + `2.t2 values (null, 7)`)
 	tk2.MustExec(`COMMIT`)
 
@@ -419,10 +424,12 @@ func TestRenameTableAutoIDs(t *testing.T) {
 		"19 18 4",
 		"51 50 5",
 		"53 52 6",
-		"55 54 7",
-		"57 56 8",
-		"59 58 9",
-		"61 60 10",
+		"54 20 5",
+		"56 55 6",
+		"58 57 7",
+		"60 59 8",
+		"62 61 9",
+		"64 63 10",
 	))
 
 	require.NoError(t, <-alterChan)
@@ -434,8 +441,11 @@ func TestRenameTableAutoIDs(t *testing.T) {
 		"19 18 4",
 		"51 50 5",
 		"53 52 6",
-		"55 54 7",
-		"57 56 8",
-		"59 58 9",
-		"61 60 10"))
+		"54 20 5",
+		"56 55 6",
+		"58 57 7",
+		"60 59 8",
+		"62 61 9",
+		"64 63 10",
+	))
 }
