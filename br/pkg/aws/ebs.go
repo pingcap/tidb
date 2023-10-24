@@ -526,7 +526,7 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 	for len(pendingVolumes) > 0 {
 		// check every 5 seconds
 		time.Sleep(5 * time.Second)
-		log.Info("check pending snapshots", zap.Int("count", len(pendingVolumes)))
+		log.Info("check pending volumes", zap.Int("count", len(pendingVolumes)))
 		resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{
 			VolumeIds: pendingVolumes,
 		})
