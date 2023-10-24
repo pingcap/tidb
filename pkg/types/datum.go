@@ -1242,7 +1242,7 @@ func (d *Datum) convertToUint(sc *stmtctx.StatementContext, target *FieldType) (
 		}
 	case KindMysqlJSON:
 		var i64 int64
-		i64, err = ConvertJSONToInt(sc, d.GetMysqlJSON(), true, tp)
+		i64, err = ConvertJSONToInt(sc.TypeCtxOrDefault(), d.GetMysqlJSON(), true, tp)
 		val = uint64(i64)
 	default:
 		return invalidConv(d, target.GetType())
@@ -1566,7 +1566,7 @@ func (d *Datum) ConvertToMysqlYear(sc *stmtctx.StatementContext, target *FieldTy
 	case KindMysqlTime:
 		y = int64(d.GetMysqlTime().Year())
 	case KindMysqlJSON:
-		y, err = ConvertJSONToInt64(sc, d.GetMysqlJSON(), false)
+		y, err = ConvertJSONToInt64(sc.TypeCtxOrDefault(), d.GetMysqlJSON(), false)
 		if err != nil {
 			ret.SetInt64(0)
 			return ret, errors.Trace(err)
@@ -1919,7 +1919,7 @@ func (d *Datum) toSignedInteger(sc *stmtctx.StatementContext, tp byte) (int64, e
 		fval := d.GetMysqlSet().ToNumber()
 		return ConvertFloatToInt(fval, lowerBound, upperBound, tp)
 	case KindMysqlJSON:
-		return ConvertJSONToInt(sc, d.GetMysqlJSON(), false, tp)
+		return ConvertJSONToInt(sc.TypeCtxOrDefault(), d.GetMysqlJSON(), false, tp)
 	case KindBinaryLiteral, KindMysqlBit:
 		val, err := d.GetBinaryLiteral().ToInt(sc.TypeCtxOrDefault())
 		if err != nil {

@@ -541,7 +541,8 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 			if item.TypeCode != types.JSONTypeCodeInt64 && item.TypeCode != types.JSONTypeCodeUint64 {
 				return nil, ErrInvalidJSONForFuncIndex
 			}
-			jsonToInt, err := types.ConvertJSONToInt(sc, item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+			jsonToInt, err := types.ConvertJSONToInt(sc.TypeCtx(), item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
+			err = sc.HandleOverflow(err, err)
 			if mysql.HasUnsignedFlag(tp.GetFlag()) {
 				return uint64(jsonToInt), err
 			}
@@ -1834,7 +1835,8 @@ func (b *builtinCastJSONAsIntSig) evalInt(row chunk.Row) (res int64, isNull bool
 		return res, isNull, err
 	}
 	sc := b.ctx.GetSessionVars().StmtCtx
-	res, err = types.ConvertJSONToInt64(sc, val, mysql.HasUnsignedFlag(b.tp.GetFlag()))
+	res, err = types.ConvertJSONToInt64(sc.TypeCtx(), val, mysql.HasUnsignedFlag(b.tp.GetFlag()))
+	err = sc.HandleOverflow(err, err)
 	return
 }
 

@@ -1254,12 +1254,13 @@ func (b *builtinCastJSONAsIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.C
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
 	sc := b.ctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
-		i64s[i], err = types.ConvertJSONToInt64(sc, buf.GetJSON(i), mysql.HasUnsignedFlag(b.tp.GetFlag()))
-		if err != nil {
+		i64s[i], err = types.ConvertJSONToInt64(tc, buf.GetJSON(i), mysql.HasUnsignedFlag(b.tp.GetFlag()))
+		if err = sc.HandleOverflow(err, err); err != nil {
 			return err
 		}
 	}
