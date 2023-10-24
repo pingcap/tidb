@@ -191,9 +191,9 @@ else
 endif
 
 enterprise-server:
-	@make init-submodule
-	@make enterprise-prepare
-	@make enterprise-server-build
+	$(MAKE) init-submodule
+	$(MAKE) enterprise-prepare
+	$(MAKE) enterprise-server-build
 
 server_check:
 ifeq ($(TARGET), "")
