@@ -1029,7 +1029,7 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType) (_ float64, err e
 		}
 		return -math.MaxFloat32, overflow(f, target.GetType())
 	}
-	return f, nil
+	return f, errors.Trace(err)
 }
 
 func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
