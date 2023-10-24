@@ -14,7 +14,7 @@
 
 include Makefile.common
 
-.PHONY: help all clean test server dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel precheck
+.PHONY: help all clean test server server_fips dev benchkv benchraw check checklist parser tidy ddltest build_br build_lightning build_lightning-ctl build_dumpling ut bazel_build bazel_prepare bazel_test check-file-perm check-bazel-prepare bazel_lint tazel precheck
 
 .DEFAULT_GOAL := default
 
@@ -162,6 +162,14 @@ ifeq ($(TARGET), "")
 else
 	CGO_ENABLED=1 $(GOBUILD) $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
 endif
+
+server_fips:
+ifeq ($(TARGET), "")
+	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GOBUILD) -tags boringcrypto $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o bin/tidb-server ./cmd/tidb-server
+else
+	GOEXPERIMENT=boringcrypto CGO_ENABLED=1 $(GOBUILD) -tags boringcrypto $(RACE_FLAG) -ldflags '$(LDFLAGS) $(CHECK_FLAG)' -o '$(TARGET)' ./cmd/tidb-server
+endif
+
 
 server_debug:
 ifeq ($(TARGET), "")
