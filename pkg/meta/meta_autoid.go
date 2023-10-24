@@ -59,14 +59,10 @@ func (a *autoIDAccessor) Inc(step int64) (int64, error) {
 	// in, but to allow concurrent use across renames etc. we keep
 	// the full ID (Schema ID + Table ID) as is.
 	// Meaning we cannot verify only the schema id.
+	// And a rename may have happened before the first id is set,
+	// So no Schema ID or Table ID verifications can be done.
 	dbKey := m.dbKey(a.databaseID)
 	tblKey := a.idEncodeFn(a.tableID)
-	// Check if the value exist, it should have been set before the use of Inc().
-	err := m.checkTableExists(dbKey, tblKey)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-
 	return m.txn.HInc(dbKey, tblKey, step)
 }
 

@@ -231,9 +231,6 @@ func TestMeta(t *testing.T) {
 	err = m.CreateTableOrView(1, tbInfo)
 	require.NoError(t, err)
 
-	err = m.GetAutoIDAccessors(1, 1).RowID().Put(0)
-	require.NoError(t, err)
-
 	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
@@ -289,8 +286,6 @@ func TestMeta(t *testing.T) {
 		require.NoError(t, err)
 	}
 	// Generate an auto id.
-	err = m.GetAutoIDAccessors(1, 2).RowID().Put(0)
-	require.NoError(t, err)
 	n, err = m.GetAutoIDAccessors(1, 2).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
@@ -332,25 +327,23 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
-	err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Put(0)
-	require.NoError(t, err)
 	n, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
-	// Fail to update auto ID.
+	// Test to update non-existing auto ID.
 	// The table ID doesn't exist.
+	// We can no longer test for non-existing ids.
 	nonExistentID := int64(1234)
 	_, err = m.GetAutoIDAccessors(currentDBID, nonExistentID).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	// Fail to update auto ID.
+	require.NoError(t, err)
+	//require.True(t, meta.ErrTableNotExists.Equal(err))
+	// Test to update non-existing auto ID.
 	// The current database ID doesn't exist.
-	// Note: can only check db+table since rename table
-	// may keep the old DBID. So error is still ErrTableNotExists
+	// We can no longer test for non-existing ids.
 	currentDBID = nonExistentID
 	_, err = m.GetAutoIDAccessors(currentDBID, tid).RowID().Inc(10)
-	require.NotNil(t, err)
-	require.True(t, meta.ErrTableNotExists.Equal(err))
+	require.NoError(t, err)
+	//require.True(t, meta.ErrDBNotExists.Equal(err))
 	// Test case for CreateTableAndSetAutoID.
 	tbInfo3 := &model.TableInfo{
 		ID:   3,
