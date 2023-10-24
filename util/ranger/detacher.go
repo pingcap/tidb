@@ -217,7 +217,7 @@ func extractIndexPointRangesForCNF(sctx sessionctx.Context, conds []expression.E
 		sameLens, allPoints := true, true
 		numCols := int(0)
 		for j, ran := range res.Ranges {
-			if !ran.IsPoint(sctx.GetSessionVars().StmtCtx) {
+			if !ran.IsPoint(sctx) {
 				allPoints = false
 				break
 			}
@@ -611,13 +611,12 @@ func ExtractEqAndInCondition(sctx sessionctx.Context, conditions []expression.Ex
 // detachDNFCondAndBuildRangeForIndex will detach the index filters from table filters when it's a DNF.
 // We will detach the conditions of every DNF items, then compose them to a DNF.
 func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression.ScalarFunction, newTpSlice []*types.FieldType) ([]*Range, []expression.Expression, []*valueInfo, bool, error) {
-	sc := d.sctx.GetSessionVars().StmtCtx
 	firstColumnChecker := &conditionChecker{
 		checkerCol:    d.cols[0],
 		shouldReserve: d.lengths[0] != types.UnspecifiedLength,
 		length:        d.lengths[0],
 	}
-	rb := builder{sc: sc}
+	rb := builder{sc: d.sctx.GetSessionVars().StmtCtx}
 	dnfItems := expression.FlattenDNFConditions(condition)
 	newAccessItems := make([]expression.Expression, 0, len(dnfItems))
 	var totalRanges []*Range
@@ -667,7 +666,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 				firstColumnChecker.shouldReserve = d.lengths[0] != types.UnspecifiedLength
 			}
 			points := rb.build(item)
-			ranges, err := points2Ranges(sc, points, newTpSlice[0])
+			ranges, err := points2Ranges(d.sctx, points, newTpSlice[0])
 			if err != nil {
 				return nil, nil, nil, false, errors.Trace(err)
 			}
@@ -694,7 +693,7 @@ func (d *rangeDetacher) detachDNFCondAndBuildRangeForIndex(condition *expression
 	if hasPrefix(d.lengths) {
 		fixPrefixColRange(totalRanges, d.lengths, newTpSlice)
 	}
-	totalRanges, err := UnionRanges(sc, totalRanges, d.mergeConsecutive)
+	totalRanges, err := UnionRanges(d.sctx, totalRanges, d.mergeConsecutive)
 	if err != nil {
 		return nil, nil, nil, false, errors.Trace(err)
 	}

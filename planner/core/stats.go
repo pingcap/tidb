@@ -284,7 +284,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			selected = path
 			break
 		}
-		if path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
+		if path.OnlyPointRange(ds.SCtx()) {
 			if path.IsTablePath() || path.Index.Unique {
 				if path.IsSingleScan {
 					selected = path
@@ -476,11 +476,10 @@ func (ts *LogicalTableScan) DeriveStats(childStats []*property.StatsInfo, selfSc
 		ts.AccessConds[i] = expression.PushDownNot(ts.ctx, expr)
 	}
 	ts.stats = ts.Source.deriveStatsByFilter(ts.AccessConds, nil)
-	sc := ts.SCtx().GetSessionVars().StmtCtx
 	// ts.Handle could be nil if PK is Handle, and PK column has been pruned.
 	// TODO: support clustered index.
 	if ts.HandleCols != nil {
-		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, sc, ts.HandleCols.GetCol(0).RetType)
+		ts.Ranges, err = ranger.BuildTableRange(ts.AccessConds, ts.ctx, ts.HandleCols.GetCol(0).RetType)
 	} else {
 		isUnsigned := false
 		if ts.Source.tableInfo.PKIsHandle {
@@ -632,7 +631,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			// If we have point or empty range, just remove other possible paths.
-			if len(path.Ranges) == 0 || path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) {
+			if len(path.Ranges) == 0 || path.OnlyPointRange(ds.SCtx()) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {
@@ -657,7 +656,7 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 				continue
 			}
 			// If we have empty range, or point range on unique index, just remove other possible paths.
-			if len(path.Ranges) == 0 || (path.OnlyPointRange(ds.SCtx().GetSessionVars().StmtCtx) && path.Index.Unique) {
+			if len(path.Ranges) == 0 || (path.OnlyPointRange(ds.SCtx()) && path.Index.Unique) {
 				if len(results) == 0 {
 					results = append(results, path)
 				} else {

@@ -18,7 +18,7 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/ranger"
 	"github.com/stretchr/testify/require"
@@ -124,9 +124,8 @@ func TestRange(t *testing.T) {
 			isPoint: false,
 		},
 	}
-	sc := new(stmtctx.StatementContext)
 	for _, v := range isPointTests {
-		require.Equal(t, v.isPoint, v.ran.IsPoint(sc))
+		require.Equal(t, v.isPoint, v.ran.IsPoint(core.MockContext()))
 	}
 }
 
