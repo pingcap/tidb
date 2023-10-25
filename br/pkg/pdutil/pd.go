@@ -164,13 +164,16 @@ func pdRequestWithCode(
 		return 0, nil, errors.Trace(err)
 	}
 	reqURL := fmt.Sprintf("%s/%s", u, prefix)
-	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	var resp *http.Response
+	var (
+		req  *http.Request
+		resp *http.Response
+	)
 	count := 0
 	for {
+		req, err = http.NewRequestWithContext(ctx, method, reqURL, body)
+		if err != nil {
+			return 0, nil, errors.Trace(err)
+		}
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
