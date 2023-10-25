@@ -198,7 +198,6 @@ func TestPDRequestRetry(t *testing.T) {
 	body := bytes.NewBuffer([]byte("test"))
 	_, reqErr := pdRequest(ctx, taddr, "", cli, http.MethodPost, body)
 	require.NoError(t, reqErr)
-
 	ts.Close()
 	count = 0
 	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -207,7 +206,6 @@ func TestPDRequestRetry(t *testing.T) {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
-
 		w.WriteHeader(http.StatusOK)
 	}))
 	taddr = ts.URL
