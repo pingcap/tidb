@@ -1418,7 +1418,7 @@ func (b *builtinCastStringAsRealSig) evalReal(row chunk.Row) (res float64, isNul
 	if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && res < 0 {
 		res = 0
 	}
-	res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp, sc)
+	res, err = types.ProduceFloatWithSpecifiedTp(res, b.tp)
 	return res, false, err
 }
 
