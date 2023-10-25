@@ -411,9 +411,8 @@ func BuildHistAndTopN(
 					)
 					// NOTE: if we don't return here, we may meet panic in the following code.
 					// The i may decrease to a negative value.
-					// We don't fix the issue here, because we don't remove the invalid sample data.
-					// The reason is that we don't know why the invalid sample data exists, and we don't know
-					// how to remove it from the samples.
+					// We haven't fix the issue here, because we don't know how to
+					// remove the invalid sample data from the samples.
 					break
 				}
 				// First time to find the same value in topN: need to record the sample data for debugging.
