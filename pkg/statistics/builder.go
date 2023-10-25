@@ -402,8 +402,8 @@ func BuildHistAndTopN(
 						zap.String("category", "stats"),
 					).Warn(
 						"invalid sample data",
-						zap.Int64("i", i),
-						zap.Int64("j", int64(j)),
+						zap.Bool("isColumn", isColumn),
+						zap.Int64("columnID", id),
 						zap.String("datum", datumString),
 						zap.Binary("sampleBytes", sampleBytes),
 						zap.Binary("topNBytes", topNList[j].Encoded),
