@@ -1016,13 +1016,20 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType) (_ float64, err e
 	if mysql.HasUnsignedFlag(target.GetFlag()) && f < 0 {
 		return 0, overflow(f, target.GetType())
 	}
+
+	if err != nil {
+		// We must return the error got from TruncateFloat after checking whether the target is unsigned to make sure
+		// the returned float is not negative when the target type is unsigned.
+		return f, errors.Trace(err)
+	}
+
 	if target.GetType() == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
 		if f > 0 {
 			return math.MaxFloat32, overflow(f, target.GetType())
 		}
 		return -math.MaxFloat32, overflow(f, target.GetType())
 	}
-	return f, errors.Trace(err)
+	return f, nil
 }
 
 func (d *Datum) convertToString(sc *stmtctx.StatementContext, target *FieldType) (Datum, error) {
