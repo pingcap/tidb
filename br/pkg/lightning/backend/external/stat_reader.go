@@ -41,12 +41,12 @@ func newStatsReader(ctx context.Context, store storage.ExternalStorage, name str
 
 func (r *statsReader) nextProp() (*rangeProperty, error) {
 	r.byteReader.reset()
-	lenBytes, err := r.byteReader.readNBytes(4)
+	lenBytes, err := r.byteReader.readNBytes(4, nil)
 	if err != nil {
 		return nil, err
 	}
 	propLen := int(binary.BigEndian.Uint32(*lenBytes))
-	propBytes, err := r.byteReader.readNBytes(propLen)
+	propBytes, err := r.byteReader.readNBytes(propLen, nil)
 	if err != nil {
 		return nil, noEOF(err)
 	}

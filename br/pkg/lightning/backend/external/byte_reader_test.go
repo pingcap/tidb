@@ -84,10 +84,10 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	// Test basic next() usage.
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x := br.next(1)
+	x := br.next(1, nil)
 	require.Equal(t, 1, len(x))
 	require.Equal(t, byte('a'), x[0])
-	x = br.next(2)
+	x = br.next(2, nil)
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('b'), x[0])
 	require.Equal(t, byte('c'), x[1])
@@ -96,7 +96,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	y, err := br.readNBytes(2)
+	y, err := br.readNBytes(2, nil)
 	require.NoError(t, err)
 	x = *y
 	require.Equal(t, 2, len(x))
@@ -106,7 +106,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	y, err = br.readNBytes(5) // Read all the data.
+	y, err = br.readNBytes(5, nil) // Read all the data.
 	require.NoError(t, err)
 	x = *y
 	require.Equal(t, 5, len(x))
@@ -115,7 +115,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	_, err = br.readNBytes(7) // EOF
+	_, err = br.readNBytes(7, nil) // EOF
 	require.Error(t, err)
 
 	err = st.WriteFile(context.Background(), "testfile", []byte("abcdef"))
@@ -124,7 +124,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	ms := &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	y, err = br.readNBytes(3)
+	y, err = br.readNBytes(3, nil)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	copy(ms.src, []byte("xyz"))
@@ -136,7 +136,7 @@ func testByteReaderNormal(t *testing.T, useConcurrency bool) {
 	ms = &mockExtStore{src: []byte("abcdef")}
 	br, err = newByteReader(context.Background(), ms, 2)
 	require.NoError(t, err)
-	y, err = br.readNBytes(2)
+	y, err = br.readNBytes(2, nil)
 	require.NoError(t, err)
 	// Pollute mockExtStore to verify if the slice is not affected.
 	copy(ms.src, []byte("xyz"))
@@ -151,9 +151,9 @@ func TestByteReaderClone(t *testing.T) {
 	ms := &mockExtStore{src: []byte("0123456789")}
 	br, err := newByteReader(context.Background(), ms, 4)
 	require.NoError(t, err)
-	y1, err := br.readNBytes(2)
+	y1, err := br.readNBytes(2, nil)
 	require.NoError(t, err)
-	y2, err := br.readNBytes(1)
+	y2, err := br.readNBytes(1, nil)
 	require.NoError(t, err)
 	x1, x2 := *y1, *y2
 	require.Len(t, x1, 2)
@@ -171,9 +171,9 @@ func TestByteReaderClone(t *testing.T) {
 	ms = &mockExtStore{src: []byte("0123456789")}
 	br, err = newByteReader(context.Background(), ms, 4)
 	require.NoError(t, err)
-	y1, err = br.readNBytes(2)
+	y1, err = br.readNBytes(2, nil)
 	require.NoError(t, err)
-	y2, err = br.readNBytes(1)
+	y2, err = br.readNBytes(1, nil)
 	require.NoError(t, err)
 	x1, x2 = *y1, *y2
 	require.Len(t, x1, 2)
@@ -194,16 +194,16 @@ func TestByteReaderAuxBuf(t *testing.T) {
 	ms := &mockExtStore{src: []byte("0123456789")}
 	br, err := newByteReader(context.Background(), ms, 1)
 	require.NoError(t, err)
-	y1, err := br.readNBytes(1)
+	y1, err := br.readNBytes(1, nil)
 	require.NoError(t, err)
-	y2, err := br.readNBytes(2)
+	y2, err := br.readNBytes(2, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("0"), *y1)
 	require.Equal(t, []byte("12"), *y2)
 
-	y3, err := br.readNBytes(1)
+	y3, err := br.readNBytes(1, nil)
 	require.NoError(t, err)
-	y4, err := br.readNBytes(2)
+	y4, err := br.readNBytes(2, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("3"), *y3)
 	require.Equal(t, []byte("45"), *y4)
@@ -248,7 +248,7 @@ func testReset(t *testing.T, useConcurrency bool) {
 		if n == 0 {
 			n = 1
 		}
-		y, err := br.readNBytes(n)
+		y, err := br.readNBytes(n, nil)
 		require.NoError(t, err)
 		toCheck = append(toCheck, y)
 		end += n
@@ -266,7 +266,7 @@ func testReset(t *testing.T, useConcurrency bool) {
 			toCheck = toCheck[:0]
 		}
 	}
-	_, err = br.readNBytes(1)
+	_, err = br.readNBytes(1, nil)
 	require.Equal(t, io.EOF, err)
 }
 
@@ -288,12 +288,12 @@ func TestUnexpectedEOF(t *testing.T) {
 
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	_, err = br.readNBytes(100)
+	_, err = br.readNBytes(100, nil)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	_, err = br.readNBytes(100)
+	_, err = br.readNBytes(100, nil)
 	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 }
 
@@ -361,7 +361,7 @@ func TestSwitchMode(t *testing.T) {
 		if n == 0 {
 			break
 		}
-		y, err := br.readNBytes(n)
+		y, err := br.readNBytes(n, nil)
 		if err == io.EOF {
 			break
 		}

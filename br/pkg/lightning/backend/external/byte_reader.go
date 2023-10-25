@@ -196,20 +196,39 @@ func (r *byteReader) switchToConcurrentReader() error {
 // The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
 // byteReader guarantees that the returned slice (pointer) will point to the same content
 // though the slice may be changed.
-func (r *byteReader) readNBytes(n int) (*[]byte, error) {
-	b := r.next(n)
+func (r *byteReader) readNBytes(n int, buf *[]byte) (*[]byte, error) {
+	b := r.next(n, buf)
 	readLen := len(b)
+	if buf != nil {
+		readLen = len(*buf)
+	}
 	if readLen == n {
+		if buf != nil {
+			r.retPointers = append(r.retPointers, buf)
+			return buf, nil
+		}
 		ret := &b
 		r.retPointers = append(r.retPointers, ret)
 		return ret, nil
 	}
+	if buf != nil {
+		r.retPointers = append(r.retPointers, buf)
+	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
-	auxBuf := make([]byte, n)
-	copy(auxBuf, b)
+	var auxBuf []byte
+	if buf == nil {
+		auxBuf = make([]byte, n)
+		copy(auxBuf, b)
+	}
 	for readLen < n {
 		r.cloneSlices()
+		if buf != nil {
+			cbuf := *buf
+			*buf = make([]byte, len(cbuf))
+			copy(*buf, cbuf)
+			r.retPointers = append(r.retPointers, buf)
+		}
 		err := r.reload()
 		switch err {
 		case nil:
@@ -221,9 +240,16 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 		default:
 			return nil, err
 		}
-		b = r.next(n - readLen)
+		b = r.next(n-readLen, buf)
+		if buf != nil {
+			readLen = len(*buf)
+			continue
+		}
 		copy(auxBuf[readLen:], b)
 		readLen += len(b)
+	}
+	if buf != nil {
+		return buf, nil
 	}
 	return &auxBuf, nil
 }
@@ -245,8 +271,17 @@ func (r *byteReader) cloneSlices() {
 	r.retPointers = r.retPointers[:0]
 }
 
-func (r *byteReader) next(n int) []byte {
+func (r *byteReader) next(n int, buf *[]byte) []byte {
 	end := min(r.curBufOffset+n, len(r.curBuf))
+	if buf != nil {
+		if len(*buf) > 0 {
+			*buf = append(*buf, r.curBuf[r.curBufOffset:end]...)
+		} else {
+			*buf = r.curBuf[r.curBufOffset:end]
+		}
+		r.curBufOffset += end - r.curBufOffset
+		return nil
+	}
 	ret := r.curBuf[r.curBufOffset:end]
 	r.curBufOffset += len(ret)
 	return ret

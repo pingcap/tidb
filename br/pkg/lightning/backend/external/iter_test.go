@@ -151,22 +151,25 @@ func TestOneUpstream(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 1, trackStore.opened.Load())
 
-	got := make([][2]string, 0)
+	got := make([]string, 0)
 	require.True(t, iter.Next())
-	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	got = []string{string(iter.Key()), string(iter.Value())}
+	require.Equal(t, []string{"key1", "value1"}, got)
 	require.True(t, iter.Next())
-	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	got = []string{string(iter.Key()), string(iter.Value())}
+	require.Equal(t, []string{"key2", "value2"}, got)
 	require.True(t, iter.Next())
-	got = append(got, [2]string{string(iter.Key()), string(iter.Value())})
+	got = []string{string(iter.Key()), string(iter.Value())}
+	require.Equal(t, []string{"key3", "value3"}, got)
 	require.False(t, iter.Next())
 	require.NoError(t, iter.Error())
 
-	expected := [][2]string{
-		{"key1", "value1"},
-		{"key2", "value2"},
-		{"key3", "value3"},
-	}
-	require.Equal(t, expected, got)
+	//expected := [][2]string{
+	//	{"key1", "value1"},
+	//	{"key2", "value2"},
+	//	{"key3", "value3"},
+	//}
+	//require.Equal(t, expected, got)
 	err = iter.Close()
 	require.NoError(t, err)
 	require.EqualValues(t, 0, trackStore.opened.Load())

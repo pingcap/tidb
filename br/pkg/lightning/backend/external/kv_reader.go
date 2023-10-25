@@ -26,7 +26,11 @@ import (
 )
 
 type kvReader struct {
-	byteReader *byteReader
+	byteReader  *byteReader
+	keyBuf      []byte
+	keyLenBuf   []byte
+	valueBuf    []byte
+	valueLenBuf []byte
 }
 
 func newKVReader(
@@ -45,27 +49,35 @@ func newKVReader(
 		return nil, err
 	}
 	return &kvReader{
-		byteReader: br,
+		byteReader:  br,
+		keyBuf:      make([]byte, 0, 1024),
+		keyLenBuf:   make([]byte, 0, 8),
+		valueBuf:    make([]byte, 0, 1024),
+		valueLenBuf: make([]byte, 0, 8),
 	}, nil
 }
 
 func (r *kvReader) nextKV() (key, val []byte, err error) {
 	r.byteReader.reset()
-	lenBytes, err := r.byteReader.readNBytes(8)
+	r.keyLenBuf = r.keyLenBuf[:0]
+	r.valueLenBuf = r.valueLenBuf[:0]
+	r.keyBuf = r.keyBuf[:0]
+	r.valueBuf = r.valueBuf[:0]
+	lenBytes, err := r.byteReader.readNBytes(8, &r.keyLenBuf)
 	if err != nil {
 		return nil, nil, err
 	}
 	keyLen := int(binary.BigEndian.Uint64(*lenBytes))
-	keyPtr, err := r.byteReader.readNBytes(keyLen)
+	keyPtr, err := r.byteReader.readNBytes(keyLen, &r.keyBuf)
 	if err != nil {
 		return nil, nil, noEOF(err)
 	}
-	lenBytes, err = r.byteReader.readNBytes(8)
+	lenBytes, err = r.byteReader.readNBytes(8, &r.valueLenBuf)
 	if err != nil {
 		return nil, nil, noEOF(err)
 	}
 	valLen := int(binary.BigEndian.Uint64(*lenBytes))
-	valPtr, err := r.byteReader.readNBytes(valLen)
+	valPtr, err := r.byteReader.readNBytes(valLen, &r.valueBuf)
 	if err != nil {
 		return nil, nil, noEOF(err)
 	}
