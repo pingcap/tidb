@@ -36,8 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
@@ -45,9 +43,8 @@ import (
 
 // BackfillingDispatcherExt is an extension of litBackfillDispatcher, exported for test.
 type BackfillingDispatcherExt struct {
-	d                    *ddl
-	previousSchedulerIDs []string
-	GlobalSort           bool
+	d          *ddl
+	GlobalSort bool
 }
 
 // NewBackfillingDispatcherExt creates a new backfillingDispatcherExt, only used for test now.
@@ -135,11 +132,7 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 				prevStep,
 				logger)
 		}
-		// for partition table, no subtasks for write and ingest step.
-		if tblInfo.Partition != nil {
-			return nil, nil
-		}
-		return generateIngestTaskPlan(ctx, dsp, taskHandle, gTask)
+		return nil, nil
 	default:
 		return nil, nil
 	}
@@ -163,7 +156,7 @@ func (dsp *BackfillingDispatcherExt) GetNextStep(task *proto.Task) proto.Step {
 		if dsp.GlobalSort {
 			return StepMergeSort
 		}
-		return StepWriteAndIngest
+		return proto.StepDone
 	case StepMergeSort:
 		return StepWriteAndIngest
 	case StepWriteAndIngest:
@@ -200,16 +193,6 @@ func (dsp *BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if len(dsp.previousSchedulerIDs) > 0 {
-		// Only the nodes that executed step one can have step two.
-		involvedServerInfos := make([]*infosync.ServerInfo, 0, len(serverInfos))
-		for _, id := range dsp.previousSchedulerIDs {
-			if idx := disttaskutil.FindServerInfo(serverInfos, id); idx >= 0 {
-				involvedServerInfos = append(involvedServerInfos, serverInfos[idx])
-			}
-		}
-		return involvedServerInfos, nil
 	}
 	return serverInfos, nil
 }
@@ -331,42 +314,6 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 		if err != nil {
 			return nil, err
 		}
-		subTaskMetas = append(subTaskMetas, metaBytes)
-	}
-	return subTaskMetas, nil
-}
-
-func generateIngestTaskPlan(
-	ctx context.Context,
-	h *BackfillingDispatcherExt,
-	taskHandle dispatcher.TaskHandle,
-	gTask *proto.Task,
-) ([][]byte, error) {
-	// We dispatch dummy subtasks because the rest data in local engine will be imported
-	// in the initialization of subtask executor.
-	var ingestSubtaskCnt int
-	if intest.InTest && taskHandle == nil {
-		serverNodes, err := dispatcher.GenerateSchedulerNodes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		ingestSubtaskCnt = len(serverNodes)
-	} else {
-		schedulerIDs, err := taskHandle.GetPreviousSchedulerIDs(ctx, gTask.ID, gTask.Step)
-		if err != nil {
-			return nil, err
-		}
-		h.previousSchedulerIDs = schedulerIDs
-		ingestSubtaskCnt = len(schedulerIDs)
-	}
-
-	subTaskMetas := make([][]byte, 0, ingestSubtaskCnt)
-	dummyMeta := &BackfillSubTaskMeta{}
-	metaBytes, err := json.Marshal(dummyMeta)
-	if err != nil {
-		return nil, err
-	}
-	for i := 0; i < ingestSubtaskCnt; i++ {
 		subTaskMetas = append(subTaskMetas, metaBytes)
 	}
 	return subTaskMetas, nil
