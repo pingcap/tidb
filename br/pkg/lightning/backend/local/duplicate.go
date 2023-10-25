@@ -239,9 +239,13 @@ func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo)
 
 // DupKVStream is a streaming interface for collecting duplicate key-value pairs.
 type DupKVStream interface {
-	// Next returns the next key-value pair or any error it encountered.
+	// Next returns the next key-value pair or any error it encountered,
+	// then move the pointer to the next key-value pair
 	// At the end of the stream, the error is io.EOF.
 	Next() (key, val []byte, err error)
+	// Peek returns the next key-value pair or any error it encountered.
+	// At the end of the stream, the error is io.EOF.
+	Peek() (key, val []byte, err error)
 	// Close closes the stream.
 	Close() error
 }
@@ -277,6 +281,20 @@ func (s *DupKVStreamImpl) Next() (key, val []byte, err error) {
 	key = append(key, s.iter.Key()...)
 	val = append(val, s.iter.Value()...)
 	s.iter.Next()
+	return
+}
+
+// Peek implements the interface of DupKVStream.
+func (s *DupKVStreamImpl) Peek() (key, val []byte, err error) {
+	if !s.iter.Valid() {
+		err = s.iter.Error()
+		if err == nil {
+			err = io.EOF
+		}
+		return
+	}
+	key = append(key, s.iter.Key()...)
+	val = append(val, s.iter.Value()...)
 	return
 }
 
@@ -395,6 +413,20 @@ func (s *RemoteDupKVStream) Next() (key, val []byte, err error) {
 	}
 	key, val = s.kvs[0].Key, s.kvs[0].Value
 	s.kvs = s.kvs[1:]
+	return
+}
+
+// Peek implements the interface of DupKVStream.
+func (s *RemoteDupKVStream) Peek() (key, val []byte, err error) {
+	for len(s.kvs) == 0 {
+		if s.atEOF {
+			return nil, nil, io.EOF
+		}
+		if err := s.tryRecv(); err != nil {
+			return nil, nil, errors.Trace(err)
+		}
+	}
+	key, val = s.kvs[0].Key, s.kvs[0].Value
 	return
 }
 
@@ -723,6 +755,13 @@ func (m *DupeDetector) CollectDuplicateRowsFromDupDB(ctx context.Context, dupDB 
 			if err := common.Retry("collect local duplicate rows", logger, func() error {
 				stream := NewLocalDupKVStream(dupDB, keyAdapter, task.KeyRange)
 				var err error
+				//key, _, err := stream.Peek()
+				//if errors.Cause(err) == io.EOF {
+				//	return nil
+				//}
+				//if err != nil {
+				//	return errors.Trace(err)
+				//}
 				if task.indexInfo == nil {
 					err = m.RecordDataConflictError(gCtx, stream)
 				} else {
@@ -832,6 +871,13 @@ func (m *DupeDetector) processRemoteDupTaskOnce(
 				if err != nil {
 					return errors.Annotatef(err, "failed to create remote duplicate kv stream")
 				}
+				//key, _, err := stream.Peek()
+				//if errors.Cause(err) == io.EOF {
+				//	return nil
+				//}
+				//if err != nil {
+				//	return errors.Trace(err)
+				//}
 				if task.indexInfo == nil {
 					err = m.RecordDataConflictError(ctx, stream)
 				} else {

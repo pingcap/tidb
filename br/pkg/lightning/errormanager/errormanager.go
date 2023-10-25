@@ -95,6 +95,7 @@ const (
 			raw_value   mediumblob NOT NULL COMMENT 'the value of the conflicted key',
 			raw_handle  mediumblob NOT NULL COMMENT 'the data handle derived from the conflicted key or value',
 			raw_row     mediumblob NOT NULL COMMENT 'the data retrieved from the handle',
+			is_data_kv  tinyint(1) NOT NULL,
 			INDEX (task_id, table_name),
 			INDEX (index_name),
 			INDEX (table_name, index_name)
@@ -123,19 +124,19 @@ const (
 
 	insertIntoConflictErrorData = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv)
 		VALUES
 	`
 
-	sqlValuesConflictErrorData = "(?,?,'PRIMARY',?,?,?,?,raw_key,raw_value)"
+	sqlValuesConflictErrorData = "(?,?,'PRIMARY',?,?,?,?,raw_key,raw_value,?)"
 
 	insertIntoConflictErrorIndex = `
 		INSERT INTO %s.` + ConflictErrorTableName + `
-		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row)
+		(task_id, table_name, index_name, key_data, row_data, raw_key, raw_value, raw_handle, raw_row, is_data_kv)
 		VALUES
 	`
 
-	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?)"
+	sqlValuesConflictErrorIndex = "(?,?,?,?,?,?,?,?,?,?)"
 
 	selectConflictKeysRemove = `
 		SELECT _tidb_rowid, raw_handle, raw_row
@@ -147,14 +148,14 @@ const (
 	selectIndexConflictKeysReplace = `
 		SELECT raw_key, index_name, raw_value, raw_handle
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND index_name <> 'PRIMARY'
+		WHERE table_name = ? AND is_data_kv = 0
 		ORDER BY raw_key;
 	`
 
 	selectDataConflictKeysReplace = `
 		SELECT raw_key, raw_value
 		FROM %s.` + ConflictErrorTableName + `
-		WHERE table_name = ? AND index_name = 'PRIMARY'
+		WHERE table_name = ? AND is_data_kv = 1
 		ORDER BY raw_key;
 	`
 
@@ -379,6 +380,7 @@ func (em *ErrorManager) RecordDataConflictError(
 				conflictInfo.Row,
 				conflictInfo.RawKey,
 				conflictInfo.RawValue,
+				tablecodec.IsRecordKey(conflictInfo.RawKey),
 			)
 		}
 		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
@@ -440,6 +442,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 				conflictInfo.RawValue,
 				rawHandles[i],
 				rawRows[i],
+				tablecodec.IsRecordKey(conflictInfo.RawKey),
 			)
 		}
 		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
@@ -623,7 +626,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !tbl.Meta().PKIsHandle || !tbl.Meta().IsCommonHandle {
+			if !tbl.Meta().HasClusteredIndex() {
 				// for nonclustered PK, need to append handle to decodedData for AddRecord
 				decodedData = append(decodedData, types.NewIntDatum(overwrittenHandle.IntValue()))
 			}
@@ -672,6 +675,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 								"null",
 								rawHandle,
 								overwritten,
+								1,
 							)
 							_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
 							return err
@@ -727,7 +731,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err != nil {
 						return errors.Trace(err)
 					}
-					if !tbl.Meta().PKIsHandle || !tbl.Meta().IsCommonHandle {
+					if !tbl.Meta().HasClusteredIndex() {
 						// for nonclustered PK, need to append handle to decodedData for AddRecord
 						decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 					}
@@ -756,7 +760,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 			if err != nil {
 				return errors.Trace(err)
 			}
-			if !tbl.Meta().PKIsHandle || !tbl.Meta().IsCommonHandle {
+			if !tbl.Meta().HasClusteredIndex() {
 				// for nonclustered PK, need to append handle to decodedData for AddRecord
 				decodedData = append(decodedData, types.NewIntDatum(handle.IntValue()))
 			}
@@ -787,11 +791,13 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 				// if the KV pair is contained in mustKeepKvPairs, we cannot delete it
 				// if not, delete the KV pair
-				isContained := slices.ContainsFunc(mustKeepKvPairs.Pairs, func(mustKeepKvPair common.KvPair) bool {
-					return bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val)
-				})
-				if isContained {
-					continue
+				if mustKeepKvPairs != nil {
+					isContained := slices.ContainsFunc(mustKeepKvPairs.Pairs, func(mustKeepKvPair common.KvPair) bool {
+						return bytes.Equal(mustKeepKvPair.Key, kvPair.Key) && bytes.Equal(mustKeepKvPair.Val, kvPair.Val)
+					})
+					if isContained {
+						continue
+					}
 				}
 
 				if err := fnDeleteKey(gCtx, kvPair.Key); err != nil {
