@@ -988,7 +988,7 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 	default:
 		return invalidConv(d, target.GetType())
 	}
-	f, err1 := ProduceFloatWithSpecifiedTp(f, target, sc)
+	f, err1 := ProduceFloatWithSpecifiedTp(f, target)
 	if err == nil && err1 != nil {
 		err = err1
 	}
@@ -1001,7 +1001,7 @@ func (d *Datum) convertToFloat(sc *stmtctx.StatementContext, target *FieldType) 
 }
 
 // ProduceFloatWithSpecifiedTp produces a new float64 according to `flen` and `decimal`.
-func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.StatementContext) (_ float64, err error) {
+func ProduceFloatWithSpecifiedTp(f float64, target *FieldType) (_ float64, err error) {
 	if math.IsNaN(f) {
 		return 0, overflow(f, target.GetType())
 	}
@@ -1012,13 +1012,17 @@ func ProduceFloatWithSpecifiedTp(f float64, target *FieldType, sc *stmtctx.State
 	// If no D is set, we will handle it like origin float whether M is set or not.
 	if target.GetFlen() != UnspecifiedLength && target.GetDecimal() != UnspecifiedLength {
 		f, err = TruncateFloat(f, target.GetFlen(), target.GetDecimal())
-		if err = sc.HandleOverflow(err, err); err != nil {
-			return f, errors.Trace(err)
-		}
 	}
 	if mysql.HasUnsignedFlag(target.GetFlag()) && f < 0 {
 		return 0, overflow(f, target.GetType())
 	}
+
+	if err != nil {
+		// We must return the error got from TruncateFloat after checking whether the target is unsigned to make sure
+		// the returned float is not negative when the target type is unsigned.
+		return f, errors.Trace(err)
+	}
+
 	if target.GetType() == mysql.TypeFloat && (f > math.MaxFloat32 || f < -math.MaxFloat32) {
 		if f > 0 {
 			return math.MaxFloat32, overflow(f, target.GetType())
