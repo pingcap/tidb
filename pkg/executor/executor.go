@@ -2112,7 +2112,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode ||
 				vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode()))
+			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode))
 
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true

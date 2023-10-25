@@ -2038,7 +2038,7 @@ func ParseTimeFromNum(ctx Context, num int64, tp byte, fsp int) (Time, error) {
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
 		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
-		if !ctx.Flags().TruncateAsWarning() && !ctx.Flags().IgnoreZeroDateErr() {
+		if !ctx.Flags().IgnoreZeroDateErr() {
 			switch tp {
 			case mysql.TypeTimestamp:
 				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
