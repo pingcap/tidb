@@ -291,14 +291,15 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 	eg, _ := errgroup.WithContext(context.Background())
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "enable snapshot FSR")
+	workerPool := utils.NewWorkerPool(uint(len(snapshotsIDsMap)), "enable snapshot FSR")
 
 	for availableZone := range snapshotsIDsMap {
+		targetAZ := availableZone
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			log.Info("enable fsr for snapshots", zap.String("available zone", availableZone))
 			resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
-				AvailabilityZones: []*string{&availableZone},
-				SourceSnapshotIds: snapshotsIDsMap[availableZone],
+				AvailabilityZones: []*string{&targetAZ},
+				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
 			})
 
 			if err != nil {
@@ -307,10 +308,10 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 			if len(resp.Unsuccessful) > 0 {
 				log.Warn("not all snapshots enabled FSR")
-				return errors.Errorf("Some snapshot fails to enable FSR, such as %s, error code is %v", *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+				return errors.Errorf("Some snapshot fails to enable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 			}
 
-			return e.waitDataFSREnabled(snapshotsIDsMap[availableZone], availableZone)
+			return e.waitDataFSREnabled(snapshotsIDsMap[targetAZ], targetAZ)
 		})
 	}
 	return snapshotsIDsMap, eg.Wait()
@@ -378,13 +379,14 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 
 	eg, _ := errgroup.WithContext(context.Background())
 
-	workerPool := utils.NewWorkerPool(e.concurrency, "disable snapshot FSR")
+	workerPool := utils.NewWorkerPool(uint(len(snapshotsIDsMap)), "disable snapshot FSR")
 
 	for availableZone := range snapshotsIDsMap {
+		targetAZ := availableZone
 		workerPool.ApplyOnErrorGroup(eg, func() error {
 			resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
-				AvailabilityZones: []*string{&availableZone},
-				SourceSnapshotIds: snapshotsIDsMap[availableZone],
+				AvailabilityZones: []*string{&targetAZ},
+				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
 			})
 
 			if err != nil {
@@ -392,11 +394,11 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 			}
 
 			if len(resp.Unsuccessful) > 0 {
-				log.Warn("not all snapshots disabled FSR", zap.String("available zone", availableZone))
-				return errors.Errorf("Some snapshot fails to disable FSR for available zone %s, such as %s, error code is %v", availableZone, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+				log.Warn("not all snapshots disabled FSR", zap.String("available zone", targetAZ))
+				return errors.Errorf("Some snapshot fails to disable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
 			}
 
-			log.Info("Disable FSR issued", zap.String("available zone", availableZone))
+			log.Info("Disable FSR issued", zap.String("available zone", targetAZ))
 
 			return nil
 		})
@@ -405,7 +407,6 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 }
 
 func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[string][]*string {
-
 	var sourceSnapshotIDs = make(map[string][]*string)
 
 	if len(meta.TiKVComponent.Stores) == 0 {
