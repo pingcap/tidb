@@ -1407,7 +1407,7 @@ func GetDDLInfoWithNewTxn(s sessionctx.Context) (*Info, error) {
 	return info, err
 }
 
-// GetDDLInfo returns DDL information.
+// GetDDLInfo returns DDL information and only uses for testing.
 func GetDDLInfo(s sessionctx.Context) (*Info, error) {
 	var err error
 	info := &Info{}
