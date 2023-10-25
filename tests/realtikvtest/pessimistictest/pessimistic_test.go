@@ -289,10 +289,10 @@ func TestSingleStatementRollback(t *testing.T) {
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
-	region1, _, _ := cluster.GetRegionByKey(region1Key)
+	region1, _, _, _ := cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
 	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(3)))
-	region2, _, _ := cluster.GetRegionByKey(region2Key)
+	region2, _, _, _ := cluster.GetRegionByKey(region2Key)
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
