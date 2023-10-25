@@ -33,7 +33,6 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/codec",
-        "//pkg/util/mathutil",
         "//pkg/util/rowcodec",
         "@com_github_dgryski_go_farm//:go-farm",
         "@com_github_gogo_protobuf//proto",

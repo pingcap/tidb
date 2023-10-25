@@ -33,7 +33,6 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/intest",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/paging",
         "//pkg/util/tiflash",

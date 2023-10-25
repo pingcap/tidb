@@ -866,7 +866,7 @@ func getLowerBoundInt(partCols ...*model.ColumnInfo) int64 {
 		if mysql.HasUnsignedFlag(col.FieldType.GetFlag()) {
 			return 0
 		}
-		ret = mathutil.Min(ret, types.IntergerSignedLowerBound(col.GetType()))
+		ret = min(ret, types.IntergerSignedLowerBound(col.GetType()))
 	}
 	return ret
 }

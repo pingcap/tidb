@@ -16,11 +16,9 @@ package testenv
 
 import (
 	"runtime"
-
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 )
 
 // SetGOMAXPROCSForTest sets GOMAXPROCS to 16 if it is greater than 16.
 func SetGOMAXPROCSForTest() {
-	runtime.GOMAXPROCS(mathutil.Min(16, runtime.GOMAXPROCS(0)))
+	runtime.GOMAXPROCS(min(16, runtime.GOMAXPROCS(0)))
 }

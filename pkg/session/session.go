@@ -94,7 +94,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/sli"
@@ -1742,7 +1741,7 @@ func (s *session) ParseWithParams(ctx context.Context, sql string, args ...inter
 	}
 	if err != nil {
 		s.rollbackOnError(ctx)
-		logSQL := sql[:mathutil.Min(500, len(sql))]
+		logSQL := sql[:min(500, len(sql))]
 		if s.sessionVars.EnableRedactLog {
 			logutil.Logger(ctx).Debug("parse SQL failed", zap.Error(err), zap.String("SQL", logSQL))
 		} else {

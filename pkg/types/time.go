@@ -2681,7 +2681,7 @@ func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time,
 	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
 		return ZeroTime, err
 	}
-	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
+	fsp := min(MaxFsp, int(dec.GetDigitsFrac()))
 	t, err = parseDateTimeFromNum(sc, intPart)
 	if err != nil {
 		return ZeroTime, err
