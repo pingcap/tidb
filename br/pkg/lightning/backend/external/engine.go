@@ -217,6 +217,7 @@ func (e *Engine) loadIngestData(
 	memBuf := e.bufPool.NewBuffer()
 	cnt := 0
 	size := 0
+	takenMemory := 0
 	totalSize := 0
 	largeRegion := e.regionSplitSize > 2*int64(config.SplitRegionSize)
 	ret := make([]common.DataAndRange, 0, 1)
@@ -231,6 +232,7 @@ func (e *Engine) loadIngestData(
 		cnt++
 		size += len(k) + len(v)
 		totalSize += len(k) + len(v)
+		takenMemory = size + 24*2
 	}
 
 	for iter.Next() {
@@ -241,7 +243,7 @@ func (e *Engine) loadIngestData(
 		if bytes.Compare(k, end) >= 0 {
 			break
 		}
-		if largeRegion && size > LargeRegionSplitDataThreshold {
+		if largeRegion && takenMemory > LargeRegionSplitDataThreshold {
 			curKey := slices.Clone(k)
 			ret = append(ret, common.DataAndRange{
 				Data:  e.buildIngestData(keys, values, memBuf),
@@ -250,6 +252,7 @@ func (e *Engine) loadIngestData(
 			keys = make([][]byte, 0, 1024)
 			values = make([][]byte, 0, 1024)
 			size = 0
+			takenMemory = 0
 			curStart = curKey
 		}
 
@@ -258,6 +261,7 @@ func (e *Engine) loadIngestData(
 		cnt++
 		size += len(k) + len(v)
 		totalSize += len(k) + len(v)
+		takenMemory += len(k) + len(v) + 24*2
 	}
 	if iter.Error() != nil {
 		return nil, errors.Trace(iter.Error())
