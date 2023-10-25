@@ -36,14 +36,11 @@ func TestCastFunctions(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// Test `cast as char[(N)]` and `cast as binary[(N)]`.
-	originIgnoreTruncate := sc.IgnoreTruncate.Load()
-	originTruncateAsWarning := sc.TruncateAsWarning
-	sc.IgnoreTruncate.Store(false)
-	sc.TruncateAsWarning = true
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(originIgnoreTruncate)
-		sc.TruncateAsWarning = originTruncateAsWarning
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithTruncateAsWarning(true))
 
 	tp := types.NewFieldType(mysql.TypeString)
 	tp.SetFlen(5)
@@ -296,14 +293,20 @@ func TestCastFuncSig(t *testing.T) {
 	ctx := createContext(t)
 
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate.Load()
+	originIgnoreTruncate := sc.TypeFlags().IgnoreTruncateErr()
 	originTZ := sc.TimeZone()
-	sc.IgnoreTruncate.Store(true)
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 	sc.SetTimeZone(time.UTC)
 	defer func() {
-		sc.IgnoreTruncate.Store(originIgnoreTruncate)
+		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(originIgnoreTruncate))
 		sc.SetTimeZone(originTZ)
 	}()
+
+	oldTypeFlags := sc.TypeFlags()
+	defer func() {
+		sc.SetTypeFlags(oldTypeFlags)
+	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 	var sig builtinFunc
 
 	durationColumn := &Column{RetType: types.NewFieldType(mysql.TypeDuration), Index: 0}
@@ -1105,11 +1108,11 @@ func TestCastFuncSig(t *testing.T) {
 func TestCastJSONAsDecimalSig(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(originIgnoreTruncate)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	col := &Column{RetType: types.NewFieldType(mysql.TypeJSON), Index: 0}
 	b, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeNewDecimal))
@@ -1587,11 +1590,11 @@ func TestCastConstAsDecimalFieldType(t *testing.T) {
 func TestCastBinaryStringAsJSONSig(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	originIgnoreTruncate := sc.IgnoreTruncate.Load()
-	sc.IgnoreTruncate.Store(true)
+	oldTypeFlags := sc.TypeFlags()
 	defer func() {
-		sc.IgnoreTruncate.Store(originIgnoreTruncate)
+		sc.SetTypeFlags(oldTypeFlags)
 	}()
+	sc.SetTypeFlags(oldTypeFlags.WithIgnoreTruncateErr(true))
 
 	// BINARY STRING will be converted to a JSON opaque
 	// and yield "base64:typeXX:<base64 encoded value>" finally

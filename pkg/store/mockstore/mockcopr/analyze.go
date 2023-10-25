@@ -83,7 +83,12 @@ func (h coprHandler) handleAnalyzeIndexReq(req *coprocessor.Request, analyzeReq 
 		execDetail:     new(execDetail),
 		hdStatus:       tablecodec.HandleNotNeeded,
 	}
-	statsBuilder := statistics.NewSortedBuilder(flagsToStatementContext(analyzeReq.Flags), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statistics.Version1)
+
+	tz, err := timeutil.ConstructTimeZone("", int(analyzeReq.TimeZoneOffset))
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	statsBuilder := statistics.NewSortedBuilder(flagsAndTzToStatementContext(analyzeReq.Flags, tz), analyzeReq.IdxReq.BucketSize, 0, types.NewFieldType(mysql.TypeBlob), statistics.Version1)
 	var cms *statistics.CMSketch
 	if analyzeReq.IdxReq.CmsketchDepth != nil && analyzeReq.IdxReq.CmsketchWidth != nil {
 		cms = statistics.NewCMSketch(*analyzeReq.IdxReq.CmsketchDepth, *analyzeReq.IdxReq.CmsketchWidth)
@@ -128,12 +133,12 @@ type analyzeColumnsExec struct {
 }
 
 func (h coprHandler) handleAnalyzeColumnsReq(req *coprocessor.Request, analyzeReq *tipb.AnalyzeReq) (_ *coprocessor.Response, err error) {
-	sc := flagsToStatementContext(analyzeReq.Flags)
 	tz, err := timeutil.ConstructTimeZone("", int(analyzeReq.TimeZoneOffset))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	sc.SetTimeZone(tz)
+
+	sc := flagsAndTzToStatementContext(analyzeReq.Flags, tz)
 
 	evalCtx := &evalContext{sc: sc}
 	columns := analyzeReq.ColReq.ColumnsInfo

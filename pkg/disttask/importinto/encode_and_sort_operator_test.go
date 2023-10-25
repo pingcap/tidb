@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -72,20 +73,15 @@ func TestEncodeAndSortOperator(t *testing.T) {
 		tableImporter: &importer.TableImporter{
 			LoadDataController: &importer.LoadDataController{
 				Plan: &importer.Plan{
-					CloudStorageURI: "s3://test-bucket/test-path",
+					CloudStorageURI: "",
 				},
 			},
 		},
 		logger: logger,
 	}
 
-	sharedVars := &SharedVars{
-		SortedDataMeta:   &external.SortedKVMeta{},
-		SortedIndexMetas: map[int64]*external.SortedKVMeta{},
-	}
-
 	source := operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op := newEncodeAndSortOperator(context.Background(), executorForParam, sharedVars, 3, 0)
+	op := newEncodeAndSortOperator(context.Background(), executorForParam, nil, 3, 0)
 	op.SetSource(source)
 	require.NoError(t, op.Open())
 	require.Greater(t, len(op.String()), 0)
@@ -105,7 +101,7 @@ func TestEncodeAndSortOperator(t *testing.T) {
 	// cancel on error and log other errors
 	mockErr2 := errors.New("mock err 2")
 	source = operator.NewSimpleDataChannel(make(chan *importStepMinimalTask))
-	op = newEncodeAndSortOperator(context.Background(), executorForParam, sharedVars, 2, 0)
+	op = newEncodeAndSortOperator(context.Background(), executorForParam, nil, 2, 0)
 	op.SetSource(source)
 	executor1 := mock.NewMockMiniTaskExecutor(ctrl)
 	executor2 := mock.NewMockMiniTaskExecutor(ctrl)
@@ -205,4 +201,10 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			DesiredTableInfo: info,
 		}), c.createSQL)
 	}
+}
+
+func TestGetKVGroupBlockSize(t *testing.T) {
+	require.Equal(t, 32*units.MiB, getKVGroupBlockSize(dataKVGroup))
+	require.Equal(t, 16*units.MiB, getKVGroupBlockSize(""))
+	require.Equal(t, 16*units.MiB, getKVGroupBlockSize("1"))
 }

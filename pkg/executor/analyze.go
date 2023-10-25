@@ -21,7 +21,6 @@ import (
 	"net"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -39,10 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
@@ -389,7 +388,7 @@ func (e *AnalyzeExec) handleResultsError(
 		handleGlobalStats(needGlobalStats, globalStatsMap, results)
 		tableIDs[results.TableID.GetStatisticsID()] = struct{}{}
 
-		if err1 := statsHandle.SaveTableStatsToStorage(results, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot, handle.StatsMetaHistorySourceAnalyze); err1 != nil {
+		if err1 := statsHandle.SaveTableStatsToStorage(results, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot, handleutil.StatsMetaHistorySourceAnalyze); err1 != nil {
 			tableID := results.TableID.TableID
 			err = err1
 			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err), zap.Int64("tableID", tableID))
@@ -397,10 +396,10 @@ func (e *AnalyzeExec) handleResultsError(
 		} else {
 			finishJobWithLog(e.Ctx(), results.Job, nil)
 		}
-		if atomic.LoadUint32(&e.Ctx().GetSessionVars().Killed) == 1 {
-			finishJobWithLog(e.Ctx(), results.Job, exeerrors.ErrQueryInterrupted)
+		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			finishJobWithLog(e.Ctx(), results.Job, err)
 			results.DestroyAndPutToPool()
-			return errors.Trace(exeerrors.ErrQueryInterrupted)
+			return err
 		}
 		results.DestroyAndPutToPool()
 	}
@@ -423,7 +422,7 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	saveResultsCh := make(chan *statistics.AnalyzeResults, partitionStatsConcurrency)
 	errCh := make(chan error, partitionStatsConcurrency)
 	for i := 0; i < partitionStatsConcurrency; i++ {
-		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().Killed)
+		worker := newAnalyzeSaveStatsWorker(saveResultsCh, subSctxs[i], errCh, &e.Ctx().GetSessionVars().SQLKiller)
 		ctx1 := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 		wg.Run(func() {
 			worker.run(ctx1, e.Ctx().GetSessionVars().EnableAnalyzeSnapshot)
@@ -433,9 +432,9 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(ctx context.Context, sta
 	panicCnt := 0
 	var err error
 	for panicCnt < statsConcurrency {
-		if atomic.LoadUint32(&e.Ctx().GetSessionVars().Killed) == 1 {
+		if err := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			close(saveResultsCh)
-			return errors.Trace(exeerrors.ErrQueryInterrupted)
+			return err
 		}
 		results, ok := <-resultsCh
 		if !ok {

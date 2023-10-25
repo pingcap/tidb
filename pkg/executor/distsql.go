@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -744,7 +743,7 @@ func (e *IndexLookUpExecutor) startIndexWorker(ctx context.Context, workCh chan<
 			}
 			results = append(results, result)
 		}
-		worker.batchSize = mathutil.Min(initBatchSize, worker.maxBatchSize)
+		worker.batchSize = min(initBatchSize, worker.maxBatchSize)
 		if len(results) > 1 && len(e.byItems) != 0 {
 			// e.Schema() not the output schema for indexReader, and we put byItems related column at first in `buildIndexReq`, so use nil here.
 			ssr := distsql.NewSortedSelectResults(results, nil, e.byItems, e.memTracker)
@@ -873,7 +872,7 @@ func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 			return nil
 		}
 		if resultTask.cursor < len(resultTask.rows) {
-			numToAppend := mathutil.Min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
+			numToAppend := min(len(resultTask.rows)-resultTask.cursor, req.RequiredRows()-req.NumRows())
 			req.AppendRows(resultTask.rows[resultTask.cursor : resultTask.cursor+numToAppend])
 			resultTask.cursor += numToAppend
 			if req.IsFull() {
@@ -981,7 +980,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			err4Panic := errors.Errorf("%v", r)
+			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
 				err = errors.Trace(err4Panic)
@@ -1169,7 +1168,8 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			task.doneCh <- errors.Errorf("%v", r)
+			err := util.GetRecoverError(r)
+			task.doneCh <- err
 		}
 	}()
 	for {

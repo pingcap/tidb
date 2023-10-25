@@ -107,7 +107,7 @@ func (s *importStepExecutor) Init(ctx context.Context) error {
 		}()
 	}
 	s.indexMemorySizeLimit = getWriterMemorySizeLimit(s.tableImporter.Plan)
-	s.logger.Info("memory size limit per index writer per concurrency",
+	s.logger.Info("index writer memory size limit",
 		zap.String("limit", units.BytesSize(float64(s.indexMemorySizeLimit))))
 	return nil
 }
@@ -315,6 +315,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		prefix,
 		writerID,
 		256*size.MB,
+		getKVGroupBlockSize(sm.KVGroup),
 		8*1024,
 		1*size.MB,
 		8*1024,

@@ -24,48 +24,37 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
 // statsHistoryImpl implements util.StatsHistory.
 type statsHistoryImpl struct {
-	pool       util.SessionPool
-	statsCache util.StatsCache
-
-	// TODO: use interfaces instead of raw function pointers
-	tableStatsToJSON func(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error)
-	dumpStatsToJSON  func(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*storage.JSONTable, error)
+	statsHandle util.StatsHandle
 }
 
 // NewStatsHistory creates a new StatsHistory.
-func NewStatsHistory(pool util.SessionPool, statsCache util.StatsCache,
-	tableStatsToJSON func(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*storage.JSONTable, error),
-	dumpStatsToJSON func(dbName string, tableInfo *model.TableInfo, historyStatsExec sqlexec.RestrictedSQLExecutor, dumpPartitionStats bool) (*storage.JSONTable, error),
+func NewStatsHistory(statsHandle util.StatsHandle,
 ) util.StatsHistory {
 	return &statsHistoryImpl{
-		pool:             pool,
-		statsCache:       statsCache,
-		tableStatsToJSON: tableStatsToJSON,
-		dumpStatsToJSON:  dumpStatsToJSON,
+		statsHandle: statsHandle,
 	}
 }
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
 func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableInfo *model.TableInfo, physicalID int64, isPartition bool) (uint64, error) {
-	var js *storage.JSONTable
+	var js *util.JSONTable
 	var err error
 	if isPartition {
-		js, err = sh.tableStatsToJSON(dbName, tableInfo, physicalID, 0)
+		js, err = sh.statsHandle.TableStatsToJSON(dbName, tableInfo, physicalID, 0)
 	} else {
-		js, err = sh.dumpStatsToJSON(dbName, tableInfo, nil, true)
+		js, err = sh.statsHandle.DumpStatsToJSON(dbName, tableInfo, nil, true)
 	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
 
 	var version uint64
-	err = util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		version, err = RecordHistoricalStatsToStorage(sctx, physicalID, js)
 		return err
 	}, util.FlagWrapTxn)
@@ -73,20 +62,22 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsToStorage(dbName string, tableI
 }
 
 // RecordHistoricalStatsMeta records stats meta of the specified version to stats_meta_history table.
-func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string) {
+func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uint64, source string, enforce bool) {
 	if version == 0 {
 		return
 	}
-	tbl, ok := sh.statsCache.Get(tableID)
-	if !ok {
-		return
+	if !enforce {
+		tbl, ok := sh.statsHandle.Get(tableID)
+		if !ok {
+			return
+		}
+		if !tbl.IsInitialized() {
+			return
+		}
 	}
-	if !tbl.IsInitialized() {
-		return
-	}
-	err := util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+	err := util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		return RecordHistoricalStatsMeta(sctx, tableID, version, source)
-	})
+	}, util.FlagWrapTxn)
 	if err != nil { // just log the error, hide the error from the outside caller.
 		logutil.BgLogger().Error("record historical stats meta failed",
 			zap.Int64("table-id", tableID),
@@ -98,7 +89,7 @@ func (sh *statsHistoryImpl) RecordHistoricalStatsMeta(tableID int64, version uin
 
 // CheckHistoricalStatsEnable checks whether historical stats is enabled.
 func (sh *statsHistoryImpl) CheckHistoricalStatsEnable() (enable bool, err error) {
-	err = util.CallWithSCtx(sh.pool, func(sctx sessionctx.Context) error {
+	err = util.CallWithSCtx(sh.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		enable = sctx.GetSessionVars().EnableHistoricalStats
 		return nil
 	})
@@ -122,14 +113,6 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 	}
 	modifyCount, count := rows[0].GetInt64(0), rows[0].GetInt64(1)
 
-	_, err = util.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		err = util.FinishTransaction(sctx, err)
-	}()
-
 	const sql = "REPLACE INTO mysql.stats_meta_history(table_id, modify_count, count, version, source, create_time) VALUES (%?, %?, %?, %?, %?, NOW())"
 	if _, err := util.Exec(sctx, sql, tableID, modifyCount, count, version, source); err != nil {
 		return errors.Trace(err)
@@ -139,10 +122,11 @@ func RecordHistoricalStatsMeta(sctx sessionctx.Context, tableID int64, version u
 }
 
 // Max column size is 6MB. Refer https://docs.pingcap.com/tidb/dev/tidb-limitations/#limitation-on-a-single-column
-const maxColumnSize = 6 << 20
+// but here is less than 6MB, because stats_history has other info except stats_data.
+const maxColumnSize = 5 << 20
 
 // RecordHistoricalStatsToStorage records the given table's stats data to mysql.stats_history
-func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *storage.JSONTable) (uint64, error) {
+func RecordHistoricalStatsToStorage(sctx sessionctx.Context, physicalID int64, js *util.JSONTable) (uint64, error) {
 	version := uint64(0)
 	if len(js.Partitions) == 0 {
 		version = js.Version

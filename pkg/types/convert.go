@@ -145,8 +145,8 @@ func ConvertUintToInt(val uint64, upperBound int64, tp byte) (int64, error) {
 }
 
 // ConvertIntToUint converts an int value to an uint value.
-func ConvertIntToUint(sc *stmtctx.StatementContext, val int64, upperBound uint64, tp byte) (uint64, error) {
-	if sc.ShouldClipToZero() && val < 0 {
+func ConvertIntToUint(flags Flags, val int64, upperBound uint64, tp byte) (uint64, error) {
+	if val < 0 && !flags.AllowNegativeToUnsigned() {
 		return 0, overflow(val, tp)
 	}
 
@@ -167,10 +167,10 @@ func ConvertUintToUint(val uint64, upperBound uint64, tp byte) (uint64, error) {
 }
 
 // ConvertFloatToUint converts a float value to an uint value.
-func ConvertFloatToUint(sc *stmtctx.StatementContext, fval float64, upperBound uint64, tp byte) (uint64, error) {
+func ConvertFloatToUint(flags Flags, fval float64, upperBound uint64, tp byte) (uint64, error) {
 	val := RoundFloat(fval)
 	if val < 0 {
-		if sc.ShouldClipToZero() {
+		if !flags.AllowNegativeToUnsigned() {
 			return 0, overflow(val, tp)
 		}
 		return uint64(int64(val)), overflow(val, tp)
@@ -276,9 +276,9 @@ func ConvertDecimalToUint(sc *stmtctx.StatementContext, d *MyDecimal, upperBound
 }
 
 // StrToInt converts a string to an integer at the best-effort.
-func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64, error) {
+func StrToInt(ctx Context, str string, isFuncCast bool) (int64, error) {
 	str = strings.TrimSpace(str)
-	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
+	validPrefix, err := getValidIntPrefix(ctx, str, isFuncCast)
 	iVal, err1 := strconv.ParseInt(validPrefix, 10, 64)
 	if err1 != nil {
 		return iVal, ErrOverflow.GenWithStackByArgs("BIGINT", validPrefix)
@@ -287,9 +287,9 @@ func StrToInt(sc *stmtctx.StatementContext, str string, isFuncCast bool) (int64,
 }
 
 // StrToUint converts a string to an unsigned integer at the best-effort.
-func StrToUint(sc *stmtctx.StatementContext, str string, isFuncCast bool) (uint64, error) {
+func StrToUint(ctx Context, str string, isFuncCast bool) (uint64, error) {
 	str = strings.TrimSpace(str)
-	validPrefix, err := getValidIntPrefix(sc, str, isFuncCast)
+	validPrefix, err := getValidIntPrefix(ctx, str, isFuncCast)
 	uVal := uint64(0)
 	hasParseErr := false
 
@@ -344,7 +344,8 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 
 	d, _, err = ParseDuration(sc, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
-		err = sc.HandleTruncate(err)
+		typeCtx := sc.TypeCtx()
+		err = typeCtx.HandleTruncate(err)
 	}
 	return d, t, true, errors.Trace(err)
 }
@@ -382,13 +383,13 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 }
 
 // getValidIntPrefix gets prefix of the string which can be successfully parsed as int.
-func getValidIntPrefix(sc *stmtctx.StatementContext, str string, isFuncCast bool) (string, error) {
+func getValidIntPrefix(ctx Context, str string, isFuncCast bool) (string, error) {
 	if !isFuncCast {
-		floatPrefix, err := getValidFloatPrefix(sc, str, isFuncCast)
+		floatPrefix, err := getValidFloatPrefix(ctx, str, isFuncCast)
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
 		}
-		return floatStrToIntStr(sc, floatPrefix, str)
+		return floatStrToIntStr(floatPrefix, str)
 	}
 
 	validLen := 0
@@ -411,7 +412,7 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string, isFuncCast bool
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(str) {
-		return valid, errors.Trace(sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str)))
+		return valid, errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", str)))
 	}
 	return valid, nil
 }
@@ -444,6 +445,9 @@ func roundIntStr(numNextDot byte, intStr string) string {
 	return string(retStr)
 }
 
+var maxUintStr = strconv.FormatUint(math.MaxUint64, 10)
+var minIntStr = strconv.FormatInt(math.MinInt64, 10)
+
 // floatStrToIntStr converts a valid float string into valid integer string which can be parsed by
 // strconv.ParseInt, we can't parse float first then convert it to string because precision will
 // be lost. For example, the string value "18446744073709551615" which is the max number of unsigned
@@ -451,7 +455,7 @@ func roundIntStr(numNextDot byte, intStr string) string {
 //
 // This func will find serious overflow such as the len of intStr > 20 (without prefix `+/-`)
 // however, it will not check whether the intStr overflow BIGINT.
-func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
+func floatStrToIntStr(validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
 	for i := 0; i < len(validFloat); i++ {
@@ -499,7 +503,12 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 	}
 	exp, err := strconv.Atoi(validFloat[eIdx+1:])
 	if err != nil {
-		return validFloat, errors.Trace(err)
+		if digits[0] == '-' {
+			intStr = minIntStr
+		} else {
+			intStr = maxUintStr
+		}
+		return intStr, ErrOverflow.GenWithStackByArgs("BIGINT", oriStr)
 	}
 	intCnt += exp
 	if exp >= 0 && (intCnt > 21 || intCnt < 0) {
@@ -507,8 +516,12 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 		// MaxUint64 has 20 decimal digits.
 		// And the intCnt may contain the len of `+/-`,
 		// so I use 21 here as the early detection.
-		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
-		return validFloat[:eIdx], nil
+		if digits[0] == '-' {
+			intStr = minIntStr
+		} else {
+			intStr = maxUintStr
+		}
+		return intStr, ErrOverflow.GenWithStackByArgs("BIGINT", oriStr)
 	}
 	if intCnt <= 0 {
 		intStr = "0"
@@ -541,15 +554,15 @@ func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr st
 }
 
 // StrToFloat converts a string to a float64 at the best-effort.
-func StrToFloat(sc *stmtctx.StatementContext, str string, isFuncCast bool) (float64, error) {
+func StrToFloat(ctx Context, str string, isFuncCast bool) (float64, error) {
 	str = strings.TrimSpace(str)
-	validStr, err := getValidFloatPrefix(sc, str, isFuncCast)
+	validStr, err := getValidFloatPrefix(ctx, str, isFuncCast)
 	f, err1 := strconv.ParseFloat(validStr, 64)
 	if err1 != nil {
 		if err2, ok := err1.(*strconv.NumError); ok {
 			// value will truncate to MAX/MIN if out of range.
 			if err2.Err == strconv.ErrRange {
-				err1 = sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", str))
+				err1 = ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", str))
 				if math.IsInf(f, 1) {
 					f = math.MaxFloat64
 				} else if math.IsInf(f, -1) {
@@ -585,7 +598,7 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool,
 		i := j.GetInt64()
 		if unsigned {
 			uBound := IntergerUnsignedUpperBound(tp)
-			u, err := ConvertIntToUint(sc, i, uBound, tp)
+			u, err := ConvertIntToUint(sc.TypeFlags(), i, uBound, tp)
 			return int64(u), sc.HandleOverflow(err, err)
 		}
 
@@ -613,31 +626,31 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool,
 			return u, sc.HandleOverflow(e, e)
 		}
 		bound := IntergerUnsignedUpperBound(tp)
-		u, err := ConvertFloatToUint(sc, f, bound, tp)
+		u, err := ConvertFloatToUint(sc.TypeFlags(), f, bound, tp)
 		return int64(u), sc.HandleOverflow(err, err)
 	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
 		if !unsigned {
-			r, e := StrToInt(sc, str, false)
+			r, e := StrToInt(sc.TypeCtxOrDefault(), str, false)
 			return r, sc.HandleOverflow(e, e)
 		}
-		u, err := StrToUint(sc, str, false)
+		u, err := StrToUint(sc.TypeCtxOrDefault(), str, false)
 		return int64(u), sc.HandleOverflow(err, err)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
 
 // ConvertJSONToFloat casts JSON into float64.
-func ConvertJSONToFloat(sc *stmtctx.StatementContext, j BinaryJSON) (float64, error) {
+func ConvertJSONToFloat(ctx Context, j BinaryJSON) (float64, error) {
 	switch j.TypeCode {
 	case JSONTypeCodeObject, JSONTypeCodeArray, JSONTypeCodeOpaque, JSONTypeCodeDate, JSONTypeCodeDatetime, JSONTypeCodeTimestamp, JSONTypeCodeDuration:
-		return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
+		return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 	case JSONTypeCodeLiteral:
 		switch j.Value[0] {
 		case JSONLiteralFalse:
 			return 0, nil
 		case JSONLiteralNil:
-			return 0, sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
+			return 0, ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("FLOAT", j.String()))
 		default:
 			return 1, nil
 		}
@@ -649,13 +662,13 @@ func ConvertJSONToFloat(sc *stmtctx.StatementContext, j BinaryJSON) (float64, er
 		return j.GetFloat64(), nil
 	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
-		return StrToFloat(sc, str, false)
+		return StrToFloat(ctx, str, false)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
 
 // ConvertJSONToDecimal casts JSON into decimal.
-func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j BinaryJSON) (*MyDecimal, error) {
+func ConvertJSONToDecimal(ctx Context, j BinaryJSON) (*MyDecimal, error) {
 	var err error = nil
 	res := new(MyDecimal)
 	switch j.TypeCode {
@@ -679,7 +692,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j BinaryJSON) (*MyDecima
 	case JSONTypeCodeString:
 		err = res.FromString(j.GetString())
 	}
-	err = sc.HandleTruncate(err)
+	err = ctx.HandleTruncate(err)
 	if err != nil {
 		return res, errors.Trace(err)
 	}
@@ -687,7 +700,7 @@ func ConvertJSONToDecimal(sc *stmtctx.StatementContext, j BinaryJSON) (*MyDecima
 }
 
 // getValidFloatPrefix gets prefix of string which can be successfully parsed as float.
-func getValidFloatPrefix(sc *stmtctx.StatementContext, s string, isFuncCast bool) (valid string, err error) {
+func getValidFloatPrefix(ctx Context, s string, isFuncCast bool) (valid string, err error) {
 	if isFuncCast && s == "" {
 		return "0", nil
 	}
@@ -735,7 +748,7 @@ func getValidFloatPrefix(sc *stmtctx.StatementContext, s string, isFuncCast bool
 		valid = "0"
 	}
 	if validLen == 0 || validLen != len(s) {
-		err = errors.Trace(sc.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)))
+		err = errors.Trace(ctx.HandleTruncate(ErrTruncatedWrongVal.GenWithStackByArgs("DOUBLE", s)))
 	}
 	return valid, err
 }
