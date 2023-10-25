@@ -27,138 +27,11 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
 )
-
-func TestSetPartitionPruneMode(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tkInit := testkit.NewTestKit(t, store)
-	tkInit.MustExec(`set @@session.tidb_partition_prune_mode = DEFAULT`)
-	tkInit.MustQuery("show warnings").Check(testkit.Rows())
-	tkInit.MustExec(`set @@global.tidb_partition_prune_mode = DEFAULT`)
-	tkInit.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 Please analyze all partition tables again for consistency between partition and global stats"))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
-	tk.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
-	tk.MustExec(`set @@session.tidb_partition_prune_mode = "static"`)
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk.MustExec(`set @@global.tidb_partition_prune_mode = "static"`)
-	tk.MustQuery("show warnings").Check(testkit.Rows())
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("static"))
-	tk2.MustQuery("show warnings").Check(testkit.Rows())
-	tk2.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("static"))
-	tk2.MustExec(`set @@session.tidb_partition_prune_mode = "dynamic"`)
-	tk2.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`,
-		`Warning 1105 Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level`))
-	tk2.MustExec(`set @@global.tidb_partition_prune_mode = "dynamic"`)
-	tk2.MustQuery("show warnings").Check(testkit.Rows(`Warning 1105 Please analyze all partition tables again for consistency between partition and global stats`))
-	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustQuery("select @@global.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
-	tk3.MustQuery("select @@session.tidb_partition_prune_mode").Check(testkit.Rows("dynamic"))
-}
-
-func TestFourReader(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists pt")
-	tk.MustExec(`create table pt (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
-partition p0 values less than (4),
-partition p1 values less than (7),
-partition p2 values less than (10))`)
-	tk.MustExec("insert into pt values (0, 0), (2, 2), (4, 4), (6, 6), (7, 7), (9, 9), (null, null)")
-
-	// Table reader
-	tk.MustQuery("select * from pt").Sort().Check(testkit.Rows("0 0", "2 2", "4 4", "6 6", "7 7", "9 9", "<nil> <nil>"))
-	// Table reader: table dual
-	tk.MustQuery("select * from pt where c > 10").Check(testkit.Rows())
-	// Table reader: one partition
-	tk.MustQuery("select * from pt where c > 8").Check(testkit.Rows("9 9"))
-	// Table reader: more than one partition
-	tk.MustQuery("select * from pt where c < 2 or c >= 9").Sort().Check(testkit.Rows("0 0", "9 9"))
-
-	// Index reader
-	tk.MustQuery("select c from pt").Sort().Check(testkit.Rows("0", "2", "4", "6", "7", "9", "<nil>"))
-	tk.MustQuery("select c from pt where c > 10").Check(testkit.Rows())
-	tk.MustQuery("select c from pt where c > 8").Check(testkit.Rows("9"))
-	tk.MustQuery("select c from pt where c < 2 or c >= 9").Sort().Check(testkit.Rows("0", "9"))
-
-	// Index lookup
-	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt").Sort().Check(testkit.Rows("0 0", "2 2", "4 4", "6 6", "7 7", "9 9", "<nil> <nil>"))
-	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt where id < 4 and c > 10").Check(testkit.Rows())
-	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c > 8").Check(testkit.Rows("9 9"))
-	tk.MustQuery("select /*+ use_index(pt, i_id) */ * from pt where id < 10 and c < 2 or c >= 9").Sort().Check(testkit.Rows("0 0", "9 9"))
-
-	// Index Merge
-	tk.MustExec("set @@tidb_enable_index_merge = 1")
-	tk.MustQuery("select /*+ use_index(i_c, i_id) */ * from pt where id = 4 or c < 7").Sort().Check(testkit.Rows("0 0", "2 2", "4 4", "6 6"))
-}
-
-func TestPartitionIndexJoin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
-	tk.MustExec("set @@session.tidb_enable_list_partition = 1")
-	for i := 0; i < 3; i++ {
-		tk.MustExec("drop table if exists p, t")
-		if i == 0 {
-			// Test for range partition
-			tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by range (c) (
-				partition p0 values less than (4),
-				partition p1 values less than (7),
-				partition p2 values less than (10))`)
-		} else if i == 1 {
-			// Test for list partition
-			tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by list (c) (
-				partition p0 values in (1,2,3,4),
-				partition p1 values in (5,6,7),
-				partition p2 values in (8, 9,10))`)
-		} else {
-			// Test for hash partition
-			tk.MustExec(`create table p (id int, c int, key i_id(id), key i_c(c)) partition by hash(c) partitions 5;`)
-		}
-
-		tk.MustExec("create table t (id int)")
-		tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9)")
-		tk.MustExec("insert into t values (4), (9)")
-
-		// Build indexLookUp in index join
-		tk.MustQuery("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id").Sort().Check(testkit.Rows("4 4 4", "9 9 9"))
-		// Build index reader in index join
-		tk.MustQuery("select /*+ INL_JOIN(p) */ p.id from p, t where p.id = t.id").Sort().Check(testkit.Rows("4", "9"))
-	}
-}
-
-func TestPartitionUnionScanIndexJoin(t *testing.T) {
-	// For issue https://github.com/pingcap/tidb/issues/19152
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1  (c_int int, c_str varchar(40), primary key (c_int)) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue)")
-	tk.MustExec("create table t2  (c_int int, c_str varchar(40), primary key (c_int, c_str)) partition by hash (c_int) partitions 4")
-	tk.MustExec("insert into t1 values (10, 'interesting neumann')")
-	tk.MustExec("insert into t2 select * from t1")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t2 values (11, 'hopeful hoover');")
-	tk.MustQuery("select /*+ INL_JOIN(t1,t2) */  * from t1 join t2 on t1.c_int = t2.c_int and t1.c_str = t2.c_str where t1.c_int in (10, 11)").Check(testkit.Rows("10 interesting neumann 10 interesting neumann"))
-	tk.MustQuery("select /*+ INL_HASH_JOIN(t1,t2) */  * from t1 join t2 on t1.c_int = t2.c_int and t1.c_str = t2.c_str where t1.c_int in (10, 11)").Check(testkit.Rows("10 interesting neumann 10 interesting neumann"))
-	tk.MustExec("commit")
-}
 
 func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -245,83 +118,6 @@ func TestPointGetwithRangeAndListPartitionTable(t *testing.T) {
 	tk.MustExec("analyze table t")
 	tk.MustHavePlan(queryOnePartition, "Point_Get")
 	tk.MustQuery(queryOnePartition).Check(testkit.Rows(fmt.Sprintf("%v", -1)))
-}
-
-func TestPartitionReaderUnderApply(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// For issue 19458.
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(c_int int)")
-	tk.MustExec("insert into t values(1), (2), (3), (4), (5), (6), (7), (8), (9)")
-	tk.MustExec("DROP TABLE IF EXISTS `t1`")
-	tk.MustExec(`CREATE TABLE t1 (
-		  c_int int NOT NULL,
-		  c_str varchar(40) NOT NULL,
-		  c_datetime datetime NOT NULL,
-		  c_timestamp timestamp NULL DEFAULT NULL,
-		  c_double double DEFAULT NULL,
-		  c_decimal decimal(12,6) DEFAULT NULL,
-		  PRIMARY KEY (c_int,c_str,c_datetime)
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
-		 PARTITION BY RANGE (c_int)
-		(PARTITION p0 VALUES LESS THAN (2) ENGINE = InnoDB,
-		 PARTITION p1 VALUES LESS THAN (4) ENGINE = InnoDB,
-		 PARTITION p2 VALUES LESS THAN (6) ENGINE = InnoDB,
-		 PARTITION p3 VALUES LESS THAN (8) ENGINE = InnoDB,
-		 PARTITION p4 VALUES LESS THAN (10) ENGINE = InnoDB,
-		 PARTITION p5 VALUES LESS THAN (20) ENGINE = InnoDB,
-		 PARTITION p6 VALUES LESS THAN (50) ENGINE = InnoDB,
-		 PARTITION p7 VALUES LESS THAN (1000000000) ENGINE = InnoDB)`)
-	tk.MustExec("INSERT INTO `t1` VALUES (19,'nifty feistel','2020-02-28 04:01:28','2020-02-04 06:11:57',32.430079,1.284000),(20,'objective snyder','2020-04-15 17:55:04','2020-05-30 22:04:13',37.690874,9.372000)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 values (22, 'wizardly saha', '2020-05-03 16:35:22', '2020-05-03 02:18:42', 96.534810, 0.088)")
-	tk.MustQuery("select c_int from t where (select min(t1.c_int) from t1 where t1.c_int > t.c_int) > (select count(*) from t1 where t1.c_int > t.c_int) order by c_int").Check(testkit.Rows(
-		"1", "2", "3", "4", "5", "6", "7", "8", "9"))
-	tk.MustExec("rollback")
-
-	// For issue 19450.
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int))")
-	tk.MustExec("create table t2  (c_int int, c_str varchar(40), c_decimal decimal(12, 6), primary key (c_int)) partition by hash (c_int) partitions 4")
-	tk.MustExec("insert into t1 values (1, 'romantic robinson', 4.436), (2, 'stoic chaplygin', 9.826), (3, 'vibrant shamir', 6.300), (4, 'hungry wilson', 4.900), (5, 'naughty swartz', 9.524)")
-	tk.MustExec("insert into t2 select * from t1")
-	tk.MustQuery("select * from t1 where c_decimal in (select c_decimal from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)").Check(testkit.Rows(
-		"1 romantic robinson 4.436000",
-		"2 stoic chaplygin 9.826000",
-		"3 vibrant shamir 6.300000",
-		"4 hungry wilson 4.900000",
-		"5 naughty swartz 9.524000"))
-
-	// For issue 19450 release-4.0
-	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
-	tk.MustQuery("select * from t1 where c_decimal in (select c_decimal from t2 where t1.c_int = t2.c_int or t1.c_int = t2.c_int and t1.c_str > t2.c_str)").Check(testkit.Rows(
-		"1 romantic robinson 4.436000",
-		"2 stoic chaplygin 9.826000",
-		"3 vibrant shamir 6.300000",
-		"4 hungry wilson 4.900000",
-		"5 naughty swartz 9.524000"))
-}
-
-func TestImproveCoverage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table coverage_rr (
-pk1 varchar(35) NOT NULL,
-pk2 int NOT NULL,
-c int,
-PRIMARY KEY (pk1,pk2)) partition by hash(pk2) partitions 4;`)
-	tk.MustExec("create table coverage_dt (pk1 varchar(35), pk2 int)")
-	tk.MustExec("insert into coverage_rr values ('ios', 3, 2),('android', 4, 7),('linux',5,1)")
-	tk.MustExec("insert into coverage_dt values ('apple',3),('ios',3),('linux',5)")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustQuery("select /*+ INL_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
-	tk.MustQuery("select /*+ INL_MERGE_JOIN(dt, rr) */ * from coverage_dt dt join coverage_rr rr on (dt.pk1 = rr.pk1 and dt.pk2 = rr.pk2);").Sort().Check(testkit.Rows("ios 3 ios 3 2", "linux 5 linux 5 1"))
 }
 
 func TestPartitionInfoDisable(t *testing.T) {
@@ -826,118 +622,6 @@ func TestOrderByAndLimit(t *testing.T) {
 	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 	tk.MustExec(fmt.Sprintf("set session tidb_mem_quota_query=%s", originMemQuota))
 	tk.MustExec(fmt.Sprintf("set global tidb_mem_oom_action=%s", originOOMAction))
-}
-
-func TestOrderByOnUnsignedPk(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table tunsigned_hash(a bigint unsigned primary key) partition by hash(a) partitions 6")
-	tk.MustExec("insert into tunsigned_hash values(25), (9279808998424041135)")
-	tk.MustQuery("select min(a) from tunsigned_hash").Check(testkit.Rows("25"))
-	tk.MustQuery("select max(a) from tunsigned_hash").Check(testkit.Rows("9279808998424041135"))
-}
-
-func TestPartitionHandleWithKeepOrder(t *testing.T) {
-	// https://github.com/pingcap/tidb/issues/44312
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (id int not null, store_id int not null )" +
-		"partition by range (store_id)" +
-		"(partition p0 values less than (6)," +
-		"partition p1 values less than (11)," +
-		"partition p2 values less than (16)," +
-		"partition p3 values less than (21))")
-	tk.MustExec("create table t1(id int not null, store_id int not null)")
-	tk.MustExec("insert into t values (1, 1)")
-	tk.MustExec("insert into t values (2, 17)")
-	tk.MustExec("insert into t1 values (0, 18)")
-	tk.MustExec("alter table t exchange partition p3 with table t1")
-	tk.MustExec("alter table t add index idx(id)")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select *,_tidb_rowid from t use index(idx) order by id limit 2").Check(testkit.Rows("0 18 1", "1 1 1"))
-
-	tk.MustExec("drop table t, t1")
-	tk.MustExec("create table t (a int, b int, c int, key `idx_ac`(a, c), key `idx_bc`(b, c))" +
-		"partition by range (b)" +
-		"(partition p0 values less than (6)," +
-		"partition p1 values less than (11)," +
-		"partition p2 values less than (16)," +
-		"partition p3 values less than (21))")
-	tk.MustExec("create table t1 (a int, b int, c int, key `idx_ac`(a, c), key `idx_bc`(b, c))")
-	tk.MustExec("insert into t values (1,2,3), (2,3,4), (3,4,5)")
-	tk.MustExec("insert into t1 values (1,18,3)")
-	tk.MustExec("alter table t exchange partition p3 with table t1")
-	tk.MustExec("analyze table t")
-	tk.MustQuery("select * from t where a = 1 or b = 5 order by c limit 2").Sort().Check(testkit.Rows("1 18 3", "1 2 3"))
-}
-
-func TestOrderByOnHandle(t *testing.T) {
-	// https://github.com/pingcap/tidb/issues/44266
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	for i := 0; i < 2; i++ {
-		// indexLookUp + _tidb_rowid
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("CREATE TABLE `t`(" +
-			"`a` int(11) NOT NULL," +
-			"`b` int(11) DEFAULT NULL," +
-			"`c` int(11) DEFAULT NULL," +
-			"KEY `idx_b` (`b`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
-		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
-		if i == 1 {
-			tk.MustExec("analyze table t")
-		}
-		tk.MustQuery("select * from t use index(idx_b) order by b, _tidb_rowid limit 10;").Check(testkit.Rows("2 -1 3", "1 1 1", "3 2 2"))
-
-		// indexLookUp + pkIsHandle
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("CREATE TABLE `t`(" +
-			"`a` int(11) NOT NULL," +
-			"`b` int(11) DEFAULT NULL," +
-			"`c` int(11) DEFAULT NULL," +
-			"primary key(`a`)," +
-			"KEY `idx_b` (`b`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
-		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
-		if i == 1 {
-			tk.MustExec("analyze table t")
-		}
-		tk.MustQuery("select * from t use index(idx_b) order by b, a limit 10;").Check(testkit.Rows("2 -1 3", "1 1 1", "3 2 2"))
-
-		// indexMerge + _tidb_rowid
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("CREATE TABLE `t`(" +
-			"`a` int(11) NOT NULL," +
-			"`b` int(11) DEFAULT NULL," +
-			"`c` int(11) DEFAULT NULL," +
-			"KEY `idx_b` (`b`)," +
-			"KEY `idx_c` (`c`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
-		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
-		if i == 1 {
-			tk.MustExec("analyze table t")
-		}
-		tk.MustQuery("select * from t use index(idx_b, idx_c) where b = 1 or c = 2 order by _tidb_rowid limit 10;").Check(testkit.Rows("3 2 2", "1 1 1"))
-
-		// indexMerge + pkIsHandle
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("CREATE TABLE `t`(" +
-			"`a` int(11) NOT NULL," +
-			"`b` int(11) DEFAULT NULL," +
-			"`c` int(11) DEFAULT NULL," +
-			"KEY `idx_b` (`b`)," +
-			"KEY `idx_c` (`c`)," +
-			"PRIMARY KEY (`a`)) PARTITION BY HASH (`a`) PARTITIONS 2;")
-		tk.MustExec("insert into t values (2,-1,3), (3,2,2), (1,1,1);")
-		if i == 1 {
-			tk.MustExec("analyze table t")
-		}
-		tk.MustQuery("select * from t use index(idx_b, idx_c) where b = 1 or c = 2 order by a limit 10;").Check(testkit.Rows("1 1 1", "3 2 2"))
-	}
 }
 
 func TestBatchGetandPointGetwithHashPartition(t *testing.T) {
@@ -1655,41 +1339,6 @@ func TestPartitionTableWithDifferentJoin(t *testing.T) {
 	tk.MustQuery(queryHash).Sort().Check(tk.MustQuery(queryRegular).Sort().Rows())
 }
 
-func TestAddDropPartitions(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_add_drop_partition")
-	tk.MustExec("use test_add_drop_partition")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-
-	tk.MustExec(`create table t(a int) partition by range(a) (
-		  partition p0 values less than (5),
-		  partition p1 values less than (10),
-		  partition p2 values less than (15))`)
-	tk.MustExec(`insert into t values (2), (7), (12)`)
-	tk.MustPartition(`select * from t where a < 3`, "p0").Sort().Check(testkit.Rows("2"))
-	tk.MustPartition(`select * from t where a < 8`, "p0,p1").Sort().Check(testkit.Rows("2", "7"))
-	tk.MustPartition(`select * from t where a < 20`, "all").Sort().Check(testkit.Rows("12", "2", "7"))
-
-	// remove p0
-	tk.MustExec(`alter table t drop partition p0`)
-	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
-	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
-	tk.MustPartition(`select * from t where a < 20`, "all").Sort().Check(testkit.Rows("12", "7"))
-
-	// add 2 more partitions
-	tk.MustExec(`alter table t add partition (partition p3 values less than (20))`)
-	tk.MustExec(`alter table t add partition (partition p4 values less than (40))`)
-	tk.MustExec(`insert into t values (15), (25)`)
-	tk.MustPartition(`select * from t where a < 3`, "p1").Sort().Check(testkit.Rows())
-	tk.MustPartition(`select * from t where a < 8`, "p1").Sort().Check(testkit.Rows("7"))
-	tk.MustPartition(`select * from t where a < 20`, "p1,p2,p3").Sort().Check(testkit.Rows("12", "15", "7"))
-}
-
 func TestMPPQueryExplainInfo(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
@@ -1719,32 +1368,6 @@ func TestMPPQueryExplainInfo(t *testing.T) {
 	tk.MustPartition(`select * from t where a < 20`, "all").Sort().Check(testkit.Rows("12", "2", "7"))
 	tk.MustPartition(`select * from t where a < 5 union all select * from t where a > 10`, "p0").Sort().Check(testkit.Rows("12", "2"))
 	tk.MustPartition(`select * from t where a < 5 union all select * from t where a > 10`, "p2").Sort().Check(testkit.Rows("12", "2"))
-}
-
-func TestPartitionPruningInTransaction(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_pruning_transaction")
-	defer tk.MustExec(`drop database test_pruning_transaction`)
-	tk.MustExec("use test_pruning_transaction")
-	tk.MustExec(`create table t(a int, b int) partition by range(a) (partition p0 values less than(3), partition p1 values less than (5), partition p2 values less than(11))`)
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustExec(`begin`)
-	tk.MustPartitionByList(`select * from t`, []string{"p0", "p1", "p2"})
-	tk.MustPartitionByList(`select * from t where a > 3`, []string{"p1", "p2"}) // partition pruning can work in transactions
-	tk.MustPartitionByList(`select * from t where a > 7`, []string{"p2"})
-	tk.MustExec(`rollback`)
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec(`begin`)
-	tk.MustPartition(`select * from t`, "all")
-	tk.MustPartition(`select * from t where a > 3`, "p1,p2") // partition pruning can work in transactions
-	tk.MustPartition(`select * from t where a > 7`, "p2")
-	tk.MustExec(`rollback`)
-	tk.MustExec("set @@tidb_partition_prune_mode = default")
 }
 
 func TestDML(t *testing.T) {
@@ -2440,31 +2063,6 @@ func TestDirectReadingWithAgg(t *testing.T) {
 		queryRegular4 := fmt.Sprintf("select /*+ hash_agg() */ count(*), sum(b), max(b), a from tregular2 where a in (%v, %v, %v) group by a;", x, y, z)
 		tk.MustHavePlan(queryPartition4, "HashAgg") // check if IndexLookUp is used
 		tk.MustQuery(queryPartition4).Sort().Check(tk.MustQuery(queryRegular4).Sort().Rows())
-	}
-}
-
-func TestDynamicModeByDefault(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceDynamicPrune")
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_dynamic_by_default")
-
-	tk.MustExec(`create table trange(a int, b int, primary key(a) clustered, index idx_b(b)) partition by range(a) (
-		partition p0 values less than(300),
-		partition p1 values less than(500),
-		partition p2 values less than(1100));`)
-	tk.MustExec(`create table thash(a int, b int, primary key(a) clustered, index idx_b(b)) partition by hash(a) partitions 4;`)
-
-	for _, q := range []string{
-		"explain select * from trange where a>400",
-		"explain select * from thash where a>=100",
-	} {
-		for _, r := range tk.MustQuery(q).Rows() {
-			require.NotContains(t, strings.ToLower(r[0].(string)), "partitionunion")
-		}
 	}
 }
 
