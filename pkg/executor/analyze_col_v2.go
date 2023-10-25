@@ -137,7 +137,7 @@ func (e *AnalyzeColumnsExecV2) analyzeColumnsPushDownV2() *statistics.AnalyzeRes
 		e.memTracker.Release(e.memTracker.BytesConsumed())
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}
-	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult, 1)
+	idxNDVPushDownCh := make(chan analyzeIndexNDVTotalResult)
 	// subIndexWorkerWg is better to be initialized in handleNDVForSpecialIndexes, however if we do so, golang would
 	// report unexpected/unreasonable data race error on subIndexWorkerWg when running TestAnalyzeVirtualCol test
 	// case with `-race` flag now.
@@ -277,8 +277,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	sc := e.ctx.GetSessionVars().StmtCtx
 
 	// Start workers to merge the result from collectors.
-	mergeResultCh := make(chan *samplingMergeResult, samplingStatsConcurrency)
-	mergeTaskCh := make(chan []byte, samplingStatsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult)
+	mergeTaskCh := make(chan []byte)
 	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
@@ -383,7 +383,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	hists = make([]*statistics.Histogram, totalLen)
 	topns = make([]*statistics.TopN, totalLen)
 	fmSketches = make([]*statistics.FMSketch, 0, totalLen)
-	buildResultChan := make(chan error, totalLen)
+	buildResultChan := make(chan error)
 	buildTaskChan := make(chan *samplingBuildTask, totalLen)
 	if totalLen < samplingStatsConcurrency {
 		samplingStatsConcurrency = totalLen
