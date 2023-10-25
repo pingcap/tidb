@@ -384,19 +384,31 @@ func BuildHistAndTopN(
 				// This should never happen, but we met this panic before, so we add this check here.
 				// See: https://github.com/pingcap/tidb/issues/35948
 				if foundTwice {
-					allTopNByteStrings := make([][]byte, 0, len(topNList))
-					for _, topN := range topNList {
-						allTopNByteStrings = append(allTopNByteStrings, topN.Encoded)
+					var datumString string
+					allSampleStrings := make([]string, 0, len(samples))
+					for index, sample := range samples {
+						sampleString, err := sample.Value.ToString()
+						if err != nil {
+							logutil.BgLogger().With(
+								zap.String("category", "stats"),
+							).Error("try to convert datum to string failed", zap.Error(err))
+						}
+						if index == int(i) {
+							datumString = sampleString
+						}
+						allSampleStrings = append(allSampleStrings, sampleString)
 					}
+
 					logutil.BgLogger().With(
 						zap.String("category", "stats"),
 					).Warn(
 						"invalid sample data",
-						zap.ByteString("sampleBytes", sampleBytes),
-						zap.ByteString("topNBytes", topNList[j].Encoded),
 						zap.Int64("i", i),
 						zap.Int64("j", int64(j)),
-						zap.ByteStrings("allTopNBytes", allTopNByteStrings),
+						zap.String("datum", datumString),
+						zap.Binary("sampleBytes", sampleBytes),
+						zap.Binary("topNBytes", topNList[j].Encoded),
+						zap.Strings("allSampleStrings", allSampleStrings),
 					)
 					// NOTE: if we don't return here, we may meet panic in the following code.
 					// The i may decrease to a negative value.
