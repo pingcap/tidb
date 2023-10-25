@@ -1889,3 +1889,159 @@ func (s *testSuite13) TestReplaceAllocatingAutoID(c *C) {
 	// Note that this error is different from MySQL's duplicated primary key error.
 	tk.MustGetErrCode("REPLACE INTO t1 VALUES (0,'newmaxvalue');", errno.ErrAutoincReadFailed)
 }
+<<<<<<< HEAD:executor/insert_test.go
+=======
+
+func TestInsertIntoSelectError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("DROP TABLE IF EXISTS t1;")
+	tk.MustExec("CREATE TABLE t1(a INT) ENGINE = InnoDB;")
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(NULL));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(-1));")
+	tk.MustQuery("SHOW WARNINGS;").Check(testkit.Rows("Warning 1210 Incorrect arguments to sleep"))
+	tk.MustExec("INSERT IGNORE into t1(SELECT SLEEP(1));")
+	tk.MustQuery("SELECT * FROM t1;").Check(testkit.Rows("0", "0", "0"))
+	tk.MustExec("DROP TABLE t1;")
+}
+
+// https://github.com/pingcap/tidb/issues/32213.
+func TestIssue32213(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	tk.MustExec("create table test.t1(c1 float)")
+	tk.MustExec("insert into test.t1 values(999.99)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(4, 1)) from test.t1").Check(testkit.Rows("999.9"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 1)) from test.t1").Check(testkit.Rows("1000.0"))
+
+	tk.MustExec("drop table if exists test.t1")
+	tk.MustExec("create table test.t1(c1 decimal(6, 4))")
+	tk.MustExec("insert into test.t1 values(99.9999)")
+	tk.MustQuery("select cast(test.t1.c1 as decimal(5, 3)) from test.t1").Check(testkit.Rows("99.999"))
+	tk.MustQuery("select cast(test.t1.c1 as decimal(6, 3)) from test.t1").Check(testkit.Rows("100.000"))
+}
+
+func TestInsertLockUnchangedKeys(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk1.MustExec("use test")
+	tk2.MustExec("use test")
+
+	for _, shouldLock := range []bool{false} {
+		for _, tt := range []struct {
+			name          string
+			ddl           string
+			dml           string
+			isClusteredPK bool
+		}{
+			{
+				"replace-pk",
+				"create table t (c int primary key clustered)",
+				"replace into t values (1)",
+				true,
+			},
+			{
+				"replace-uk",
+				"create table t (c int unique key)",
+				"replace into t values (1)",
+				false,
+			},
+			{
+				"insert-ignore-pk",
+				"create table t (c int primary key clustered)",
+				"insert ignore into t values (1)",
+				true,
+			},
+			{
+				"insert-ignore-uk",
+				"create table t (c int unique key)",
+				"insert ignore into t values (1)",
+				false,
+			},
+			{
+				"insert-update-pk",
+				"create table t (c int primary key clustered)",
+				"insert into t values (1) on duplicate key update c = values(c)",
+				true,
+			},
+			{
+				"insert-update-uk",
+				"create table t (c int unique key)",
+				"insert into t values (1) on duplicate key update c = values(c)",
+				false,
+			},
+		} {
+			t.Run(
+				tt.name+"-"+strconv.FormatBool(shouldLock), func(t *testing.T) {
+					tk1.MustExec(fmt.Sprintf("set @@tidb_lock_unchanged_keys = %v", shouldLock))
+					tk1.MustExec("drop table if exists t")
+					tk1.MustExec(tt.ddl)
+					tk1.MustExec("insert into t values (1)")
+					tk1.MustExec("begin")
+					tk1.MustExec(tt.dml)
+					errCh := make(chan error)
+					go func() {
+						_, err := tk2.Exec("insert into t values (1)")
+						errCh <- err
+					}()
+					select {
+					case <-errCh:
+						if shouldLock {
+							require.Failf(t, "txn2 is not blocked by %q", tt.dml)
+						}
+						close(errCh)
+					case <-time.After(200 * time.Millisecond):
+						if !shouldLock && !tt.isClusteredPK {
+							require.Failf(t, "txn2 is blocked by %q", tt.dml)
+						}
+					}
+					tk1.MustExec("commit")
+					<-errCh
+					tk1.MustQuery("select * from t").Check(testkit.Rows("1"))
+				},
+			)
+		}
+	}
+}
+
+// see issue https://github.com/pingcap/tidb/issues/47787
+func TestInsertBigScientificNotation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table t1(id int, a int)")
+
+	tk.MustExec("set @@SQL_MODE='STRICT_TRANS_TABLES'")
+	err := tk.ExecToErr("insert into t1 values(1, '1e100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	err = tk.ExecToErr("insert into t1 values(2, '-1e100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	tk.MustQuery("select id, a from t1").Check(testkit.Rows())
+
+	tk.MustExec("set @@SQL_MODE=''")
+	tk.MustExec("insert into t1 values(1, '1e100')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
+	tk.MustExec("insert into t1 values(2, '-1e100')")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
+	tk.MustQuery("select id, a from t1 order by id asc").Check(testkit.Rows("1 2147483647", "2 -2147483648"))
+}
+
+// see issue: https://github.com/pingcap/tidb/issues/47945
+func TestUnsignedDecimalFloatInsertNegative(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table tf(a float(1, 0) unsigned)")
+	err := tk.ExecToErr("insert into tf values('-100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into tf values('-100')")
+	tk.MustQuery("select * from tf").Check(testkit.Rows("0"))
+}
+>>>>>>> 97310ad5dbd (types: fix issue that we can insert negative value to unsinged float column sometimes (#47946)):pkg/executor/insert_test.go
