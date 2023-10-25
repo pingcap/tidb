@@ -1242,70 +1242,6 @@ func TestDynamicPruningUnderIndexJoin(t *testing.T) {
 		tk.MustQuery(`select /*+ INL_JOIN(touter, tnormal) */ tnormal.* from touter join tnormal use index(idx_b) on touter.b = tnormal.b`).Sort().Rows())
 }
 
-func TestIssue25527(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_issue_25527")
-	tk.MustExec("use test_issue_25527")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec("set @@session.tidb_enable_list_partition = ON")
-
-	// the original case
-	tk.MustExec(`CREATE TABLE t (
-		  col1 tinyint(4) primary key
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( COL1 DIV 80 )
-		PARTITIONS 6`)
-	tk.MustExec(`insert into t values(-128), (107)`)
-	tk.MustExec(`prepare stmt from 'select col1 from t where col1 in (?, ?, ?)'`)
-	tk.MustExec(`set @a=-128, @b=107, @c=-128`)
-	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("-128", "107"))
-
-	// the minimal reproducible case for hash partitioning
-	tk.MustExec(`CREATE TABLE t0 (a int primary key) PARTITION BY HASH( a DIV 80 ) PARTITIONS 2`)
-	tk.MustExec(`insert into t0 values (1)`)
-	tk.MustQuery(`select a from t0 where a in (1)`).Check(testkit.Rows("1"))
-
-	// the minimal reproducible case for range partitioning
-	tk.MustExec(`create table t1 (a int primary key) partition by range (a+5) (
-		partition p0 values less than(10), partition p1 values less than(20))`)
-	tk.MustExec(`insert into t1 values (5)`)
-	tk.MustQuery(`select a from t1 where a in (5)`).Check(testkit.Rows("5"))
-
-	// the minimal reproducible case for list partitioning
-	tk.MustExec(`create table  t2 (a int primary key) partition by list (a+5) (
-		partition p0 values in (5, 6, 7, 8), partition p1 values in (9, 10, 11, 12))`)
-	tk.MustExec(`insert into t2 values (5)`)
-	tk.MustQuery(`select a from t2 where a in (5)`).Check(testkit.Rows("5"))
-}
-
-func TestIssue25598(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_issue_25598")
-	tk.MustExec("use test_issue_25598")
-	tk.MustExec(`CREATE TABLE UK_HP16726 (
-	  COL1 bigint(16) DEFAULT NULL,
-	  COL2 varchar(20) DEFAULT NULL,
-	  COL4 datetime DEFAULT NULL,
-	  COL3 bigint(20) DEFAULT NULL,
-	  COL5 float DEFAULT NULL,
-	  UNIQUE KEY UK_COL1 (COL1) /*!80000 INVISIBLE */
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-	PARTITION BY HASH( COL1 )
-	PARTITIONS 25`)
-
-	tk.MustQuery(`select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`).Check(testkit.Rows())
-	tk.MustExec(`explain select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`)
-
-	tk.MustExec(`set @@tidb_partition_prune_mode = 'dynamic'`)
-	tk.MustQuery(`select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`).Check(testkit.Rows())
-	tk.MustExec(`explain select t1. col1, t2. col1 from UK_HP16726 as t1 inner join UK_HP16726 as t2 on t1.col1 = t2.col1 where t1.col1 > -9223372036854775808 group by t1.col1, t2.col1 having t1.col1 != 9223372036854775807`)
-}
-
 func TestBatchGetforRangeandListPartitionTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1811,40 +1747,6 @@ func TestPartitionPruningInTransaction(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = default")
 }
 
-func TestIssue25253(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database issue25253")
-	defer tk.MustExec("drop database issue25253")
-	tk.MustExec("use issue25253")
-
-	tk.MustExec(`CREATE TABLE IDT_HP23902 (
-	  COL1 smallint DEFAULT NULL,
-	  COL2 varchar(20) DEFAULT NULL,
-	  COL4 datetime DEFAULT NULL,
-	  COL3 bigint DEFAULT NULL,
-	  COL5 float DEFAULT NULL,
-	  KEY UK_COL1 (COL1)
-	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-	PARTITION BY HASH( COL1+30 )
-	PARTITIONS 6`)
-	tk.MustExec(`insert ignore into IDT_HP23902 partition(p0, p1)(col1, col3) values(-10355, 1930590137900568573), (13810, -1332233145730692137)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1748 Found a row not matching the given partition set",
-		"Warning 1748 Found a row not matching the given partition set"))
-	tk.MustQuery(`select * from IDT_HP23902`).Check(testkit.Rows())
-
-	tk.MustExec(`create table t (
-	  a int
-	) partition by range(a) (
-	  partition p0 values less than (10),
-	  partition p1 values less than (20))`)
-	tk.MustExec(`insert ignore into t partition(p0)(a) values(12)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1748 Found a row not matching the given partition set"))
-	tk.MustQuery(`select * from t`).Check(testkit.Rows())
-}
-
 func TestDML(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -2275,34 +2177,6 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 	tk.MustExec(`rollback`)
 }
 
-func TestIssue25030(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_issue_25030")
-	tk.MustExec("use test_issue_25030")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-
-	tk.MustExec(`CREATE TABLE tbl_936 (
-	col_5410 smallint NOT NULL,
-	col_5411 double,
-	col_5412 boolean NOT NULL DEFAULT 1,
-	col_5413 set('Alice', 'Bob', 'Charlie', 'David') NOT NULL DEFAULT 'Charlie',
-	col_5414 varbinary(147) COLLATE 'binary' DEFAULT 'bvpKgYWLfyuTiOYSkj',
-	col_5415 timestamp NOT NULL DEFAULT '2021-07-06',
-	col_5416 decimal(6, 6) DEFAULT 0.49,
-	col_5417 text COLLATE utf8_bin,
-	col_5418 float DEFAULT 2048.0762299371554,
-	col_5419 int UNSIGNED NOT NULL DEFAULT 3152326370,
-	PRIMARY KEY (col_5419) )
-	PARTITION BY HASH (col_5419) PARTITIONS 3`)
-	tk.MustQuery(`SELECT last_value(col_5414) OVER w FROM tbl_936
-	WINDOW w AS (ORDER BY col_5410, col_5411, col_5412, col_5413, col_5414, col_5415, col_5416, col_5417, col_5418, col_5419)
-	ORDER BY col_5410, col_5411, col_5412, col_5413, col_5414, col_5415, col_5416, col_5417, col_5418, col_5419, nth_value(col_5412, 5) OVER w`).
-		Check(testkit.Rows()) // can work properly without any error or panic
-}
-
 func TestUnsignedPartitionColumn(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -2594,45 +2468,6 @@ func TestDynamicModeByDefault(t *testing.T) {
 	}
 }
 
-func TestIssue24636(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_issue_24636")
-	tk.MustExec("use test_issue_24636")
-
-	tk.MustExec(`CREATE TABLE t (a int, b date, c int, PRIMARY KEY (a,b))
-		PARTITION BY RANGE ( TO_DAYS(b) ) (
-		  PARTITION p0 VALUES LESS THAN (737821),
-		  PARTITION p1 VALUES LESS THAN (738289)
-		)`)
-	tk.MustExec(`INSERT INTO t (a, b, c) VALUES(0, '2021-05-05', 0)`)
-	tk.MustQuery(`select c from t use index(primary) where a=0 limit 1`).Check(testkit.Rows("0"))
-
-	tk.MustExec(`
-		CREATE TABLE test_partition (
-		  a varchar(100) NOT NULL,
-		  b date NOT NULL,
-		  c varchar(100) NOT NULL,
-		  d datetime DEFAULT NULL,
-		  e datetime DEFAULT NULL,
-		  f bigint(20) DEFAULT NULL,
-		  g bigint(20) DEFAULT NULL,
-		  h bigint(20) DEFAULT NULL,
-		  i bigint(20) DEFAULT NULL,
-		  j bigint(20) DEFAULT NULL,
-		  k bigint(20) DEFAULT NULL,
-		  l bigint(20) DEFAULT NULL,
-		  PRIMARY KEY (a,b,c) /*T![clustered_index] NONCLUSTERED */
-		) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-		PARTITION BY RANGE ( TO_DAYS(b) ) (
-		  PARTITION pmin VALUES LESS THAN (737821),
-		  PARTITION p20200601 VALUES LESS THAN (738289))`)
-	tk.MustExec(`INSERT INTO test_partition (a, b, c, d, e, f, g, h, i, j, k, l) VALUES('aaa', '2021-05-05', '428ff6a1-bb37-42ac-9883-33d7a29961e6', '2021-05-06 08:13:38', '2021-05-06 13:28:08', 0, 8, 3, 0, 9, 1, 0)`)
-	tk.MustQuery(`select c,j,l from test_partition where c='428ff6a1-bb37-42ac-9883-33d7a29961e6' and a='aaa' limit 0, 200`).Check(testkit.Rows("428ff6a1-bb37-42ac-9883-33d7a29961e6 9 0"))
-}
-
 func TestIdexMerge(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -2727,45 +2562,6 @@ func TestIdexMerge(t *testing.T) {
 	}
 }
 
-func TestIssue25309(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create database test_issue_25309")
-	tk.MustExec("use test_issue_25309")
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-
-	tk.MustExec(`CREATE TABLE tbl_500 (
-      col_20 tinyint(4) NOT NULL,
-      col_21 varchar(399) CHARACTER SET utf8 COLLATE utf8_unicode_ci DEFAULT NULL,
-      col_22 json DEFAULT NULL,
-      col_23 blob DEFAULT NULL,
-      col_24 mediumint(9) NOT NULL,
-      col_25 float NOT NULL DEFAULT '7306.384497585912',
-      col_26 binary(196) NOT NULL,
-      col_27 timestamp DEFAULT '1976-12-08 00:00:00',
-      col_28 bigint(20) NOT NULL,
-      col_29 tinyint(1) NOT NULL DEFAULT '1',
-      PRIMARY KEY (col_29,col_20) /*T![clustered_index] NONCLUSTERED */,
-      KEY idx_7 (col_28,col_20,col_26,col_27,col_21,col_24),
-      KEY idx_8 (col_25,col_29,col_24)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin`)
-
-	tk.MustExec(`CREATE TABLE tbl_600 (
-      col_60 int(11) NOT NULL DEFAULT '-776833487',
-      col_61 tinyint(1) NOT NULL DEFAULT '1',
-      col_62 tinyint(4) NOT NULL DEFAULT '-125',
-      PRIMARY KEY (col_62,col_60,col_61) /*T![clustered_index] NONCLUSTERED */,
-      KEY idx_19 (col_60)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
-    PARTITION BY HASH( col_60 )
-    PARTITIONS 1`)
-
-	tk.MustExec(`insert into tbl_500 select -34, 'lrfGPPPUuZjtT', '{"obj1": {"sub_obj0": 100}}', 0x6C47636D, 1325624, 7306.3843, 'abc', '1976-12-08', 4757891479624162031, 0`)
-	tk.MustQuery(`select tbl_5.* from tbl_500 tbl_5 where col_24 in ( select col_62 from tbl_600 where tbl_5.col_26 < 'hSvHLdQeGBNIyOFXStV' )`).Check(testkit.Rows())
-}
-
 func TestGlobalIndexScan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -2851,35 +2647,6 @@ partition p2 values less than (10))`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkDropGlobalIndex", `return(true)`)
 	tk.MustExec("alter table p drop index idx")
 	failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkDropGlobalIndex")
-}
-
-func TestIssue20028(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("set @@tidb_partition_prune_mode='static-only'")
-	tk.MustExec(`create table t1 (c_datetime datetime, primary key (c_datetime))
-partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')),
-partition p1 values less than (to_days('2020-04-01')),
-partition p2 values less than (to_days('2020-06-01')),
-partition p3 values less than maxvalue)`)
-	tk.MustExec("create table t2 (c_datetime datetime, unique key(c_datetime))")
-	tk.MustExec("insert into t1 values ('2020-06-26 03:24:00'), ('2020-02-21 07:15:33'), ('2020-04-27 13:50:58')")
-	tk.MustExec("insert into t2 values ('2020-01-10 09:36:00'), ('2020-02-04 06:00:00'), ('2020-06-12 03:45:18')")
-	tk.MustExec("begin")
-	tk.MustQuery("select * from t1 join t2 on t1.c_datetime >= t2.c_datetime for update").
-		Sort().
-		Check(testkit.Rows(
-			"2020-02-21 07:15:33 2020-01-10 09:36:00",
-			"2020-02-21 07:15:33 2020-02-04 06:00:00",
-			"2020-04-27 13:50:58 2020-01-10 09:36:00",
-			"2020-04-27 13:50:58 2020-02-04 06:00:00",
-			"2020-06-26 03:24:00 2020-01-10 09:36:00",
-			"2020-06-26 03:24:00 2020-02-04 06:00:00",
-			"2020-06-26 03:24:00 2020-06-12 03:45:18"))
-	tk.MustExec("rollback")
 }
 
 func TestSelectLockOnPartitionTable(t *testing.T) {
@@ -3013,34 +2780,6 @@ partition p2 values less than (11))`)
 			c()
 		}
 	}
-}
-
-func TestIssue21731(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists p, t")
-	tk.MustExec("set @@tidb_enable_list_partition = OFF")
-	// Notice that this does not really test the issue #21731
-	tk.MustExec("create table t (a int, b int, unique index idx(a)) partition by list columns(b) (partition p0 values in (1), partition p1 values in (2));")
-}
-
-func TestIssue25528(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustExec("use test")
-	tk.MustExec("create table issue25528 (id int primary key, balance DECIMAL(10, 2), balance2 DECIMAL(10, 2) GENERATED ALWAYS AS (-balance) VIRTUAL, created_at TIMESTAMP) PARTITION BY HASH(id) PARTITIONS 8")
-	tk.MustExec("insert into issue25528 (id, balance, created_at) values(1, 100, '2021-06-17 22:35:20')")
-	tk.MustExec("begin pessimistic")
-	tk.MustQuery("select * from issue25528 where id = 1 for update").Check(testkit.Rows("1 100.00 -100.00 2021-06-17 22:35:20"))
-
-	tk.MustExec("drop table if exists issue25528")
-	tk.MustExec("CREATE TABLE `issue25528` ( `c1` int(11) NOT NULL, `c2` int(11) DEFAULT NULL, `c3` int(11) DEFAULT NULL, `c4` int(11) DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */, KEY `k2` (`c2`), KEY `k3` (`c3`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH( `c1` ) PARTITIONS 10;")
-	tk.MustExec("INSERT INTO issue25528 (`c1`, `c2`, `c3`, `c4`) VALUES (1, 1, 1, 1) , (3, 3, 3, 3) , (2, 2, 2, 2) , (4, 4, 4, 4);")
-	tk.MustQuery("select * from issue25528 where c1 in (3, 4) order by c2 for update;").Check(testkit.Rows("3 3 3 3", "4 4 4 4"))
 }
 
 func TestIssue26251(t *testing.T) {
@@ -3213,48 +2952,6 @@ func TestIssue31024(t *testing.T) {
 	require.Equal(t, <-ch, 2)
 
 	tk2.MustExec("rollback")
-}
-
-func TestIssue27346(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("create database TestIssue27346")
-	defer tk1.MustExec("drop database TestIssue27346")
-	tk1.MustExec("use TestIssue27346")
-
-	tk1.MustExec("set @@tidb_enable_index_merge=1,@@tidb_partition_prune_mode='dynamic'")
-
-	tk1.MustExec("DROP TABLE IF EXISTS `tbl_18`")
-	tk1.MustExec("CREATE TABLE `tbl_18` (`col_119` binary(16) NOT NULL DEFAULT 'skPoKiwYUi',`col_120` int(10) unsigned NOT NULL,`col_121` timestamp NOT NULL,`col_122` double NOT NULL DEFAULT '3937.1887880628115',`col_123` bigint(20) NOT NULL DEFAULT '3550098074891542725',PRIMARY KEY (`col_123`,`col_121`,`col_122`,`col_120`) CLUSTERED,UNIQUE KEY `idx_103` (`col_123`,`col_119`,`col_120`),UNIQUE KEY `idx_104` (`col_122`,`col_120`),UNIQUE KEY `idx_105` (`col_119`,`col_120`),KEY `idx_106` (`col_121`,`col_120`,`col_122`,`col_119`),KEY `idx_107` (`col_121`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci PARTITION BY HASH( `col_120` ) PARTITIONS 3")
-	tk1.MustExec("INSERT INTO tbl_18 (`col_119`, `col_120`, `col_121`, `col_122`, `col_123`) VALUES (X'736b506f4b6977595569000000000000', 672436701, '1974-02-24 00:00:00', 3937.1887880628115e0, -7373106839136381229), (X'736b506f4b6977595569000000000000', 2637316689, '1993-10-29 00:00:00', 3937.1887880628115e0, -4522626077860026631), (X'736b506f4b6977595569000000000000', 831809724, '1995-11-20 00:00:00', 3937.1887880628115e0, -4426441253940231780), (X'736b506f4b6977595569000000000000', 1588592628, '2001-03-28 00:00:00', 3937.1887880628115e0, 1329207475772244999), (X'736b506f4b6977595569000000000000', 3908038471, '2031-06-06 00:00:00', 3937.1887880628115e0, -6562815696723135786), (X'736b506f4b6977595569000000000000', 1674237178, '2001-10-24 00:00:00', 3937.1887880628115e0, -6459065549188938772), (X'736b506f4b6977595569000000000000', 3507075493, '2010-03-25 00:00:00', 3937.1887880628115e0, -4329597025765326929), (X'736b506f4b6977595569000000000000', 1276461709, '2019-07-20 00:00:00', 3937.1887880628115e0, 3550098074891542725)")
-
-	tk1.MustQuery("select col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update").Sort().Check(testkit.Rows(
-		"1588592628 3937.1887880628115 1329207475772244999",
-		"1674237178 3937.1887880628115 -6459065549188938772",
-		"2637316689 3937.1887880628115 -4522626077860026631",
-		"672436701 3937.1887880628115 -7373106839136381229",
-		"831809724 3937.1887880628115 -4426441253940231780"))
-	tk1.MustQuery("select /*+ use_index_merge( tbl_18 ) */ col_120,col_122,col_123 from tbl_18 where tbl_18.col_122 = 4763.320888074281 and not( tbl_18.col_121 in ( '2032-11-01' , '1975-05-21' , '1994-05-16' , '1984-01-15' ) ) or not( tbl_18.col_121 >= '2008-10-24' ) order by tbl_18.col_119,tbl_18.col_120,tbl_18.col_121,tbl_18.col_122,tbl_18.col_123 limit 919 for update").Sort().Check(testkit.Rows(
-		"1588592628 3937.1887880628115 1329207475772244999",
-		"1674237178 3937.1887880628115 -6459065549188938772",
-		"2637316689 3937.1887880628115 -4522626077860026631",
-		"672436701 3937.1887880628115 -7373106839136381229",
-		"831809724 3937.1887880628115 -4426441253940231780"))
-}
-
-func TestIssue35181(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database TestIssue35181")
-	tk.MustExec("use TestIssue35181")
-	tk.MustExec("CREATE TABLE `t` (`a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL) PARTITION BY RANGE (`a`) (PARTITION `p0` VALUES LESS THAN (2021), PARTITION `p1` VALUES LESS THAN (3000))")
-
-	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
-	tk.MustExec(`insert into t select * from t where a=3000`)
-	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-	tk.MustExec(`insert into t select * from t where a=3000`)
 }
 
 func TestIssue21732(t *testing.T) {
@@ -3486,74 +3183,4 @@ func TestGlobalIndexMerge(t *testing.T) {
 	require.False(t, tk.MustUseIndex("select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2", "uidx_ac"))
 	tk.MustQuery("select /*+ use_index_merge(t, uidx_ac, idx_bc) */ * from t where a=1 or b=2").Sort().Check(
 		testkit.Rows("1 1 1 1", "2 2 2 2"))
-}
-
-func TestIssue39999(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`create schema test39999`)
-	tk.MustExec(`use test39999`)
-	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
-	tk.MustExec(`drop table if exists c, t`)
-	tk.MustExec("CREATE TABLE `c` (" +
-		"`serial_id` varchar(24)," +
-		"`occur_trade_date` date," +
-		"`txt_account_id` varchar(24)," +
-		"`capital_sub_class` varchar(10)," +
-		"`occur_amount` decimal(16,2)," +
-		"`broker` varchar(10)," +
-		"PRIMARY KEY (`txt_account_id`,`occur_trade_date`,`serial_id`) /*T![clustered_index] CLUSTERED */," +
-		"KEY `idx_serial_id` (`serial_id`)" +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci " +
-		"PARTITION BY RANGE COLUMNS(`serial_id`) (" +
-		"PARTITION `p202209` VALUES LESS THAN ('20221001')," +
-		"PARTITION `p202210` VALUES LESS THAN ('20221101')," +
-		"PARTITION `p202211` VALUES LESS THAN ('20221201')" +
-		")")
-
-	tk.MustExec("CREATE TABLE `t` ( " +
-		"`txn_account_id` varchar(24), " +
-		"`account_id` varchar(32), " +
-		"`broker` varchar(10), " +
-		"PRIMARY KEY (`txn_account_id`) /*T![clustered_index] CLUSTERED */ " +
-		") ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci")
-
-	tk.MustExec("INSERT INTO `c` (serial_id, txt_account_id, capital_sub_class, occur_trade_date, occur_amount, broker) VALUES ('2022111700196920','04482786','CUST','2022-11-17',-2.01,'0009')")
-	tk.MustExec("INSERT INTO `t` VALUES ('04482786','1142927','0009')")
-
-	tk.MustExec(`set tidb_partition_prune_mode='dynamic'`)
-	tk.MustExec(`analyze table c`)
-	tk.MustExec(`analyze table t`)
-	query := `select
-    /*+ inl_join(c) */
-    c.occur_amount
-from
-    c
-    join t on c.txt_account_id = t.txn_account_id
-    and t.broker = '0009'
-    and c.occur_trade_date = '2022-11-17'`
-	tk.MustQuery("explain " + query).Check(testkit.Rows(""+
-		"IndexJoin_22 1.00 root  inner join, inner:TableReader_21, outer key:test39999.t.txn_account_id, inner key:test39999.c.txt_account_id, equal cond:eq(test39999.t.txn_account_id, test39999.c.txt_account_id)",
-		"├─TableReader_27(Build) 1.00 root  data:Selection_26",
-		"│ └─Selection_26 1.00 cop[tikv]  eq(test39999.t.broker, \"0009\")",
-		"│   └─TableFullScan_25 1.00 cop[tikv] table:t keep order:false",
-		"└─TableReader_21(Probe) 1.00 root partition:all data:Selection_20",
-		"  └─Selection_20 1.00 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)",
-		"    └─TableRangeScan_19 1.00 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false"))
-	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
-
-	// Add the missing partition key part.
-	tk.MustExec(`alter table t add column serial_id varchar(24) default '2022111700196920'`)
-	query += ` and c.serial_id = t.serial_id`
-	tk.MustQuery(query).Check(testkit.Rows("-2.01"))
-	tk.MustQuery("explain " + query).Check(testkit.Rows(""+
-		`IndexJoin_20 0.80 root  inner join, inner:TableReader_19, outer key:test39999.t.txn_account_id, test39999.t.serial_id, inner key:test39999.c.txt_account_id, test39999.c.serial_id, equal cond:eq(test39999.t.serial_id, test39999.c.serial_id), eq(test39999.t.txn_account_id, test39999.c.txt_account_id)`,
-		`├─TableReader_25(Build) 0.80 root  data:Selection_24`,
-		`│ └─Selection_24 0.80 cop[tikv]  eq(test39999.t.broker, "0009"), not(isnull(test39999.t.serial_id))`,
-		`│   └─TableFullScan_23 1.00 cop[tikv] table:t keep order:false`,
-		`└─TableReader_19(Probe) 0.80 root partition:all data:Selection_18`,
-		`  └─Selection_18 0.80 cop[tikv]  eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)`,
-		`    └─TableRangeScan_17 0.80 cop[tikv] table:c range: decided by [eq(test39999.c.txt_account_id, test39999.t.txn_account_id) eq(test39999.c.serial_id, test39999.t.serial_id) eq(test39999.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false`))
 }
