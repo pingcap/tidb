@@ -16,7 +16,7 @@
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
 
-build=0
+build=1
 mysql_tester="./mysql_tester"
 tidb_server=""
 portgenerator=""
@@ -25,7 +25,7 @@ tests=""
 record=0
 record_case=""
 stats="s"
-collation_opt=1
+collation_opt=2
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
