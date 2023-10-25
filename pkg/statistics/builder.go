@@ -375,28 +375,30 @@ func BuildHistAndTopN(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
-		foundTwice := false
+		// For debugging invalid sample data.
+		var (
+			foundTwice      bool
+			firstTimeSample types.Datum
+		)
 		for j := 0; j < len(topNList); j++ {
 			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-				// find the same value in topn: need to skip over this value in samples
-				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
-				samples = samples[:uint64(len(samples))-topNList[j].Count]
-				// This should never happen, but we met this panic before, so we add this check here.
-				// See: https://github.com/pingcap/tidb/issues/35948
-				if foundTwice {
-					var datumString string
-					allSampleStrings := make([]string, 0, len(samples))
-					for index, sample := range samples {
-						sampleString, err := sample.Value.ToString()
-						if err != nil {
-							logutil.BgLogger().With(
-								zap.String("category", "stats"),
-							).Error("try to convert datum to string failed", zap.Error(err))
-						}
-						if index == int(i) {
-							datumString = sampleString
-						}
-						allSampleStrings = append(allSampleStrings, sampleString)
+				// First time to find the same value in topN: need to record the sample data for debugging.
+				if !foundTwice {
+					firstTimeSample = samples[i].Value
+				} else {
+					// This should never happen, but we met this panic before, so we add this check here.
+					// See: https://github.com/pingcap/tidb/issues/35948
+					datumString, err := samples[i].Value.ToString()
+					if err != nil {
+						logutil.BgLogger().With(
+							zap.String("category", "stats"),
+						).Error("try to convert datum to string failed", zap.Error(err))
+					}
+					firstTimeSampleString, err := firstTimeSample.ToString()
+					if err != nil {
+						logutil.BgLogger().With(
+							zap.String("category", "stats"),
+						).Error("try to convert datum to string failed", zap.Error(err))
 					}
 
 					logutil.BgLogger().With(
@@ -408,12 +410,18 @@ func BuildHistAndTopN(
 						zap.String("datum", datumString),
 						zap.Binary("sampleBytes", sampleBytes),
 						zap.Binary("topNBytes", topNList[j].Encoded),
-						zap.Strings("allSampleStrings", allSampleStrings),
+						zap.String("firstTimeSample", firstTimeSampleString),
 					)
 					// NOTE: if we don't return here, we may meet panic in the following code.
 					// The i may decrease to a negative value.
+					// We don't fix the issue here, because we don't remove the invalid sample data.
+					// The reason is that we don't know why the invalid sample data exists, and we don't know
+					// how to remove it from the samples.
 					break
 				}
+				// Found the same value in topn: need to skip over this value in samples.
+				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
+				samples = samples[:uint64(len(samples))-topNList[j].Count]
 				i--
 				foundTwice = true
 				continue
