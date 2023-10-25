@@ -78,7 +78,6 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `ExternalStorage` interface.
 type S3Storage struct {
-	session *session.Session
 	svc     s3iface.S3API
 	options *backuppb.S3
 }
@@ -263,7 +262,6 @@ func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 // NewS3StorageForTest creates a new S3Storage for testing only.
 func NewS3StorageForTest(svc s3iface.S3API, options *backuppb.S3) *S3Storage {
 	return &S3Storage{
-		session: nil,
 		svc:     svc,
 		options: options,
 	}
@@ -419,7 +417,6 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	}
 
 	s3Storage := &S3Storage{
-		session: ses,
 		svc:     c,
 		options: &qs,
 	}
@@ -429,7 +426,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *ExternalStora
 	return s3Storage, nil
 }
 
-// checkBucket checks if a bucket exists.
+// s3BucketExistenceCheck checks if a bucket exists.
 func s3BucketExistenceCheck(_ context.Context, svc s3iface.S3API, qs *backuppb.S3) error {
 	input := &s3.HeadBucketInput{
 		Bucket: aws.String(qs.Bucket),
@@ -1111,15 +1108,15 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
 		}
 	})
+	if r.HTTPRequest.URL.Host == ec2MetaAddress && (isDeadlineExceedError(r.Error) || isConnectionResetError(r.Error)) {
+		// fast fail for unreachable linklocal address in EC2 containers.
+		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
+		return false
+	}
 	if isConnectionResetError(r.Error) {
 		return true
 	}
 	if isConnectionRefusedError(r.Error) {
-		return false
-	}
-	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
-		// fast fail for unreachable linklocal address in EC2 containers.
-		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
 		return false
 	}
 	return rl.DefaultRetryer.ShouldRetry(r)
