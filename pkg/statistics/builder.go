@@ -382,12 +382,9 @@ func BuildHistAndTopN(
 		)
 		for j := 0; j < len(topNList); j++ {
 			if bytes.Equal(sampleBytes, topNList[j].Encoded) {
-				// First time to find the same value in topN: need to record the sample data for debugging.
-				if !foundTwice {
-					firstTimeSample = samples[i].Value
-				} else {
-					// This should never happen, but we met this panic before, so we add this check here.
-					// See: https://github.com/pingcap/tidb/issues/35948
+				// This should never happen, but we met this panic before, so we add this check here.
+				// See: https://github.com/pingcap/tidb/issues/35948
+				if foundTwice {
 					datumString, err := samples[i].Value.ToString()
 					if err != nil {
 						logutil.BgLogger().With(
@@ -419,6 +416,8 @@ func BuildHistAndTopN(
 					// how to remove it from the samples.
 					break
 				}
+				// First time to find the same value in topN: need to record the sample data for debugging.
+				firstTimeSample = samples[i].Value
 				// Found the same value in topn: need to skip over this value in samples.
 				copy(samples[i:], samples[uint64(i)+topNList[j].Count:])
 				samples = samples[:uint64(len(samples))-topNList[j].Count]
