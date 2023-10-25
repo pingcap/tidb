@@ -102,7 +102,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_allow_fallback_to_tikv":                      {},
 	"tiflash_fastscan":                                 {},
 	"tiflash_fine_grained_shuffle_batch_size":          {},
-	"tiflash_find_grained_shuffle_stream_count":        {},
+	"tiflash_fine_grained_shuffle_stream_count":        {},
 	// Variables that is compatible with MySQL.
 	"cte_max_recursion_depth": {},
 	"sql_mode":                {},
