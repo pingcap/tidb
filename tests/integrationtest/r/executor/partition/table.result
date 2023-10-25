@@ -494,3 +494,52 @@ select * from t where a > 7;
 a	b
 rollback;
 set @@tidb_partition_prune_mode = default;
+drop table if exists tt1, tt2;
+set global tidb_partition_prune_mode='dynamic';
+set session tidb_partition_prune_mode='dynamic';
+CREATE TABLE tt1 (
+id INT NOT NULL,
+listid INT,
+name varchar(10),
+primary key (listid) clustered
+)
+PARTITION BY LIST (listid) (
+PARTITION p1 VALUES IN (1),
+PARTITION p2 VALUES IN (2),
+PARTITION p3 VALUES IN (3),
+PARTITION p4 VALUES IN (4)
+);
+CREATE TABLE tt2 (
+id INT NOT NULL,
+listid INT
+);
+create index idx_listid on tt1(id,listid);
+create index idx_listid on tt2(listid);
+insert into tt1 values(1,1,1);
+insert into tt1 values(2,2,2);
+insert into tt1 values(3,3,3);
+insert into tt1 values(4,4,4);
+insert into tt2 values(1,1);
+insert into tt2 values(2,2);
+insert into tt2 values(3,3);
+insert into tt2 values(4,4);
+insert into tt2 values(5,5);
+analyze table tt1;
+analyze table tt2;
+select /*+ inl_join(tt1)*/ count(*) from tt2
+left join tt1 on tt1.listid=tt2.listid and tt1.id=tt2.id;
+count(*)
+5
+select /*+ inl_join(tt1)*/ count(*) from tt2
+left join tt1 on tt1.listid=tt2.listid;
+count(*)
+5
+explain format = 'brief' select /*+ inl_join(tt1)*/ count(*) from tt2
+left join tt1 on tt1.listid=tt2.listid;
+id	estRows	task	access object	operator info
+StreamAgg	1.00	root		funcs:count(Column#13)->Column#7
+└─IndexReader	1.00	root		index:StreamAgg
+  └─StreamAgg	1.00	cop[tikv]		funcs:count(1)->Column#13
+    └─IndexFullScan	5.00	cop[tikv]	table:tt2, index:idx_listid(listid)	keep order:false
+set global tidb_partition_prune_mode=default;
+set session tidb_partition_prune_mode=default;
