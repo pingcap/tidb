@@ -577,12 +577,10 @@ func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte)
 
 	// select all available TiDB nodes for task.
 	serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
-	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
 	if err != nil {
 		return err
 	}
-	// 4. filter by role.
+	// filter by role.
 	serverNodes, err = d.filterByRole(serverNodes)
 	if err != nil {
 		return err
