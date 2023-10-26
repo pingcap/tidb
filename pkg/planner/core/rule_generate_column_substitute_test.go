@@ -97,7 +97,7 @@ import (
 //	.          .     86:   fmt.Println(sql)
 //	.          .     87:   stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 //	.          .     88:   require.NoError(b, err, sql)
-//	.   512.01kB     89:   p, _, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
+//	.   512.01kB     89:   p, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
 //	.          .     90:   require.NoError(b, err)
 //	.          .     91:   selection := p.(core.LogicalPlan).Children()[0]
 //	.          .     92:   m := make(core.ExprColumnMap, len(selection.Schema().Columns))
@@ -187,7 +187,7 @@ import (
 //	.          .     86:   fmt.Println(sql)
 //	.          .     87:   stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 //	.          .     88:   require.NoError(b, err, sql)
-//	.   512.07kB     89:   p, _, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
+//	.   512.07kB     89:   p, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
 //	.          .     90:   require.NoError(b, err)
 //	.          .     91:   selection := p.(core.LogicalPlan).Children()[0]
 //	.          .     92:   m := make(core.ExprColumnMap, len(selection.Schema().Columns))
@@ -262,7 +262,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	fmt.Println(sql)
 	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 	require.NoError(b, err, sql)
-	p, _, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
+	p, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
 	require.NoError(b, err)
 	selection := p.(core.LogicalPlan).Children()[0]
 	m := make(core.ExprColumnMap, len(selection.Schema().Columns))

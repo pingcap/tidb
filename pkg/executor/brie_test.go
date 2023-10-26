@@ -78,7 +78,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 	stmt, err := p.ParseOneStmt("show backups", "", "")
 	require.NoError(t, err)
-	plan, _, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
+	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)
 	schema := plan.Schema()
 

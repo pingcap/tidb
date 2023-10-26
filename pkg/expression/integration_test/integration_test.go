@@ -422,7 +422,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err, "error %v, for resolve name, expr %s", err, tt.exprStr)
-		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, "error %v, for build plan, expr %s", err, tt.exprStr)
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
