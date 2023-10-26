@@ -195,7 +195,7 @@ func (local *Backend) writeToTiKV(ctx context.Context, j *regionJob) error {
 		return err
 	}
 	// currently only one case will restart write
-	if strings.Contains(err.Error(), "please retry write later") {
+	if strings.Contains(err.Error(), "RequestTooNew") {
 		j.convertStageTo(regionScanned)
 		return err
 	}
