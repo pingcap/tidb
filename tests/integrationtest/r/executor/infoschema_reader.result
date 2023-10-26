@@ -43,6 +43,7 @@ select default_character_set_name, default_collation_name FROM information_schem
 default_character_set_name	default_collation_name
 utf8mb4	utf8mb4_bin
 drop database `foo`;
+drop view if exists executor__infoschema_reader.v1;
 CREATE DEFINER='root'@'localhost' VIEW executor__infoschema_reader.v1 AS SELECT 1;
 select TABLE_COLLATION is null from INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='VIEW';
 TABLE_COLLATION is null

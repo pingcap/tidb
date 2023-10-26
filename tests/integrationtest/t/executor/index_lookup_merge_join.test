@@ -89,7 +89,7 @@ SELECT /*+ INL_MERGE_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.
 SELECT /*+ HASH_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;
 
 # TestIssue24473
-drop table if exists x, t2, t3;
+drop table if exists x;
 CREATE TABLE `x` (  `a` enum('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));
 insert into x values("x"),("x"),("b"),("y");
 --sorted_result
@@ -98,7 +98,7 @@ SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t
 SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;
 
 # TestIssue25669
-drop table if exists x, t2, t3;
+drop table if exists x;
 CREATE TABLE `x` (  `a` set('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));
 insert into x values("x"),("x"),("b"),("y");
 --sorted_result
