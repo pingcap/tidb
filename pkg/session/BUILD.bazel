@@ -85,7 +85,6 @@ go_library(
         "//pkg/util/kvcache",
         "//pkg/util/logutil",
         "//pkg/util/logutil/consistency",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/parser",
         "//pkg/util/sem",

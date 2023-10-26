@@ -34,5 +34,10 @@ const StrictFlags = context.StrictFlags
 // NewContext creates a new `Context`
 var NewContext = context.NewContext
 
-// DefaultNoWarningContext is an alias of `DefaultNoWarningContext`
-var DefaultNoWarningContext = context.DefaultNoWarningContext
+// DefaultStmtFlags is the default flags for statement context with the flag `FlagAllowNegativeToUnsigned` set.
+// TODO: make DefaultStmtFlags to be equal with StrictFlags, and setting flag `FlagAllowNegativeToUnsigned`
+// is only for make the code to be equivalent with the old implement during refactoring.
+const DefaultStmtFlags = context.DefaultStmtFlags
+
+// DefaultStmtNoWarningContext is an alias of `DefaultStmtNoWarningContext`
+var DefaultStmtNoWarningContext = context.DefaultStmtNoWarningContext

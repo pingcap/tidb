@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package globalstats_test
+package globalstats
 
 import (
 	"fmt"
@@ -22,10 +22,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/globalstats"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 	"github.com/tiancaiamao/gp"
 )
@@ -35,7 +35,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
-	isKilled := uint32(0)
+	killer := sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
@@ -77,7 +77,7 @@ func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Benchmark merge 10 topN.
-		_, _, _, _ = statistics.MergePartTopN2GlobalTopN(loc, version, topNs, 10, hists, false, &isKilled)
+		_, _, _, _ = MergePartTopN2GlobalTopN(loc, version, topNs, 10, hists, false, &killer)
 	}
 }
 
@@ -86,7 +86,7 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
-	isKilled := uint32(0)
+	killer := sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
@@ -124,20 +124,20 @@ func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *test
 		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 40})
 		hists = append(hists, h)
 	}
-	wrapper := globalstats.NewStatsWrapper(hists, topNs)
+	wrapper := NewStatsWrapper(hists, topNs)
 	const mergeConcurrency = 4
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
 		batchSize = 1
-	} else if batchSize > globalstats.MaxPartitionMergeBatchSize {
-		batchSize = globalstats.MaxPartitionMergeBatchSize
+	} else if batchSize > MaxPartitionMergeBatchSize {
+		batchSize = MaxPartitionMergeBatchSize
 	}
 	gpool := gp.New(mergeConcurrency, 5*time.Minute)
 	defer gpool.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Benchmark merge 10 topN.
-		_, _, _, _ = globalstats.MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, &isKilled)
+		_, _, _, _ = MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, &killer)
 	}
 }
 
