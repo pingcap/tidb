@@ -1159,7 +1159,6 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 	return details
 }
 
-<<<<<<< HEAD
 // ShouldClipToZero indicates whether values less than 0 should be clipped to 0 for unsigned integer types.
 // This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 // see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
@@ -1176,8 +1175,6 @@ func (sc *StatementContext) ShouldIgnoreOverflowError() bool {
 	return false
 }
 
-=======
->>>>>>> 9f97c9ac0ca (types: fix update unsigned column with overflow string issue (#47817))
 // PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) PushDownFlags() uint64 {
 	var flags uint64
