@@ -198,7 +198,7 @@ func (*BackfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 // GetEligibleInstances implements dispatcher.Extension interface.
 func (dsp *BackfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
-	logutil.BgLogger().Info("ywq test back nodes", zap.Any("cnt", len(serverInfos)), zap.Any("previous cnt", len(h.previousSchedulerIDs)))
+	logutil.BgLogger().Info("ywq test nodes", zap.Any("cnt", len(serverInfos)), zap.Any("previous cnt", len(dsp.previousSchedulerIDs)))
 	if err != nil {
 		return nil, err
 	}
@@ -249,6 +249,7 @@ func (dsp *LitBackfillDispatcher) Init() (err error) {
 
 // Close implements BaseDispatcher interface.
 func (dsp *LitBackfillDispatcher) Close() {
+	logutil.BgLogger().Info("ywq test close dispatcher")
 	dsp.BaseDispatcher.Close()
 }
 
