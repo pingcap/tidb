@@ -227,3 +227,7 @@ func (d *DataInDiskByChunks) deserializeDataToChunk(data []byte, chk *Chunk) {
 		}
 	}
 }
+
+func (d *DataInDiskByChunks) NumChunks() int {
+	return len(d.offsetOfEachChunk)
+}
