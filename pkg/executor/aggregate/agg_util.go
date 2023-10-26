@@ -109,7 +109,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		}
 		expression.PutColumn(buf)
 	}
-	return groupKey, nil
+	return groupKey[:numRows], nil
 }
 
 // HashAggRuntimeStats record the HashAggExec runtime stat

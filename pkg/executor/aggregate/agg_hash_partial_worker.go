@@ -119,7 +119,8 @@ func (w *HashAggPartialWorker) newPartialResults(n int, partialResultNum int) []
 
 func (w *HashAggPartialWorker) expandPartialResults(partialResult [][]aggfuncs.PartialResult, partialResultSize int) [][]aggfuncs.PartialResult {
 	partialResultLen := len(partialResult)
-	if len(w.partialResultsBuffer) < partialResultLen+1 {
+	bufferLen := len(w.partialResultsBuffer)
+	if bufferLen < partialResultLen+1 {
 		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, partialResultSize))
 	}
 	return w.partialResultsBuffer[:partialResultLen+1]
@@ -159,7 +160,12 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementCo
 			w.BInMaps[finalWorkerIdx]++
 		}
 
-		mapper[finalWorkerIdx][string(groupKey[i])] = partialResultsOfEachRow[lastIdx]
+		mapperVal := make([]aggfuncs.PartialResult, partialResultNum)
+		for i := range mapperVal {
+			mapperVal[i] = partialResultsOfEachRow[lastIdx][i]
+		}
+		mapper[finalWorkerIdx][string(groupKey[i])] = mapperVal
+
 		allMemDelta += int64(len(groupKey[i]))
 	}
 	w.memTracker.Consume(allMemDelta)
@@ -182,8 +188,8 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *s
 	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
 		partialResult := partialResultOfEachRow[i]
+		rows[0] = chk.GetRow(i)
 		for j, af := range w.aggFuncs {
-			rows[0] = chk.GetRow(i)
 			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResult[j])
 			if err != nil {
 				return err
