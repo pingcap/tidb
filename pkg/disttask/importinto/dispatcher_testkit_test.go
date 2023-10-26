@@ -150,6 +150,12 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 }
 
 func TestDispatcherExtGlobalSort(t *testing.T) {
+	// Domain start dispatcher manager automatically, we need to disable it as
+	// we test import task management in this case.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/disableDispatcherManager", "return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/disableDispatcherManager"))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
