@@ -586,7 +586,7 @@ func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte)
 		return err
 	}
 
-	logutil.Logger(d.logCtx).Info("eligible instances after filter", zap.Int("num", len(serverNodes)))
+	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
 
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
