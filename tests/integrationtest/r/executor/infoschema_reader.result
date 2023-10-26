@@ -134,6 +134,7 @@ select character_maximum_length, character_octet_length from information_schema.
 character_maximum_length	character_octet_length
 4	16
 drop table t;
+set global tidb_ddl_enable_fast_reorg = false;
 drop database if exists test_ddl_jobs;
 create database test_ddl_jobs;
 select db_name, job_type from information_schema.DDL_JOBS limit 1;
@@ -167,9 +168,10 @@ select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3;
 db_name	table_name	job_type
 test_ddl_jobs	tt	alter table multi-schema change
 test_ddl_jobs	tt	add column /* subjob */
-test_ddl_jobs	tt	add index /* subjob */ /* txn-merge */
+test_ddl_jobs	tt	add index /* subjob */ /* txn */
 drop database test_ddl_jobs;
 use executor__infoschema_reader;
+set global tidb_ddl_enable_fast_reorg = default;
 select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';
 CONSTRAINT_CATALOG	CONSTRAINT_SCHEMA	CONSTRAINT_NAME	TABLE_CATALOG	TABLE_SCHEMA	TABLE_NAME	COLUMN_NAME	ORDINAL_POSITION	POSITION_IN_UNIQUE_CONSTRAINT	REFERENCED_TABLE_SCHEMA	REFERENCED_TABLE_NAME	REFERENCED_COLUMN_NAME
 def	mysql	tbl	def	mysql	stats_meta	table_id	1	NULL	NULL	NULL	NULL

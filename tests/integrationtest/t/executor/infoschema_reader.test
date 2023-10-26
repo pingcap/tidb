@@ -100,6 +100,7 @@ select character_maximum_length, character_octet_length from information_schema.
 drop table t;
 
 # TestDDLJobs
+set global tidb_ddl_enable_fast_reorg = false;
 drop database if exists test_ddl_jobs;
 create database test_ddl_jobs;
 select db_name, job_type from information_schema.DDL_JOBS limit 1;
@@ -131,6 +132,7 @@ select db_name, table_name, job_type from information_schema.DDL_JOBS limit 3;
 disconnect conn1;
 drop database test_ddl_jobs;
 use executor__infoschema_reader;
+set global tidb_ddl_enable_fast_reorg = default;
 
 # TestKeyColumnUsage
 select * from information_schema.KEY_COLUMN_USAGE where TABLE_NAME='stats_meta' and COLUMN_NAME='table_id';
