@@ -628,12 +628,16 @@ func ConvertJSONToInt(ctx Context, j BinaryJSON, unsigned bool, tp byte) (int64,
 		return int64(u), err
 	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
-		if !unsigned {
-			r, e := StrToInt(ctx, str, false)
-			return r, e
+		// The behavior of casting json string as an integer is consistent with casting a string as an integer.
+		// See the `builtinCastStringAsIntSig` in `expression` pkg. The only difference is that this function
+		// doesn't append any warning. This behavior is compatible with MySQL.
+		isNegative := len(str) > 1 && str[0] == '-'
+		if !isNegative {
+			r, err := StrToUint(ctx, str, false)
+			return int64(r), err
 		}
-		u, err := StrToUint(ctx, str, false)
-		return int64(u), err
+
+		return StrToInt(ctx, str, false)
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
