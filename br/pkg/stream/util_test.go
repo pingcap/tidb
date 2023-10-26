@@ -27,6 +27,10 @@ func TestDateFormat(t *testing.T) {
 			434605478903808000,
 			"2022-07-15 20:32:12 +0800",
 		},
+		{
+			434605478903808000,
+			"2022-07-15 20:32:12 +0800",
+		},
 	}
 
 	timeZone, _ := time.LoadLocation("Asia/Shanghai")

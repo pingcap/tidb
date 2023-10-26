@@ -5,9 +5,14 @@ drop table table_to_be_dropped_or_truncated.t0_dropped;
 drop table table_to_be_dropped_or_truncated.t1_dropped;
 truncate table table_to_be_dropped_or_truncated.t0_truncated;
 truncate table table_to_be_dropped_or_truncated.t1_truncated;
--- 3. Drop/Truncate Table Partition
+-- 3.1. Drop/Truncate Table Partition
 alter table partition_to_be_dropped_or_truncated.t1_dropped drop partition p0; 
 alter table partition_to_be_dropped_or_truncated.t1_truncated truncate partition p0;
+alter table partition_to_be_dropped_or_truncated.t1_truncated reorganize partition p2 INTO (PARTITION p2 VALUES LESS THAN (20), PARTITION p3 VALUES LESS THAN MAXVALUE);
+-- 3.2. Remove/Alter Table Partitioning
+alter table partition_to_be_removed_or_altered.t_removed remove partitioning;
+alter table partition_to_be_removed_or_altered.t_altered partition by range(id) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (100), PARTITION p2 VALUES LESS THAN MAXVALUE );
+alter table partition_to_be_removed_or_altered.t_altered partition by key(id) partitions 3;
 -- 4. Drop Table Index/PrimaryKey
 alter table index_or_primarykey_to_be_dropped.t0 drop index k1;
 alter table index_or_primarykey_to_be_dropped.t1 drop index k1;
