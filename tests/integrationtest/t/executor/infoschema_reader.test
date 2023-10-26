@@ -47,7 +47,7 @@ SELECT table_catalog, table_schema, table_name, table_type, engine, version, row
 # TestColumnsTables
 drop table if exists t;
 create table t (bit bit(10) DEFAULT b'100');
-SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_NAME = 't';
+SELECT * FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = 'executor__infoschema_reader' AND TABLE_NAME = 't';
 drop table if exists t;
 set time_zone='+08:00';
 drop table if exists t;
