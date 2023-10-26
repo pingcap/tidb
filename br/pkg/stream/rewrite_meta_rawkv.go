@@ -805,10 +805,14 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				}
 				newPhysicalTableIDs = append(newPhysicalTableIDs, newPid)
 			}
+
+			// logical table may contain global index regions, so delete the logical table range.
+			newPhysicalTableIDs = append(newPhysicalTableIDs, tableReplace.TableID)
 			if len(newPhysicalTableIDs) > 0 {
 				sr.insertDeleteRangeForTable(newJobID, newPhysicalTableIDs)
 			}
-			// logical table may contain global index regions, so delete the logical table range.
+
+			return nil
 		}
 
 		sr.insertDeleteRangeForTable(newJobID, []int64{tableReplace.TableID})
@@ -836,10 +840,14 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 		for _, oldPid := range physicalTableIDs {
 			newPid, exist := tableReplace.PartitionMap[oldPid]
 			if !exist {
-				logutil.CL(lctx).Warn(
-					"DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldPartitionID",
-					zap.Int64("oldPartitionID", oldPid))
-				continue
+				// the physicalTableIDs contains old table id if job's type is partition Reorganize or Remove or Alter
+				if job.TableID != oldPid {
+					logutil.CL(lctx).Warn(
+						"DropTablePartition/TruncateTablePartition: try to drop a non-existent table, missing oldPartitionID",
+						zap.Int64("oldPartitionID", oldPid))
+					continue
+				}
+				newPid = tableReplace.TableID
 			}
 			newPhysicalTableIDs = append(newPhysicalTableIDs, newPid)
 		}
