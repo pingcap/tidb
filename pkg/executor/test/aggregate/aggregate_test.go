@@ -15,6 +15,7 @@
 package aggregate
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -577,6 +578,16 @@ func checkResults(actualRes [][]interface{}, expectedRes map[string]string) bool
 	return true
 }
 
+func genListPartition(begin, end int) string {
+	buf := &bytes.Buffer{}
+	buf.WriteString("(")
+	for i := begin; i < end-1; i++ {
+		buf.WriteString(fmt.Sprintf("%v, ", i))
+	}
+	buf.WriteString(fmt.Sprintf("%v)", end-1))
+	return buf.String()
+}
+
 func TestParallelHashAgg(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -613,4 +624,42 @@ func TestParallelHashAgg(t *testing.T) {
 	expectedResult["Ee"] = "20"
 	res := tk.MustQuery("select k, sum(v) from parallel_hash_agg group by k;")
 	tk.RequireEqual(true, checkResults(res.Rows(), expectedResult))
+
+	tk.MustExec("create database list_partition_agg")
+	tk.MustExec("use list_partition_agg")
+	tk.MustExec("drop table if exists tlist")
+	tk.MustExec(`set tidb_enable_list_partition = 1`)
+	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (` +
+		` partition p0 values in ` + genListPartition(0, 20) +
+		`, partition p1 values in ` + genListPartition(20, 40) +
+		`, partition p2 values in ` + genListPartition(40, 60) +
+		`, partition p3 values in ` + genListPartition(60, 80) +
+		`, partition p4 values in ` + genListPartition(80, 100) + `)`)
+	tk.MustExec(`create table tnormal (a int, b int)`)
+
+	vals := ""
+	for i := 0; i < 100; i++ {
+		if vals != "" {
+			vals += ", "
+		}
+		vals += fmt.Sprintf("(%v, %v)", rand.Intn(100), rand.Intn(100))
+	}
+	tk.MustExec(`insert into tnormal values ` + vals)
+	tk.MustExec(`insert into tlist values ` + vals)
+
+	for _, aggFunc := range []string{"min", "max", "sum", "count"} {
+		c1, c2 := "a", "b"
+		for i := 0; i < 2; i++ {
+			rs := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tnormal group by %v`, c1, aggFunc, c2, c1)).Sort()
+
+			tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+			rsDynamic := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tlist group by %v`, c1, aggFunc, c2, c1)).Sort()
+
+			tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+			rsStatic := tk.MustQuery(fmt.Sprintf(`select %v, %v(%v) from tlist group by %v`, c1, aggFunc, c2, c1)).Sort()
+
+			rs.Check(rsDynamic.Rows())
+			rs.Check(rsStatic.Rows())
+		}
+	}
 }

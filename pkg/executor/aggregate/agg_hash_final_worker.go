@@ -73,6 +73,8 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			return nil
 		}
 
+		// As the w.partialResultMap is empty when we get the first input.
+		// So it's better to directly assign the input to w.partialResultMap
 		if w.isFirstInput {
 			w.isFirstInput = false
 			w.partialResultMap = *input

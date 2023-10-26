@@ -39,7 +39,8 @@ type HashAggPartialWorker struct {
 	giveBackCh     chan<- *HashAggInput
 	BInMaps        []int
 
-	partialResultsBuffer [][]aggfuncs.PartialResult
+	partialResultsBuffer  [][]aggfuncs.PartialResult
+	partialResultNumInRow int
 
 	// Length of this map is equal to the number of final workers
 	partialResultsMap []AggPartialResultMapper
@@ -107,16 +108,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	}
 }
 
-func (w *HashAggPartialWorker) newPartialResults(n int, partialResultNum int) [][]aggfuncs.PartialResult {
-	if n > len(w.partialResultsBuffer) {
-		appendNum := n - len(w.partialResultsBuffer)
-		for i := 0; i < appendNum; i++ {
-			w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, partialResultNum))
-		}
-	}
-	return w.partialResultsBuffer[0:0]
-}
-
 func (w *HashAggPartialWorker) expandPartialResults(partialResult [][]aggfuncs.PartialResult, partialResultSize int) [][]aggfuncs.PartialResult {
 	partialResultLen := len(partialResult)
 	bufferLen := len(w.partialResultsBuffer)
@@ -129,30 +120,29 @@ func (w *HashAggPartialWorker) expandPartialResults(partialResult [][]aggfuncs.P
 // If the group key has appeared before, reuse the partial result.
 // If the group key has not appeared before, create empty partial results.
 func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementContext, groupKey [][]byte, mapper []AggPartialResultMapper, finalConcurrency int) [][]aggfuncs.PartialResult {
-	cntOfGroupKeys := len(groupKey)
+	numRows := len(groupKey)
 	allMemDelta := int64(0)
-	partialResultNum := w.getPartialResultSliceLenConsiderByteAlign()
-	partialResultsOfEachRow := w.newPartialResults(cntOfGroupKeys, partialResultNum)
+	w.partialResultsBuffer = w.partialResultsBuffer[0:0]
 
-	for i := 0; i < cntOfGroupKeys; i++ {
+	for i := 0; i < numRows; i++ {
 		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
-		tmp, ok := mapper[finalWorkerIdx][string(groupKey[i])]
+		tmp, ok := mapper[finalWorkerIdx][string(hack.String(groupKey[i]))]
 
 		// This group by key has appeared before, reuse the partial result.
 		if ok {
-			partialResultsOfEachRow = append(partialResultsOfEachRow, tmp)
+			w.partialResultsBuffer = append(w.partialResultsBuffer, tmp)
 			continue
 		}
 
 		// It's the first time that this group by key appeared, create it
-		partialResultsOfEachRow = w.expandPartialResults(partialResultsOfEachRow, partialResultNum)
-		lastIdx := len(partialResultsOfEachRow) - 1
+		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, w.partialResultNumInRow))
+		lastIdx := len(w.partialResultsBuffer) - 1
 		for j, af := range w.aggFuncs {
 			partialResult, memDelta := af.AllocPartialResult()
-			partialResultsOfEachRow[lastIdx][j] = partialResult
+			w.partialResultsBuffer[lastIdx][j] = partialResult
 			allMemDelta += memDelta // the memory usage of PartialResult
 		}
-		allMemDelta += int64(partialResultNum * 8)
+		allMemDelta += int64(w.partialResultNumInRow * 8)
 
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper[finalWorkerIdx])+1 > (1<<w.BInMaps[finalWorkerIdx])*hack.LoadFactorNum/hack.LoadFactorDen {
@@ -160,16 +150,16 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementCo
 			w.BInMaps[finalWorkerIdx]++
 		}
 
-		mapperVal := make([]aggfuncs.PartialResult, partialResultNum)
+		mapperVal := make([]aggfuncs.PartialResult, w.partialResultNumInRow)
 		for i := range mapperVal {
-			mapperVal[i] = partialResultsOfEachRow[lastIdx][i]
+			mapperVal[i] = w.partialResultsBuffer[lastIdx][i]
 		}
 		mapper[finalWorkerIdx][string(groupKey[i])] = mapperVal
 
 		allMemDelta += int64(len(groupKey[i]))
 	}
 	w.memTracker.Consume(allMemDelta)
-	return partialResultsOfEachRow
+	return w.partialResultsBuffer
 }
 
 func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, finalConcurrency int) (err error) {

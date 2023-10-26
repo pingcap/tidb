@@ -286,7 +286,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			outputChs:            e.partialOutputChs,
 			giveBackCh:           e.inputCh,
 			BInMaps:              make([]int, finalConcurrency),
-			partialResultsBuffer: make([][]aggfuncs.PartialResult, 2048),
+			partialResultsBuffer: make([][]aggfuncs.PartialResult, 0, 2048),
 			globalOutputCh:       e.finalOutputCh,
 			partialResultsMap:    partialResultsMap,
 			groupByItems:         e.GroupByItems,
@@ -294,12 +294,7 @@ func (e *HashAggExec) initForParallelExec(_ sessionctx.Context) {
 			groupKey:             make([][]byte, 0, 8),
 		}
 
-		partialResultNum := w.getPartialResultSliceLenConsiderByteAlign()
-		partialResultsBufferLen := len(w.partialResultsBuffer)
-		for i := 0; i < partialResultsBufferLen; i++ {
-			w.partialResultsBuffer[i] = make([]aggfuncs.PartialResult, partialResultNum)
-		}
-
+		w.partialResultNumInRow = w.getPartialResultSliceLenConsiderByteAlign()
 		for i := 0; i < finalConcurrency; i++ {
 			w.BInMaps[i] = 0
 		}
