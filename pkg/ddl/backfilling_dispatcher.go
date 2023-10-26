@@ -198,6 +198,7 @@ func (*backfillingDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.Task
 
 func (h *backfillingDispatcherExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, error) {
 	serverInfos, err := dispatcher.GenerateSchedulerNodes(ctx)
+	logutil.BgLogger().Info("ywq test back nodes", zap.Any("cnt", len(serverInfos)), zap.Any("previous cnt", len(h.previousSchedulerIDs)))
 	if err != nil {
 		return nil, err
 	}

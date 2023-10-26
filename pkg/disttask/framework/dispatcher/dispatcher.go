@@ -577,18 +577,18 @@ func (d *BaseDispatcher) dispatchSubTask(subtaskStep proto.Step, metas [][]byte)
 
 	// select all available TiDB nodes for task.
 	serverNodes, err := d.GetEligibleInstances(d.ctx, d.Task)
-	logutil.Logger(d.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+	logutil.Logger(d.logCtx).Info("eligible instances before filter", zap.Int("num", len(serverNodes)))
 
 	if err != nil {
 		return err
 	}
-	// 4. filter by role.
+	// filter by role.
 	serverNodes, err = d.filterByRole(serverNodes)
 	if err != nil {
 		return err
 	}
 
-	logutil.Logger(d.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+	logutil.Logger(d.logCtx).Info("eligible instances after filter", zap.Int("num", len(serverNodes)))
 
 	if len(serverNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
