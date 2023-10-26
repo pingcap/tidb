@@ -137,7 +137,7 @@ func (d *DataInDiskByChunks) GetChunk(chkIdx int) (*Chunk, error) {
 		return nil, errors2.New("Fail to restore the spilled chunk")
 	}
 
-	chk := NewChunkWithCapacity(d.fieldTypes, len(d.buf))
+	chk := NewChunkWithCapacity(d.fieldTypes, 2048)
 	d.deserializeDataToChunk(d.buf, chk)
 
 	return chk, nil
