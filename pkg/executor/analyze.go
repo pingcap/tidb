@@ -108,7 +108,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	// Start workers with channel to collect results.
 	taskCh := make(chan *analyzeTask, concurrency)
-	resultsCh := make(chan *statistics.AnalyzeResults)
+	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	for i := 0; i < concurrency; i++ {
 		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
 	}
