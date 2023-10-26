@@ -259,6 +259,7 @@ func (e *Engine) loadIngestData(
 			size = 0
 			curStart = curKey
 			batchStartTs = time.Now()
+			memBuf = e.bufPool.NewBuffer()
 		}
 
 		keys = append(keys, memBuf.AddBytes(k))
