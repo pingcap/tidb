@@ -1108,15 +1108,15 @@ func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
 		}
 	})
+	if r.HTTPRequest.URL.Host == ec2MetaAddress && (isDeadlineExceedError(r.Error) || isConnectionResetError(r.Error)) {
+		// fast fail for unreachable linklocal address in EC2 containers.
+		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
+		return false
+	}
 	if isConnectionResetError(r.Error) {
 		return true
 	}
 	if isConnectionRefusedError(r.Error) {
-		return false
-	}
-	if isDeadlineExceedError(r.Error) && r.HTTPRequest.URL.Host == ec2MetaAddress {
-		// fast fail for unreachable linklocal address in EC2 containers.
-		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))
 		return false
 	}
 	return rl.DefaultRetryer.ShouldRetry(r)

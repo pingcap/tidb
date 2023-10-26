@@ -2444,7 +2444,7 @@ func getUintFromNode(ctx sessionctx.Context, n ast.Node, mustInt64orUint64 bool)
 			return uint64(v), false, true
 		}
 	case string:
-		ctx := ctx.GetSessionVars().StmtCtx.TypeCtx
+		ctx := ctx.GetSessionVars().StmtCtx.TypeCtx()
 		uVal, err := types.StrToUint(ctx, v, false)
 		if err != nil {
 			return 0, false, false
