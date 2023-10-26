@@ -79,9 +79,8 @@ type TableCommon struct {
 	WritableConstraints             []*table.Constraint
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
-	recordPrefix     kv.Key
-	indexPrefix      kv.Key
-	SkipEncodeDataKV bool
+	recordPrefix kv.Key
+	indexPrefix  kv.Key
 }
 
 // MockTableFromMeta only serves for test.
@@ -987,12 +986,10 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	if !t.SkipEncodeDataKV {
-		checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
-		writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
-		if err != nil {
-			return nil, err
-		}
+	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	if err != nil {
+		return nil, err
 	}
 	value := writeBufs.RowValBuf
 
