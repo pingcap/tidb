@@ -625,6 +625,9 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 func enablePlanCacheForGeneratedCols(sctx sessionctx.Context) bool {
 	// disable this by default since it's not well tested.
 	// TODO: complete its test and enable it by default.
+	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().GetOptimizerFixControlMap() == nil {
+		return false
+	}
 	return fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45798, false)
 }
 
