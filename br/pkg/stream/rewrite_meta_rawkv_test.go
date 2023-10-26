@@ -652,12 +652,8 @@ var (
 	addTable1IndexJob             = &model.Job{Type: model.ActionAddIndex, State: model.JobStateSynced, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[2,false,[]]`)}
 	dropTable0IndexJob            = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,2,[72,73,74]]`)}
 	dropTable1IndexJob            = &model.Job{Type: model.ActionDropIndex, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,2,[]]`)}
-	dropTable0IndexesJob          = &model.Job{Type: model.ActionDropIndexes, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[72,73,74]]`)}
-	dropTable1IndexesJob          = &model.Job{Type: model.ActionDropIndexes, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[]]`)}
 	dropTable0ColumnJob           = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`["",false,[2,3],[72,73,74]]`)}
 	dropTable1ColumnJob           = &model.Job{Type: model.ActionDropColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`["",false,[2,3],[]]`)}
-	dropTable0ColumnsJob          = &model.Job{Type: model.ActionDropColumns, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[72,73,74]]`)}
-	dropTable1ColumnsJob          = &model.Job{Type: model.ActionDropColumns, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[],[],[2,3],[]]`)}
 	modifyTable0ColumnJob         = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable0OldID, RawArgs: json.RawMessage(`[[2,3],[72,73,74]]`)}
 	modifyTable1ColumnJob         = &model.Job{Type: model.ActionModifyColumn, SchemaID: mDDLJobDBOldID, TableID: mDDLJobTable1OldID, RawArgs: json.RawMessage(`[[2,3],[]]`)}
 	multiSchemaChangeJob0         = &model.Job{
@@ -773,14 +769,14 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 	err = schemaReplace.deleteRange(dropTable0Job)
 	require.NoError(t, err)
 	targs = <-midr.tableCh
-	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewPartitionIDSet))
+	require.Equal(t, len(targs.tableIDs), len(mDDLJobALLNewPartitionIDSet)+1)
 	for _, tableID := range targs.tableIDs {
 		_, exist := mDDLJobALLNewPartitionIDSet[tableID]
+		if !exist {
+			exist = tableID == mDDLJobTable0NewID
+		}
 		require.True(t, exist)
 	}
-	targs = <-midr.tableCh
-	require.Equal(t, len(targs.tableIDs), 1)
-	require.Equal(t, targs.tableIDs[0], mDDLJobTable0NewID)
 
 	// drop table1
 	err = schemaReplace.deleteRange(dropTable1Job)
@@ -892,6 +888,31 @@ func TestDeleteRangeForMDDLJob(t *testing.T) {
 
 	// drop column for table1
 	err = schemaReplace.deleteRange(dropTable1ColumnJob)
+	require.NoError(t, err)
+	iargs = <-midr.indexCh
+	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
+	require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
+	for _, indexID := range iargs.indexIDs {
+		_, exist := mDDLJobALLIndexesIDSet[indexID]
+		require.True(t, exist)
+	}
+
+	// modify column for table0
+	err = schemaReplace.deleteRange(modifyTable0ColumnJob)
+	require.NoError(t, err)
+	for i := 0; i < len(mDDLJobALLNewPartitionIDSet); i++ {
+		iargs = <-midr.indexCh
+		_, exist := mDDLJobALLNewPartitionIDSet[iargs.tableID]
+		require.True(t, exist)
+		require.Equal(t, len(iargs.indexIDs), len(mDDLJobALLIndexesIDSet))
+		for _, indexID := range iargs.indexIDs {
+			_, exist := mDDLJobALLIndexesIDSet[indexID]
+			require.True(t, exist)
+		}
+	}
+
+	// modify column for table1
+	err = schemaReplace.deleteRange(modifyTable1ColumnJob)
 	require.NoError(t, err)
 	iargs = <-midr.indexCh
 	require.Equal(t, iargs.tableID, mDDLJobTable1NewID)
