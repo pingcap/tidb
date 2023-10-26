@@ -129,7 +129,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 
 	// Disable stats by default.
 	// TODO: we need a better way to backup/restore stats.
-	flags.Bool(flagIgnoreStats, true, "ignore backup stats, used for test")
+	flags.Bool(flagIgnoreStats, true, "ignore backup stats")
 
 	flags.Bool(flagUseBackupMetaV2, true,
 		"use backup meta v2 to store meta info")
