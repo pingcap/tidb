@@ -1615,3 +1615,16 @@ func TestInsertBigScientificNotation(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1264 Out of range value for column 'a' at row 1"))
 	tk.MustQuery("select id, a from t1 order by id asc").Check(testkit.Rows("1 2147483647", "2 -2147483648"))
 }
+
+// see issue: https://github.com/pingcap/tidb/issues/47945
+func TestUnsignedDecimalFloatInsertNegative(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec("create table tf(a float(1, 0) unsigned)")
+	err := tk.ExecToErr("insert into tf values('-100')")
+	require.EqualError(t, err, "[types:1264]Out of range value for column 'a' at row 1")
+	tk.MustExec("set @@sql_mode=''")
+	tk.MustExec("insert into tf values('-100')")
+	tk.MustQuery("select * from tf").Check(testkit.Rows("0"))
+}
