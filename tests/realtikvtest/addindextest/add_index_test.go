@@ -172,6 +172,39 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec(`set global tidb_enable_dist_task=0;`)
 }
 
+func TestAddIndexFail(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	if store.Name() != "TiKV" {
+		t.Skip("TiKV store only")
+	}
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists test;")
+	tk.MustExec("create database test;")
+	tk.MustExec("use test;")
+	tk.MustExec(`set global tidb_enable_dist_task=1;`)
+
+	tk.MustExec("create table t1(a bigint auto_random primary key);")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
+	tk.MustExec("split table t1 between (3) and (8646911284551352360) regions 50;")
+
+	// fail a job.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/markSubTaskAsFailed", "return()"))
+	tk.MustExecToErr("alter table t1 add index idx(a);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/markSubTaskAsFailed"))
+	// fail a job.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/markSubTaskAsFailed", "return()"))
+	tk.MustExecToErr("alter table t1 add index idx0(a);")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/markSubTaskAsFailed"))
+
+	tk.MustExec("alter table t1 add index idx1(a);")
+	tk.MustExec("admin check index t1 idx1;")
+	tk.MustExec(`set global tidb_enable_dist_task=0;`)
+}
+
 func TestAddIndexDistCancel(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	if store.Name() != "TiKV" {

@@ -580,6 +580,9 @@ func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask
 // 2. Only fail subtasks when meet non retryable error.
 // 3. When meet other errors, don't change subtasks' state.
 func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask *proto.Subtask) bool {
+	failpoint.Inject("markSubTaskAsFailed", func() {
+		s.updateSubtaskStateAndError(subtask, proto.TaskStateFailed, errors.New("mock error"))
+	})
 	if err := s.getError(); err != nil {
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
