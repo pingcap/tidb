@@ -108,15 +108,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	}
 }
 
-func (w *HashAggPartialWorker) expandPartialResults(partialResult [][]aggfuncs.PartialResult, partialResultSize int) [][]aggfuncs.PartialResult {
-	partialResultLen := len(partialResult)
-	bufferLen := len(w.partialResultsBuffer)
-	if bufferLen < partialResultLen+1 {
-		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, partialResultSize))
-	}
-	return w.partialResultsBuffer[:partialResultLen+1]
-}
-
 // If the group key has appeared before, reuse the partial result.
 // If the group key has not appeared before, create empty partial results.
 func (w *HashAggPartialWorker) getPartialResultsOfEachRow(_ *stmtctx.StatementContext, groupKey [][]byte, mapper []AggPartialResultMapper, finalConcurrency int) [][]aggfuncs.PartialResult {
