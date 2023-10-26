@@ -1619,7 +1619,7 @@ func (cli *testServerClient) runTestLoadData(t *testing.T, server *Server) {
 		dbt.MustExec("drop table if exists pn")
 		dbt.MustExec("create table pn (c1 int, c2 int, c3 int, c4 int)")
 		dbt.MustExec("set @@tidb_dml_batch_size = 1")
-		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @val2, @val3, @val4) 
+		_, err1 := dbt.GetDB().Exec(fmt.Sprintf(`load data local infile %q into table pn FIELDS TERMINATED BY ',' (c1, @val2, @val3, @val4)
 							 SET c2 = NULLIF(@val2, ''), c3 = NULLIF(@val3, ''), c4 = NULLIF(@val4, '')`, path))
 		require.NoError(t, err1)
 		var (
@@ -2501,6 +2501,59 @@ func (cli *testServerClient) runTestLoadDataReplace(t *testing.T) {
 		_, err = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile '%s' replace into table t1 fields terminated by ',' enclosed by '' (id,name)`, path1))
 		require.NoError(t, err)
 		_, err = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile '%s' replace into table t1 fields terminated by ',' enclosed by '' (id,name)`, path2))
+		require.NoError(t, err)
+		var (
+			a sql.NullInt64
+			b sql.NullString
+		)
+		rows := dbt.MustQuery("select * from t1 order by id asc")
+		for _, expect := range expects {
+			require.Truef(t, rows.Next(), "unexpected data")
+			err = rows.Scan(&a, &b)
+			require.NoError(t, err)
+			require.Equal(t, expect.col1, a.Int64)
+			require.Equal(t, expect.col2, b.String)
+			err = rows.Scan(&a, &b)
+			require.NoError(t, err)
+		}
+		require.Falsef(t, rows.Next(), "expect end")
+	})
+}
+
+func (cli *testServerClient) runTestLoadDataReplaceNonclusteredPK(t *testing.T) {
+	fp1, err := os.CreateTemp("", "a.dat")
+	require.NoError(t, err)
+	require.NotNil(t, fp1)
+	path1 := fp1.Name()
+	defer func() {
+		err = fp1.Close()
+		require.NoError(t, err)
+		err = os.Remove(path1)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp1.WriteString(
+		"1,'abc'\n" +
+			"2,'acc'\n" +
+			"3,'add'\n")
+	require.NoError(t, err)
+
+	expects := []struct {
+		col1 int64
+		col2 string
+	}{
+		{1, `'abc'`},
+		{2, `'acc'`},
+		{3, `'add'`},
+	}
+
+	cli.runTestsOnNewDB(t, func(config *mysql.Config) {
+		config.AllowAllFiles = true
+		config.Params["sql_mode"] = "''"
+	}, "LoadData", func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table t1(id int, name varchar(20), primary key(id) nonclustered);")
+		dbt.MustExec("insert into t1 values (2, 'kkkk');")
+		_, err = dbt.GetDB().Exec(fmt.Sprintf(`load data local infile '%s' replace into table t1 fields terminated by ','`, path1))
 		require.NoError(t, err)
 		var (
 			a sql.NullInt64
