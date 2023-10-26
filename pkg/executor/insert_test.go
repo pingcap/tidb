@@ -1593,8 +1593,6 @@ func TestInsertLockUnchangedKeys(t *testing.T) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
 
 // see issue https://github.com/pingcap/tidb/issues/47787
 func TestInsertBigScientificNotation(t *testing.T) {
@@ -1630,4 +1628,3 @@ func TestUnsignedDecimalFloatInsertNegative(t *testing.T) {
 	tk.MustExec("insert into tf values('-100')")
 	tk.MustQuery("select * from tf").Check(testkit.Rows("0"))
 }
->>>>>>> 97310ad5dbd (types: fix issue that we can insert negative value to unsinged float column sometimes (#47946))
