@@ -525,13 +525,16 @@ func TestFrameworkSetLabel(t *testing.T) {
 	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
 	distContext := testkit.NewDistExecutionContext(t, 3)
 	tk := testkit.NewTestKit(t, distContext.Store)
+
 	// 1. all "" role.
 	DispatchTaskAndCheckSuccess("😁", t, &m)
+
 	// 2. one "background" role.
 	tk.MustExec("set global tidb_service_scope=background")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
 	DispatchTaskAndCheckSuccess("😊", t, &m)
+
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	DispatchTaskAndCheckSuccess("😆", t, &m)

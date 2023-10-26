@@ -417,6 +417,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 
 	require.NoError(t, sm.StartManager(":4000", "background"))
 	require.NoError(t, sm.StartManager(":4001", ""))
+	require.NoError(t, sm.StartManager(":4002", ""))
 	require.NoError(t, sm.StartManager(":4002", "background"))
 
 	allNodes, err := sm.GetAllNodes()
