@@ -997,22 +997,15 @@ func TestGetValidFloat(t *testing.T) {
 		{"123.456784e5", "12345678", false},
 		{"+999.9999e2", "+100000", false},
 	}
-<<<<<<< HEAD
-	for _, tt := range tests2 {
-		str, err := floatStrToIntStr(sc, tt.origin, tt.origin)
-		require.NoError(t, err)
-		require.Equalf(t, tt.expected, str, "%v, %v", tt.origin, tt.expected)
-=======
 	for i, tt := range tests2 {
 		msg := fmt.Sprintf("%d: %v, %v", i, tt.origin, tt.expected)
-		str, err := floatStrToIntStr(tt.origin, tt.origin)
+		str, err := floatStrToIntStr(sc, tt.origin, tt.origin)
 		if tt.overflow {
 			require.True(t, terror.ErrorEqual(err, ErrOverflow), msg)
 		} else {
 			require.NoError(t, err, msg)
 		}
 		require.Equalf(t, tt.expected, str, msg)
->>>>>>> 5e3210b0d54 (types: fix the behavior when inserting a big scientific notation number to keep it same with mysql (#47803))
 	}
 }
 

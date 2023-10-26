@@ -388,11 +388,7 @@ func getValidIntPrefix(sc *stmtctx.StatementContext, str string, isFuncCast bool
 		if err != nil {
 			return floatPrefix, errors.Trace(err)
 		}
-<<<<<<< HEAD
 		return floatStrToIntStr(sc, floatPrefix, str)
-=======
-		return floatStrToIntStr(floatPrefix, str)
->>>>>>> 5e3210b0d54 (types: fix the behavior when inserting a big scientific notation number to keep it same with mysql (#47803))
 	}
 
 	validLen := 0
@@ -458,11 +454,7 @@ var minIntStr = strconv.FormatInt(math.MinInt64, 10)
 //
 // This func will find serious overflow such as the len of intStr > 20 (without prefix `+/-`)
 // however, it will not check whether the intStr overflow BIGINT.
-<<<<<<< HEAD
-func floatStrToIntStr(sc *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
-=======
-func floatStrToIntStr(validFloat string, oriStr string) (intStr string, _ error) {
->>>>>>> 5e3210b0d54 (types: fix the behavior when inserting a big scientific notation number to keep it same with mysql (#47803))
+func floatStrToIntStr(_ *stmtctx.StatementContext, validFloat string, oriStr string) (intStr string, _ error) {
 	var dotIdx = -1
 	var eIdx = -1
 	for i := 0; i < len(validFloat); i++ {
@@ -523,17 +515,12 @@ func floatStrToIntStr(validFloat string, oriStr string) (intStr string, _ error)
 		// MaxUint64 has 20 decimal digits.
 		// And the intCnt may contain the len of `+/-`,
 		// so I use 21 here as the early detection.
-<<<<<<< HEAD
-		sc.AppendWarning(ErrOverflow.GenWithStackByArgs("BIGINT", oriStr))
-		return validFloat[:eIdx], nil
-=======
 		if digits[0] == '-' {
 			intStr = minIntStr
 		} else {
 			intStr = maxUintStr
 		}
 		return intStr, ErrOverflow.GenWithStackByArgs("BIGINT", oriStr)
->>>>>>> 5e3210b0d54 (types: fix the behavior when inserting a big scientific notation number to keep it same with mysql (#47803))
 	}
 	if intCnt <= 0 {
 		intStr = "0"
