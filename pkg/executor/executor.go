@@ -1211,7 +1211,7 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 		return nil, err
 	}
 	lockCtx := tikvstore.NewLockCtx(forUpdateTS, lockWaitTime, seVars.StmtCtx.GetLockWaitStartTime())
-	lockCtx.Killed = &seVars.Killed
+	lockCtx.Killed = &seVars.SQLKiller.Signal
 	lockCtx.PessimisticLockWaited = &seVars.StmtCtx.PessimisticLockWaited
 	lockCtx.LockKeysDuration = &seVars.StmtCtx.LockKeysDuration
 	lockCtx.LockKeysCount = &seVars.StmtCtx.LockKeysCount
@@ -1844,7 +1844,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("resultPuller panicked", zap.Any("recover", r), zap.Stack("stack"))
-			result.err = errors.Errorf("%v", r)
+			result.err = util.GetRecoverError(r)
 			e.resultPool <- result
 			e.stopFetchData.Store(true)
 		}
@@ -1993,6 +1993,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Detach()
 	vars.DiskTracker.ResetMaxConsumed()
 	vars.MemTracker.SessionID.Store(vars.ConnectionID)
+	vars.MemTracker.Killer = &vars.SQLKiller
+	vars.DiskTracker.Killer = &vars.SQLKiller
+	vars.SQLKiller.Reset()
+	vars.SQLKiller.ConnID = vars.ConnectionID
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
 	isAnalyze := false
@@ -2015,7 +2019,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	logOnQueryExceedMemQuota := domain.GetDomain(ctx).ExpensiveQueryHandle().LogOnQueryExceedMemQuota
 	switch variable.OOMAction.Load() {
 	case variable.OOMActionCancel:
-		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID}
+		action := &memory.PanicOnExceed{ConnID: vars.ConnectionID, Killer: vars.MemTracker.Killer}
 		action.SetLogHook(logOnQueryExceedMemQuota)
 		vars.MemTracker.SetActionOnExceed(action)
 	case variable.OOMActionLog:
@@ -2162,7 +2166,12 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.SetTypeFlags(sc.TypeFlags().
 		WithSkipUTF8Check(vars.SkipUTF8Check).
 		WithSkipSACIICheck(vars.SkipASCIICheck).
-		WithSkipUTF8MB4Check(!globalConfig.Instance.CheckMb4ValueInUTF8.Load()))
+		WithSkipUTF8MB4Check(!globalConfig.Instance.CheckMb4ValueInUTF8.Load()).
+		// WithAllowNegativeToUnsigned with false value indicates values less than 0 should be clipped to 0 for unsigned integer types.
+		// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
+		// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
+	)
 
 	vars.PlanCacheParams.Reset()
 	if priority := mysql.PriorityEnum(atomic.LoadInt32(&variable.ForcePriority)); priority != mysql.NoPriority {

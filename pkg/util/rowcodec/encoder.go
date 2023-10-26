@@ -205,7 +205,7 @@ func encodeValueDatum(sc *stmtctx.StatementContext, d *types.Datum, buffer []byt
 		buffer, err = codec.EncodeDecimal(buffer, d.GetMysqlDecimal(), d.Length(), d.Frac())
 		if err != nil && sc != nil {
 			if terror.ErrorEqual(err, types.ErrTruncated) {
-				err = sc.TypeCtx.HandleTruncate(err)
+				err = sc.HandleTruncate(err)
 			} else if terror.ErrorEqual(err, types.ErrOverflow) {
 				err = sc.HandleOverflow(err, err)
 			}

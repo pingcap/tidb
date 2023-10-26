@@ -22,7 +22,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/util/dbterror/exeerrors",
-        "//pkg/util/memory",
+        "//pkg/util/sqlkiller",
         "//pkg/util/tiflashcompute",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

@@ -103,7 +103,7 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20231010061802-07432ef6c031
+	github.com/tikv/client-go/v2 v2.0.8-0.20231025022411-cad314220659
 	github.com/tikv/pd/client v0.0.0-20230912103610-2f57a9f050eb
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
@@ -121,7 +121,7 @@ require (
 	go.uber.org/atomic v1.11.0
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/goleak v1.2.1
-	go.uber.org/mock v0.2.0
+	go.uber.org/mock v0.3.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/exp v0.0.0-20230711005742-c3f37128e5a4
@@ -186,7 +186,7 @@ require (
 	github.com/eapache/go-resiliency v1.2.0 // indirect
 	github.com/eapache/go-xerial-snappy v0.0.0-20180814174437-776d5712da21 // indirect
 	github.com/eapache/queue v1.1.0 // indirect
-	github.com/fatih/structtag v1.2.0 // indirect
+	github.com/fatih/structtag v1.2.0
 	github.com/felixge/httpsnoop v1.0.2 // indirect
 	github.com/form3tech-oss/jwt-go v3.2.5+incompatible // indirect
 	github.com/go-asn1-ber/asn1-ber v1.5.4 // indirect
