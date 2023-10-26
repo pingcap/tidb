@@ -2670,7 +2670,7 @@ func ParseTimeFromDecimal(ctx Context, dec *MyDecimal) (t Time, err error) {
 	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
 		return ZeroTime, err
 	}
-	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
+	fsp := min(MaxFsp, int(dec.GetDigitsFrac()))
 	t, err = parseDateTimeFromNum(ctx, intPart)
 	if err != nil {
 		return ZeroTime, err
