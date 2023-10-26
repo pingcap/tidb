@@ -60,7 +60,6 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 		for j := 1; j <= 500; j++ {
 			datum := types.NewIntDatum(int64(j))
 			h.AppendBucket(&datum, &datum, int64(10+j*10), 10)
-
 		}
 		hists = append(hists, h)
 	}
