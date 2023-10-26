@@ -66,7 +66,7 @@ run_sql 'INSERT INTO db.test2(b) VALUES(33);'
 run_sql 'INSERT INTO db.test2(b) VALUES(44);'
 run_sql 'INSERT INTO db.test2(b) VALUES(55);'
 
-grep 'please rescan region later' "$TEST_DIR/lightning.log" | grep -q 'needRescan'
+grep 'RequestTooOld' "$TEST_DIR/lightning.log" | grep -q 'needRescan'
 cleanup
 
 export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/changeEpochVersion=1*return(10)"
@@ -91,5 +91,5 @@ run_sql 'INSERT INTO db.test2(b) VALUES(33);'
 run_sql 'INSERT INTO db.test2(b) VALUES(44);'
 run_sql 'INSERT INTO db.test2(b) VALUES(55);'
 
-grep 'please retry write later' "$TEST_DIR/lightning.log" | grep -q 'regionScanned'
+grep 'RequestTooNew' "$TEST_DIR/lightning.log" | grep -q 'regionScanned'
 cleanup
