@@ -254,7 +254,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 		sqls = append(sqls, [2]string{"create type error table", createTypeErrorTable})
 	}
 	if em.conflictV1Enabled {
-		sqls = append(sqls, [2]string{"create conflict error v1 table", createConflictErrorTable})
+		sqls = append(sqls, [2]string{"create conflict error v2 table", createConflictErrorTable})
 	}
 	if em.conflictV2Enabled {
 		sqls = append(sqls, [2]string{"create duplicate records table", createDupRecordTable})
