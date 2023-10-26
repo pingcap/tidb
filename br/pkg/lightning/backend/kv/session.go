@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
@@ -134,6 +135,16 @@ func (mb *MemBuf) AllocateBuf(size int) {
 
 // Set sets the key-value pair.
 func (mb *MemBuf) Set(k kv.Key, v []byte) error {
+	if tablecodec.IsRecordKey(k) {
+		return nil
+	}
+	indexID, err := tablecodec.DecodeIndexID(k)
+	if err != nil {
+		return err
+	}
+	if indexID != 7 && indexID != 4 {
+		return nil
+	}
 	kvPairs := mb.kvPairs
 	size := len(k) + len(v)
 	if mb.buf == nil || mb.buf.cap-mb.buf.idx < size {
