@@ -184,6 +184,7 @@ func (do *Domain) loadInfoSchema(startTS uint64) (infoschema.InfoSchema, bool, i
 		loadSchemaDurationTotal.Observe(time.Since(beginTime).Seconds())
 	}()
 	snapshot := do.store.GetSnapshot(kv.NewVersion(startTS))
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
 	m := meta.NewSnapshotMeta(snapshot)
 	neededSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
