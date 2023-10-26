@@ -299,7 +299,7 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 			return nil, errors.Trace(err)
 		}
 		offsets = offs
-		logger.Info("seek props offsets",
+		logger.Debug("seek props offsets",
 			zap.Uint64s("offsets", offsets),
 			zap.String("startKey", hex.EncodeToString(start)),
 			zap.Strings("dataFiles", e.dataFiles),
