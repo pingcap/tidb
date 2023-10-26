@@ -239,8 +239,7 @@ func tableIndexKeyRanges(tableInfo *model.TableInfo, indexInfo *model.IndexInfo)
 
 // DupKVStream is a streaming interface for collecting duplicate key-value pairs.
 type DupKVStream interface {
-	// Next returns the next key-value pair or any error it encountered,
-	// then move the pointer to the next key-value pair
+	// Next returns the next key-value pair or any error it encountered.
 	// At the end of the stream, the error is io.EOF.
 	Next() (key, val []byte, err error)
 	// Close closes the stream.
