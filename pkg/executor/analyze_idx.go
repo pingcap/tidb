@@ -154,9 +154,11 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		startTS = e.snapshot
 		isoLevel = kv.SI
 	}
+	paging := e.ctx.GetSessionVars().EnablePaging
 	kvReq, err := kvReqBuilder.
 		SetAnalyzeRequest(e.analyzePB, isoLevel).
 		SetStartTS(startTS).
+		SetPaging(paging).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).
