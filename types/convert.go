@@ -608,12 +608,26 @@ func ConvertJSONToInt(sc *stmtctx.StatementContext, j BinaryJSON, unsigned bool,
 		return int64(u), sc.HandleOverflow(err, err)
 	case JSONTypeCodeString:
 		str := string(hack.String(j.GetString()))
+<<<<<<< HEAD:types/convert.go
 		if !unsigned {
 			r, e := StrToInt(sc, str, false)
 			return r, sc.HandleOverflow(e, e)
 		}
 		u, err := StrToUint(sc, str, false)
 		return int64(u), sc.HandleOverflow(err, err)
+=======
+		// The behavior of casting json string as an integer is consistent with casting a string as an integer.
+		// See the `builtinCastStringAsIntSig` in `expression` pkg. The only difference is that this function
+		// doesn't append any warning. This behavior is compatible with MySQL.
+		isNegative := len(str) > 1 && str[0] == '-'
+		if !isNegative {
+			r, err := StrToUint(sc.TypeCtxOrDefault(), str, false)
+			return int64(r), sc.HandleOverflow(err, err)
+		}
+
+		r, err := StrToInt(sc.TypeCtxOrDefault(), str, false)
+		return r, sc.HandleOverflow(err, err)
+>>>>>>> e13113a14ae (types: fix the behavior of casting json string to integers (#48010)):pkg/types/convert.go
 	}
 	return 0, errors.New("Unknown type code in JSON")
 }
