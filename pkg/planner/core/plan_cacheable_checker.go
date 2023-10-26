@@ -580,7 +580,7 @@ func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, 
 	case *PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
-		if x.AccessMVIndex {
+		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
 			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 		underIndexMerge = true
@@ -622,6 +622,10 @@ func getMaxParamLimit(sctx sessionctx.Context) int {
 	return v
 }
 
+func enablePlanCacheForGeneratedCols(sctx sessionctx.Context) bool {
+	return fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45798, false)
+}
+
 // checkTableCacheable checks whether a query accessing this table is cacheable.
 func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
 	tableSchema := node.Schema
@@ -653,9 +657,12 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 		*/
 		return false, "query accesses partitioned tables is un-cacheable"
 	}
-	for _, col := range tb.Cols() {
-		if col.IsGenerated() {
-			return false, "query accesses generated columns is un-cacheable"
+
+	if !enablePlanCacheForGeneratedCols(sctx) {
+		for _, col := range tb.Cols() {
+			if col.IsGenerated() {
+				return false, "query accesses generated columns is un-cacheable"
+			}
 		}
 	}
 	if tb.Meta().TempTableType != model.TempTableNone {
