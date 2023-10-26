@@ -807,10 +807,14 @@ func (sr *SchemasReplace) deleteRange(job *model.Job) error {
 				}
 				newPhysicalTableIDs = append(newPhysicalTableIDs, newPid)
 			}
+
+			// logical table may contain global index regions, so delete the logical table range.
+			newPhysicalTableIDs = append(newPhysicalTableIDs, tableReplace.TableID)
 			if len(newPhysicalTableIDs) > 0 {
 				sr.insertDeleteRangeForTable(newJobID, newPhysicalTableIDs)
 			}
-			// logical table may contain global index regions, so delete the logical table range.
+
+			return nil
 		}
 
 		sr.insertDeleteRangeForTable(newJobID, []int64{tableReplace.TableID})
