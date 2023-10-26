@@ -146,7 +146,9 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasks done")
 			return
 		case <-ticker.C:
+			logutil.Logger(m.logCtx).Info("ywq test still fetching?")
 			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
+
 			if err != nil {
 				m.logErr(err)
 				continue
@@ -189,7 +191,9 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 
 // onRunnableTasks handles runnable tasks.
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
+	logutil.BgLogger().Info("ywq test tasks", zap.Any("tasks", tasks))
 	tasks = m.filterAlreadyHandlingTasks(tasks)
+	logutil.BgLogger().Info("ywq test filtered tasks", zap.Any("tasks", tasks))
 	for _, task := range tasks {
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
@@ -379,6 +383,7 @@ func (m *Manager) removeHandlingTask(id int64) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.mu.handlingTasks, id)
+	logutil.Logger(m.logCtx).Info("ywq test removed one handling task", zap.Any("handling tasks", m.mu.handlingTasks))
 }
 
 func (m *Manager) logErr(err error) {

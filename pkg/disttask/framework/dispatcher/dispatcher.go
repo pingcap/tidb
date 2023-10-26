@@ -322,7 +322,7 @@ func (d *BaseDispatcher) onPending() error {
 // handle task in running state, check all running subtasks finished.
 // If subtasks finished, run into the next stage.
 func (d *BaseDispatcher) onRunning() error {
-	logutil.Logger(d.logCtx).Debug("on running state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
+	logutil.Logger(d.logCtx).Info("on running state", zap.Stringer("state", d.Task.State), zap.Int64("stage", int64(d.Task.Step)))
 	subTaskErrs, err := d.taskMgr.CollectSubTaskError(d.Task.ID)
 	if err != nil {
 		logutil.Logger(d.logCtx).Warn("collect subtask error failed", zap.Error(err))
@@ -339,6 +339,7 @@ func (d *BaseDispatcher) onRunning() error {
 		return err
 	}
 
+	logutil.Logger(d.logCtx).Info("ywq test subtask in pending and running cnt", zap.Any("cnt", cnt))
 	if cnt == 0 {
 		return d.onNextStage()
 	}
