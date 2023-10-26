@@ -275,8 +275,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	sc := e.ctx.GetSessionVars().StmtCtx
 
 	// Start workers to merge the result from collectors.
-	mergeResultCh := make(chan *samplingMergeResult, samplingStatsConcurrency)
-	mergeTaskCh := make(chan []byte, samplingStatsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, 1)
+	mergeTaskCh := make(chan []byte, 1)
 	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
