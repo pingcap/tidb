@@ -147,7 +147,6 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 			return
 		case <-ticker.C:
 			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
-
 			if err != nil {
 				m.logErr(err)
 				continue
