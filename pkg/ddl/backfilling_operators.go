@@ -189,7 +189,7 @@ func NewWriteIndexToExternalStoragePipeline(
 		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
 	}
 	readerCnt := int(variable.GetDDLReorgWorkerCounter())
-	writerCnt := 1
+	writerCnt := readerCnt / 2
 
 	backend, err := storage.ParseBackend(extStoreURI, nil)
 	if err != nil {
@@ -505,24 +505,25 @@ func NewWriteExternalStoreOperator(
 	shareMu *sync.Mutex,
 	memoryQuota uint64,
 ) *WriteExternalStoreOperator {
+	var writersRef atomic.Int64
+	writers := make([]ingest.Writer, 0, len(indexes))
+	for _, index := range indexes {
+		builder := external.NewWriterBuilder().
+			SetOnCloseFunc(onClose).
+			SetKeyDuplicationEncoding(index.Meta().Unique).
+			SetMutex(shareMu).
+			SetMemorySizeLimit(memoryQuota)
+		writerID := uuid.New().String()
+		prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
+		writer := builder.Build(store, prefix, writerID)
+		writers = append(writers, writer)
+	}
 	pool := workerpool.NewWorkerPool(
 		"WriteExternalStoreOperator",
 		util.DDL,
 		concurrency,
 		func() workerpool.Worker[IndexRecordChunk, IndexWriteResult] {
-			writers := make([]ingest.Writer, 0, len(indexes))
-			for _, index := range indexes {
-				builder := external.NewWriterBuilder().
-					SetOnCloseFunc(onClose).
-					SetKeyDuplicationEncoding(index.Meta().Unique).
-					SetMutex(shareMu).
-					SetMemorySizeLimit(memoryQuota)
-				writerID := uuid.New().String()
-				prefix := path.Join(strconv.Itoa(int(jobID)), strconv.Itoa(int(subtaskID)))
-				writer := builder.Build(store, prefix, writerID)
-				writers = append(writers, writer)
-			}
-
+			writersRef.Add(1)
 			return &indexIngestWorker{
 				ctx:          ctx,
 				tbl:          tbl,
@@ -531,6 +532,7 @@ func NewWriteExternalStoreOperator(
 				se:           nil,
 				sessPool:     sessPool,
 				writers:      writers,
+				writersRef:   &writersRef,
 				srcChunkPool: srcChunkPool,
 			}
 		})
@@ -607,6 +609,7 @@ type indexIngestWorker struct {
 	se       *session.Session
 
 	writers      []ingest.Writer
+	writersRef   *atomic.Int64
 	srcChunkPool chan *chunk.Chunk
 }
 
@@ -646,10 +649,12 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 }
 
 func (w *indexIngestWorker) Close() {
-	for _, writer := range w.writers {
-		err := writer.Close(w.ctx)
-		if err != nil {
-			w.ctx.onError(err)
+	if w.writersRef.Add(-1) == 0 {
+		for _, writer := range w.writers {
+			err := writer.Close(w.ctx)
+			if err != nil {
+				w.ctx.onError(err)
+			}
 		}
 	}
 	if w.se != nil {
