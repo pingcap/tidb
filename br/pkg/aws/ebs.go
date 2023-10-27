@@ -292,12 +292,10 @@ func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string)
 
 	eg, _ := errgroup.WithContext(context.Background())
 
-	workerPool := utils.NewWorkerPool(uint(len(snapshotsIDsMap)), "enable snapshot FSR")
-
 	for availableZone := range snapshotsIDsMap {
 		targetAZ := availableZone
-		workerPool.ApplyOnErrorGroup(eg, func() error {
-			log.Info("enable fsr for snapshots", zap.String("available zone", availableZone))
+		eg.Go(func() error {
+			log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ))
 			resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
 				AvailabilityZones: []*string{&targetAZ},
 				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
@@ -380,11 +378,9 @@ func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error 
 
 	eg, _ := errgroup.WithContext(context.Background())
 
-	workerPool := utils.NewWorkerPool(uint(len(snapshotsIDsMap)), "disable snapshot FSR")
-
 	for availableZone := range snapshotsIDsMap {
 		targetAZ := availableZone
-		workerPool.ApplyOnErrorGroup(eg, func() error {
+		eg.Go(func() error {
 			resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
 				AvailabilityZones: []*string{&targetAZ},
 				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
