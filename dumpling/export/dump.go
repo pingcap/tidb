@@ -142,6 +142,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
 	initColTypeRowReceiverMap()
+	initUsedBinaryFormat(DialectBinaryFormatMap[d.conf.CsvOutputDialect])
 	var (
 		conn    *sql.Conn
 		err     error
