@@ -141,6 +141,10 @@ func (c *coalesceFunctionClass) getFunction(ctx sessionctx.Context, args []Expre
 		return nil, err
 	}
 
+	if resultFieldType.GetType() == mysql.TypeDate {
+		bf.setDecimalAndFlenForDate()
+	}
+
 	bf.tp.AddFlag(resultFieldType.GetFlag())
 	resultFieldType.SetFlen(0)
 	resultFieldType.SetDecimal(types.UnspecifiedLength)

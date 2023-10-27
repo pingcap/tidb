@@ -406,7 +406,7 @@ func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 		res, isNull, err = sf.EvalReal(sf.GetCtx(), row)
 	case types.ETDecimal:
 		res, isNull, err = sf.EvalDecimal(sf.GetCtx(), row)
-	case types.ETDatetime, types.ETTimestamp:
+	case types.ETDatetime, types.ETTimestamp: // TODO maybe we need to add typoes.ETDate
 		res, isNull, err = sf.EvalTime(sf.GetCtx(), row)
 	case types.ETDuration:
 		res, isNull, err = sf.EvalDuration(sf.GetCtx(), row)
