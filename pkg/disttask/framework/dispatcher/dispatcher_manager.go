@@ -129,7 +129,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 func (dm *Manager) Start() {
 	dm.wg.Run(dm.dispatchTaskLoop)
 	dm.wg.Run(dm.gcSubtaskHistoryTableLoop)
-	//dm.wg.Run(dm.cleanUpLoop)
+	dm.wg.Run(dm.cleanUpLoop)
 	dm.inited = true
 }
 
