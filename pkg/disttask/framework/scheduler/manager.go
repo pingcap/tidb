@@ -25,8 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -34,9 +36,10 @@ import (
 var (
 	schedulerPoolSize int32 = 4
 	// same as dispatcher
-	checkTime        = 300 * time.Millisecond
-	retrySQLTimes    = 3
-	retrySQLInterval = 500 * time.Millisecond
+	checkTime           = 300 * time.Millisecond
+	recoverMetaInterval = 90 * time.Second
+	retrySQLTimes       = 30
+	retrySQLInterval    = 500 * time.Millisecond
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -70,7 +73,7 @@ type Manager struct {
 	}
 	// id, it's the same as server id now, i.e. host:port.
 	id      string
-	wg      sync.WaitGroup
+	wg      tidbutil.WaitGroupWrapper
 	ctx     context.Context
 	cancel  context.CancelFunc
 	logCtx  context.Context
@@ -97,36 +100,33 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	return m, nil
 }
 
-// Start starts the Manager.
-func (m *Manager) Start() error {
-	logutil.Logger(m.logCtx).Debug("manager start")
-	var err error
+func (m *Manager) initMeta() (err error) {
 	for i := 0; i < retrySQLTimes; i++ {
 		err = m.taskTable.StartManager(m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
 		}
 		if i%10 == 0 {
-			logutil.Logger(m.logCtx).Warn("start manager failed", zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
-				zap.Int("retry times", retrySQLTimes), zap.Error(err))
+			logutil.Logger(m.logCtx).Warn("start manager failed",
+				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
+				zap.Int("retry times", i),
+				zap.Error(err))
 		}
 		time.Sleep(retrySQLInterval)
 	}
-	if err != nil {
+	return err
+}
+
+// Start starts the Manager.
+func (m *Manager) Start() error {
+	logutil.Logger(m.logCtx).Debug("manager start")
+	if err := m.initMeta(); err != nil {
 		return err
 	}
 
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		m.fetchAndHandleRunnableTasks(m.ctx)
-	}()
-
-	m.wg.Add(1)
-	go func() {
-		defer m.wg.Done()
-		m.fetchAndFastCancelTasks(m.ctx)
-	}()
+	m.wg.Run(m.fetchAndHandleRunnableTasksLoop)
+	m.wg.Run(m.fetchAndFastCancelTasksLoop)
+	m.wg.Run(m.recoverMetaLoop)
 	return nil
 }
 
@@ -138,12 +138,13 @@ func (m *Manager) Stop() {
 }
 
 // fetchAndHandleRunnableTasks fetches the runnable tasks from the global task table and handles them.
-func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
+func (m *Manager) fetchAndHandleRunnableTasksLoop() {
+	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndHandleRunnableTasksLoop", m.fetchAndHandleRunnableTasksLoop, false)
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
-		case <-ctx.Done():
-			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasks done")
+		case <-m.ctx.Done():
+			logutil.Logger(m.logCtx).Info("fetchAndHandleRunnableTasksLoop done")
 			return
 		case <-ticker.C:
 			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateRunning, proto.TaskStateReverting)
@@ -151,19 +152,21 @@ func (m *Manager) fetchAndHandleRunnableTasks(ctx context.Context) {
 				m.logErr(err)
 				continue
 			}
-			m.onRunnableTasks(ctx, tasks)
+			m.onRunnableTasks(m.ctx, tasks)
 		}
 	}
 }
 
 // fetchAndFastCancelTasks fetches the reverting/pausing tasks from the global task table and fast cancels them.
-func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
+func (m *Manager) fetchAndFastCancelTasksLoop() {
+	defer tidbutil.Recover(metrics.LabelDomain, "fetchAndFastCancelTasksLoop", m.fetchAndFastCancelTasksLoop, false)
+
 	ticker := time.NewTicker(checkTime)
 	for {
 		select {
-		case <-ctx.Done():
+		case <-m.ctx.Done():
 			m.cancelAllRunningTasks()
-			logutil.Logger(m.logCtx).Info("fetchAndFastCancelTasks done")
+			logutil.Logger(m.logCtx).Info("fetchAndFastCancelTasksLoop done")
 			return
 		case <-ticker.C:
 			tasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStateReverting)
@@ -171,7 +174,7 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 				m.logErr(err)
 				continue
 			}
-			m.onCanceledTasks(ctx, tasks)
+			m.onCanceledTasks(m.ctx, tasks)
 
 			// cancel pending/running subtasks, and mark them as paused.
 			pausingTasks, err := m.taskTable.GetGlobalTasksInStates(proto.TaskStatePausing)
@@ -189,6 +192,9 @@ func (m *Manager) fetchAndFastCancelTasks(ctx context.Context) {
 
 // onRunnableTasks handles runnable tasks.
 func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
+	if len(tasks) == 0 {
+		return
+	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 	for _, task := range tasks {
 		exist, err := m.taskTable.HasSubtasksInStates(m.id, task.ID, task.Step,
@@ -221,6 +227,9 @@ func (m *Manager) onRunnableTasks(ctx context.Context, tasks []*proto.Task) {
 
 // onCanceledTasks cancels the running subtasks.
 func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
+	if len(tasks) == 0 {
+		return
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
@@ -234,6 +243,9 @@ func (m *Manager) onCanceledTasks(_ context.Context, tasks []*proto.Task) {
 
 // onPausingTasks pauses/cancels the pending/running subtasks.
 func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
+	if len(tasks) == 0 {
+		return nil
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
@@ -248,6 +260,28 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 		}
 	}
 	return nil
+}
+
+// recoverMetaLoop inits and recovers dist_framework_meta for the tidb node running the scheduler manager.
+// This is necessary when the TiDB node experiences a prolonged network partition
+// and the dispatcher deletes `dist_framework_meta`.
+// When the TiDB node recovers from the network partition,
+// we need to re-insert the metadata.
+func (m *Manager) recoverMetaLoop() {
+	defer tidbutil.Recover(metrics.LabelDomain, "recoverMetaLoop", m.recoverMetaLoop, false)
+	ticker := time.NewTicker(recoverMetaInterval)
+	for {
+		select {
+		case <-m.ctx.Done():
+			logutil.Logger(m.logCtx).Info("recoverMetaLoop done")
+			return
+		case <-ticker.C:
+			if err := m.initMeta(); err != nil {
+				m.logErr(err)
+				continue
+			}
+		}
+	}
 }
 
 // cancelAllRunningTasks cancels all running tasks.
