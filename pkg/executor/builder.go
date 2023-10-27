@@ -562,7 +562,9 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 
 	if tblInfo.IsCommonHandle {
 		for _, c := range pkCols {
-			columns = append(columns, tblInfo.Columns[c.Offset])
+			if model.FindColumnInfo(columns, c.Name.L) == nil {
+				columns = append(columns, tblInfo.Columns[c.Offset])
+			}
 		}
 		return columns
 	}
@@ -633,8 +635,12 @@ func buildHandleColsForExec(sctx *stmtctx.StatementContext, tblInfo *model.Table
 		}
 	}
 	pkIdx := tables.FindPrimaryIndex(tblInfo)
-	for i, c := range pkIdx.Columns {
-		tblCols[c.Offset].Index = len(idxInfo.Columns) + i
+	for _, c := range pkIdx.Columns {
+		for j, colInfo := range allColInfo {
+			if colInfo.Name.L == c.Name.L {
+				tblCols[c.Offset].Index = j
+			}
+		}
 	}
 	return plannercore.NewCommonHandleCols(sctx, tblInfo, pkIdx, tblCols)
 }
