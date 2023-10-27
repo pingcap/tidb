@@ -277,8 +277,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	sc := e.ctx.GetSessionVars().StmtCtx
 
 	// Start workers to merge the result from collectors.
-	mergeResultCh := make(chan *samplingMergeResult, samplingStatsConcurrency)
-	mergeTaskCh := make(chan []byte, samplingStatsConcurrency)
+	mergeResultCh := make(chan *samplingMergeResult, 1)
+	mergeTaskCh := make(chan []byte, 1)
 	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
@@ -465,8 +465,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 
 	count = rootRowCollector.Base().Count
 	if needExtStats {
-		statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-		extStats, err = statsHandle.BuildExtendedStats(e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
+		extStats, err = statistics.BuildExtendedStats(e.ctx, e.TableID.GetStatisticsID(), e.colsInfo, sampleCollectors)
 		if err != nil {
 			return 0, nil, nil, nil, nil, err
 		}

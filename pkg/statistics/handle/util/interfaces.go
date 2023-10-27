@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -218,6 +219,9 @@ type StatsReadWriter interface {
 	// TableStatsFromStorage loads table stats info from storage.
 	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
 
+	// LoadTablePartitionStats loads partition stats info from storage.
+	LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)
+
 	// StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 	StatsMetaCountAndModifyCount(tableID int64) (count, modifyCount int64, err error)
 
@@ -293,6 +297,21 @@ type StatsReadWriter interface {
 	SaveExtendedStatsToStorage(tableID int64, extStats *statistics.ExtendedStatsColl, isLoad bool) (err error)
 }
 
+// StatsGlobal is used to manage partition table global stats.
+type StatsGlobal interface {
+	// MergePartitionStats2GlobalStatsByTableID merges partition stats to global stats by table ID.
+	MergePartitionStats2GlobalStatsByTableID(sctx sessionctx.Context,
+		opts map[ast.AnalyzeOptionType]uint64, is infoschema.InfoSchema,
+		physicalID int64,
+		isIndex bool,
+		histIDs []int64,
+		_ map[int64]*statistics.Table,
+	) (globalStats interface{}, err error)
+
+	// UpdateGlobalStats will trigger the merge of global-stats when we drop table partition
+	UpdateGlobalStats(tblInfo *model.TableInfo) error
+}
+
 // StatsHandle is used to manage TiDB Statistics.
 type StatsHandle interface {
 	// GPool returns the goroutine pool.
@@ -342,4 +361,7 @@ type StatsHandle interface {
 
 	// StatsReadWriter is used to read and write stats to the storage.
 	StatsReadWriter
+
+	// StatsGlobal is used to manage partition table global stats.
+	StatsGlobal
 }
