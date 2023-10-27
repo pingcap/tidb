@@ -537,6 +537,10 @@ func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	return true
 }
 
+// BR also uses jobNeedGC to determine whether a history job needs to construct a delete range.
+// Therefore, please make sure any modification is compatible with BR.
+var JobNeedGCForBR = jobNeedGC
+
 func jobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
 		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {

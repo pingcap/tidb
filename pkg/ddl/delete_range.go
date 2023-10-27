@@ -17,7 +17,6 @@ package ddl
 import (
 	"context"
 	"encoding/hex"
-	"fmt"
 	"math"
 	"strings"
 	"sync"
@@ -364,29 +363,18 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 				return errors.Trace(err)
 			}
 		}
-		for _, indexID := range allIndexIDs {
-			// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
-			if len(partitionIDs) == 0 {
-				startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-				elemID := ea.allocForIndexID(tableID, indexID)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("index ID is %d", indexID)); err != nil {
-					return errors.Trace(err)
-				}
-				continue
+		// partitionIDs len is 0 if the dropped index is a global index, even if it is a partitioned table.
+		if len(partitionIDs) == 0 {
+			return errors.Trace(wrapper.DoBatchDeleteIndiceRange(ctx, job.ID, tableID, allIndexIDs, "drop index: table ID"))
+		}
+		failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("drop global index must not delete partition index range")
 			}
-			failpoint.Inject("checkDropGlobalIndex", func(val failpoint.Value) {
-				if val.(bool) {
-					panic("drop global index must not delete partition index range")
-				}
-			})
-			for _, pid := range partitionIDs {
-				startKey := tablecodec.EncodeTableIndexPrefix(pid, indexID)
-				endKey := tablecodec.EncodeTableIndexPrefix(pid, indexID+1)
-				elemID := ea.allocForIndexID(pid, indexID)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", pid)); err != nil {
-					return errors.Trace(err)
-				}
+		})
+		for _, pid := range partitionIDs {
+			if err := wrapper.DoBatchDeleteIndiceRange(ctx, job.ID, pid, allIndexIDs, "drop index: partition table ID"); err != nil {
+				return errors.Trace(err)
 			}
 		}
 	case model.ActionDropColumn:
