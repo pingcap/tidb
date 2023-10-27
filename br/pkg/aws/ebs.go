@@ -281,6 +281,152 @@ func (e *EC2Session) DeleteSnapshots(snapIDMap map[string]string) {
 	log.Info("delete snapshot end", zap.Int("need-to-del", len(snapIDMap)), zap.Int32("deleted", deletedCnt.Load()))
 }
 
+// EnableDataFSR enables FSR for data volume snapshots
+func (e *EC2Session) EnableDataFSR(meta *config.EBSBasedBRMeta, targetAZ string) (map[string][]*string, error) {
+	snapshotsIDsMap := fetchTargetSnapshots(meta, targetAZ)
+
+	if len(snapshotsIDsMap) == 0 {
+		return snapshotsIDsMap, errors.Errorf("empty backup meta")
+	}
+
+	eg, _ := errgroup.WithContext(context.Background())
+
+	for availableZone := range snapshotsIDsMap {
+		targetAZ := availableZone
+		eg.Go(func() error {
+			log.Info("enable fsr for snapshots", zap.String("available zone", targetAZ))
+			resp, err := e.ec2.EnableFastSnapshotRestores(&ec2.EnableFastSnapshotRestoresInput{
+				AvailabilityZones: []*string{&targetAZ},
+				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
+			})
+
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if len(resp.Unsuccessful) > 0 {
+				log.Warn("not all snapshots enabled FSR")
+				return errors.Errorf("Some snapshot fails to enable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+			}
+
+			return e.waitDataFSREnabled(snapshotsIDsMap[targetAZ], targetAZ)
+		})
+	}
+	return snapshotsIDsMap, eg.Wait()
+}
+
+// waitDataFSREnabled waits FSR for data volume snapshots are all enabled
+func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) error {
+	// Create a map to store the strings as keys
+	pendingSnapshots := make(map[string]struct{})
+
+	// Populate the map with the strings from the array
+	for _, str := range snapShotIDs {
+		pendingSnapshots[*str] = struct{}{}
+	}
+
+	log.Info("starts check fsr pending snapshots", zap.Any("snapshots", pendingSnapshots), zap.String("available zone", targetAZ))
+	for {
+		if len(pendingSnapshots) == 0 {
+			log.Info("all snapshots fsr enablement is finished", zap.String("available zone", targetAZ))
+			return nil
+		}
+
+		// check pending snapshots every 1 minute
+		time.Sleep(1 * time.Minute)
+		log.Info("check snapshots not fsr enabled", zap.Int("count", len(pendingSnapshots)))
+		input := &ec2.DescribeFastSnapshotRestoresInput{
+			Filters: []*ec2.Filter{
+				{
+					Name:   aws.String("state"),
+					Values: []*string{aws.String("disabled"), aws.String("disabling"), aws.String("enabling"), aws.String("optimizing")},
+				},
+				{
+					Name:   aws.String("availability-zone"),
+					Values: []*string{aws.String(targetAZ)},
+				},
+			},
+		}
+
+		result, err := e.ec2.DescribeFastSnapshotRestores(input)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		uncompletedSnapshots := make(map[string]struct{})
+		for _, fastRestore := range result.FastSnapshotRestores {
+			_, found := pendingSnapshots[*fastRestore.SnapshotId]
+			if found {
+				// Detect some conflict states
+				if strings.EqualFold(*fastRestore.State, "disabled") || strings.EqualFold(*fastRestore.State, "disabling") {
+					log.Error("detect conflict status", zap.String("snapshot", *fastRestore.SnapshotId), zap.String("status", *fastRestore.State))
+					return errors.Errorf("status of snapshot %s is %s ", *fastRestore.SnapshotId, *fastRestore.State)
+				}
+				uncompletedSnapshots[*fastRestore.SnapshotId] = struct{}{}
+			}
+		}
+		pendingSnapshots = uncompletedSnapshots
+	}
+}
+
+// DisableDataFSR disables FSR for data volume snapshots
+func (e *EC2Session) DisableDataFSR(snapshotsIDsMap map[string][]*string) error {
+	if len(snapshotsIDsMap) == 0 {
+		return nil
+	}
+
+	eg, _ := errgroup.WithContext(context.Background())
+
+	for availableZone := range snapshotsIDsMap {
+		targetAZ := availableZone
+		eg.Go(func() error {
+			resp, err := e.ec2.DisableFastSnapshotRestores(&ec2.DisableFastSnapshotRestoresInput{
+				AvailabilityZones: []*string{&targetAZ},
+				SourceSnapshotIds: snapshotsIDsMap[targetAZ],
+			})
+
+			if err != nil {
+				return errors.Trace(err)
+			}
+
+			if len(resp.Unsuccessful) > 0 {
+				log.Warn("not all snapshots disabled FSR", zap.String("available zone", targetAZ))
+				return errors.Errorf("Some snapshot fails to disable FSR for available zone %s, such as %s, error code is %v", targetAZ, *resp.Unsuccessful[0].SnapshotId, resp.Unsuccessful[0].FastSnapshotRestoreStateErrors)
+			}
+
+			log.Info("Disable FSR issued", zap.String("available zone", targetAZ))
+
+			return nil
+		})
+	}
+	return eg.Wait()
+}
+
+func fetchTargetSnapshots(meta *config.EBSBasedBRMeta, specifiedAZ string) map[string][]*string {
+	var sourceSnapshotIDs = make(map[string][]*string)
+
+	if len(meta.TiKVComponent.Stores) == 0 {
+		return sourceSnapshotIDs
+	}
+
+	for i := range meta.TiKVComponent.Stores {
+		store := meta.TiKVComponent.Stores[i]
+		for j := range store.Volumes {
+			oldVol := store.Volumes[j]
+			// Handle data volume snapshots only
+			if strings.Compare(oldVol.Type, "storage.data-dir") == 0 {
+				if specifiedAZ != "" {
+					sourceSnapshotIDs[specifiedAZ] = append(sourceSnapshotIDs[specifiedAZ], &oldVol.SnapshotID)
+				} else {
+					sourceSnapshotIDs[oldVol.VolumeAZ] = append(sourceSnapshotIDs[oldVol.VolumeAZ], &oldVol.SnapshotID)
+				}
+			}
+		}
+	}
+
+	return sourceSnapshotIDs
+}
+
 // CreateVolumes create volumes from snapshots
 // if err happens in the middle, return half-done result
 // returned map: store id -> old volume id -> new volume id
@@ -377,7 +523,7 @@ func (e *EC2Session) WaitVolumesCreated(volumeIDMap map[string]string, progress 
 	for len(pendingVolumes) > 0 {
 		// check every 5 seconds
 		time.Sleep(5 * time.Second)
-		log.Info("check pending snapshots", zap.Int("count", len(pendingVolumes)))
+		log.Info("check pending volumes", zap.Int("count", len(pendingVolumes)))
 		resp, err := e.ec2.DescribeVolumes(&ec2.DescribeVolumesInput{
 			VolumeIds: pendingVolumes,
 		})
