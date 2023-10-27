@@ -33,6 +33,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/parser",
+        "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "//pkg/util/stmtsummary/v2:stmtsummary",
         "//pkg/util/table-filter",
