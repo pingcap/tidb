@@ -95,15 +95,12 @@ func (dsp *BackfillingDispatcherExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		instancesForLocal := 0
-		if !dsp.GlobalSort {
-			is, err := dsp.GetEligibleInstances(ctx, gTask)
-			if err != nil {
-				return nil, err
-			}
-			instancesForLocal = len(is)
+		is, err := dsp.GetEligibleInstances(ctx, gTask)
+		if err != nil {
+			return nil, err
 		}
-		return generateNonPartitionPlan(dsp.d, tblInfo, job, instancesForLocal)
+		instanceCnt := len(is)
+		return generateNonPartitionPlan(dsp.d, tblInfo, job, dsp.GlobalSort, instanceCnt)
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, gTask, logger)
 		if err != nil {
@@ -279,7 +276,7 @@ func generatePartitionPlan(tblInfo *model.TableInfo) (metas [][]byte, err error)
 }
 
 func generateNonPartitionPlan(
-	d *ddl, tblInfo *model.TableInfo, job *model.Job, instanceForLocal int) (metas [][]byte, err error) {
+	d *ddl, tblInfo *model.TableInfo, job *model.Job, useCloud bool, instanceCnt int) (metas [][]byte, err error) {
 	tbl, err := getTable(d.store, job.SchemaID, tblInfo)
 	if err != nil {
 		return nil, err
@@ -302,15 +299,13 @@ func generateNonPartitionPlan(
 		return nil, err
 	}
 
-	regionBatch := 20
-	if instanceForLocal > 0 {
+	regionBatch := 100
+	if !useCloud {
 		// Make subtask large enough to reduce the overhead of local/global flush.
 		quota := variable.DDLDiskQuota.Load()
-		regionBatch = min(
-			int(int64(quota)/int64(config.SplitRegionSize)),
-			len(recordRegionMetas)/instanceForLocal,
-		)
+		regionBatch = int(int64(quota) / int64(config.SplitRegionSize))
 	}
+	regionBatch = min(regionBatch, len(recordRegionMetas)/instanceCnt)
 
 	subTaskMetas := make([][]byte, 0, 4)
 	sort.Slice(recordRegionMetas, func(i, j int) bool {
