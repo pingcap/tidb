@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"path"
 	"strconv"
 	"sync"
@@ -440,6 +441,8 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 			return err
 		}
 		var done bool
+		totalBytes := int64(0)
+		startTime := time.Now()
 		for !done {
 			srcChk := w.getChunk()
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
@@ -448,9 +451,12 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 				terror.Call(rs.Close)
 				return err
 			}
+			totalBytes += srcChk.MemoryUsage()
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
 			sender(idxResult)
 		}
+		rate := float64(totalBytes) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
+		metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
 		return rs.Close()
 	})
 	if err != nil {
