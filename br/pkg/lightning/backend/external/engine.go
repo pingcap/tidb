@@ -164,8 +164,13 @@ func (e *Engine) LoadIngestData(
 	concurrency := e.getAdjustedConcurrency()
 	rangeGroups := split(regionRanges, concurrency)
 
-	logutil.Logger(ctx).Info("load ingest data", zap.Int("concurrency", concurrency),
-		zap.Int("range-groups", len(rangeGroups)))
+	logutil.Logger(ctx).Info("load ingest data",
+		zap.Int("concurrency", concurrency),
+		zap.Int("ranges", len(regionRanges)),
+		zap.Int("range-groups", len(rangeGroups)),
+		zap.Int("data-files", len(e.dataFiles)),
+		zap.Bool("check-hotspot", e.checkHotspot),
+	)
 	eg, egCtx := errgroup.WithContext(ctx)
 	for _, ranges := range rangeGroups {
 		ranges := ranges
