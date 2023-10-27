@@ -585,8 +585,8 @@ func isRetryableError(err error) bool {
 		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
 		return ok
 	}
-	// For the unknown errors, we should retry.
-	return true
+	// can't retry Unknown err
+	return false
 }
 
 // markSubTaskCanceledOrFailed check the error type and decide the subtasks' state.
