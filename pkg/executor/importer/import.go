@@ -18,7 +18,6 @@ import (
 	"context"
 	"io"
 	"math"
-	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -937,13 +936,7 @@ func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, ta
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
 	}
 
-	transport, _ := storage.CloneDefaultHttpTransport()
-	transport.DisableKeepAlives = true
-	opt := &storage.ExternalStorageOptions{
-		HTTPClient: &http.Client{
-			Transport: transport,
-		},
-	}
+	opt := &storage.ExternalStorageOptions{}
 	if intest.InTest {
 		opt.NoCredentials = true
 	}
