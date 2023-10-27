@@ -141,7 +141,8 @@ func (e *Engine) LoadIngestData(
 		concurrency = int(MergeSortOverlapThreshold) / len(e.dataFiles)
 		concurrency = min(concurrency, 8)
 	} else {
-		concurrency = e.workerConcurrency
+		concurrency = min(e.workerConcurrency, 8000/len(e.dataFiles))
+		concurrency = max(concurrency, 1)
 	}
 	rangeGroups := split(regionRanges, concurrency)
 
