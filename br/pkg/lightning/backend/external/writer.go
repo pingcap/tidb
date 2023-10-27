@@ -327,6 +327,9 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	}
 	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
 	length := encodedKeyLen + len(idxVal) + lengthBytes*2
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
 	blockIdx, dataBuf, off, allocated := w.kvBuffer.Alloc(length)
 	if !allocated {
 		if err := w.flushKVs(ctx, false); err != nil {
@@ -357,10 +360,7 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 // Since flushKVs is thread-safe in external storage writer,
 // this is implemented as noop.
 func (w *Writer) LockForWrite() func() {
-	w.mu.Lock()
-	return func() {
-		w.mu.Unlock()
-	}
+	return func() {}
 }
 
 // Close closes the writer.
