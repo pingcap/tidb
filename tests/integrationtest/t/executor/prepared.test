@@ -146,11 +146,13 @@ select @@last_plan_from_cache;
 
 # TestPreparedStmtWithHint
 ## https://github.com/pingcap/tidb/issues/18535
-prepare stmt from "select /*+ max_execution_time(100) */ sleep(1)";
-execute stmt;
+prepare stmt from "select /*+ max_execution_time(10) */ sleep(3)";
 set @a=now();
-select /*+ max_execution_time(100) */ sleep(1);
-select timediff(now(), @a) < 1;
+execute stmt;
+select timediff(now(), @a) < 3;
+set @a=now();
+select /*+ max_execution_time(10) */ sleep(3);
+select timediff(now(), @a) < 3;
 
 ## see https://github.com/pingcap/tidb/issues/46817
 drop table if exists t;

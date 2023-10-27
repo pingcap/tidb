@@ -208,16 +208,20 @@ id	num
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
-prepare stmt from "select /*+ max_execution_time(100) */ sleep(1)";
+prepare stmt from "select /*+ max_execution_time(10) */ sleep(3)";
+set @a=now();
 execute stmt;
-sleep(1)
+sleep(3)
+1
+select timediff(now(), @a) < 3;
+timediff(now(), @a) < 3
 1
 set @a=now();
-select /*+ max_execution_time(100) */ sleep(1);
-sleep(1)
+select /*+ max_execution_time(10) */ sleep(3);
+sleep(3)
 1
-select timediff(now(), @a) < 1;
-timediff(now(), @a) < 1
+select timediff(now(), @a) < 3;
+timediff(now(), @a) < 3
 1
 drop table if exists t;
 create table t (i int);
