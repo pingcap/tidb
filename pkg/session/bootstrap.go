@@ -183,7 +183,7 @@ const (
 	// Maybe we will put it back to INFORMATION_SCHEMA.
 	CreateGlobalVariablesTable = `CREATE TABLE IF NOT EXISTS mysql.GLOBAL_VARIABLES(
 		VARIABLE_NAME  VARCHAR(64) NOT NULL PRIMARY KEY,
-		VARIABLE_VALUE VARCHAR(1024) DEFAULT NULL);`
+		VARIABLE_VALUE VARCHAR(16383) DEFAULT NULL);`
 	// CreateTiDBTable is the SQL statement creates a table in system db.
 	// This table is a key-value struct contains some information used by TiDB.
 	// Currently we only put bootstrapped in it which indicates if the system is already bootstrapped.
