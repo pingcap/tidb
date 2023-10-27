@@ -96,11 +96,9 @@ func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
 	}
 	defer dr.sessPool.Put(sctx)
 
-	if job.MultiSchemaInfo != nil {
-		err = insertJobIntoDeleteRangeTableMultiSchema(ctx, sctx, job)
-	} else {
-		err = insertJobIntoDeleteRangeTable(ctx, sctx, job, &elementIDAlloc{})
-	}
+	// The same Job ID uses the same element ID allocator
+	wrapper := newDelRangeExecWrapper(sctx, &elementIDAlloc{})
+	err = AddDelRangeJobInternal(ctx, wrapper, job)
 	if err != nil {
 		logutil.BgLogger().Error("add job into delete-range table failed", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.String("jobType", job.Type.String()), zap.Error(err))
 		return errors.Trace(err)
@@ -112,12 +110,21 @@ func (dr *delRange) addDelRangeJob(ctx context.Context, job *model.Job) error {
 	return nil
 }
 
-func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, sctx sessionctx.Context, job *model.Job) error {
-	var ea elementIDAlloc
+func AddDelRangeJobInternal(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job) error {
+	var err error
+	if job.MultiSchemaInfo != nil {
+		err = insertJobIntoDeleteRangeTableMultiSchema(ctx, wrapper, job)
+	} else {
+		err = insertJobIntoDeleteRangeTable(ctx, wrapper, job)
+	}
+	return errors.Trace(err)
+}
+
+func insertJobIntoDeleteRangeTableMultiSchema(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job) error {
 	for i, sub := range job.MultiSchemaInfo.SubJobs {
 		proxyJob := sub.ToProxyJob(job, i)
 		if jobNeedGC(&proxyJob) {
-			err := insertJobIntoDeleteRangeTable(ctx, sctx, &proxyJob, &ea)
+			err := insertJobIntoDeleteRangeTable(ctx, wrapper, &proxyJob)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -262,14 +269,12 @@ func (dr *delRange) doTask(sctx sessionctx.Context, r util.DelRangeTask) error {
 // insertJobIntoDeleteRangeTable parses the job into delete-range arguments,
 // and inserts a new record into gc_delete_range table. The primary key is
 // (job ID, element ID), so we ignore key conflict error.
-func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context, job *model.Job, ea *elementIDAlloc) error {
-	now, err := getNowTSO(sctx)
-	if err != nil {
+func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrapper, job *model.Job) error {
+	if err := wrapper.UpdateTSOForJob(); err != nil {
 		return errors.Trace(err)
 	}
 
 	ctx = kv.WithInternalSourceType(ctx, getDDLRequestSource(job.Type))
-	s := sctx.(sqlexec.SQLExecutor)
 	switch job.Type {
 	case model.ActionDropSchema:
 		var tableIDs []int64
@@ -281,7 +286,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			if batchEnd > i+batchInsertDeleteRangeSize {
 				batchEnd = i + batchInsertDeleteRangeSize
 			}
-			if err := doBatchInsert(ctx, s, job.ID, tableIDs[i:batchEnd], now, ea); err != nil {
+			if err := wrapper.DoBatchDeleteTablesRange(ctx, job.ID, tableIDs[i:batchEnd], "drop schema: table IDs"); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -295,24 +300,13 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			return errors.Trace(err)
 		}
 		if len(physicalTableIDs) > 0 {
-			for _, pid := range physicalTableIDs {
-				startKey = tablecodec.EncodeTablePrefix(pid)
-				endKey := tablecodec.EncodeTablePrefix(pid + 1)
-				elemID := ea.allocForPhysicalID(pid)
-				if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition ID is %d", pid)); err != nil {
-					return errors.Trace(err)
-				}
+			if err := wrapper.DoBatchDeleteTablesRange(ctx, job.ID, physicalTableIDs, "drop table: partition table IDs"); err != nil {
+				return errors.Trace(err)
 			}
 			// logical table may contain global index regions, so delete the logical table range.
-			startKey = tablecodec.EncodeTablePrefix(tableID)
-			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			elemID := ea.allocForPhysicalID(tableID)
-			return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
+			return errors.Trace(wrapper.DoBatchDeleteTablesRange(ctx, job.ID, []int64{tableID}, "drop table: table ID"))
 		}
-		startKey = tablecodec.EncodeTablePrefix(tableID)
-		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-		elemID := ea.allocForPhysicalID(tableID)
-		return doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("table ID is %d", tableID))
+		return errors.Trace(wrapper.DoBatchDeleteTablesRange(ctx, job.ID, []int64{tableID}, "drop table: table ID"))
 	case model.ActionDropTablePartition, model.ActionTruncateTablePartition,
 		model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
@@ -325,10 +319,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			return errors.Trace(err)
 		}
 		for _, physicalTableID := range physicalTableIDs {
-			startKey := tablecodec.EncodeTablePrefix(physicalTableID)
-			endKey := tablecodec.EncodeTablePrefix(physicalTableID + 1)
-			elemID := ea.allocForPhysicalID(physicalTableID)
-			if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("partition table ID is %d", physicalTableID)); err != nil {
+			if err := wrapper.DoBatchDeleteTablesRange(ctx, job.ID, []int64{physicalTableID}, "drop partition: physical table ID(s)"); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -357,13 +348,8 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 				indexIDs = []int64{tempIdxID}
 			}
 			for _, pid := range physicalIDs {
-				for _, iid := range indexIDs {
-					startKey := tablecodec.EncodeTableIndexPrefix(pid, iid)
-					endKey := tablecodec.EncodeTableIndexPrefix(pid, iid+1)
-					elemID := ea.allocForIndexID(pid, iid)
-					if err := doInsert(ctx, s, job.ID, elemID, startKey, endKey, now, fmt.Sprintf("physical ID is %d", pid)); err != nil {
-						return errors.Trace(err)
-					}
+				if err := wrapper.DoBatchDeleteIndiceRange(ctx, job.ID, pid, indexIDs, "add index: physical table ID(s)"); err != nil {
+					return errors.Trace(err)
 				}
 			}
 		}
@@ -410,10 +396,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 		}
 		if len(indexIDs) > 0 {
 			if len(partitionIDs) == 0 {
-				return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
+				return errors.Trace(wrapper.DoBatchDeleteIndiceRange(ctx, job.ID, job.TableID, indexIDs, "drop column: table ID"))
 			}
 			for _, pid := range partitionIDs {
-				if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pid, indexIDs, now, ea); err != nil {
+				if err := wrapper.DoBatchDeleteIndiceRange(ctx, job.ID, pid, indexIDs, "drop column: partition table ID"); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -428,10 +414,10 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 			return nil
 		}
 		if len(partitionIDs) == 0 {
-			return doBatchDeleteIndiceRange(ctx, s, job.ID, job.TableID, indexIDs, now, ea)
+			return wrapper.DoBatchDeleteIndiceRange(ctx, job.ID, job.TableID, indexIDs, "modify column: table ID")
 		}
 		for _, pid := range partitionIDs {
-			if err := doBatchDeleteIndiceRange(ctx, s, job.ID, pid, indexIDs, now, ea); err != nil {
+			if err := wrapper.DoBatchDeleteIndiceRange(ctx, job.ID, pid, indexIDs, "modify column: partition table ID"); err != nil {
 				return errors.Trace(err)
 			}
 		}
@@ -439,8 +425,29 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, sctx sessionctx.Context,
 	return nil
 }
 
-func doBatchDeleteIndiceRange(ctx context.Context, s sqlexec.SQLExecutor, jobID, tableID int64, indexIDs []int64, ts uint64, ea *elementIDAlloc) error {
-	logutil.BgLogger().Info("batch insert into delete-range indices", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("tableID", tableID), zap.Int64s("indexIDs", indexIDs))
+type DelRangeExecWrapper interface {
+	DoBatchDeleteIndiceRange(ctx context.Context, jobID, tableID int64, indexIDs []int64, comment string) error
+	DoBatchDeleteTablesRange(ctx context.Context, jobID int64, tableIDs []int64, comment string) error
+	UpdateTSOForJob() error
+}
+
+type sessionDelRangeExecWrapper struct {
+	ea   *elementIDAlloc
+	sctx sessionctx.Context
+	s    sqlexec.SQLExecutor
+	ts   uint64
+}
+
+func newDelRangeExecWrapper(sctx sessionctx.Context, ea *elementIDAlloc) DelRangeExecWrapper {
+	return &sessionDelRangeExecWrapper{
+		ea:   ea,
+		sctx: sctx,
+		s:    sctx.(sqlexec.SQLExecutor),
+	}
+}
+
+func (sdr *sessionDelRangeExecWrapper) DoBatchDeleteIndiceRange(ctx context.Context, jobID, tableID int64, indexIDs []int64, comment string) error {
+	logutil.BgLogger().Info("insert into delete-range indices", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("tableID", tableID), zap.Int64s("indexIDs", indexIDs), zap.String("comment", comment))
 	paramsList := make([]interface{}, 0, len(indexIDs)*5)
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
@@ -453,28 +460,19 @@ func doBatchDeleteIndiceRange(ctx context.Context, s sqlexec.SQLExecutor, jobID,
 		if i != len(indexIDs)-1 {
 			buf.WriteString(",")
 		}
-		elemID := ea.allocForIndexID(tableID, indexID)
-		paramsList = append(paramsList, jobID, elemID, startKeyEncoded, endKeyEncoded, ts)
+		elemID := sdr.ea.allocForIndexID(tableID, indexID)
+		paramsList = append(paramsList, jobID, elemID, startKeyEncoded, endKeyEncoded, sdr.ts)
 	}
-	_, err := s.ExecuteInternal(ctx, buf.String(), paramsList...)
-	return errors.Trace(err)
-}
-
-func doInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID, elementID int64, startKey, endKey kv.Key, ts uint64, comment string) error {
-	logutil.BgLogger().Info("insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64("elementID", elementID), zap.String("comment", comment))
-	startKeyEncoded := hex.EncodeToString(startKey)
-	endKeyEncoded := hex.EncodeToString(endKey)
 	// set session disk full opt
-	// TODO ddl txn func including an session pool txn, there may be a problem?
-	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := s.ExecuteInternal(ctx, insertDeleteRangeSQL, jobID, elementID, startKeyEncoded, endKeyEncoded, ts)
+	sdr.s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := sdr.s.ExecuteInternal(ctx, buf.String(), paramsList...)
 	// clear session disk full opt
-	s.ClearDiskFullOpt()
+	sdr.s.ClearDiskFullOpt()
 	return errors.Trace(err)
 }
 
-func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tableIDs []int64, ts uint64, ea *elementIDAlloc) error {
-	logutil.BgLogger().Info("batch insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs))
+func (sdr *sessionDelRangeExecWrapper) DoBatchDeleteTablesRange(ctx context.Context, jobID int64, tableIDs []int64, comment string) error {
+	logutil.BgLogger().Info("insert into delete-range table", zap.String("category", "ddl"), zap.Int64("jobID", jobID), zap.Int64s("tableIDs", tableIDs), zap.String("comment", comment))
 	var buf strings.Builder
 	buf.WriteString(insertDeleteRangeSQLPrefix)
 	paramsList := make([]interface{}, 0, len(tableIDs)*5)
@@ -487,15 +485,24 @@ func doBatchInsert(ctx context.Context, s sqlexec.SQLExecutor, jobID int64, tabl
 		if i != len(tableIDs)-1 {
 			buf.WriteString(",")
 		}
-		elemID := ea.allocForPhysicalID(tableID)
-		paramsList = append(paramsList, jobID, elemID, startKeyEncoded, endKeyEncoded, ts)
+		elemID := sdr.ea.allocForPhysicalID(tableID)
+		paramsList = append(paramsList, jobID, elemID, startKeyEncoded, endKeyEncoded, sdr.ts)
 	}
 	// set session disk full opt
-	s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
-	_, err := s.ExecuteInternal(ctx, buf.String(), paramsList...)
+	sdr.s.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
+	_, err := sdr.s.ExecuteInternal(ctx, buf.String(), paramsList...)
 	// clear session disk full opt
-	s.ClearDiskFullOpt()
+	sdr.s.ClearDiskFullOpt()
 	return errors.Trace(err)
+}
+
+func (sdr *sessionDelRangeExecWrapper) UpdateTSOForJob() error {
+	now, err := getNowTSO(sdr.sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	sdr.ts = now
+	return nil
 }
 
 // getNowTS gets the current timestamp, in TSO.
