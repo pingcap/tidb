@@ -1045,7 +1045,7 @@ func parseDatetime(sc *stmtctx.StatementContext, str string, fsp int, isFloat bo
 		l := len(seps[0])
 		// Values specified as numbers
 		if isFloat {
-			numOfTime, err := StrToInt(sc, seps[0], false)
+			numOfTime, err := StrToInt(sc.TypeCtxOrDefault(), seps[0], false)
 			if err != nil {
 				return ZeroDatetime, errors.Trace(ErrWrongValue.GenWithStackByArgs(DateTimeStr, str))
 			}
@@ -2045,7 +2045,7 @@ func ParseTimeFromNum(sc *stmtctx.StatementContext, num int64, tp byte, fsp int)
 	// MySQL compatibility: 0 should not be converted to null, see #11203
 	if num == 0 {
 		zt := NewTime(ZeroCoreTime, tp, DefaultFsp)
-		if sc != nil && sc.InCreateOrAlterStmt && !sc.TruncateAsWarning && sc.NoZeroDate {
+		if sc != nil && sc.InCreateOrAlterStmt && !sc.TypeFlags().TruncateAsWarning() && sc.NoZeroDate {
 			switch tp {
 			case mysql.TypeTimestamp:
 				return zt, ErrTruncatedWrongVal.GenWithStackByArgs(TimestampStr, "0")
@@ -2681,7 +2681,7 @@ func ParseTimeFromDecimal(sc *stmtctx.StatementContext, dec *MyDecimal) (t Time,
 	if err != nil && !terror.ErrorEqual(err, ErrTruncated) {
 		return ZeroTime, err
 	}
-	fsp := mathutil.Min(MaxFsp, int(dec.GetDigitsFrac()))
+	fsp := min(MaxFsp, int(dec.GetDigitsFrac()))
 	t, err = parseDateTimeFromNum(sc, intPart)
 	if err != nil {
 		return ZeroTime, err

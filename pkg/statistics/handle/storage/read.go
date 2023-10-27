@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
@@ -189,7 +187,7 @@ func ExtendedStatsFromStorage(sctx sessionctx.Context, table *statistics.Table, 
 		return table, nil
 	}
 	for _, row := range rows {
-		lastVersion = mathutil.Max(lastVersion, row.GetUint64(5))
+		lastVersion = max(lastVersion, row.GetUint64(5))
 		name := row.GetString(0)
 		status := uint8(row.GetInt64(1))
 		if status == statistics.ExtendedStatsDeleted || status == statistics.ExtendedStatsInited {
@@ -451,8 +449,8 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 		return nil, nil
 	}
 	for _, row := range rows {
-		if atomic.LoadUint32(&sctx.GetSessionVars().Killed) == 1 {
-			return nil, errors.Trace(statistics.ErrQueryInterrupted)
+		if err := sctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
 		}
 		if row.GetInt64(1) > 0 {
 			err = indexStatsFromStorage(sctx, row, table, tableInfo, loadAll, lease, tracker)

@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -544,7 +543,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 
 	var resp *sst.IngestResponse
 	for start := 0; start < len(j.writeResult.sstMeta); start += batch {
-		end := mathutil.Min(start+batch, len(j.writeResult.sstMeta))
+		end := min(start+batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))

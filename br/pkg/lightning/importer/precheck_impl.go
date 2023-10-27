@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/engine"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -280,8 +279,8 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 		}
 		tableCount += len(info.Tables)
 	}
-	errorThrehold := mathutil.Max(errorEmptyRegionCntPerStore, tableCount*3)
-	warnThrehold := mathutil.Max(warnEmptyRegionCntPerStore, tableCount)
+	errorThrehold := max(errorEmptyRegionCntPerStore, tableCount*3)
+	warnThrehold := max(warnEmptyRegionCntPerStore, tableCount)
 	var (
 		errStores  []string
 		warnStores []string
@@ -380,7 +379,7 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 		}
 		tableCount += len(info.Tables)
 	}
-	threhold := mathutil.Max(checkRegionCntRatioThreshold, tableCount)
+	threhold := max(checkRegionCntRatioThreshold, tableCount)
 	if maxStore.Status.RegionCount <= threhold {
 		return theResult, nil
 	}
@@ -1350,7 +1349,7 @@ func (ci *tableEmptyCheckItem) Check(ctx context.Context) (*precheck.CheckResult
 
 	var lock sync.Mutex
 	tableNames := make([]string, 0)
-	concurrency := mathutil.Min(tableCount, ci.cfg.App.RegionConcurrency)
+	concurrency := min(tableCount, ci.cfg.App.RegionConcurrency)
 	type tableNameComponents struct {
 		DBName    string
 		TableName string
