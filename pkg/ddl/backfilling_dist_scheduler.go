@@ -47,11 +47,11 @@ type BackfillGlobalMeta struct {
 
 // BackfillSubTaskMeta is the sub-task meta for backfilling index.
 type BackfillSubTaskMeta struct {
-	PhysicalTableID int64  `json:"physical_table_id"`
-	StartKey        []byte `json:"start_key"`
-	EndKey          []byte `json:"end_key"`
+	PhysicalTableID int64 `json:"physical_table_id"`
 
 	RangeSplitKeys        [][]byte `json:"range_split_keys"`
+	DataFiles             []string `json:"data-files"`
+	StatFiles             []string `json:"stat-files"`
 	external.SortedKVMeta `json:",inline"`
 }
 
