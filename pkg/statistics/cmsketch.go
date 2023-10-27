@@ -828,14 +828,12 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 
 // CheckEmptyTopNs checks whether all TopNs are empty.
 func CheckEmptyTopNs(topNs []*TopN) bool {
-	count := uint64(0)
 	for _, topN := range topNs {
-		count += topN.TotalCount()
-		if count != 0 {
+		if topN.TotalCount() != 0 {
 			return false
 		}
 	}
-	return count == 0
+	return true
 }
 
 // SortTopnMeta sort topnMeta
