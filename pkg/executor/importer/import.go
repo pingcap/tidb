@@ -1247,6 +1247,7 @@ func (e *LoadDataController) getBackendWorkerConcurrency() int {
 	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
 	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
 	// IO intensive, so CPU usage is below ThreadCnt in our tests.
+	// The real concurrency used is adjusted in external engine later.
 	// when using local sort, use the default value as lightning.
 	if e.IsGlobalSort() {
 		return int(e.ThreadCnt) * 2

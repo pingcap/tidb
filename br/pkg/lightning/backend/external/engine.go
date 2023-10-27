@@ -37,6 +37,16 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+// during test on ks3, we found that we can open about 8000 connections to ks3,
+// bigger than that, we might receive "connection reset by peer" error, and
+// the read speed will be very slow, still investigating the reason.
+// Also open too many connections will take many memory in kernel, and the
+// test is based on k8s pod, not sure how it will behave on EC2.
+// but, ks3 supporter says there's no such limit on connections.
+// And our target for global sort is AWS s3, this default value might not fit well.
+// TODO: adjust it according to cloud storage.
+const maxCloudStorageConnections = 8000
+
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
 	storage         storage.ExternalStorage
@@ -47,7 +57,14 @@ type Engine struct {
 	splitKeys       [][]byte
 	regionSplitSize int64
 	bufPool         *membuf.Pool
-	checkHotspot    bool
+	// checkHotspot is true means we will check hotspot file when using MergeKVIter.
+	// if hotspot file is detected, we will use multiple readers to read data.
+	// if it's false, MergeKVIter will read each file using 1 reader.
+	// this flag also affects the strategy of loading data, either:
+	// 	less load routine + check and read hotspot file concurrently (add-index uses this one)
+	// 	more load routine + read each file using 1 reader (import-into uses this one)
+	// TODO: if the second strategy is better for add-index too, we can remove this flag.
+	checkHotspot bool
 
 	keyAdapter         common.KeyAdapter
 	duplicateDetection bool
@@ -125,6 +142,17 @@ func split[T any](in []T, groupNum int) [][]T {
 	return ret
 }
 
+func (e *Engine) getAdjustedConcurrency() int {
+	if e.checkHotspot {
+		// estimate we will open at most 1000 files, so if e.dataFiles is small we can
+		// try to concurrently process ranges.
+		adjusted := int(MergeSortOverlapThreshold) / len(e.dataFiles)
+		return min(adjusted, 8)
+	}
+	adjusted := min(e.workerConcurrency, maxCloudStorageConnections/len(e.dataFiles))
+	return max(adjusted, 1)
+}
+
 // LoadIngestData loads the data from the external storage to memory in [start,
 // end) range, so local backend can ingest it. The used byte slice of ingest data
 // are allocated from Engine.bufPool and must be released by
@@ -134,16 +162,7 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// estimate we will open at most 1000 files, so if e.dataFiles is small we can
-	// try to concurrently process ranges.
-	var concurrency int
-	if e.checkHotspot {
-		concurrency = int(MergeSortOverlapThreshold) / len(e.dataFiles)
-		concurrency = min(concurrency, 8)
-	} else {
-		concurrency = min(e.workerConcurrency, 8000/len(e.dataFiles))
-		concurrency = max(concurrency, 1)
-	}
+	concurrency := e.getAdjustedConcurrency()
 	rangeGroups := split(regionRanges, concurrency)
 
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("concurrency", concurrency),
