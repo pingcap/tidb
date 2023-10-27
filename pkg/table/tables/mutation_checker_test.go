@@ -238,7 +238,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 		types.NewStringDatum("some string"),
 		types.NewTimeDatum(now),
 	}
-	anotherTime, err := now.Add(sessVars.StmtCtx, types.NewDuration(24, 0, 0, 0, 0))
+	anotherTime, err := now.Add(sessVars.StmtCtx.TypeCtx(), types.NewDuration(24, 0, 0, 0, 0))
 	require.Nil(t, err)
 	rowToRemove := []types.Datum{
 		types.NewStringDatum("old string"),

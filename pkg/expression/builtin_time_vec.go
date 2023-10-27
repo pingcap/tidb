@@ -421,7 +421,7 @@ func (b *builtinUTCTimeWithArgSig) vecEvalDuration(input *chunk.Chunk, result *c
 		if fsp < int64(types.MinFsp) {
 			return errors.Errorf("Invalid negative %d specified, must in [0, 6]", fsp)
 		}
-		res, _, err := types.ParseDuration(stmtCtx, utc, int(fsp))
+		res, _, err := types.ParseDuration(stmtCtx.TypeCtx(), utc, int(fsp))
 		if err != nil {
 			return err
 		}
@@ -726,7 +726,7 @@ func (b *builtinStrToDateDateSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 			continue
 		}
 		var t types.Time
-		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
+		succ := t.StrToDate(sc.TypeCtx(), bufStrings.GetString(i), bufFormats.GetString(i))
 		if !succ {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
@@ -1138,7 +1138,7 @@ func (b *builtinStrToDateDurationSig) vecEvalDuration(input *chunk.Chunk, result
 			continue
 		}
 		var t types.Time
-		succ := t.StrToDate(sc, bufStrings.GetString(i), bufFormats.GetString(i))
+		succ := t.StrToDate(sc.TypeCtx(), bufStrings.GetString(i), bufFormats.GetString(i))
 		if !succ {
 			if err := handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
@@ -1500,7 +1500,7 @@ func (b *builtinStrToDateDatetimeSig) vecEvalTime(input *chunk.Chunk, result *ch
 			continue
 		}
 		var t types.Time
-		succ := t.StrToDate(sc, dateBuf.GetString(i), formatBuf.GetString(i))
+		succ := t.StrToDate(sc.TypeCtx(), dateBuf.GetString(i), formatBuf.GetString(i))
 		if !succ {
 			if err = handleInvalidTimeError(b.ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, t.String())); err != nil {
 				return err
@@ -1744,7 +1744,7 @@ func (b *builtinTimestampAddSig) vecEvalString(input *chunk.Chunk, result *chunk
 			fsp = types.MaxFsp
 		}
 		r := types.NewTime(types.FromGoTime(tb), b.resolveType(arg.Type(), unit), fsp)
-		if err = r.Check(b.ctx.GetSessionVars().StmtCtx); err != nil {
+		if err = r.Check(b.ctx.GetSessionVars().StmtCtx.TypeCtx()); err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
 			}
@@ -1937,7 +1937,7 @@ func (b *builtinSecToTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.
 			second = seconds % 60
 		}
 		secondDemical := float64(second) + demical
-		duration, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), b.tp.GetDecimal())
+		duration, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), fmt.Sprintf("%s%02d:%02d:%s", negative, hour, minute, strconv.FormatFloat(secondDemical, 'f', -1, 64)), b.tp.GetDecimal())
 		if err != nil {
 			return err
 		}
@@ -1958,7 +1958,7 @@ func (b *builtinUTCTimeWithoutArgSig) vecEvalDuration(input *chunk.Chunk, result
 	if err != nil {
 		return err
 	}
-	res, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, nowTs.UTC().Format(types.TimeFormat), types.DefaultFsp)
+	res, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), nowTs.UTC().Format(types.TimeFormat), types.DefaultFsp)
 	if err != nil {
 		return err
 	}
@@ -2361,7 +2361,7 @@ func (b *builtinCurrentTime0ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 	}
 	tz := b.ctx.GetSessionVars().Location()
 	dur := nowTs.In(tz).Format(types.TimeFormat)
-	res, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx, dur, types.MinFsp)
+	res, _, err := types.ParseDuration(b.ctx.GetSessionVars().StmtCtx.TypeCtx(), dur, types.MinFsp)
 	if err != nil {
 		return err
 	}
@@ -2409,7 +2409,7 @@ func (b *builtinTimeSig) vecEvalDuration(input *chunk.Chunk, result *chunk.Colum
 		}
 		fsp = tmpFsp
 
-		res, _, err := types.ParseDuration(sc, expr, fsp)
+		res, _, err := types.ParseDuration(sc.TypeCtx(), expr, fsp)
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = sc.HandleTruncate(err)
 		}
@@ -2555,7 +2555,7 @@ func (b *builtinCurrentTime1ArgSig) vecEvalDuration(input *chunk.Chunk, result *
 	result.ResizeGoDuration(n, false)
 	durations := result.GoDurations()
 	for i := 0; i < n; i++ {
-		res, _, err := types.ParseDuration(stmtCtx, dur, int(i64s[i]))
+		res, _, err := types.ParseDuration(stmtCtx.TypeCtx(), dur, int(i64s[i]))
 		if err != nil {
 			return err
 		}
@@ -2658,9 +2658,9 @@ func (b *builtinTimestamp1ArgSig) vecEvalTime(input *chunk.Chunk, result *chunk.
 		s := buf.GetString(i)
 
 		if b.isFloat {
-			tm, err = types.ParseTimeFromFloatString(sc, s, mysql.TypeDatetime, types.GetFsp(s))
+			tm, err = types.ParseTimeFromFloatString(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s))
 		} else {
-			tm, err = types.ParseTime(sc, s, mysql.TypeDatetime, types.GetFsp(s), nil)
+			tm, err = types.ParseTime(sc.TypeCtx(), s, mysql.TypeDatetime, types.GetFsp(s), nil)
 		}
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
@@ -2711,9 +2711,9 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 		arg1 := buf1.GetString(i)
 
 		if b.isFloat {
-			tm, err = types.ParseTimeFromFloatString(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0))
+			tm, err = types.ParseTimeFromFloatString(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0))
 		} else {
-			tm, err = types.ParseTime(sc, arg0, mysql.TypeDatetime, types.GetFsp(arg0), nil)
+			tm, err = types.ParseTime(sc.TypeCtx(), arg0, mysql.TypeDatetime, types.GetFsp(arg0), nil)
 		}
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
@@ -2734,7 +2734,7 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			continue
 		}
 
-		duration, _, err := types.ParseDuration(sc, arg1, types.GetFsp(arg1))
+		duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if err = handleInvalidTimeError(b.ctx, err); err != nil {
 				return err
@@ -2742,7 +2742,7 @@ func (b *builtinTimestamp2ArgsSig) vecEvalTime(input *chunk.Chunk, result *chunk
 			result.SetNull(i, true)
 			continue
 		}
-		tmp, err := tm.Add(sc, duration)
+		tmp, err := tm.Add(sc.TypeCtx(), duration)
 		if err != nil {
 			return err
 		}
@@ -2929,7 +2929,7 @@ func (b *builtinAddSubDateDurationAnySig) vecEvalTime(input *chunk.Chunk, result
 			continue
 		}
 		iterDuration.Duration = goDurations[i]
-		t, err := iterDuration.ConvertToTime(sc, mysql.TypeDatetime)
+		t, err := iterDuration.ConvertToTime(sc.TypeCtx(), mysql.TypeDatetime)
 		if err != nil {
 			result.SetNull(i, true)
 		}

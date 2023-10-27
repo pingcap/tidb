@@ -421,7 +421,7 @@ func TestDate(t *testing.T) {
 func TestMonthName(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	cases := []struct {
 		args     interface{}
 		expected string
@@ -457,7 +457,7 @@ func TestMonthName(t *testing.T) {
 func TestDayName(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	cases := []struct {
 		args     interface{}
 		expected string
@@ -495,7 +495,7 @@ func TestDayName(t *testing.T) {
 func TestDayOfWeek(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -531,7 +531,7 @@ func TestDayOfWeek(t *testing.T) {
 func TestDayOfMonth(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -567,7 +567,7 @@ func TestDayOfMonth(t *testing.T) {
 func TestDayOfYear(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	cases := []struct {
 		args     interface{}
 		expected int64
@@ -964,7 +964,7 @@ func TestAddTimeSig(t *testing.T) {
 		{"-110:00:00", "1 02:00:00", "-84:00:00"},
 	}
 	for _, c := range tbl {
-		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, c.Input, types.GetFsp(c.Input))
+		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), c.Input, types.GetFsp(c.Input))
 		require.NoError(t, err)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(c.InputDuration)
@@ -1065,7 +1065,7 @@ func TestSubTimeSig(t *testing.T) {
 		{"235959", "00:00:01", "23:59:58"},
 	}
 	for _, c := range tbl {
-		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx, c.Input, types.GetFsp(c.Input))
+		dur, _, err := types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), c.Input, types.GetFsp(c.Input))
 		require.NoError(t, err)
 		tmpInput := types.NewDurationDatum(dur)
 		tmpInputDuration := types.NewStringDatum(c.InputDuration)
@@ -1613,7 +1613,7 @@ func TestDateDiff(t *testing.T) {
 func TestTimeDiff(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_timediff
 	tests := []struct {
 		args       []interface{}
@@ -1717,7 +1717,7 @@ func TestWeekWithoutModeSig(t *testing.T) {
 func TestYearWeek(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	// Test cases from https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_yearweek
 	tests := []struct {
 		t      string
@@ -1781,8 +1781,7 @@ func TestTimestampDiff(t *testing.T) {
 	}
 
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true).WithIgnoreZeroInDate(true))
 	resetStmtContext(ctx)
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewStringDatum("DAY"),
 		types.NewStringDatum("2017-01-00"),
@@ -1843,7 +1842,7 @@ func TestUnixTimestamp(t *testing.T) {
 
 	// Set the time_zone variable, because UnixTimestamp() result depends on it.
 	ctx.GetSessionVars().TimeZone = time.UTC
-	ctx.GetSessionVars().StmtCtx.IgnoreZeroInDate = true
+	ctx.GetSessionVars().StmtCtx.SetTypeFlags(ctx.GetSessionVars().StmtCtx.TypeFlags().WithIgnoreZeroInDate(true))
 	tests := []struct {
 		inputDecimal int
 		input        types.Datum
@@ -2161,7 +2160,7 @@ func TestDateArithFuncs(t *testing.T) {
 		},
 	}
 	for _, tt := range testDurations {
-		dur, _, ok, err := types.StrToDuration(nil, tt.dur, tt.fsp)
+		dur, _, ok, err := types.StrToDuration(types.DefaultStmtNoWarningContext, tt.dur, tt.fsp)
 		require.NoError(t, err)
 		require.True(t, ok)
 		args = types.MakeDatums(dur, tt.format, tt.unit)
@@ -2400,7 +2399,7 @@ func TestMakeTime(t *testing.T) {
 func TestQuarter(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	tests := []struct {
 		t      string
 		expect int64
@@ -2479,7 +2478,7 @@ func TestGetFormat(t *testing.T) {
 func TestToSeconds(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	tests := []struct {
 		param  interface{}
 		expect int64
@@ -2522,7 +2521,7 @@ func TestToSeconds(t *testing.T) {
 func TestToDays(t *testing.T) {
 	ctx := createContext(t)
 	sc := ctx.GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true))
 	tests := []struct {
 		param  interface{}
 		expect int64
@@ -2951,7 +2950,7 @@ func TestLastDay(t *testing.T) {
 	}
 
 	var timeData types.Time
-	timeData.StrToDate(ctx.GetSessionVars().StmtCtx, "202010", "%Y%m")
+	timeData.StrToDate(ctx.GetSessionVars().StmtCtx.TypeCtx(), "202010", "%Y%m")
 	testsNull := []struct {
 		param           interface{}
 		isNilNoZeroDate bool
@@ -2996,7 +2995,7 @@ func TestWithTimeZone(t *testing.T) {
 		return result
 	}
 	durationToGoTime := func(d types.Datum, loc *time.Location) time.Time {
-		t, _ := d.GetMysqlDuration().ConvertToTime(sv.StmtCtx, mysql.TypeDatetime)
+		t, _ := d.GetMysqlDuration().ConvertToTime(sv.StmtCtx.TypeCtx(), mysql.TypeDatetime)
 		result, _ := t.GoTime(sv.TimeZone)
 		return result
 	}

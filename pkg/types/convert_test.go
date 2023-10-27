@@ -148,15 +148,15 @@ func TestConvertType(t *testing.T) {
 	vv, err := Convert(v, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:12.1", vv.(Duration).String())
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	vd, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
+	typeCtx := DefaultStmtNoWarningContext
+	vd, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeDatetime, 2, nil)
 	require.Equal(t, "2010-10-10 10:11:11.12", vd.String())
 	require.NoError(t, err)
 	v, err = Convert(vd, ft)
 	require.NoError(t, err)
 	require.Equal(t, "10:11:11.1", v.(Duration).String())
 
-	vt, err := ParseTime(sc, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
+	vt, err := ParseTime(typeCtx, "2010-10-10 10:11:11.12345", mysql.TypeTimestamp, 2, nil)
 	require.Equal(t, "2010-10-10 10:11:11.12", vt.String())
 	require.NoError(t, err)
 	v, err = Convert(vt, ft)
@@ -248,11 +248,11 @@ func TestConvertType(t *testing.T) {
 
 	// Test Datum.ToDecimal with bad number.
 	d := NewDatum("hello")
-	_, err = d.ToDecimal(sc.TypeCtxOrDefault())
+	_, err = d.ToDecimal(typeCtx)
 	require.Truef(t, terror.ErrorEqual(err, ErrTruncatedWrongVal), "err %v", err)
 
-	sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-	v, err = d.ToDecimal(sc.TypeCtxOrDefault())
+	typeCtx = typeCtx.WithFlags(typeCtx.Flags().WithIgnoreTruncateErr(true))
+	v, err = d.ToDecimal(typeCtx)
 	require.NoError(t, err)
 	require.Equal(t, "0", v.(*MyDecimal).String())
 
@@ -266,7 +266,7 @@ func TestConvertType(t *testing.T) {
 	require.Equal(t, int64(2015), v)
 	_, err = Convert(1800, ft)
 	require.Error(t, err)
-	dt, err := ParseDate(nil, "2015-11-11")
+	dt, err := ParseDate(DefaultStmtNoWarningContext, "2015-11-11")
 	require.NoError(t, err)
 	v, err = Convert(dt, ft)
 	require.NoError(t, err)
@@ -345,11 +345,11 @@ func TestConvertToString(t *testing.T) {
 	testToString(t, Enum{Name: "a", Value: 1}, "a")
 	testToString(t, Set{Name: "a", Value: 1}, "a")
 
-	t1, err := ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
+	t1, err := ParseTime(DefaultStmtNoWarningContext, "2011-11-10 11:11:11.999999", mysql.TypeTimestamp, 6, nil)
 	require.NoError(t, err)
 	testToString(t, t1, "2011-11-10 11:11:11.999999")
 
-	td, _, err := ParseDuration(nil, "11:11:11.999999", 6)
+	td, _, err := ParseDuration(DefaultStmtNoWarningContext, "11:11:11.999999", 6)
 	require.NoError(t, err)
 	testToString(t, td, "11:11:11.999999")
 
@@ -1210,7 +1210,6 @@ func TestNumberToDuration(t *testing.T) {
 }
 
 func TestStrToDuration(t *testing.T) {
-	sc := stmtctx.NewStmtCtx()
 	var tests = []struct {
 		str        string
 		fsp        int
@@ -1224,7 +1223,7 @@ func TestStrToDuration(t *testing.T) {
 		{"00:00:00", 0, true},
 	}
 	for _, tt := range tests {
-		_, _, isDuration, err := StrToDuration(sc, tt.str, tt.fsp)
+		_, _, isDuration, err := StrToDuration(DefaultStmtNoWarningContext, tt.str, tt.fsp)
 		require.NoError(t, err)
 		require.Equal(t, tt.isDuration, isDuration)
 	}

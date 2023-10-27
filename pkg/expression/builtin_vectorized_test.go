@@ -279,7 +279,7 @@ func (p *mockBuiltinDouble) vecEvalTime(input *chunk.Chunk, result *chunk.Column
 		if err != nil {
 			return err
 		}
-		if ts[i], err = ts[i].Add(p.ctx.GetSessionVars().StmtCtx, d); err != nil {
+		if ts[i], err = ts[i].Add(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), d); err != nil {
 			return err
 		}
 	}
@@ -371,7 +371,7 @@ func (p *mockBuiltinDouble) evalTime(row chunk.Row) (types.Time, bool, error) {
 	if err != nil {
 		return types.ZeroTime, false, err
 	}
-	v, err = v.Add(p.ctx.GetSessionVars().StmtCtx, d)
+	v, err = v.Add(p.ctx.GetSessionVars().StmtCtx.TypeCtx(), d)
 	return v, isNull, err
 }
 
@@ -512,7 +512,7 @@ func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.C
 			tt := types.NewTime(gt, convertETType(eType), 0)
 			d, err := tt.ConvertToDuration()
 			require.NoError(t, err)
-			v, err := tt.Add(mock.NewContext().GetSessionVars().StmtCtx, d)
+			v, err := tt.Add(mock.NewContext().GetSessionVars().StmtCtx.TypeCtx(), d)
 			require.NoError(t, err)
 			require.Equal(t, 0, v.Compare(ds[i]))
 		}
