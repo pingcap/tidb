@@ -88,7 +88,7 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(sm.TotalKVSize),
 			TotalKVCount:  0,
-			CheckHotspot:  true,
+			CheckHotspot:  false,
 		},
 	}, engineUUID)
 	if err != nil {
