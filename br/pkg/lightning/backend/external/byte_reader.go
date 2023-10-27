@@ -44,7 +44,7 @@ type byteReader struct {
 	curBufOffset int
 	smallBuf     []byte
 
-	retPointersV2 []*slice
+	retPointers []*slice
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
@@ -206,7 +206,7 @@ func (r *byteReader) readNBytes(n int) (*slice, error) {
 			offset: originOffset,
 			length: readLen,
 		}
-		r.retPointersV2 = append(r.retPointersV2, ret)
+		r.retPointers = append(r.retPointers, ret)
 		return ret, nil
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
@@ -244,21 +244,21 @@ func (s slice) get() []byte {
 }
 
 func (r *byteReader) reset() {
-	for i := range r.retPointersV2 {
-		r.retPointersV2[i] = nil
+	for i := range r.retPointers {
+		r.retPointers[i] = nil
 	}
-	r.retPointersV2 = r.retPointersV2[:0]
+	r.retPointers = r.retPointers[:0]
 }
 
 func (r *byteReader) cloneSlices() {
-	for i := range r.retPointersV2 {
-		copied := make([]byte, r.retPointersV2[i].length)
-		copy(copied, r.retPointersV2[i].buf[r.retPointersV2[i].offset:])
-		r.retPointersV2[i].buf = copied
-		r.retPointersV2[i].offset = 0
-		r.retPointersV2[i].length = len(copied)
+	for i := range r.retPointers {
+		copied := make([]byte, r.retPointers[i].length)
+		copy(copied, r.retPointers[i].buf[r.retPointers[i].offset:])
+		r.retPointers[i].buf = copied
+		r.retPointers[i].offset = 0
+		r.retPointers[i].length = len(copied)
 	}
-	r.retPointersV2 = r.retPointersV2[:0]
+	r.retPointers = r.retPointers[:0]
 }
 
 func (r *byteReader) next(n int) []byte {
