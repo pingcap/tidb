@@ -223,8 +223,8 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 		return b.applyDropTableOrPartition(m, diff)
 	case model.ActionRecoverTable:
 		return b.applyRecoverTable(m, diff)
-	case model.ActionCreateTables:
-		return b.applyCreateTables(m, diff)
+	case model.ActionCreateTables, model.ActionRenameTables:
+		return b.applyCreateOrRenameTables(m, diff)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		return b.applyReorganizePartition(m, diff)
@@ -237,17 +237,20 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, erro
 	}
 }
 
-func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+func (b *Builder) applyCreateOrRenameTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs := make([]int64, 0, len(diff.AffectedOpts))
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
 			affectedDiff := &model.SchemaDiff{
 				Version:     diff.Version,
-				Type:        model.ActionCreateTable,
 				SchemaID:    opt.SchemaID,
 				TableID:     opt.TableID,
 				OldSchemaID: opt.OldSchemaID,
 				OldTableID:  opt.OldTableID,
+			}
+			affectedDiff.Type = model.ActionCreateTable
+			if diff.Type == model.ActionRenameTables {
+				affectedDiff.Type = model.ActionRenameTable
 			}
 			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
 			if err != nil {
@@ -764,7 +767,7 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]in
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
 	}
-	return b.applyCreateTables(m, diff)
+	return b.applyCreateOrRenameTables(m, diff)
 }
 
 func (b *Builder) copySortedTablesBucket(bucketIdx int) {

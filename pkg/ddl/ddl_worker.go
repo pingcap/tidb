@@ -1366,22 +1366,15 @@ func updateSchemaVersion(d *ddlCtx, t *meta.Meta, job *model.Job, multiInfos ...
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		affects := make([]*model.AffectedOption, len(newSchemaIDs)-1)
+		affects := make([]*model.AffectedOption, len(newSchemaIDs))
 		for i, newSchemaID := range newSchemaIDs {
-			// Do not add the first table to AffectedOpts. Related issue tidb#47064.
-			if i == 0 {
-				continue
-			}
-			affects[i-1] = &model.AffectedOption{
+			affects[i] = &model.AffectedOption{
 				SchemaID:    newSchemaID,
 				TableID:     tableIDs[i],
 				OldTableID:  tableIDs[i],
 				OldSchemaID: oldSchemaIDs[i],
 			}
 		}
-		diff.TableID = tableIDs[0]
-		diff.SchemaID = newSchemaIDs[0]
-		diff.OldSchemaID = oldSchemaIDs[0]
 		diff.AffectedOpts = affects
 	case model.ActionExchangeTablePartition:
 		// From start of function: diff.SchemaID = job.SchemaID
