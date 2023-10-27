@@ -314,6 +314,7 @@ type Writer struct {
 	totalSize uint64
 	// This mutex is used to make sure the writer is flushed mutually exclusively in a TiDB server.
 	shareMu *sync.Mutex
+	mu      sync.Mutex
 }
 
 // WriteRow implements ingest.Writer.
@@ -356,7 +357,10 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 // Since flushKVs is thread-safe in external storage writer,
 // this is implemented as noop.
 func (w *Writer) LockForWrite() func() {
-	return func() {}
+	w.mu.Lock()
+	return func() {
+		w.mu.Unlock()
+	}
 }
 
 // Close closes the writer.
