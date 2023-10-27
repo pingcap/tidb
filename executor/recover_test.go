@@ -92,6 +92,11 @@ func TestRecoverTable(t *testing.T) {
 	err := tk.ExecToErr(fmt.Sprintf("recover table by job %d", 10000000))
 	require.Error(t, err)
 
+	// recover table by zero JobID.
+	// related issue: https://github.com/pingcap/tidb/issues/46296
+	err = tk.ExecToErr(fmt.Sprintf("recover table by job %d", 0))
+	require.Error(t, err)
+
 	// Disable GC by manual first, then after recover table, the GC enable status should also be disabled.
 	require.NoError(t, gcutil.DisableGC(tk.Session()))
 

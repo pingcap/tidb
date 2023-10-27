@@ -4228,16 +4228,16 @@ type RecoverTableStmt struct {
 // Restore implements Node interface.
 func (n *RecoverTableStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("RECOVER TABLE ")
-	if n.JobID != 0 {
-		ctx.WriteKeyWord("BY JOB ")
-		ctx.WritePlainf("%d", n.JobID)
-	} else {
+	if n.Table != nil {
 		if err := n.Table.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing RecoverTableStmt Table")
 		}
 		if n.JobNum > 0 {
 			ctx.WritePlainf(" %d", n.JobNum)
 		}
+	} else {
+		ctx.WriteKeyWord("BY JOB ")
+		ctx.WritePlainf("%d", n.JobID)
 	}
 	return nil
 }
