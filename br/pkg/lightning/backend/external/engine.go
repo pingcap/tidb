@@ -42,8 +42,8 @@ type Engine struct {
 	storage         storage.ExternalStorage
 	dataFiles       []string
 	statsFiles      []string
-	minKey          []byte
-	maxKey          []byte
+	startKey        []byte
+	endKey          []byte
 	splitKeys       [][]byte
 	regionSplitSize int64
 	bufPool         *membuf.Pool
@@ -66,8 +66,8 @@ func NewExternalEngine(
 	storage storage.ExternalStorage,
 	dataFiles []string,
 	statsFiles []string,
-	minKey []byte,
-	maxKey []byte,
+	startKey []byte,
+	endKey []byte,
 	splitKeys [][]byte,
 	regionSplitSize int64,
 	keyAdapter common.KeyAdapter,
@@ -82,8 +82,8 @@ func NewExternalEngine(
 		storage:            storage,
 		dataFiles:          dataFiles,
 		statsFiles:         statsFiles,
-		minKey:             minKey,
-		maxKey:             maxKey,
+		startKey:           startKey,
+		endKey:             endKey,
 		splitKeys:          splitKeys,
 		regionSplitSize:    regionSplitSize,
 		bufPool:            membuf.NewPool(),
@@ -305,8 +305,8 @@ func (e *Engine) ID() string {
 }
 
 // GetKeyRange implements common.Engine.
-func (e *Engine) GetKeyRange() (firstKey []byte, lastKey []byte, err error) {
-	return e.minKey, e.maxKey, nil
+func (e *Engine) GetKeyRange() (startKey []byte, endKey []byte, err error) {
+	return e.startKey, e.endKey, nil
 }
 
 // SplitRanges split the ranges by split keys provided by external engine.

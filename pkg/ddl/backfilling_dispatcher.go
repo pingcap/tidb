@@ -320,7 +320,12 @@ func generateNonPartitionPlan(d *ddl, tblInfo *model.TableInfo, job *model.Job) 
 			end = len(recordRegionMetas)
 		}
 		batch := recordRegionMetas[i:end]
-		subTaskMeta := &BackfillSubTaskMeta{StartKey: batch[0].StartKey(), EndKey: batch[len(batch)-1].EndKey()}
+		subTaskMeta := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: batch[0].StartKey(),
+				EndKey:   batch[len(batch)-1].EndKey(),
+			},
+		}
 		if i == 0 {
 			subTaskMeta.StartKey = startKey
 		}
@@ -381,7 +386,7 @@ func generateGlobalSortIngestPlan(
 	step proto.Step,
 	logger *zap.Logger,
 ) ([][]byte, error) {
-	firstKey, lastKey, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
+	startKeyFromSumm, endKeyFromSumm, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +407,7 @@ func generateGlobalSortIngestPlan(
 	}()
 
 	metaArr := make([][]byte, 0, 16)
-	startKey := firstKey
+	startKey := startKeyFromSumm
 	var endKey kv.Key
 	for {
 		endKeyOfGroup, dataFiles, statFiles, rangeSplitKeys, err := splitter.SplitOneRangesGroup()
@@ -410,7 +415,7 @@ func generateGlobalSortIngestPlan(
 			return nil, err
 		}
 		if len(endKeyOfGroup) == 0 {
-			endKey = lastKey.Next()
+			endKey = endKeyFromSumm
 		} else {
 			endKey = kv.Key(endKeyOfGroup).Clone()
 		}
@@ -423,12 +428,12 @@ func generateGlobalSortIngestPlan(
 		}
 		m := &BackfillSubTaskMeta{
 			SortedKVMeta: external.SortedKVMeta{
-				MinKey:      startKey,
-				MaxKey:      endKey,
-				DataFiles:   dataFiles,
-				StatFiles:   statFiles,
+				StartKey:    startKey,
+				EndKey:      endKey,
 				TotalKVSize: totalSize / uint64(len(instanceIDs)),
 			},
+			DataFiles:      dataFiles,
+			StatFiles:      statFiles,
 			RangeSplitKeys: rangeSplitKeys,
 		}
 		metaBytes, err := json.Marshal(m)
@@ -483,9 +488,7 @@ func generateMergePlan(
 			end = len(dataFiles)
 		}
 		m := &BackfillSubTaskMeta{
-			SortedKVMeta: external.SortedKVMeta{
-				DataFiles: dataFiles[start:end],
-			},
+			DataFiles: dataFiles[start:end],
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -542,12 +545,11 @@ func getSummaryFromLastStep(
 	taskHandle dispatcher.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
-) (min, max kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
+) (startKey, endKey kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
 		return nil, nil, 0, nil, nil, errors.Trace(err)
 	}
-	var minKey, maxKey kv.Key
 	allDataFiles := make([]string, 0, 16)
 	allStatFiles := make([]string, 0, 16)
 	for _, subTaskMeta := range subTaskMetas {
@@ -556,10 +558,22 @@ func getSummaryFromLastStep(
 		if err != nil {
 			return nil, nil, 0, nil, nil, errors.Trace(err)
 		}
-		// Skip empty subtask.MinKey/MaxKey because it means
+		// Skip empty subtask.StartKey/EndKey because it means
 		// no records need to be written in this subtask.
-		minKey = external.NotNilMin(minKey, subtask.MinKey)
-		maxKey = external.NotNilMax(maxKey, subtask.MaxKey)
+		if subtask.StartKey == nil || subtask.EndKey == nil {
+			continue
+		}
+
+		if len(startKey) == 0 {
+			startKey = subtask.StartKey
+		} else {
+			startKey = external.BytesMin(startKey, subtask.StartKey)
+		}
+		if len(endKey) == 0 {
+			endKey = subtask.EndKey
+		} else {
+			endKey = external.BytesMax(endKey, subtask.EndKey)
+		}
 		totalKVSize += subtask.TotalKVSize
 
 		for _, stat := range subtask.MultipleFilesStats {
@@ -569,7 +583,7 @@ func getSummaryFromLastStep(
 			}
 		}
 	}
-	return minKey, maxKey, totalKVSize, allDataFiles, allStatFiles, nil
+	return startKey, endKey, totalKVSize, allDataFiles, allStatFiles, nil
 }
 
 // StepStr convert proto.Step to string.
