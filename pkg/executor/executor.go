@@ -1996,6 +1996,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.MemTracker.Killer = &vars.SQLKiller
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
+	vars.SQLKiller.ConnID = vars.ConnectionID
 	vars.StmtCtx.TableStats = make(map[int64]interface{})
 
 	isAnalyze := false
