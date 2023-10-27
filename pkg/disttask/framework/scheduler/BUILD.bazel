@@ -23,6 +23,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/resourcemanager/pool/spool",
         "//pkg/resourcemanager/util",
+        "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",

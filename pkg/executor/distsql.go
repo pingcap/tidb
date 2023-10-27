@@ -980,7 +980,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("indexWorker in IndexLookupExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			err4Panic := errors.Errorf("%v", r)
+			err4Panic := util.GetRecoverError(r)
 			w.syncErr(err4Panic)
 			if err != nil {
 				err = errors.Trace(err4Panic)
@@ -1168,7 +1168,8 @@ func (w *tableWorker) pickAndExecTask(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(ctx).Error("tableWorker in IndexLookUpExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
-			task.doneCh <- errors.Errorf("%v", r)
+			err := util.GetRecoverError(r)
+			task.doneCh <- err
 		}
 	}()
 	for {
