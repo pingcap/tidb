@@ -578,7 +578,7 @@ func (s *BaseScheduler) finishSubtaskAndUpdateState(ctx context.Context, subtask
 }
 
 // TODO: abstract interface for each business to implement it.
-func IsRetyableError(err error) bool {
+func isRetyableError(err error) bool {
 	originErr := errors.Cause(err)
 	if tErr, ok := originErr.(*terror.Error); ok {
 		sqlErr := terror.ToSQLError(tErr)
@@ -598,7 +598,7 @@ func (s *BaseScheduler) markSubTaskCanceledOrFailed(ctx context.Context, subtask
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(subtask, proto.TaskStateCanceled, nil)
-		} else if common.IsRetryableError(err) || IsRetyableError(err) {
+		} else if common.IsRetryableError(err) || isRetyableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if errors.Cause(err) != context.Canceled {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
