@@ -63,7 +63,6 @@ type Engine struct {
 	// this flag also affects the strategy of loading data, either:
 	// 	less load routine + check and read hotspot file concurrently (add-index uses this one)
 	// 	more load routine + read each file using 1 reader (import-into uses this one)
-	// TODO: if the second strategy is better for add-index too, we can remove this flag.
 	checkHotspot bool
 
 	keyAdapter         common.KeyAdapter

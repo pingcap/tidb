@@ -31,7 +31,9 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -147,8 +149,12 @@ func (s *BaseScheduler) run(ctx context.Context, task *proto.Task) (resErr error
 	defer runCancel(ErrFinishSubtask)
 	s.registerCancelFunc(runCancel)
 	s.resetError()
-	stepLogger := log.BeginTask(logutil.Logger(s.logCtx).With(zap.Any("step", task.Step),
-		zap.Any("concurrency", task.Concurrency)), "schedule step")
+	stepLogger := log.BeginTask(logutil.Logger(s.logCtx).With(
+		zap.Any("step", task.Step),
+		zap.Uint64("concurrency", task.Concurrency),
+		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
+		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
+	), "schedule step")
 	// log as info level, subtask might be cancelled, let caller check it.
 	defer stepLogger.End(zap.InfoLevel, resErr)
 
