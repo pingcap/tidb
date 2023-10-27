@@ -316,15 +316,15 @@ func StrToUint(ctx Context, str string, isFuncCast bool) (uint64, error) {
 }
 
 // StrToDateTime converts str to MySQL DateTime.
-func StrToDateTime(sc *stmtctx.StatementContext, str string, fsp int) (Time, error) {
-	return ParseTime(sc, str, mysql.TypeDatetime, fsp, nil)
+func StrToDateTime(ctx Context, str string, fsp int) (Time, error) {
+	return ParseTime(ctx, str, mysql.TypeDatetime, fsp, nil)
 }
 
 // StrToDuration converts str to Duration. It returns Duration in normal case,
 // and returns Time when str is in datetime format.
 // when isDuration is true, the d is returned, when it is false, the t is returned.
 // See https://dev.mysql.com/doc/refman/5.5/en/date-and-time-literals.html.
-func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duration, t Time, isDuration bool, err error) {
+func StrToDuration(ctx Context, str string, fsp int) (d Duration, t Time, isDuration bool, err error) {
 	str = strings.TrimSpace(str)
 	length := len(str)
 	if length > 0 && str[0] == '-' {
@@ -336,16 +336,15 @@ func StrToDuration(sc *stmtctx.StatementContext, str string, fsp int) (d Duratio
 	// Timestamp format is 'YYYYMMDDHHMMSS' or 'YYMMDDHHMMSS', which length is 12.
 	// See #3923, it explains what we do here.
 	if length >= 12 {
-		t, err = StrToDateTime(sc, str, fsp)
+		t, err = StrToDateTime(ctx, str, fsp)
 		if err == nil {
 			return d, t, false, nil
 		}
 	}
 
-	d, _, err = ParseDuration(sc, str, fsp)
+	d, _, err = ParseDuration(ctx, str, fsp)
 	if ErrTruncatedWrongVal.Equal(err) {
-		typeCtx := sc.TypeCtx()
-		err = typeCtx.HandleTruncate(err)
+		err = ctx.HandleTruncate(err)
 	}
 	return d, t, true, errors.Trace(err)
 }
@@ -355,7 +354,7 @@ func NumberToDuration(number int64, fsp int) (Duration, error) {
 	if number > TimeMaxValue {
 		// Try to parse DATETIME.
 		if number >= 10000000000 { // '2001-00-00 00-00-00'
-			if t, err := ParseDatetimeFromNum(nil, number); err == nil {
+			if t, err := ParseDatetimeFromNum(DefaultStmtNoWarningContext, number); err == nil {
 				dur, err1 := t.ConvertToDuration()
 				return dur, errors.Trace(err1)
 			}
