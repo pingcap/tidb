@@ -44,7 +44,7 @@ type byteReader struct {
 	curBufOffset int
 	smallBuf     []byte
 
-	retPointers []*[]byte
+	retPointersV2 []*slice
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
@@ -196,12 +196,17 @@ func (r *byteReader) switchToConcurrentReader() error {
 // The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
 // byteReader guarantees that the returned slice (pointer) will point to the same content
 // though the slice may be changed.
-func (r *byteReader) readNBytes(n int) (*[]byte, error) {
+func (r *byteReader) readNBytes(n int) (*slice, error) {
+	originOffset := r.curBufOffset
 	b := r.next(n)
 	readLen := len(b)
 	if readLen == n {
-		ret := &b
-		r.retPointers = append(r.retPointers, ret)
+		ret := &slice{
+			buf:    r.curBuf,
+			offset: originOffset,
+			length: readLen,
+		}
+		r.retPointersV2 = append(r.retPointersV2, ret)
 		return ret, nil
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
@@ -225,24 +230,35 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 		copy(auxBuf[readLen:], b)
 		readLen += len(b)
 	}
-	return &auxBuf, nil
+	return &slice{buf: auxBuf, offset: 0, length: len(auxBuf)}, nil
+}
+
+type slice struct {
+	buf    []byte
+	offset int
+	length int
+}
+
+func (s slice) get() []byte {
+	return s.buf[s.offset : s.offset+s.length]
 }
 
 func (r *byteReader) reset() {
-	for i := range r.retPointers {
-		r.retPointers[i] = nil
+	for i := range r.retPointersV2 {
+		r.retPointersV2[i] = nil
 	}
-	r.retPointers = r.retPointers[:0]
+	r.retPointersV2 = r.retPointersV2[:0]
 }
 
 func (r *byteReader) cloneSlices() {
-	for i := range r.retPointers {
-		copied := make([]byte, len(*r.retPointers[i]))
-		copy(copied, *r.retPointers[i])
-		*r.retPointers[i] = copied
-		r.retPointers[i] = nil
+	for i := range r.retPointersV2 {
+		copied := make([]byte, r.retPointersV2[i].length)
+		copy(copied, r.retPointersV2[i].buf[r.retPointersV2[i].offset:])
+		r.retPointersV2[i].buf = copied
+		r.retPointersV2[i].offset = 0
+		r.retPointersV2[i].length = len(copied)
 	}
-	r.retPointers = r.retPointers[:0]
+	r.retPointersV2 = r.retPointersV2[:0]
 }
 
 func (r *byteReader) next(n int) []byte {
