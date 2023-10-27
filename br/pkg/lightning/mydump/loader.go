@@ -705,7 +705,8 @@ func calculateFileBytes(ctx context.Context,
 	}
 	defer reader.Close()
 
-	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, storage.DecompressConfig{}, offset)
+	decompressConfig := storage.DecompressConfig{ZStdDecodeConcurrency: 1}
+	compressReader, err := storage.NewLimitedInterceptReader(reader, compressType, decompressConfig, offset)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}

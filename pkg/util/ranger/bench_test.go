@@ -112,7 +112,7 @@ WHERE
 	err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	require.NoError(b, err)
 	ctx := context.Background()
-	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+	p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 	require.NoError(b, err)
 	selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 	tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,7 +32,7 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
-	isKilled := uint32(0)
+	killer := sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, 10)
@@ -53,7 +54,7 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 	}
 
 	// Test merge 2 topN with nil hists.
-	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, nil, false, &isKilled)
+	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, nil, false, &killer)
 	require.NoError(t, err)
 	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
 	require.Equal(t, uint64(50), globalTopN.TotalCount(), "should have 50 rows")
@@ -64,7 +65,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	loc := time.UTC
 	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
 	version := 1
-	isKilled := uint32(0)
+	killer := sqlkiller.SQLKiller{}
 
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, 10)
@@ -104,7 +105,7 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 	}
 
 	// Test merge 2 topN.
-	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, hists, false, &isKilled)
+	globalTopN, leftTopN, _, err := MergePartTopN2GlobalTopN(loc, version, topNs, 2, hists, false, &killer)
 	require.NoError(t, err)
 	require.Len(t, globalTopN.TopN, 2, "should only have 2 topN")
 	require.Equal(t, uint64(55), globalTopN.TotalCount(), "should have 55")

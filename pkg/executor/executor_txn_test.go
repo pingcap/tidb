@@ -462,36 +462,6 @@ func TestTxnSavepoint1(t *testing.T) {
 	}
 }
 
-func TestRollbackToSavepoint(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int, a int, unique index idx(id))")
-
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("insert into t values (1,1)")
-	tk.MustExec("savepoint s1")
-	tk.MustExec("insert into t values (2,2)")
-	tk.MustExec("rollback to s1")
-	tk.MustExec("insert into t values (2,2)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1", "2 2"))
-	tk.MustExec("rollback to s1")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1"))
-
-	tk.MustExec("delete from t")
-	tk.MustExec("insert into t values (1,1)")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("delete from t where id = 1")
-	tk.MustExec("savepoint s1")
-	tk.MustExec("insert into t values (1,2)")
-	tk.MustExec("rollback to s1")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-	tk.MustExec("commit")
-	tk.MustQuery("select * from t").Check(testkit.Rows())
-}
-
 func TestRollbackToSavepointReleasePessimisticLock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
@@ -658,67 +628,6 @@ func TestSavepointInBigTxn(t *testing.T) {
 	tk1.MustExec("rollback to s1")
 	tk1.MustExec("commit")
 	tk1.MustQuery("select * from t order by id").Check(testkit.Rows("0 0", "1 1"))
-}
-
-func TestSavepointRandTestIssue0(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("CREATE TABLE t (a enum('B','C') NOT NULL,UNIQUE KEY idx_1 (a),KEY idx_2 (a));")
-	tk.MustExec("begin pessimistic")
-	tk.MustExec("savepoint sp0;")
-	tk.MustExec("insert ignore into t values ( 'B' ),( 'C' );")
-	err := tk.ExecToErr("update t set a = 'C' where a = 'B';")
-	require.Error(t, err)
-	tk.MustExec("select * from t where a = 'B' for update;")
-	tk.MustExec("rollback to sp0;")
-	tk.MustExec("delete from t where a = 'B' ;")
-}
-
-func TestSavepointWithTemporaryTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	// Test for local temporary table.
-	txnModes := []string{"optimistic", "pessimistic", ""}
-	for _, txnMode := range txnModes {
-		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
-		tk.MustExec("drop table if exists tmp1")
-		tk.MustExec("create temporary table tmp1 (id int primary key auto_increment, u int unique, v int)")
-		tk.MustExec("insert into tmp1 values(1, 11, 101)")
-		tk.MustExec("begin")
-		tk.MustExec("savepoint sp0;")
-		tk.MustExec("insert into tmp1 values(2, 22, 202)")
-		tk.MustExec("savepoint sp1;")
-		tk.MustExec("insert into tmp1 values(3, 33, 303)")
-		tk.MustExec("rollback to sp1;")
-		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
-		tk.MustExec("commit")
-		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("1 11 101", "2 22 202"))
-	}
-
-	// Test for global temporary table.
-	for _, txnMode := range txnModes {
-		tk.MustExec(fmt.Sprintf("set session tidb_txn_mode='%v';", txnMode))
-		tk.MustExec("drop table if exists tmp1")
-		tk.MustExec("create global temporary table tmp1 (id int primary key auto_increment, u int unique, v int) on commit delete rows")
-		tk.MustExec("begin")
-		tk.MustExec("savepoint sp0;")
-		tk.MustExec("insert into tmp1 values(2, 22, 202)")
-		tk.MustExec("savepoint sp1;")
-		tk.MustExec("insert into tmp1 values(3, 33, 303)")
-		tk.MustExec("savepoint sp2;")
-		tk.MustExec("insert into tmp1 values(4, 44, 404)")
-		tk.MustExec("rollback to sp2;")
-		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("2 22 202", "3 33 303"))
-		tk.MustExec("rollback to sp1;")
-		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows("2 22 202"))
-		tk.MustExec("commit")
-		tk.MustQuery("select * from tmp1 order by id").Check(testkit.Rows())
-	}
 }
 
 func TestSavepointWithCacheTable(t *testing.T) {
