@@ -442,21 +442,27 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 		}
 		var done bool
 		totalBytes := int64(0)
-		startTime := time.Now()
+		var elp float64
+		cnt := 0
+		totalTs := time.Now()
 		for !done {
 			srcChk := w.getChunk()
+			ts := time.Now()
 			done, err = fetchTableScanResult(w.ctx, w.copCtx.GetBase(), rs, srcChk)
 			if err != nil || util2.IsContextDone(w.ctx) {
 				w.recycleChunk(srcChk)
 				terror.Call(rs.Close)
 				return err
 			}
+			elp += time.Since(ts).Seconds()
+			cnt += srcChk.NumRows()
 			totalBytes += srcChk.MemoryUsage()
 			idxResult = IndexRecordChunk{ID: task.ID, Chunk: srcChk, Done: done}
 			sender(idxResult)
 		}
-		rate := float64(totalBytes) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
+		rate := float64(totalBytes) / 1024.0 / 1024.0 / elp
 		metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
+		logutil.BgLogger().Info("table scan finished", zap.Any("task", task.ID), zap.Float64("speed(MB/s)", rate), zap.Any("cnt", cnt), zap.Any("bytes(MB)", float64(totalBytes)/1024.0/1024.0), zap.Duration("take", time.Since(totalTs)))
 		return rs.Close()
 	})
 	if err != nil {
