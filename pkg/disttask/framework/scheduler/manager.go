@@ -106,9 +106,12 @@ func (m *Manager) initMeta() (err error) {
 		if err == nil {
 			break
 		}
-		logutil.Logger(m.logCtx).Warn("start manager failed",
-			zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
-			zap.Error(err))
+		if i%10 == 0 {
+			logutil.Logger(m.logCtx).Warn("start manager failed",
+				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
+				zap.Int("retry times", i),
+				zap.Error(err))
+		}
 		time.Sleep(retrySQLInterval)
 	}
 	return err
