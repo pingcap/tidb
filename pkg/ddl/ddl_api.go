@@ -1760,16 +1760,20 @@ func checkColumnAttributes(colName string, tp *types.FieldType) error {
 	return nil
 }
 
-func checkDuplicateConstraint(namesMap map[string]bool, name string, foreign bool) error {
+func checkDuplicateConstraint(namesMap map[string]bool, name string, constraintType ast.ConstraintType) error {
 	if name == "" {
 		return nil
 	}
 	nameLower := strings.ToLower(name)
 	if namesMap[nameLower] {
-		if foreign {
+		switch constraintType {
+		case ast.ConstraintForeignKey:
 			return dbterror.ErrFkDupName.GenWithStackByArgs(name)
+		case ast.ConstraintCheck:
+			return dbterror.ErrCheckConstraintDupName.GenWithStackByArgs(name)
+		default:
+			return dbterror.ErrDupKeyName.GenWithStackByArgs(name)
 		}
-		return dbterror.ErrDupKeyName.GenWithStack("duplicate key name %s", name)
 	}
 	namesMap[nameLower] = true
 	return nil
@@ -1824,26 +1828,16 @@ func setEmptyConstraintName(namesMap map[string]bool, constr *ast.Constraint) {
 
 func checkConstraintNames(tableName model.CIStr, constraints []*ast.Constraint) error {
 	constrNames := map[string]bool{}
-	fkNames := map[string]bool{}
+	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
 
 	// Check not empty constraint name whether is duplicated.
 	for _, constr := range constraints {
-		if constr.Tp == ast.ConstraintForeignKey {
-			err := checkDuplicateConstraint(fkNames, constr.Name, true)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		} else {
-			err := checkDuplicateConstraint(constrNames, constr.Name, false)
-			if err != nil {
-				return errors.Trace(err)
-			}
+		err := checkDuplicateConstraint(constrNames, constr.Name, constr.Tp)
+		if err != nil {
+			return errors.Trace(err)
 		}
-	}
 
-	// Set empty constraint names.
-	checkConstraints := make([]*ast.Constraint, 0, len(constraints))
-	for _, constr := range constraints {
+		// Set empty constraint names.
 		if constr.Tp != ast.ConstraintForeignKey {
 			setEmptyConstraintName(constrNames, constr)
 		}
