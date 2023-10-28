@@ -3567,7 +3567,7 @@ func (c *addSubDateFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 			resultEvalTp = types.ETDatetime
 		}
 	} else if dateEvalTp == types.ETDuration {
-		if types.IsDateUnit(unit) && unit != "DAY_MICROSECOND" && unit != "DAY" {
+		if types.IsDateUnit(unit) && unit != "DAY_MICROSECOND" {
 			// First arg is time and unit contains YMD (except DAY_MICROSECOND), return datetime.
 			resultTp = mysql.TypeDatetime
 			resultEvalTp = types.ETDatetime

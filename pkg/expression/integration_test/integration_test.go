@@ -3034,11 +3034,55 @@ func TestIssue47136(t *testing.T) {
 	tk.MustExec("drop table if exists test.test_interval")
 	tk.MustExec("create table test.test_interval(p int not null,o time not null,v int not null)")
 	tk.MustExec("insert into test.test_interval (p, o, v) values (0, '1:2:3', 1)")
-	rs, err := tk.Exec("select date_add(o, interval 1 day) from test_interval")
-	require.NoError(t, err)
-	require.Equal(t, tk.ResultSetToResult(rs, "").Rows()[0][0], "25:02:03")
+	defer tk.MustExec("drop table test.test_interval")
 
-	tk.MustExec("drop table test.test_interval")
+	sql := "select date_add(o, interval %s %s) from test_interval"
+
+	dateTimeRegExp := `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$`
+	timeRegExp := `^\d{2}:\d{2}:\d{2}(\.\d+)?$`
+
+	type returnType string
+	const (
+		DateTime returnType = "datetime"
+		Time     returnType = "time"
+	)
+
+	testCases := []struct {
+		value        string
+		unit         string
+		expectedType returnType
+	}{
+		{"1", "MICROSECOND", Time},
+		{"1", "SECOND", Time},
+		{"1", "MINUTE", Time},
+		{"1", "HOUR", Time},
+		{"1", "DAY", DateTime},
+		{"1", "WEEK", DateTime},
+		{"1", "MONTH", DateTime},
+		{"1", "QUARTER", DateTime},
+		{"1", "YEAR", DateTime},
+		{"'1.1'", "SECOND_MICROSECOND", Time},
+		{"'1:1.1'", "MINUTE_MICROSECOND", Time},
+		{"'1:1'", "MINUTE_SECOND", Time},
+		{"'1:1:1.1'", "HOUR_MICROSECOND", Time},
+		{"'1:1:1'", "HOUR_SECOND", Time},
+		{"'1:1'", "HOUR_MINUTE", Time},
+		{"'1 1:1:1.1'", "DAY_MICROSECOND", Time},
+		{"'1 1:1:1'", "DAY_SECOND", DateTime},
+		{"'1 1:1'", "DAY_MINUTE", DateTime},
+		{"'1 1'", "DAY_HOUR", DateTime},
+		{"'1-1'", "YEAR_MONTH", DateTime},
+	}
+	for _, testCase := range testCases {
+		rs, err := tk.Exec(fmt.Sprintf(sql, testCase.value, testCase.unit))
+		require.NoError(t, err)
+		if testCase.expectedType == Time {
+			require.Regexp(t, timeRegExp, tk.ResultSetToResult(rs, "").Rows()[0][0])
+		}
+		if testCase.expectedType == DateTime {
+			require.Regexp(t, dateTimeRegExp, tk.ResultSetToResult(rs, "").Rows()[0][0])
+		}
+	}
 }
 
 // issues 14448, 19383, 17734
