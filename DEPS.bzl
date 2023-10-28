@@ -1955,19 +1955,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_form3tech_oss_jwt_go",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/form3tech-oss/jwt-go",
-        sha256 = "ebe8386761761d53fac2de5f8f575ddf66c114ec9835947c761131662f1d38f3",
-        strip_prefix = "github.com/form3tech-oss/jwt-go@v3.2.6-0.20210809144907-32ab6a8243d7+incompatible",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/form3tech-oss/jwt-go/com_github_form3tech_oss_jwt_go-v3.2.5+incompatible.zip",
-            "http://ats.apps.svc/gomod/github.com/form3tech-oss/jwt-go/com_github_form3tech_oss_jwt_go-v3.2.5+incompatible.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/form3tech-oss/jwt-go/com_github_form3tech_oss_jwt_go-v3.2.5+incompatible.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/form3tech-oss/jwt-go/com_github_form3tech_oss_jwt_go-v3.2.5+incompatible.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_fortytw2_leaktest",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/fortytw2/leaktest",
@@ -9811,19 +9798,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "io_opentelemetry_go_contrib",
-        build_file_proto_mode = "disable_global",
-        importpath = "go.opentelemetry.io/contrib",
-        sha256 = "b33252dafaa7884e1925ca052bfc32275bd69f7faa1a294ce2dbf05b7f62fda1",
-        strip_prefix = "go.opentelemetry.io/contrib@v0.20.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/contrib/io_opentelemetry_go_contrib-v0.20.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/contrib/io_opentelemetry_go_contrib-v0.20.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/contrib/io_opentelemetry_go_contrib-v0.20.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/contrib/io_opentelemetry_go_contrib-v0.20.0.zip",
-        ],
-    )
-    go_repository(
         name = "io_opentelemetry_go_contrib_instrumentation_google_golang_org_grpc_otelgrpc",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc",
@@ -9847,19 +9821,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.0.1.zip",
             "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.0.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.0.1.zip",
-        ],
-    )
-    go_repository(
-        name = "io_opentelemetry_go_otel_exporters_otlp",
-        build_file_proto_mode = "disable_global",
-        importpath = "go.opentelemetry.io/otel/exporters/otlp",
-        sha256 = "abd40ffff96f3caa01ee6854b52e69e6787b10d31a6c2023447d5106496c9b2e",
-        strip_prefix = "go.opentelemetry.io/otel/exporters/otlp@v0.20.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/exporters/otlp/io_opentelemetry_go_otel_exporters_otlp-v0.20.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/exporters/otlp/io_opentelemetry_go_otel_exporters_otlp-v0.20.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/exporters/otlp/io_opentelemetry_go_otel_exporters_otlp-v0.20.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/exporters/otlp/io_opentelemetry_go_otel_exporters_otlp-v0.20.0.zip",
         ],
     )
     go_repository(
@@ -9889,32 +9850,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "io_opentelemetry_go_otel_metric",
-        build_file_proto_mode = "disable_global",
-        importpath = "go.opentelemetry.io/otel/metric",
-        sha256 = "d7ae3abbdcf9ea48ff23a477f324cb3595c77f3eb83f6acde5c0c9300e23fedb",
-        strip_prefix = "go.opentelemetry.io/otel/metric@v0.20.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v0.20.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v0.20.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v0.20.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v0.20.0.zip",
-        ],
-    )
-    go_repository(
-        name = "io_opentelemetry_go_otel_oteltest",
-        build_file_proto_mode = "disable_global",
-        importpath = "go.opentelemetry.io/otel/oteltest",
-        sha256 = "5773e674e2f095c2348d13133d2c5ed3019c3c4dc43c47dcae788a673f197d20",
-        strip_prefix = "go.opentelemetry.io/otel/oteltest@v0.20.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/oteltest/io_opentelemetry_go_otel_oteltest-v0.20.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/oteltest/io_opentelemetry_go_otel_oteltest-v0.20.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/oteltest/io_opentelemetry_go_otel_oteltest-v0.20.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/oteltest/io_opentelemetry_go_otel_oteltest-v0.20.0.zip",
-        ],
-    )
-    go_repository(
         name = "io_opentelemetry_go_otel_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/sdk",
@@ -9925,32 +9860,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.0.1.zip",
             "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.0.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.0.1.zip",
-        ],
-    )
-    go_repository(
-        name = "io_opentelemetry_go_otel_sdk_export_metric",
-        build_file_proto_mode = "disable_global",
-        importpath = "go.opentelemetry.io/otel/sdk/export/metric",
-        sha256 = "e0037e543d27111d06904f8a2060b41fb40e960ddce5cec5e6f190490ae52f57",
-        strip_prefix = "go.opentelemetry.io/otel/sdk/export/metric@v0.20.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/sdk/export/metric/io_opentelemetry_go_otel_sdk_export_metric-v0.20.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/sdk/export/metric/io_opentelemetry_go_otel_sdk_export_metric-v0.20.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/sdk/export/metric/io_opentelemetry_go_otel_sdk_export_metric-v0.20.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/sdk/export/metric/io_opentelemetry_go_otel_sdk_export_metric-v0.20.0.zip",
-        ],
-    )
-    go_repository(
-        name = "io_opentelemetry_go_otel_sdk_metric",
-        build_file_proto_mode = "disable_global",
-        importpath = "go.opentelemetry.io/otel/sdk/metric",
-        sha256 = "b0d5ffded967229eeee79bb9fb50320c68af812d5f2e6dcb9e44ddb7bd2afe16",
-        strip_prefix = "go.opentelemetry.io/otel/sdk/metric@v0.20.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v0.20.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v0.20.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v0.20.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v0.20.0.zip",
         ],
     )
     go_repository(
